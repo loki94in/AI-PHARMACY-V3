@@ -1,0 +1,898 @@
+import { dbManager } from '../database/connection.js';
+import { notificationService } from './notificationService.js';
+import { resolveDistributorContact } from '../utils/distributorSyncHelper.js';
+
+let isWorkerRunning = false;
+let checkIntervalTimer: NodeJS.Timeout | null = null;
+let reminderSchemaEnsured = false;
+
+async function ensureReminderSchema(db: any): Promise<void> {
+  if (reminderSchemaEnsured) return;
+  try {
+    const cols = await db.all("PRAGMA table_info(distributor_dispatch_reminders)");
+    const colNames = new Set(cols.map((c: any) => c.name.toLowerCase()));
+    if (!colNames.has('scheduled_send_time')) {
+      await db.run("ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL");
+    }
+    reminderSchemaEnsured = true;
+  } catch (_e) {}
+}
+
+/**
+ * Get current date string YYYY-MM-DD in local time
+ */
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Auto-detect active distributors from today's orders (purchases, special_orders)
+ * and ensure they exist in distributor_dispatch_reminders for today.
+ */
+export async function syncTodayActiveDistributors(): Promise<any[]> {
+  const db = await dbManager.getConnection();
+  const todayStr = getTodayDateString();
+
+  try {
+    await ensureReminderSchema(db);
+    // 0. Auto-deduplicate distributor_dispatch_reminders for today to keep single canonical row per distributor
+    await db.run(
+      `DELETE FROM distributor_dispatch_reminders 
+       WHERE id NOT IN (
+         SELECT MAX(id) 
+         FROM distributor_dispatch_reminders 
+         GROUP BY date, LOWER(TRIM(distributor_name))
+       )`
+    );
+
+    // 1. Fetch distributors with Pharmarack placed orders today
+    const pharmarackOrders = await db.all(
+      `SELECT DISTINCT po.store_name as store_name
+       FROM pharmarack_placed_orders po
+       WHERE po.order_date = ? OR DATE(po.placed_at / 1000, 'unixepoch') = ?`,
+      [todayStr, todayStr]
+    );
+
+    const pharmarackDistributors: Array<{ store_name: string; distributor_id: number | null; distributor_name: string; distributor_phone: string }> = [];
+    for (const po of pharmarackOrders) {
+      const storeName = (po.store_name || '').trim();
+      if (!storeName) continue;
+      const contact = await resolveDistributorContact(db, storeName);
+      pharmarackDistributors.push({
+        store_name: storeName,
+        distributor_id: contact.distributor_id,
+        distributor_name: storeName,
+        distributor_phone: contact.distributor_phone || ''
+      });
+    }
+
+    // 2. Fetch distributors with purchase bills created today
+    const purchases = await db.all(
+      `SELECT DISTINCT d.name as store_name, d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+       FROM purchases p
+       JOIN distributors d ON p.distributor_id = d.id
+       WHERE p.date IS NOT NULL AND DATE(p.date) = ?`,
+      [todayStr]
+    );
+    const purchaseDistributors = purchases.map(d => ({
+      store_name: d.store_name,
+      distributor_id: d.distributor_id,
+      distributor_name: d.distributor_name,
+      distributor_phone: (d.distributor_phone || d.distributor_contact || '').replace(/\D/g, '').slice(-10)
+    }));
+
+    // 3. Fetch distributors with incoming emails/invoices received strictly today
+    const emailDistributors = await db.all(
+      `SELECT DISTINCT d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+       FROM distributors d
+       WHERE d.id IN (
+         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
+         UNION
+         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
+       )
+       OR LOWER(TRIM(d.name)) IN (
+         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
+       )
+       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
+         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
+       ))
+       OR EXISTS (
+         SELECT 1 FROM emails e 
+         WHERE (
+           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
+           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
+           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
+         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
+       )`,
+      [todayStr, todayStr, todayStr, todayStr, todayStr, todayStr, todayStr]
+    );
+
+    // Merge distinct active distributors (Pharmarack, Purchases, OR Incoming Emails)
+    const distMap = new Map<string, { id: number | null; name: string; phone: string; hasEmailToday: boolean }>();
+    for (const d of [...pharmarackDistributors, ...purchaseDistributors]) {
+      const name = d.distributor_name || d.store_name;
+      if (name && !distMap.has(name.toLowerCase().trim())) {
+        distMap.set(name.toLowerCase().trim(), {
+          id: d.distributor_id || null,
+          name: name.trim(),
+          phone: d.distributor_phone || '',
+          hasEmailToday: false
+        });
+      }
+    }
+
+    for (const d of emailDistributors) {
+      const name = d.distributor_name;
+      if (name) {
+        const key = name.toLowerCase().trim();
+        const existing = distMap.get(key);
+        const p = (d.distributor_phone || d.distributor_contact || '').replace(/\D/g, '').slice(-10);
+        if (existing) {
+          existing.hasEmailToday = true;
+          if (!existing.phone && p) existing.phone = p;
+        } else {
+          distMap.set(key, {
+            id: d.distributor_id || null,
+            name: name.trim(),
+            phone: p || '',
+            hasEmailToday: true
+          });
+        }
+      }
+    }
+
+    // Insert missing active distributors into distributor_dispatch_reminders for today
+    for (const dist of distMap.values()) {
+      let activePhone = dist.phone;
+      let activeId = dist.id;
+      if (!activePhone) {
+        const resolved = await resolveDistributorContact(db, dist.name);
+        if (resolved.distributor_phone) {
+          activePhone = resolved.distributor_phone;
+          activeId = activeId || resolved.distributor_id;
+        }
+      }
+
+      const existing = await db.get(
+        `SELECT id, status, distributor_phone, distributor_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
+        [dist.name, todayStr]
+      );
+      if (!existing) {
+        const initialStatus = dist.hasEmailToday ? 'Dispatched' : 'Pending';
+        await db.run(
+          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          [
+            activeId, dist.name, activePhone || '', todayStr, initialStatus,
+            dist.hasEmailToday ? 'email' : 'pharmarack',
+            dist.hasEmailToday ? new Date().toISOString() : null
+          ]
+        );
+      } else {
+        if (dist.hasEmailToday && existing.status === 'Pending') {
+          await db.run(
+            `UPDATE distributor_dispatch_reminders SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [existing.id]
+          );
+        }
+        // Keep distributor_phone and distributor_name in sync with master distributors directory
+        const phoneToUpdate = activePhone || existing.distributor_phone || '';
+        const idToUpdate = activeId || existing.distributor_id || null;
+        await db.run(
+          `UPDATE distributor_dispatch_reminders 
+           SET distributor_id = COALESCE(distributor_id, ?),
+               distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+               distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
+           WHERE id = ?`,
+          [idToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
+        );
+      }
+    }
+
+    // Purge/Delete any stale records for today with no supporting evidence left.
+    // 'phone_call' orders are always manual, so they're never auto-purged.
+    // 'Collected' is a human-confirmed final state, so it's always kept.
+    // A merely 'Dispatched' status reached via automatic email-matching ('email' source) is NOT
+    // human-confirmed — if the email match it was based on no longer holds (e.g. it was a bad
+    // match to begin with), it must be re-validated like everything else instead of being
+    // permanently immune to cleanup, otherwise a single bad auto-match lingers forever.
+    const activeNames = Array.from(distMap.values()).map(d => d.name.toLowerCase().trim());
+    if (activeNames.length > 0) {
+      const placeholders = activeNames.map(() => '?').join(',');
+      await db.run(
+        `DELETE FROM distributor_dispatch_reminders
+         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
+           AND NOT (status = 'Dispatched' AND order_source != 'email')
+           AND LOWER(TRIM(distributor_name)) NOT IN (${placeholders})`,
+        [todayStr, ...activeNames]
+      );
+    } else {
+      await db.run(
+        `DELETE FROM distributor_dispatch_reminders
+         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
+           AND NOT (status = 'Dispatched' AND order_source != 'email')`,
+        [todayStr]
+      );
+    }
+
+    // Email Auto-Match Check: Check email_order_reviews, distributor_historical_files, purchases, action_logs, and processed_files for today's received emails
+    const todayEmailDistributors = await db.all(
+      `SELECT DISTINCT d.id as dist_id, LOWER(TRIM(d.name)) as dist_name
+       FROM distributors d
+       WHERE d.id IN (
+         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
+         UNION
+         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
+       )
+       OR LOWER(TRIM(d.name)) IN (
+         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
+       )
+       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
+         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
+       ))
+       OR EXISTS (
+         SELECT 1 FROM processed_files pf WHERE (LOWER(pf.file_path) LIKE '%' || LOWER(d.name) || '%' OR (d.email IS NOT NULL AND d.email != '' AND LOWER(pf.file_path) LIKE '%' || LOWER(d.email) || '%')) AND DATE(pf.last_processed, 'localtime') = ?
+       )
+       OR EXISTS (
+         SELECT 1 FROM emails e 
+         WHERE (
+           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
+           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
+           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
+         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
+       )`,
+      [todayStr, todayStr, todayStr, todayStr, todayStr, todayStr, todayStr, todayStr]
+    );
+
+    for (const match of todayEmailDistributors) {
+      if (match.dist_name || match.dist_id) {
+        await db.run(
+          `UPDATE distributor_dispatch_reminders
+           SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP
+           WHERE date = ? AND (distributor_id = ? OR LOWER(TRIM(distributor_name)) = ?) AND status = 'Pending'`,
+          [todayStr, match.dist_id || null, match.dist_name || '']
+        );
+      }
+    }
+
+    // Dynamically allocate staggered reminder times avoiding 30-day past slots
+    await allocateDynamicReminderTimes(db, todayStr);
+
+    // Fetch and return full list of today's reminders with delivery boy name joined.
+    const todayReminders = await db.all(
+      `SELECT r.id, r.distributor_id,
+              COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
+              COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
+              1 as has_pharmarack_order_today,
+              1 as has_order_today,
+              (
+                SELECT n.status FROM automation_notifications n
+                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
+                  AND DATE(n.created_at) = ?
+                ORDER BY n.id DESC LIMIT 1
+              ) as latest_notif_status,
+              (
+                SELECT n.error_message FROM automation_notifications n
+                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
+                  AND DATE(n.created_at) = ? AND (n.status = 'failed' OR n.status = 'error')
+                ORDER BY n.id DESC LIMIT 1
+              ) as latest_notif_error
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       LEFT JOIN delivery_boys db ON r.delivery_boy_id = db.id
+       WHERE r.date = ?
+       ORDER BY r.status DESC, r.created_at DESC`,
+      [todayStr, todayStr, todayStr]
+    );
+
+    for (const r of todayReminders) {
+      if (!r.distributor_phone || r.distributor_phone.trim() === '') {
+        const resolved = await resolveDistributorContact(db, r.distributor_name);
+        if (resolved.distributor_phone) {
+          r.distributor_phone = resolved.distributor_phone;
+          r.distributor_id = r.distributor_id || resolved.distributor_id;
+          try {
+            await db.run(
+              `UPDATE distributor_dispatch_reminders 
+               SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+               WHERE id = ?`,
+              [resolved.distributor_phone, resolved.distributor_id, r.id]
+            );
+          } catch (_) {}
+        }
+      }
+    }
+
+    // Merge all saved distributors from master directory tables who don't have an active order today
+    const existingNamesSet = new Set<string>();
+    for (const tr of todayReminders) {
+      if (tr.distributor_name) existingNamesSet.add(tr.distributor_name.toLowerCase().trim());
+    }
+
+    try {
+      const allMasterDistributors = await db.all(
+        `SELECT d.id, d.name, d.phone, d.contact 
+         FROM distributors d 
+         WHERE d.name IS NOT NULL AND d.name != ''
+         ORDER BY d.name ASC`
+      );
+
+      let syntheticCounter = 800000;
+      for (const md of allMasterDistributors) {
+        const normName = md.name.toLowerCase().trim();
+        if (!existingNamesSet.has(normName)) {
+          existingNamesSet.add(normName);
+          const phone = (md.phone || md.contact || '').replace(/\D/g, '').slice(-10);
+          todayReminders.push({
+            id: md.id ? 800000 + md.id : ++syntheticCounter,
+            distributor_id: md.id || null,
+            distributor_name: md.name.trim(),
+            distributor_phone: phone,
+            date: todayStr,
+            status: 'No Order Today',
+            auto_remind: 0,
+            delivery_boy_id: null,
+            last_reminded_at: null,
+            scheduled_send_time: null,
+            created_at: new Date().toISOString(),
+            delivery_boy_name: null,
+            delivery_boy_phone: null,
+            has_pharmarack_order_today: 0,
+            has_order_today: 0,
+            latest_notif_status: null,
+            latest_notif_error: null
+          });
+        }
+      }
+
+      // Also merge any extra saved names from pharmarack_distributor_mappings
+      const pharmarackMappings = await db.all(
+        `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
+      );
+      for (const pm of pharmarackMappings) {
+        const normName = pm.store_name.toLowerCase().trim();
+        if (!existingNamesSet.has(normName)) {
+          existingNamesSet.add(normName);
+          const phone = (pm.phone || '').replace(/\D/g, '').slice(-10);
+          todayReminders.push({
+            id: ++syntheticCounter,
+            distributor_id: pm.distributor_id || null,
+            distributor_name: pm.store_name.trim(),
+            distributor_phone: phone,
+            date: todayStr,
+            status: 'No Order Today',
+            auto_remind: 0,
+            delivery_boy_id: null,
+            last_reminded_at: null,
+            scheduled_send_time: null,
+            created_at: new Date().toISOString(),
+            delivery_boy_name: null,
+            delivery_boy_phone: null,
+            has_pharmarack_order_today: 0,
+            has_order_today: 0,
+            latest_notif_status: null,
+            latest_notif_error: null
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[DistributorReminderWorker] Error merging master saved distributors:', err.message);
+    }
+
+    // Fetch placed orders and purchases for today to populate order_count, orders_list, and total_items_count
+    try {
+      const todayPlacedOrders = await db.all(
+        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+         FROM pharmarack_placed_orders 
+         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
+         ORDER BY placed_at ASC`,
+        [todayStr, todayStr, todayStr]
+      );
+
+      const todayPurchases = await db.all(
+        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
+         FROM purchases p
+         JOIN distributors d ON p.distributor_id = d.id
+         WHERE (p.date IS NOT NULL AND (DATE(p.date) = ? OR DATE(p.date, 'localtime') = ?))
+         ORDER BY p.id ASC`,
+        [todayStr, todayStr]
+      );
+
+      for (const r of todayReminders) {
+        const normDistName = (r.distributor_name || '').toLowerCase().trim();
+        const distId = r.distributor_id;
+
+        const matchingPlaced = todayPlacedOrders.filter(po => 
+          (po.store_name && po.store_name.toLowerCase().trim() === normDistName) ||
+          (distId && po.store_id === distId)
+        );
+
+        const matchingPurchases = todayPurchases.filter(p =>
+          (p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName) ||
+          (distId && p.distributor_id === distId)
+        );
+
+        const ordersList: Array<{
+          id: string | number;
+          source: 'pharmarack' | 'purchase' | 'manual';
+          order_time: string;
+          items_count: number;
+          items_preview: string[];
+        }> = [];
+
+        let totalItems = 0;
+
+        for (const po of matchingPlaced) {
+          let itemsArr: any[] = [];
+          try {
+            itemsArr = typeof po.items_json === 'string' ? JSON.parse(po.items_json) : (Array.isArray(po.items_json) ? po.items_json : []);
+          } catch (_) {}
+
+          totalItems += itemsArr.length;
+          const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
+          const previews = itemsArr.slice(0, 5).map(it => `${it.productName || it.name || 'Item'} (Qty: ${it.qty || it.Quantity || 1})`);
+
+          ordersList.push({
+            id: `pharma_${po.id}`,
+            source: 'pharmarack',
+            order_time: timeStr,
+            items_count: itemsArr.length,
+            items_preview: previews
+          });
+        }
+
+        for (const p of matchingPurchases) {
+          const timeStr = p.date ? new Date(p.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today';
+          ordersList.push({
+            id: `purch_${p.id}`,
+            source: 'purchase',
+            order_time: timeStr,
+            items_count: 1,
+            items_preview: [`Purchase Bill #${p.invoice_no || p.id}`]
+          });
+        }
+
+        const totalCount = ordersList.length;
+        r.order_count = totalCount > 0 ? totalCount : (r.has_order_today && r.status !== 'No Order Today' ? 1 : 0);
+        r.orders_list = ordersList;
+        r.total_items_count = totalItems;
+      }
+    } catch (countErr: any) {
+      console.warn('[DistributorReminderWorker] Error calculating order counts:', countErr.message);
+    }
+
+    return todayReminders || [];
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error syncing today active distributors:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Allocate dynamic, non-uniform reminder dispatch times across the configured window
+ * avoiding time slots used by the same distributor over the past 30 days.
+ */
+export async function allocateDynamicReminderTimes(db: any, todayStr: string): Promise<void> {
+  try {
+    await ensureReminderSchema(db);
+    // 1. Fetch configured window start & end times
+    const [startSetting, endSetting] = await Promise.all([
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'")
+    ]);
+
+    const startTimeStr = startSetting?.value || '12:30';
+    const endTimeStr = endSetting?.value || '13:00';
+
+    const [startH, startM] = startTimeStr.split(':').map(Number);
+    const [endH, endM] = endTimeStr.split(':').map(Number);
+
+    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
+    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
+
+    const windowDuration = Math.max(10, endMinutesTotal - startMinutesTotal);
+
+    // 2. Fetch today's active reminders that need scheduling
+    const reminders = await db.all(
+      `SELECT id, distributor_name, scheduled_send_time, last_reminded_at, status
+       FROM distributor_dispatch_reminders
+       WHERE date = ? AND status != 'No Order Today'
+       ORDER BY id ASC`,
+      [todayStr]
+    );
+
+    if (reminders.length === 0) return;
+
+    // 3. For each distributor, fetch past 30-day reminder timestamps
+    const pastThirtyDaysDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const pastReminders = await db.all(
+      `SELECT LOWER(TRIM(distributor_name)) as dist_name, last_reminded_at, scheduled_send_time, date
+       FROM distributor_dispatch_reminders
+       WHERE date >= ? AND date < ? AND (last_reminded_at IS NOT NULL OR scheduled_send_time IS NOT NULL)`,
+      [pastThirtyDaysDate, todayStr]
+    );
+
+    // Build map of past send minutes (minute of day) per distributor
+    const pastMinutesMap = new Map<string, number[]>();
+    for (const pr of pastReminders) {
+      const name = pr.dist_name;
+      if (!name) continue;
+      let minuteOfDay: number | null = null;
+      if (pr.last_reminded_at) {
+        const d = new Date(pr.last_reminded_at);
+        if (!isNaN(d.getTime())) {
+          minuteOfDay = d.getHours() * 60 + d.getMinutes();
+        }
+      }
+      if (minuteOfDay === null && pr.scheduled_send_time && pr.scheduled_send_time.includes(':')) {
+        const [ph, pm] = pr.scheduled_send_time.split(':').map(Number);
+        if (!isNaN(ph) && !isNaN(pm)) {
+          minuteOfDay = ph * 60 + pm;
+        }
+      }
+      if (minuteOfDay !== null) {
+        if (!pastMinutesMap.has(name)) pastMinutesMap.set(name, []);
+        pastMinutesMap.get(name)!.push(minuteOfDay);
+      }
+    }
+
+    // 4. Track slots already assigned today
+    const assignedSlotsToday = new Set<number>();
+    for (const r of reminders) {
+      if (r.scheduled_send_time && r.scheduled_send_time.includes(':')) {
+        const [h, m] = r.scheduled_send_time.split(':').map(Number);
+        if (!isNaN(h) && !isNaN(m)) {
+          assignedSlotsToday.add(h * 60 + m);
+        }
+      }
+    }
+
+    // Unassigned reminders that need a new slot
+    const unassigned = reminders.filter((r: any) => !r.scheduled_send_time);
+    if (unassigned.length === 0) return;
+
+    const totalSlotsNeeded = unassigned.length;
+    const step = windowDuration / (totalSlotsNeeded + 1);
+
+    for (let i = 0; i < unassigned.length; i++) {
+      const rem = unassigned[i];
+      const normName = (rem.distributor_name || '').toLowerCase().trim();
+      const pastMinutes = pastMinutesMap.get(normName) || [];
+
+      // Base target minute with pseudo-random non-uniform jitter
+      const jitter = Math.floor(Math.random() * 9) - 4;
+      let targetMin = Math.round(startMinutesTotal + (i + 1) * step + jitter);
+      targetMin = Math.max(startMinutesTotal, Math.min(endMinutesTotal - 1, targetMin));
+
+      // Find best minute around targetMin avoiding past 30-day slots & today collisions
+      let bestMin = targetMin;
+      let bestScore = -Infinity;
+
+      for (let offset = -15; offset <= 15; offset++) {
+        const candidate = targetMin + offset;
+        if (candidate < startMinutesTotal || candidate >= endMinutesTotal) continue;
+
+        // Check collision with today's assigned slots
+        let collisionToday = false;
+        for (const assigned of assignedSlotsToday) {
+          if (Math.abs(assigned - candidate) < 2) {
+            collisionToday = true;
+            break;
+          }
+        }
+        if (collisionToday) continue;
+
+        // Score based on distance to past 30-day send times for this specific distributor
+        let minPastDist = 999;
+        for (const pm of pastMinutes) {
+          const diff = Math.abs(pm - candidate);
+          if (diff < minPastDist) minPastDist = diff;
+        }
+
+        const score = minPastDist * 2 - Math.abs(offset);
+        if (score > bestScore) {
+          bestScore = score;
+          bestMin = candidate;
+        }
+      }
+
+      assignedSlotsToday.add(bestMin);
+
+      const resH = Math.floor(bestMin / 60);
+      const resM = bestMin % 60;
+      const formattedTime = `${String(resH).padStart(2, '0')}:${String(resM).padStart(2, '0')}`;
+
+      await db.run(
+        `UPDATE distributor_dispatch_reminders SET scheduled_send_time = ? WHERE id = ?`,
+        [formattedTime, rem.id]
+      );
+      rem.scheduled_send_time = formattedTime;
+    }
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error allocating dynamic reminder times:', err.message);
+  }
+}
+
+/**
+ * Check and run auto-sending during the configured time window with dynamic unequal schedule
+ */
+export async function checkAndSendAutoReminders() {
+  if (isWorkerRunning) return;
+  isWorkerRunning = true;
+
+  try {
+    const db = await dbManager.getConnection();
+    const [globalAuto, triggerSetting, startSetting, endSetting] = await Promise.all([
+      db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'")
+    ]);
+
+    const isGlobalEnabled = !globalAuto || globalAuto.value === 'true';
+    const isTriggerEnabled = triggerSetting?.value === 'true';
+
+    // Must be explicitly enabled by owner
+    if (!isGlobalEnabled || !isTriggerEnabled) {
+      isWorkerRunning = false;
+      return;
+    }
+
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+
+    // Time window: parse configured start & end times (default: 12:30 to 13:00)
+    const startTimeStr = startSetting?.value || '12:30';
+    const endTimeStr = endSetting?.value || '13:00';
+    const [startH, startM] = startTimeStr.split(':').map(Number);
+    const [endH, endM] = endTimeStr.split(':').map(Number);
+
+    const currentMinutesTotal = hours * 60 + minutes;
+    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
+    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
+
+    // Active window check (with 15 min buffer to catch late slots)
+    const isWithinWindow = currentMinutesTotal >= startMinutesTotal && currentMinutesTotal <= (endMinutesTotal + 15);
+
+    if (!isWithinWindow) {
+      isWorkerRunning = false;
+      return;
+    }
+
+    const todayStr = getTodayDateString();
+    await syncTodayActiveDistributors();
+    await allocateDynamicReminderTimes(db, todayStr);
+
+    // 1. Fetch all active reminders for today that have not been reminded today
+    const activeReminders = await db.all(
+      `SELECT r.id, r.distributor_name, r.distributor_phone, r.scheduled_send_time, d.phone as master_phone
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       WHERE r.date = ? AND r.status != 'No Order Today'
+         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at) != ?)`,
+      [todayStr, todayStr]
+    );
+
+    const dueReminders: Array<{ id: number; distributor_name: string }> = [];
+    const missingPhone: Array<{ id: number; distributor_name: string }> = [];
+
+    for (const item of activeReminders) {
+      const p = (item.distributor_phone || item.master_phone || '').replace(/\D/g, '').slice(-10);
+      if (!p || p.length !== 10) {
+        missingPhone.push({ id: item.id, distributor_name: item.distributor_name });
+        continue;
+      }
+
+      // Check if scheduled time has arrived
+      let isDue = true;
+      if (item.scheduled_send_time && item.scheduled_send_time.includes(':')) {
+        const [schH, schM] = item.scheduled_send_time.split(':').map(Number);
+        if (!isNaN(schH) && !isNaN(schM)) {
+          const schMinutes = schH * 60 + schM;
+          if (currentMinutesTotal < schMinutes) {
+            isDue = false;
+          }
+        }
+      }
+
+      if (isDue) {
+        dueReminders.push({ id: item.id, distributor_name: item.distributor_name });
+      }
+    }
+
+    if (dueReminders.length > 0) {
+      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
+
+      // Ensure WhatsApp client is ready (wake from idle sleep if needed) before dispatching
+      try {
+        const { ensureWhatsAppReady } = await import('../whatsappClient.js');
+        const isReady = await ensureWhatsAppReady(30000);
+        if (!isReady) {
+          console.warn('[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.');
+          isWorkerRunning = false;
+          return;
+        }
+      } catch (waReadyErr: any) {
+        console.warn('[DistributorReminderWorker] WhatsApp readiness check warning:', waReadyErr?.message || waReadyErr);
+      }
+
+      for (const item of dueReminders) {
+        // Enqueue reminder to notificationService -> whatsappQueueWorker (where 10-15s non-bulk pacing is enforced)
+        await notificationService.sendDistributorDispatchReminder(item.id);
+        // Micro-yield between queue additions
+        await new Promise(res => setTimeout(res, 1000));
+      }
+    }
+
+    // 2. Alert Pharmacy Admin if any active suppliers are missing contact phone numbers
+    if (missingPhone.length > 0) {
+      const alreadyAlerted = await db.get(
+        `SELECT id FROM automation_notifications 
+         WHERE type = 'admin_missing_distributor_phones' AND DATE(created_at) = ?
+         LIMIT 1`,
+        [todayStr]
+      );
+
+      if (!alreadyAlerted) {
+        console.log(`[DistributorReminderWorker] Alerting pharmacy admin of ${missingPhone.length} missing distributor phone numbers.`);
+        await notificationService.sendMissingDistributorPhonesAdminAlert(
+          missingPhone.map(m => ({ name: m.distributor_name }))
+        );
+      }
+    }
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error during auto reminder run:', err.message);
+  } finally {
+    isWorkerRunning = false;
+  }
+}
+
+/**
+ * Check and send the consolidated Delivery Boy dispatch summary at the configured afternoon time (e.g. 14:00)
+ */
+export async function checkAndSendAfternoonDeliveryBoyReminder() {
+  try {
+    const db = await dbManager.getConnection();
+    const todayStr = getTodayDateString();
+
+    // 1. Check settings - must be explicitly enabled by owner
+    const [globalAuto, enabledSetting] = await Promise.all([
+      db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'")
+    ]);
+
+    const isGlobalEnabled = !globalAuto || globalAuto.value === 'true';
+    if (!isGlobalEnabled || enabledSetting?.value !== 'true') return;
+
+    const timeSetting = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_time'");
+    const targetTime = timeSetting?.value || '14:00';
+
+    const [targetH, targetM] = targetTime.split(':').map(Number);
+    const now = new Date();
+    const currentH = now.getHours();
+    const currentM = now.getMinutes();
+
+    // Check if current time is within 15 minutes of the target afternoon time (e.g., 14:00 - 14:15)
+    const isTargetHour = currentH === (targetH || 14);
+    const isWithinMinutes = currentM >= (targetM || 0) && currentM <= ((targetM || 0) + 15);
+
+    if (!isTargetHour || !isWithinMinutes) {
+      return;
+    }
+
+    // 2. Deduplicate: check if already sent today
+    const alreadySent = await db.get(
+      `SELECT id FROM automation_notifications 
+       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ? AND status = 'sent'
+       LIMIT 1`,
+      [todayStr]
+    );
+
+    if (alreadySent) {
+      return;
+    }
+
+    console.log(`[DistributorReminderWorker] Triggering scheduled afternoon Delivery Boy consolidated dispatch at ${targetTime}...`);
+    try {
+      const { ensureWhatsAppReady } = await import('../whatsappClient.js');
+      await ensureWhatsAppReady(30000);
+    } catch (_) {}
+
+    const todayReminders = await syncTodayActiveDistributors();
+    const result = await notificationService.sendConsolidatedDeliveryBoyDispatch(todayReminders);
+    console.log('[DistributorReminderWorker] Afternoon Delivery Boy dispatch result:', result);
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error in checkAndSendAfternoonDeliveryBoyReminder:', err.message);
+  }
+}
+
+/**
+ * Automatically expire past-due reminders if the PC was offline during the reminder window.
+ * Ensures zero stale messages are ever sent for past dates.
+ */
+export async function purgeStaleOfflineReminders(): Promise<number> {
+  const db = await dbManager.getConnection();
+  const todayStr = getTodayDateString();
+
+  try {
+    const staleRecords = await db.all(
+      `SELECT id, distributor_name, distributor_phone, date
+       FROM distributor_dispatch_reminders
+       WHERE date < ? AND status = 'Pending'`,
+      [todayStr]
+    );
+
+    if (staleRecords.length > 0) {
+      console.log(`[DistributorReminderWorker] Purging/expiring ${staleRecords.length} past-due reminders from PC offline period.`);
+      for (const item of staleRecords) {
+        await db.run(
+          `UPDATE distributor_dispatch_reminders SET status = 'Skipped (PC Offline)' WHERE id = ?`,
+          [item.id]
+        );
+        await db.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            'distributor_dispatch_reminder',
+            item.distributor_name,
+            item.distributor_phone || '',
+            `Skipped automatically because PC was offline on ${item.date}`,
+            'skipped_offline',
+            `reminder_stale_${item.id}_${item.date}`
+          ]
+        );
+      }
+    }
+    return staleRecords.length;
+  } catch (err: any) {
+    console.error('[DistributorReminderWorker] Error purging stale offline reminders:', err.message);
+    return 0;
+  }
+}
+
+/**
+ * Start the periodic background checker (runs every 60 seconds)
+ */
+export function startDistributorDispatchReminderWorker() {
+  if (checkIntervalTimer) return;
+
+  // Run initial stale purge, sync & check
+  purgeStaleOfflineReminders().catch(() => {});
+  syncTodayActiveDistributors().catch(() => {});
+  checkAndSendAutoReminders().catch(() => {});
+  checkAndSendAfternoonDeliveryBoyReminder().catch(() => {});
+
+  // Check every 60 seconds (1 minute). P3 gated worker: skip ticks while the
+  // user is idle >30 min; checks resume automatically on the next tick after wake.
+  checkIntervalTimer = setInterval(async () => {
+    try {
+      const { activityTracker } = await import('../utils/activityTracker.js');
+      if (activityTracker.isIdle()) return;
+    } catch (_) {}
+    purgeStaleOfflineReminders().catch(() => {});
+    checkAndSendAutoReminders().catch(() => {});
+    checkAndSendAfternoonDeliveryBoyReminder().catch(() => {});
+  }, 60 * 1000);
+
+  console.log('[DistributorReminderWorker] Distributor dispatch reminder background worker initialized with dynamic 30-day staggered scheduler & PC offline protection.');
+}
+
+/**
+ * Stop the periodic background checker
+ */
+export function stopDistributorDispatchReminderWorker() {
+  if (checkIntervalTimer) {
+    clearInterval(checkIntervalTimer);
+    checkIntervalTimer = null;
+    console.log('[DistributorReminderWorker] Distributor dispatch reminder background worker stopped.');
+  }
+}
+

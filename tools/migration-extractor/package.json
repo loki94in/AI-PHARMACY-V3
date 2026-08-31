@@ -1,0 +1,24 @@
+{
+  "name": "migration-extractor",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "build": "node scripts/buildBundle.cjs && node scripts/buildSea.cjs",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "bin": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "commander": "^15.0.0",
+    "csv-writer": "^1.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

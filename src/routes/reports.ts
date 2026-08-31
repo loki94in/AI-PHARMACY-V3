@@ -1,0 +1,803 @@
+import express from 'express';
+import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
+import { dbManager } from '../database/connection.js';
+import { exportToExcel, exportToPdf, exportToCsv } from '../utils/reportExporter.js';
+import { nonMovingReportService } from '../services/nonMovingReportService.js';
+import { getReportCutoverDate, effectiveReportFromDate } from '../utils/reportCutover.js';
+
+const router = express.Router();
+
+// Summary response cache (60s). The sales/purchases summary each full-scan
+// their tables through COALESCE date expressions; repeat tab switches and
+// range re-selects within a minute reuse one computation. Invalidated by any
+// transactional write via invalidateReportsSummaryCache() (write interceptor).
+const REPORTS_SUMMARY_TTL_MS = 60_000;
+const REPORTS_SUMMARY_CACHE_MAX = 60;
+const reportsSummaryCache = new Map<string, { at: number; payload: any }>();
+
+export function invalidateReportsSummaryCache() {
+  reportsSummaryCache.clear();
+}
+
+async function resolveFromDate(requestedFrom: string, db?: any): Promise<string> {
+  const requested = (requestedFrom && requestedFrom.trim()) ? requestedFrom.trim() : '';
+  if (requested || !db) return requested || '1970-01-01';
+  // Migration cutover clamp: when the caller sends no from-date (or the UI
+  // "All time" preset), start from the configured report cutover date instead
+  // of scanning pre-migration history back to 1970.
+  try {
+    const cutover = await getReportCutoverDate(db);
+    return effectiveReportFromDate(requested, cutover);
+  } catch {
+    return '1970-01-01';
+  }
+}
+
+// Helper SQL snippet for sales date resolution
+const SALES_DATE_EXPR = "COALESCE(date(business_date), date(date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10)))";
+const SALES_INV_DATE_EXPR = "COALESCE(date(sinv.business_date), date(sinv.date), date(substr(sinv.date, 1, 10)), date(substr(sinv.business_date, 1, 10)))";
+
+// Helper SQL snippet for purchases date resolution
+const PURCHASES_DATE_EXPR = "COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10)))";
+const PURCHASES_P_DATE_EXPR = "COALESCE(date(p.date), date(p.business_date), date(substr(p.date, 1, 10)), date(substr(p.business_date, 1, 10)))";
+
+// Fetch summary metrics for stats cards
+router.get('/', async (req, res) => {
+  const { fromDate, toDate, type } = req.query;
+  const reportType = type ? String(type) : 'sales';
+
+  try {
+    const summarySig = `${reportType}|${fromDate || ''}|${toDate || ''}`;
+    const cachedSummary = reportsSummaryCache.get(summarySig);
+    if (cachedSummary && Date.now() - cachedSummary.at < REPORTS_SUMMARY_TTL_MS) {
+      cachedSummary.at = Date.now();
+      return res.json(cachedSummary.payload);
+    }
+
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    const finishSummary = (payload: any) => {
+      reportsSummaryCache.set(summarySig, { at: Date.now(), payload });
+      if (reportsSummaryCache.size > REPORTS_SUMMARY_CACHE_MAX) {
+        const oldestKey = reportsSummaryCache.keys().next().value;
+        if (oldestKey !== undefined) reportsSummaryCache.delete(oldestKey);
+      }
+      res.json(payload);
+    };
+    
+    if (reportType === 'sales') {
+      const salesRow = await db.get(
+        `SELECT IFNULL(SUM(total_amount), 0) as total FROM sales_invoices WHERE ${SALES_DATE_EXPR} >= date(?) AND ${SALES_DATE_EXPR} <= date(?)`,
+        [from, to]
+      );
+      
+      const marginRow = await db.get(`
+        SELECT IFNULL(SUM(si.quantity * si.unit_price), 0) as revenue,
+               IFNULL(SUM(si.quantity * IFNULL(im.cost_price, 0)), 0) as cost,
+               IFNULL(SUM(si.quantity), 0) as items_sold
+        FROM sale_items si
+        JOIN sales_invoices sinv ON si.invoice_id = sinv.id
+        JOIN inventory_master im ON si.inventory_id = im.id
+        WHERE ${SALES_INV_DATE_EXPR} >= date(?) AND ${SALES_INV_DATE_EXPR} <= date(?)
+      `, [from, to]);
+
+      const revenue = marginRow.revenue || 0;
+      const cost = marginRow.cost || 0;
+      const netProfit = revenue - cost;
+      const profitMargin = revenue > 0 ? Math.round((netProfit / revenue) * 100) : 0;
+
+      return finishSummary({
+        totalSales: salesRow.total || 0,
+        cogs: cost,
+        profitMargin: profitMargin,
+        itemsSold: marginRow.items_sold || 0,
+        netProfit: netProfit
+      });
+    }
+
+    if (reportType === 'purchases') {
+      const purchasesRow = await db.get(
+        `SELECT IFNULL(SUM(total_amount), 0) as total, COUNT(DISTINCT distributor_id) as suppliers FROM purchases WHERE ${PURCHASES_DATE_EXPR} >= date(?) AND ${PURCHASES_DATE_EXPR} <= date(?)`,
+        [from, to]
+      );
+
+      const itemsRow = await db.get(`
+        SELECT IFNULL(SUM(quantity), 0) as qty
+        FROM purchase_items pi
+        JOIN purchases p ON pi.purchase_id = p.id
+        WHERE ${PURCHASES_P_DATE_EXPR} >= date(?) AND ${PURCHASES_P_DATE_EXPR} <= date(?)
+      `, [from, to]);
+
+      const total = purchasesRow.total || 0;
+      const qty = itemsRow.qty || 0;
+      const avgItemPrice = qty > 0 ? (total / qty) : 0;
+
+      return finishSummary({
+        totalPurchases: total,
+        itemsPurchased: qty,
+        suppliersCount: purchasesRow.suppliers || 0,
+        avgItemPrice: avgItemPrice
+      });
+    }
+
+    if (reportType === 'inventory') {
+      const invRow = await db.get(`
+        SELECT IFNULL(SUM(quantity), 0) as qty,
+               IFNULL(SUM(quantity * cost_price), 0) as cost_val,
+               IFNULL(SUM(quantity * mrp), 0) as mrp_val,
+               COUNT(DISTINCT medicine_id) as items
+        FROM inventory_master
+        WHERE quantity > 0
+      `);
+
+      return finishSummary({
+        totalStock: invRow.qty || 0,
+        holdValuationCost: invRow.cost_val || 0,
+        holdValuationMrp: invRow.mrp_val || 0,
+        uniqueMedicines: invRow.items || 0
+      });
+    }
+
+    if (reportType === 'expiry') {
+      let countQuery = '';
+      let params: any[] = [];
+      if (fromDate || toDate) {
+        countQuery = `
+          SELECT COUNT(DISTINCT medicine_id) as items,
+                 IFNULL(SUM(quantity), 0) as qty,
+                 IFNULL(SUM(quantity * cost_price), 0) as cost_val,
+                 IFNULL(SUM(quantity * mrp), 0) as mrp_val
+          FROM inventory_master
+          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND quantity > 0
+        `;
+        params = [from, to];
+      } else {
+        countQuery = `
+          SELECT COUNT(DISTINCT medicine_id) as items,
+                 IFNULL(SUM(quantity), 0) as qty,
+                 IFNULL(SUM(quantity * cost_price), 0) as cost_val,
+                 IFNULL(SUM(quantity * mrp), 0) as mrp_val
+          FROM inventory_master
+          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) <= date('now', '+365 days') AND quantity > 0
+        `;
+      }
+
+      const expRow = await db.get(countQuery, params);
+
+      return finishSummary({
+        expiringMedicines: expRow.items || 0,
+        expiringStockQty: expRow.qty || 0,
+        expiringCostValue: expRow.cost_val || 0,
+        expiringMrpValue: expRow.mrp_val || 0
+      });
+    }
+
+    // Default fallback
+    finishSummary({
+      totalSales: 0,
+      totalPurchases: 0,
+      profitMargin: 0,
+      itemsSold: 0
+    });
+  } catch (err) {
+    console.error('Reports summary error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Fetch report raw data lists for the UI table
+router.get('/data', async (req, res) => {
+  const { type, fromDate, toDate } = req.query;
+
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+    let data: any[] = [];
+
+    if (type === 'sales') {
+      data = await db.all(
+        `SELECT invoice_no, total_amount, COALESCE(date, business_date) as date FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC LIMIT 500`,
+        [from, to]
+      );
+    } else if (type === 'purchases') {
+      data = await db.all(
+        `SELECT p.invoice_no, p.total_amount, d.name as distributor, COALESCE(p.date, p.business_date) as date FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC LIMIT 500`,
+        [from, to]
+      );
+    } else if (type === 'inventory') {
+      data = await db.all(`
+        SELECT m.name as medicine_name, im.batch_no, im.quantity as stock, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value 
+        FROM inventory_master im 
+        JOIN medicines m ON im.medicine_id = m.id 
+        ORDER BY stock DESC LIMIT 500
+      `);
+    } else if (type === 'expiry') {
+      if (fromDate || toDate) {
+        data = await db.all(`
+          SELECT m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity, im.cost_price, (im.quantity * im.cost_price) as value
+          FROM inventory_master im 
+          JOIN medicines m ON im.medicine_id = m.id 
+          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0
+          ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC LIMIT 500
+        `, [from, to]);
+      } else {
+        data = await db.all(`
+          SELECT m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity, im.cost_price, (im.quantity * im.cost_price) as value
+          FROM inventory_master im 
+          JOIN medicines m ON im.medicine_id = m.id 
+          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date('now', '+365 days') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0
+          ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC LIMIT 500
+        `);
+      }
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error('Reports data error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PDF export endpoint
+router.get('/export-pdf', async (req, res) => {
+  const { type, fromDate, toDate } = req.query;
+
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    let title = 'Pharmacy OS Report';
+    let headers: string[] = [];
+    let keys: string[] = [];
+    let query = '';
+    let params: any[] = [];
+    let alignMap: Record<string, 'left' | 'center' | 'right'> = {};
+    let colWidths: number[] = [];
+
+    if (type === 'sales') {
+      title = 'Sales History Report';
+      headers = ['Invoice No', 'Date', 'Amount'];
+      keys = ['invoice_no', 'date', 'total_amount'];
+      query = `SELECT invoice_no, COALESCE(date, business_date) as date, total_amount FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC`;
+      params = [from, to];
+      alignMap = { invoice_no: 'left', date: 'center', total_amount: 'right' };
+      colWidths = [180, 180, 152];
+    } else if (type === 'purchases') {
+      title = 'Purchase History Report';
+      headers = ['Invoice / Bill No', 'Distributor / Supplier', 'Date', 'Amount'];
+      keys = ['invoice_no', 'distributor_name', 'date', 'total_amount'];
+      query = `SELECT p.invoice_no, d.name as distributor_name, COALESCE(p.date, p.business_date) as date, p.total_amount FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC`;
+      params = [from, to];
+      alignMap = { invoice_no: 'left', distributor_name: 'left', date: 'center', total_amount: 'right' };
+      colWidths = [120, 180, 112, 100];
+    } else if (type === 'inventory') {
+      title = 'Current Inventory Status Report';
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Expiry Date', 'Cost Price', 'MRP', 'Valuation (Cost)'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'expiry_date', 'cost_price', 'mrp', 'value'];
+      query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.expiry_date, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(im.is_active, 1) = 1 ORDER BY medicine_name ASC';
+      alignMap = { medicine_name: 'left', batch_no: 'left', quantity: 'right', expiry_date: 'center', cost_price: 'right', mrp: 'right', value: 'right' };
+      colWidths = [130, 60, 50, 70, 50, 50, 102];
+    } else if (type === 'expiry') {
+      if (fromDate || toDate) {
+        title = `Expiry Warning Report (${from} to ${to})`;
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [from, to];
+      } else {
+        title = 'Expiry Warning Report (Next 365 Days)';
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date(\'now\', \'+365 days\') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [];
+      }
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Cost Price', 'Expiry Date', 'Cost Value'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'cost_price', 'expiry_date', 'value'];
+      alignMap = { medicine_name: 'left', batch_no: 'left', quantity: 'right', cost_price: 'right', expiry_date: 'center', value: 'right' };
+      colWidths = [150, 70, 60, 60, 80, 92];
+    } else if (type === 'nonMoving') {
+      const periodDays = req.query.days ? parseInt(String(req.query.days)) : 200;
+      title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
+      headers = ['Medicine Name', 'Batch No', 'Purchase Date', 'Stock Qty', 'Expiry Date', 'Cost Price', 'Hold Value (Cost)', 'Hold Value (MRP)', 'Dormant Period'];
+      keys = ['medicineName', 'batchNo', 'purchaseDate', 'quantity', 'expiryDate', 'costPrice', 'totalCostValue', 'totalValue', 'dormantDaysLabel'];
+      alignMap = { medicineName: 'left', batchNo: 'left', purchaseDate: 'center', quantity: 'right', expiryDate: 'center', costPrice: 'right', totalCostValue: 'right', totalValue: 'right', dormantDaysLabel: 'center' };
+      colWidths = [110, 45, 55, 40, 60, 50, 55, 55, 52];
+      
+      const nonMovingItems = await nonMovingReportService.getNonMovingItems(periodDays);
+      const rows = nonMovingItems.map(item => ({
+        ...item,
+        batchNo: item.batchNo || 'N/A',
+        purchaseDate: item.purchaseDate || 'N/A',
+        expiryDate: item.expiryDate || 'N/A',
+        costPrice: (item.costPrice || 0).toFixed(2),
+        totalCostValue: (item.totalCostValue || 0).toFixed(2),
+        totalValue: (item.totalValue || 0).toFixed(2),
+        dormantDaysLabel: `${item.daysSinceLastTransaction} days`
+      }));
+
+      const isSplit = req.query.split === 'true';
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=report_nonMoving_${Date.now()}.pdf`);
+      return exportToPdf(res, title, headers, keys, rows, alignMap, colWidths, isSplit);
+    } else {
+      return res.status(400).json({ error: 'Invalid report type' });
+    }
+
+    const rows = await db.all(query, params);
+    const isSplit = req.query.split === 'true';
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=report_${type}_${Date.now()}.pdf`);
+    
+    exportToPdf(res, title, headers, keys, rows, alignMap, colWidths, isSplit);
+  } catch (err: any) {
+    console.error('PDF export error:', err);
+    res.status(500).json({ error: 'Failed to export PDF' });
+  }
+});
+
+// Excel export endpoint
+router.get('/export-excel', async (req, res) => {
+  const { type, fromDate, toDate } = req.query;
+
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    let title = 'Pharmacy OS Report';
+    let headers: string[] = [];
+    let keys: string[] = [];
+    let query = '';
+    let params: any[] = [];
+
+    if (type === 'sales') {
+      title = 'Sales History Report';
+      headers = ['Invoice No', 'Date', 'Amount (Rs.)'];
+      keys = ['invoice_no', 'date', 'total_amount'];
+      query = `SELECT invoice_no, COALESCE(date, business_date) as date, total_amount FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC`;
+      params = [from, to];
+    } else if (type === 'purchases') {
+      title = 'Purchase History Report';
+      headers = ['Invoice / Bill No', 'Distributor / Supplier', 'Date', 'Amount (Rs.)'];
+      keys = ['invoice_no', 'distributor_name', 'date', 'total_amount'];
+      query = `SELECT p.invoice_no, d.name as distributor_name, COALESCE(p.date, p.business_date) as date, p.total_amount FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC`;
+      params = [from, to];
+    } else if (type === 'inventory') {
+      title = 'Current Inventory Status Report';
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'MRP (Rs.)', 'Valuation Cost (Rs.)'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'expiry_date', 'cost_price', 'mrp', 'value'];
+      query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.expiry_date, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(im.is_active, 1) = 1 ORDER BY medicine_name ASC';
+    } else if (type === 'expiry') {
+      if (fromDate || toDate) {
+        title = `Expiry Warning Report (${from} to ${to})`;
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [from, to];
+      } else {
+        title = 'Expiry Warning Report (Next 180 Days)';
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date(\'now\', \'+180 days\') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [];
+      }
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Cost Price (Rs.)', 'Expiry Date', 'Cost Value (Rs.)'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'cost_price', 'expiry_date', 'value'];
+    } else if (type === 'nonMoving') {
+      const periodDays = req.query.days ? parseInt(String(req.query.days)) : 200;
+      title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
+      headers = ['Medicine Name', 'Batch No', 'Purchase Date', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'Hold Value Cost (Rs.)', 'Hold Value MRP (Rs.)', 'Dormant Period'];
+      keys = ['medicineName', 'batchNo', 'purchaseDate', 'quantity', 'expiryDate', 'costPrice', 'totalCostValue', 'totalValue', 'dormantDaysLabel'];
+      
+      const nonMovingItems = await nonMovingReportService.getNonMovingItems(periodDays);
+      const rows = nonMovingItems.map(item => ({
+        ...item,
+        batchNo: item.batchNo || 'N/A',
+        purchaseDate: item.purchaseDate || 'N/A',
+        expiryDate: item.expiryDate || 'N/A',
+        costPrice: Number(item.costPrice || 0).toFixed(2),
+        totalCostValue: Number(item.totalCostValue || 0).toFixed(2),
+        totalValue: Number(item.totalValue || 0).toFixed(2),
+        dormantDaysLabel: `${item.daysSinceLastTransaction} days`
+      }));
+
+      const csvContent = exportToCsv(headers, keys, rows);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=report_nonMoving_${Date.now()}.csv`);
+      return res.send(csvContent);
+    } else {
+      return res.status(400).json({ error: 'Invalid report type' });
+    }
+
+    const rows = await db.all(query, params);
+    const csvContent = exportToCsv(headers, keys, rows);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=report_${type}_${Date.now()}.csv`);
+    res.send(csvContent);
+  } catch (err: any) {
+    console.error('Excel export error:', err);
+    res.status(500).json({ error: 'Failed to export Excel sheet' });
+  }
+});
+
+// CSV export endpoint
+router.get('/export-csv', async (req, res) => {
+  const { type, fromDate, toDate } = req.query;
+
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    let title = 'Pharmacy OS Report';
+    let headers: string[] = [];
+    let keys: string[] = [];
+    let query = '';
+    let params: any[] = [];
+
+    if (type === 'sales') {
+      title = 'Sales History Report';
+      headers = ['Invoice No', 'Date', 'Amount (Rs.)'];
+      keys = ['invoice_no', 'date', 'total_amount'];
+      query = `SELECT invoice_no, COALESCE(date, business_date) as date, total_amount FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC`;
+      params = [from, to];
+    } else if (type === 'purchases') {
+      title = 'Purchase History Report';
+      headers = ['Invoice / Bill No', 'Distributor / Supplier', 'Date', 'Amount (Rs.)'];
+      keys = ['invoice_no', 'distributor_name', 'date', 'total_amount'];
+      query = `SELECT p.invoice_no, d.name as distributor_name, COALESCE(p.date, p.business_date) as date, p.total_amount FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC`;
+      params = [from, to];
+    } else if (type === 'inventory') {
+      title = 'Current Inventory Status Report';
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'MRP (Rs.)', 'Valuation Cost (Rs.)'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'expiry_date', 'cost_price', 'mrp', 'value'];
+      query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.expiry_date, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(im.is_active, 1) = 1 ORDER BY medicine_name ASC';
+    } else if (type === 'expiry') {
+      if (fromDate || toDate) {
+        title = `Expiry Warning Report (${from} to ${to})`;
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [from, to];
+      } else {
+        title = 'Expiry Warning Report (Next 180 Days)';
+        query = 'SELECT m.name as medicine_name, im.batch_no, im.quantity, im.cost_price, im.expiry_date, (im.quantity * im.cost_price) as value FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date(\'now\', \'+180 days\') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC';
+        params = [];
+      }
+      headers = ['Medicine Name', 'Batch No', 'Stock Qty', 'Cost Price (Rs.)', 'Expiry Date', 'Cost Value (Rs.)'];
+      keys = ['medicine_name', 'batch_no', 'quantity', 'cost_price', 'expiry_date', 'value'];
+    } else if (type === 'nonMoving') {
+      const periodDays = req.query.days ? parseInt(String(req.query.days)) : 200;
+      title = `Non-Moving Inventory Report (${periodDays}+ Days Inactive)`;
+      headers = ['Medicine Name', 'Batch No', 'Purchase Date', 'Stock Qty', 'Expiry Date', 'Cost Price (Rs.)', 'Hold Value Cost (Rs.)', 'Hold Value MRP (Rs.)', 'Dormant Period'];
+      keys = ['medicineName', 'batchNo', 'purchaseDate', 'quantity', 'expiryDate', 'costPrice', 'totalCostValue', 'totalValue', 'dormantDaysLabel'];
+      
+      const nonMovingItems = await nonMovingReportService.getNonMovingItems(periodDays);
+      const rows = nonMovingItems.map(item => ({
+        ...item,
+        batchNo: item.batchNo || 'N/A',
+        purchaseDate: item.purchaseDate || 'N/A',
+        expiryDate: item.expiryDate || 'N/A',
+        costPrice: Number(item.costPrice || 0).toFixed(2),
+        totalCostValue: Number(item.totalCostValue || 0).toFixed(2),
+        totalValue: Number(item.totalValue || 0).toFixed(2),
+        dormantDaysLabel: `${item.daysSinceLastTransaction} days`
+      }));
+
+      const csvContent = exportToCsv(headers, keys, rows);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=report_nonMoving_${Date.now()}.csv`);
+      return res.send(csvContent);
+    } else {
+      return res.status(400).json({ error: 'Invalid report type' });
+    }
+
+    const rows = await db.all(query, params);
+    const csvContent = exportToCsv(headers, keys, rows);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=report_${type}_${Date.now()}.csv`);
+    res.send(csvContent);
+  } catch (err: any) {
+    console.error('CSV export error:', err);
+    res.status(500).json({ error: 'Failed to export CSV file' });
+  }
+});
+
+// Non-moving inventory report endpoint
+router.get('/non-moving', async (req, res) => {
+  try {
+    const { days } = req.query;
+    const periodDays = days ? parseInt(days as string) : 200;
+
+    const report = await nonMovingReportService.generateNonMovingReport(periodDays);
+    await nonMovingReportService.saveReportToFile(report);
+    await nonMovingReportService.sendReportNotification(report);
+
+    res.json({
+      success: true,
+      message: `Non-moving inventory report generated for last ${periodDays} days`,
+      report: {
+        generatedAt: report.generatedAt,
+        periodDays: report.periodDays,
+        totalNonMovingItems: report.totalNonMovingItems,
+        totalValue: report.totalValue
+      }
+    });
+  } catch (err: any) {
+    console.error('Non-moving report error:', err);
+    res.status(500).json({ error: 'Failed to generate non-moving report' });
+  }
+});
+
+// Get non-moving items data (JSON)
+router.get('/non-moving/data', async (req, res) => {
+  try {
+    const { days } = req.query;
+    const periodDays = days ? parseInt(days as string) : 200;
+
+    const items = await nonMovingReportService.getNonMovingItems(periodDays);
+
+    res.json({
+      success: true,
+      periodDays: periodDays,
+      count: items.length,
+      items: items
+    });
+  } catch (err: any) {
+    console.error('Non-moving data error:', err);
+    res.status(500).json({ error: 'Failed to get non-moving inventory data' });
+  }
+});
+
+// Product Trace audit endpoint (searches purchases & sales all-in-one)
+router.get('/product-trace', async (req, res) => {
+  const query = (req.query.q as string || '').trim();
+  if (!query || query.length < 2) {
+    return res.json({ purchases: [], sales: [] });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+
+    // Prefix-first (index-usable on idx_medicines_name / invoice lookups);
+    // leading-wildcard containment only when the prefix pass finds nothing.
+    const buildLike = (prefixOnly: boolean) => prefixOnly ? `${query}%` : `%${query}%`;
+
+    const runPass = async (prefixOnly: boolean) => {
+      const likeQuery = buildLike(prefixOnly);
+      const [purchases, sales] = await Promise.all([
+        db.all(`
+          SELECT pi.id, pi.batch_no, pi.expiry_date, pi.quantity, pi.cost_price, pi.mrp,
+                 p.invoice_no, p.date as transaction_date, d.name as distributor_name,
+                 m.name as medicine_name
+          FROM purchase_items pi
+          JOIN purchases p ON pi.purchase_id = p.id
+          JOIN distributors d ON p.distributor_id = d.id
+          JOIN medicines m ON pi.medicine_id = m.id
+          WHERE m.name LIKE ?
+             OR pi.batch_no LIKE ?
+             OR p.invoice_no LIKE ?
+             OR d.name LIKE ?
+          ORDER BY p.date DESC
+          LIMIT 100
+        `, [likeQuery, likeQuery, likeQuery, likeQuery]),
+        db.all(`
+          SELECT si.id, COALESCE(si.batch_no, im.batch_no) as batch_no, im.expiry_date, si.quantity, si.unit_price, si.mrp,
+                 inv.invoice_no, inv.date as transaction_date, c.name as customer_name,
+                 m.name as medicine_name
+          FROM sale_items si
+          JOIN sales_invoices inv ON si.invoice_id = inv.id
+          LEFT JOIN customers c ON inv.customer_id = c.id
+          JOIN inventory_master im ON si.inventory_id = im.id
+          JOIN medicines m ON im.medicine_id = m.id
+          WHERE m.name LIKE ?
+             OR COALESCE(si.batch_no, im.batch_no) LIKE ?
+             OR inv.invoice_no LIKE ?
+             OR c.name LIKE ?
+          ORDER BY inv.date DESC
+          LIMIT 100
+        `, [likeQuery, likeQuery, likeQuery, likeQuery])
+      ]);
+      return { purchases, sales };
+    };
+
+    let result = await runPass(true);
+    if (result.purchases.length === 0 && result.sales.length === 0) {
+      result = await runPass(false);
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('Error tracing product:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Preview or download monthly/mid-month/quarterly/yearly/custom scheduled report & text message with graphs
+router.get('/monthly-scheduled-preview', async (req, res) => {
+  const periodType = (req.query.type ? String(req.query.type) : 'monthly') as 'monthly' | 'midmonth' | 'quarterly' | 'yearly' | 'custom';
+  const chartStyle = req.query.style ? String(req.query.style) : 'standard';
+  const theme = req.query.theme ? String(req.query.theme) : 'executive';
+  const startDate = req.query.startDate ? String(req.query.startDate) : undefined;
+  const endDate = req.query.endDate ? String(req.query.endDate) : undefined;
+  const downloadFormat = req.query.download ? String(req.query.download).toLowerCase() : undefined;
+
+  try {
+    const { monthlyReportService } = await import('../services/monthlyReportService.js');
+    const data = await monthlyReportService.compileReportData(periodType, undefined, startDate, endDate);
+
+    if (downloadFormat === 'pdf') {
+      const pdfPath = await monthlyReportService.generateReportPdf(data, chartStyle, theme);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="Report_${theme}_${periodType}_${Date.now()}.pdf"`);
+      return res.sendFile(pdfPath);
+    }
+
+    if (downloadFormat === 'excel') {
+      const excelPath = await monthlyReportService.generateReportExcel(data);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="Report_${periodType}_${Date.now()}.xlsx"`);
+      return res.sendFile(excelPath);
+    }
+
+    const formattedText = monthlyReportService.formatReportMessage(data, chartStyle);
+    const targetPhone = await monthlyReportService.resolveRecipientPhone();
+
+    res.json({ success: true, data, formattedText, targetPhone });
+  } catch (err: any) {
+    console.error('Error generating monthly report preview:', err);
+    res.status(500).json({ error: 'Failed to generate report preview' });
+  }
+});
+
+// Send all 3 PDF template style samples directly to Owner WhatsApp
+router.post('/send-all-template-samples', async (req, res) => {
+  const customPhone = req.body.phone ? String(req.body.phone).trim() : undefined;
+  try {
+    const { monthlyReportService } = await import('../services/monthlyReportService.js');
+    const result = await monthlyReportService.sendAllTemplateSamples(customPhone);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Error sending PDF template samples:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to send template samples' });
+  }
+});
+
+// Manually trigger or send monthly/quarterly/yearly/custom scheduled report to WhatsApp
+router.post('/send-monthly-scheduled', async (req, res) => {
+  const periodType = (req.body.type ? String(req.body.type) : 'monthly') as 'monthly' | 'midmonth' | 'quarterly' | 'yearly' | 'custom';
+  const customPhone = req.body.phone ? String(req.body.phone).trim() : undefined;
+  const deliveryFormat = req.body.deliveryFormat ? String(req.body.deliveryFormat).trim() : undefined;
+  const chartStyle = req.body.chartStyle ? String(req.body.chartStyle).trim() : undefined;
+  const theme = req.body.theme ? String(req.body.theme).trim() : undefined;
+  const startDate = req.body.startDate ? String(req.body.startDate).trim() : undefined;
+  const endDate = req.body.endDate ? String(req.body.endDate).trim() : undefined;
+
+  try {
+    const { monthlyReportService } = await import('../services/monthlyReportService.js');
+    const result = await monthlyReportService.sendReport(periodType, customPhone, deliveryFormat, chartStyle, theme, startDate, endDate);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Error triggering scheduled monthly report send:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to send report' });
+  }
+});
+
+// GSTR-1 B2C Tax Filing Summary Endpoint
+router.get('/gstr-1', async (req, res) => {
+  const { fromDate, toDate } = req.query;
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    const summaryRow = await db.get(`
+      SELECT 
+        COUNT(id) as invoice_count,
+        IFNULL(SUM(total_amount), 0) as gross_sales,
+        IFNULL(SUM(subtotal), 0) as total_subtotal,
+        IFNULL(SUM(discount), 0) as total_discount,
+        IFNULL(SUM(cgst_value), 0) as total_cgst,
+        IFNULL(SUM(sgst_value), 0) as total_sgst,
+        IFNULL(SUM(igst_value), 0) as total_igst,
+        IFNULL(SUM(tax_amount), 0) as total_tax,
+        IFNULL(SUM(roff), 0) as total_roff
+      FROM sales_invoices
+      WHERE ${SALES_DATE_EXPR} >= date(?) AND ${SALES_DATE_EXPR} <= date(?)
+    `, [from, to]);
+
+    const invoices = await db.all(`
+      SELECT
+        sinv.id, sinv.invoice_no, ${SALES_INV_DATE_EXPR} as date,
+        sinv.total_amount, sinv.subtotal, sinv.discount,
+        sinv.cgst_value, sinv.sgst_value, sinv.igst_value, sinv.tax_amount, sinv.roff,
+        c.name as customer_name
+      FROM sales_invoices sinv
+      LEFT JOIN customers c ON sinv.customer_id = c.id
+      WHERE ${SALES_INV_DATE_EXPR} >= date(?) AND ${SALES_INV_DATE_EXPR} <= date(?)
+      ORDER BY sinv.id DESC
+      LIMIT 1000
+    `, [from, to]);
+
+    const taxableAmount = Math.max(0, (summaryRow.total_subtotal || 0) - (summaryRow.total_discount || 0));
+
+    res.json({
+      period: { from, to },
+      summary: {
+        invoiceCount: summaryRow.invoice_count || 0,
+        grossSales: summaryRow.gross_sales || 0,
+        subtotal: summaryRow.total_subtotal || 0,
+        discount: summaryRow.total_discount || 0,
+        taxableAmount: taxableAmount,
+        cgst: summaryRow.total_cgst || 0,
+        sgst: summaryRow.total_sgst || 0,
+        igst: summaryRow.total_igst || 0,
+        totalTax: summaryRow.total_tax || 0,
+        roundOff: summaryRow.total_roff || 0
+      },
+      invoices
+    });
+  } catch (err: any) {
+    console.error('Error generating GSTR-1 summary:', err);
+    res.status(500).json({ error: 'Failed to generate GSTR-1 summary' });
+  }
+});
+
+// HSN-wise Sales Tax Summary Endpoint
+router.get('/hsn-summary', async (req, res) => {
+  const { fromDate, toDate } = req.query;
+  try {
+    const db = await dbManager.getConnection();
+    const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
+    const to = toDate ? String(toDate) : '9999-12-31';
+
+    const hsnRows = await db.all(`
+      SELECT 
+        COALESCE(NULLIF(TRIM(m.hsn_code), ''), 'UNSPECIFIED') as hsn_code,
+        m.name as medicine_name,
+        COALESCE(m.cgst_per, 2.5) + COALESCE(m.sgst_per, 2.5) as gst_rate,
+        SUM(si.quantity) as total_quantity,
+        SUM(si.quantity * si.unit_price * (1 - COALESCE(si.discount_per, 0) / 100)) as gross_amount,
+        SUM(COALESCE(si.cgst_value, 0)) as total_cgst,
+        SUM(COALESCE(si.sgst_value, 0)) as total_sgst
+      FROM sale_items si
+      JOIN sales_invoices sinv ON si.invoice_id = sinv.id
+      JOIN inventory_master im ON si.inventory_id = im.id
+      JOIN medicines m ON im.medicine_id = m.id
+      WHERE ${SALES_INV_DATE_EXPR} >= date(?) AND ${SALES_INV_DATE_EXPR} <= date(?)
+      GROUP BY COALESCE(NULLIF(TRIM(m.hsn_code), ''), 'UNSPECIFIED'), m.name
+      ORDER BY gross_amount DESC
+    `, [from, to]);
+
+    const formattedRows = hsnRows.map((r: any) => {
+      const gross = r.gross_amount || 0;
+      const cgst = r.total_cgst || 0;
+      const sgst = r.total_sgst || 0;
+      const totalTax = cgst + sgst;
+      const taxable = Math.max(0, gross - totalTax);
+      return {
+        hsnCode: r.hsn_code,
+        medicineName: r.medicine_name,
+        gstRate: r.gst_rate,
+        quantity: r.total_quantity || 0,
+        grossAmount: Number(gross.toFixed(2)),
+        taxableAmount: Number(taxable.toFixed(2)),
+        cgst: Number(cgst.toFixed(2)),
+        sgst: Number(sgst.toFixed(2)),
+        totalTax: Number(totalTax.toFixed(2))
+      };
+    });
+
+    res.json({
+      period: { from, to },
+      totalItemsCount: formattedRows.length,
+      hsnSummary: formattedRows
+    });
+  } catch (err: any) {
+    console.error('Error generating HSN summary report:', err);
+    res.status(500).json({ error: 'Failed to generate HSN summary report' });
+  }
+});
+
+export default router;
+
+
+
+

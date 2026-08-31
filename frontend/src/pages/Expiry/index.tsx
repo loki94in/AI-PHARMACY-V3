@@ -1,0 +1,863 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Search, 
+  AlertTriangle, 
+  RefreshCw, 
+  CheckCircle2,
+  RotateCcw,
+  FileText,
+  Sliders,
+  X
+} from 'lucide-react';
+import { api } from '../../services/api';
+import { toastEvent } from '../../services/events';
+import { DateRangeFilter } from '../../components/DateRangeFilter';
+import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
+import { useApiQuery } from '../../hooks/useApiQuery';
+import { useQueryClient } from '@tanstack/react-query';
+import { getNDaysAgoString, toDateInputValue } from '../../utils/date';
+
+interface ExpiryItem {
+  id: number;
+  medicine_name: string;
+  batch_no: string;
+  expiry_date: string;
+  quantity: number;
+  mrp: number;
+  rack_location?: string;
+  medicine_id?: number;
+  purchase_invoice_no?: string;
+  purchase_id?: number;
+  purchase_item_id?: number;
+  purchase_cost_price?: number;
+  distributor_id?: number;
+  distributor_name?: string;
+}
+
+
+
+const cachedExpiryMap: Record<string, ExpiryItem[]> = {};
+
+const Expiry = () => {
+  const navigate = useNavigate();
+  const [pendingReviewsCount, setPendingReviewsCount] = useState(0);
+
+  useEffect(() => {
+    api.getExpiryReviews({ status: 'pending' }).then(res => {
+      if (res?.stats) setPendingReviewsCount(res.stats.pendingCount || 0);
+    }).catch(() => {});
+  }, []);
+
+  const dateRangeHelper = usePersistedDateRange({
+    storageKey: 'expiry-date-range',
+    defaultFrom: getNDaysAgoString(365), // Default to 1 year ago to show expired medicines
+    defaultTo: getNDaysAgoString(-90),   // Default to 90 days in the future
+    minDate: '2020-01-01',
+    maxDate: '2035-12-31',
+    futurePresets: true,
+  });
+  
+  const queryClient = useQueryClient();
+  const cacheKey = `${dateRangeHelper.dateRange.from}_${dateRangeHelper.dateRange.to}`;
+  const expiryKey = ['expiry', dateRangeHelper.dateRange.from, dateRangeHelper.dateRange.to] as const;
+  const { data: items = [], isLoading: loading, isFetching: refreshing, refetch: refetchExpiry } = useApiQuery<ExpiryItem[]>(
+    expiryKey,
+    async () => {
+      const res = await api.getExpiryList({
+        date_from: dateRangeHelper.dateRange.from,
+        date_to: dateRangeHelper.dateRange.to,
+      });
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      cachedExpiryMap[cacheKey] = list;
+      return list;
+    },
+    {
+      initialData: cachedExpiryMap[cacheKey] || undefined,
+      staleTime: 10000,
+    }
+  );
+
+  // P1 "events, not timers": refetch ONLY when stock/expiry data actually
+  // changed (window events + SSE push) — no 15s polling of unchanged data.
+  useEffect(() => {
+    const handleStockWrite = () => {
+      refetchExpiry().catch(() => {});
+    };
+
+    window.addEventListener('stock-write-completed', handleStockWrite);
+    window.addEventListener('sse-inventory-changed', handleStockWrite);
+    window.addEventListener('sse-invoice-saved', handleStockWrite);
+    window.addEventListener('expiry-list-changed', handleStockWrite);
+
+    return () => {
+      window.removeEventListener('stock-write-completed', handleStockWrite);
+      window.removeEventListener('sse-inventory-changed', handleStockWrite);
+      window.removeEventListener('sse-invoice-saved', handleStockWrite);
+      window.removeEventListener('expiry-list-changed', handleStockWrite);
+    };
+  }, [refetchExpiry]);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // Staged return drafts tracker across all active return draft tabs
+  const getStagedDraftQuantities = (): Map<string, number> => {
+    const map = new Map<string, number>();
+    try {
+      const saved = localStorage.getItem('returns_draft_tabs');
+      if (saved) {
+        const parsedTabs = JSON.parse(saved);
+        if (Array.isArray(parsedTabs)) {
+          parsedTabs.forEach((t: any) => {
+            if (Array.isArray(t.items)) {
+              t.items.forEach((it: any) => {
+                const qty = parseFloat(String(it.quantity || 0)) || 0;
+                if (qty > 0 && it.batch_no) {
+                  const key = `${it.medicine_id || ''}_${String(it.batch_no).trim().toLowerCase()}`;
+                  map.set(key, (map.get(key) || 0) + qty);
+                }
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse staged draft quantities:', e);
+    }
+    return map;
+  };
+
+  const [stagedMap, setStagedMap] = useState<Map<string, number>>(getStagedDraftQuantities);
+
+  useEffect(() => {
+    const updateStaged = () => {
+      setStagedMap(getStagedDraftQuantities());
+    };
+    window.addEventListener('returns-draft-changed', updateStaged);
+    window.addEventListener('storage', updateStaged);
+    window.addEventListener('stock-write-completed', updateStaged);
+    return () => {
+      window.removeEventListener('returns-draft-changed', updateStaged);
+      window.removeEventListener('storage', updateStaged);
+      window.removeEventListener('stock-write-completed', updateStaged);
+    };
+  }, []);
+
+  const getItemStagedInfo = (item: ExpiryItem) => {
+    const key = `${item.medicine_id || item.id}_${String(item.batch_no || '').trim().toLowerCase()}`;
+    const stagedQty = stagedMap.get(key) || 0;
+    const physicalStock = item.quantity || 0;
+    const actionableQty = Math.max(0, physicalStock - stagedQty);
+    const isFullyStaged = stagedQty >= physicalStock && physicalStock > 0;
+    const isPartiallyStaged = stagedQty > 0 && stagedQty < physicalStock;
+    return { stagedQty, physicalStock, actionableQty, isFullyStaged, isPartiallyStaged };
+  };
+  
+  // Custom Filters
+  const [minQty, setMinQty] = useState('');
+  const [maxQty, setMaxQty] = useState('');
+  const [colFilterStatus, setColFilterStatus] = useState('All');
+  const [colFilterMedName, setColFilterMedName] = useState('');
+  const [colFilterBatchNo, setColFilterBatchNo] = useState('');
+  const [colFilterDate, setColFilterDate] = useState('');
+  const [colFilterMinQty, setColFilterMinQty] = useState('');
+  const [colFilterMaxQty, setColFilterMaxQty] = useState('');
+  const [colFilterMinMrp, setColFilterMinMrp] = useState('');
+  const [colFilterMaxMrp, setColFilterMaxMrp] = useState('');
+  const [colFilterLocation, setColFilterLocation] = useState('');
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'info') => {
+    toastEvent.trigger(message, type, '/expiry');
+  };
+
+  const toggleSelect = (id: number) => {
+    const targetItem = items.find(i => i.id === id);
+    if (targetItem) {
+      const { isFullyStaged } = getItemStagedInfo(targetItem);
+      if (isFullyStaged) return;
+    }
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSendToReturns = () => {
+    const selected = filteredItems
+      .filter(item => selectedIds.has(item.id))
+      .map(item => {
+        const { actionableQty } = getItemStagedInfo(item);
+        return {
+          ...item,
+          quantity: actionableQty > 0 ? actionableQty : item.quantity
+        };
+      })
+      .filter(item => (item.quantity || 0) > 0);
+
+    if (selected.length === 0) return;
+    navigate('/returns', { state: { prefilledReturnItems: selected } });
+  };
+
+  const handleExport = async (format: 'pdf' | 'csv') => {
+    try {
+      const blob = await api.exportExpiryReport({
+        date_from: dateRangeHelper.dateRange.from,
+        date_to: dateRangeHelper.dateRange.to,
+        format
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `expiry_report_${Date.now()}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showNotification(`Expiry report (${format.toUpperCase()}) exported successfully!`, 'success');
+    } catch (err) {
+      console.error(`Failed to export expiry report:`, err);
+      showNotification('Failed to export expiry report.', 'error');
+    }
+  };
+
+  // Calculations for Expiry Badging
+  const getExpiryDaysDiff = (expiryDateStr: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exp = new Date(expiryDateStr);
+    exp.setHours(0, 0, 0, 0);
+    
+    const diffTime = exp.getTime() - today.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
+
+  const getExpiryStatusDetails = (daysDiff: number) => {
+    if (daysDiff <= 0) {
+      return {
+        label: 'EXPIRED',
+        colorClass: 'bg-red-500/15 border-red-500/30 text-red font-bold',
+        rowClass: 'border-red-500/10 bg-red-500/5',
+        daysText: `${Math.abs(daysDiff)} days ago`
+      };
+    } else if (daysDiff <= 30) {
+      return {
+        label: 'CRITICAL',
+        colorClass: 'bg-orange-500/15 border-orange-500/30 text-orange-500 font-bold',
+        rowClass: 'border-orange-500/10 bg-orange-500/5',
+        daysText: `in ${daysDiff} days`
+      };
+    } else if (daysDiff <= 60) {
+      return {
+        label: 'WARNING',
+        colorClass: 'bg-amber-500/15 border-amber-500/30 text-amber-500 font-bold',
+        rowClass: 'border-amber-500/5',
+        daysText: `in ${daysDiff} days`
+      };
+    } else {
+      return {
+        label: 'NEAR EXPIRY',
+        colorClass: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400 font-semibold',
+        rowClass: '',
+        daysText: `in ${daysDiff} days`
+      };
+    }
+  };
+
+  const filteredItems = items.filter(item => {
+    const matchesSearch = item.medicine_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          item.batch_no.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesMinQty = !minQty || item.quantity >= Number(minQty);
+    const matchesMaxQty = !maxQty || item.quantity <= Number(maxQty);
+
+    if (!(matchesSearch && matchesMinQty && matchesMaxQty)) {
+      return false;
+    }
+
+    // Status segmented tab filter
+    if (colFilterStatus !== 'All') {
+      const daysDiff = getExpiryDaysDiff(item.expiry_date);
+      const details = getExpiryStatusDetails(daysDiff);
+      if (details.label !== colFilterStatus) {
+        return false;
+      }
+    }
+
+    // Column-specific header filters
+    if (colFilterMedName && !item.medicine_name.toLowerCase().includes(colFilterMedName.toLowerCase())) {
+      return false;
+    }
+    if (colFilterBatchNo && !item.batch_no.toLowerCase().includes(colFilterBatchNo.toLowerCase())) {
+      return false;
+    }
+    if (colFilterDate) {
+      const itemRaw = item.expiry_date ? item.expiry_date.trim() : '';
+      let match = false;
+      if (itemRaw.startsWith(colFilterDate)) {
+        match = true;
+      } else if (itemRaw.includes('/')) {
+        const parts = itemRaw.split('/');
+        const m = parts[0].padStart(2, '0');
+        let y = parts[1];
+        if (y.length === 2) y = '20' + y;
+        if (`${y}-${m}` === colFilterDate.substring(0, 7)) match = true;
+      } else if (itemRaw.substring(0, 7) === colFilterDate.substring(0, 7)) {
+        match = true;
+      }
+      if (!match) return false;
+    }
+    const qtyVal = item.quantity || 0;
+    const minQ = colFilterMinQty ? Number(colFilterMinQty) : 0;
+    const maxQ = colFilterMaxQty ? Number(colFilterMaxQty) : 100000000;
+    if (qtyVal < minQ || qtyVal > maxQ) return false;
+
+    const mrpVal = item.mrp || 0;
+    const minM = colFilterMinMrp ? Number(colFilterMinMrp) : 0;
+    const maxM = colFilterMaxMrp ? Number(colFilterMaxMrp) : 100000000;
+    if (mrpVal < minM || mrpVal > maxM) return false;
+
+    if (colFilterLocation && !(item.rack_location || '').toLowerCase().includes(colFilterLocation.toLowerCase())) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return (
+    <div className="h-full flex flex-col fade-in gap-3">
+      {/* Pending Expiry Returns Alert Banner */}
+      {pendingReviewsCount > 0 && (
+        <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm shrink-0">
+          <div className="flex items-center gap-2.5 text-xs">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-500 shrink-0">
+              <AlertTriangle size={16} />
+            </div>
+            <div>
+              <span className="text-text font-bold">
+                {pendingReviewsCount} expired stock batch{pendingReviewsCount > 1 ? 'es' : ''} detected & awaiting pharmacist approval.
+              </span>
+              <p className="text-muted text-[11px] font-medium">Inventory is preserved until explicitly approved in Expiry Return Review.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/returns?tab=expiry-review')}
+            className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-bg font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm"
+          >
+            <span>Open Review Hub</span>
+            <RotateCcw size={12} />
+          </button>
+        </div>
+      )}
+
+      {/* Selection action bar — only visible when items are selected */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 px-1 select-none animate-in slide-in-from-top-1 duration-150">
+          <span className="text-xs font-semibold text-muted">{selectedIds.size} item{selectedIds.size > 1 ? 's' : ''} selected</span>
+          <button
+            onClick={handleSendToReturns}
+            className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 transition-all text-xs font-bold active:scale-95"
+          >
+            <RotateCcw size={12} />
+            Send {selectedIds.size} to Returns ↗
+          </button>
+        </div>
+      )}
+
+      <div className="flex gap-4 flex-1 min-h-0">
+        
+        {/* LEFT SIDEBAR: Compact filters + summary stats (~22% width) */}
+        <div className="w-56 flex-shrink-0 flex flex-col gap-3 overflow-y-auto scrollbar-thin">
+
+          {/* Date Range */}
+          <div className="glass-panel p-4">
+            <h3 className="font-bold text-[10px] text-muted uppercase tracking-wider mb-3">Date Range</h3>
+            <DateRangeFilter
+              helper={dateRangeHelper}
+              label=""
+              showInputs={true}
+              presets={[
+                { label: '30d', days: 30 },
+                { label: '60d', days: 60 },
+                { label: '90d', days: 90 },
+                { label: '180d', days: 180 }
+              ]}
+            />
+          </div>
+
+          {/* Status Summary */}
+          <div className="glass-panel p-4 flex flex-col gap-2">
+            <h3 className="font-bold text-[10px] text-muted uppercase tracking-wider mb-1">Status Breakdown</h3>
+
+            {[
+              { label: 'Expired', color: 'bg-red-500', textColor: 'text-red-500', count: items.filter(i => getExpiryDaysDiff(i.expiry_date) <= 0).length },
+              { label: 'Critical ≤30d', color: 'bg-orange-500', textColor: 'text-orange-500', count: items.filter(i => { const d = getExpiryDaysDiff(i.expiry_date); return d > 0 && d <= 30; }).length },
+              { label: 'Warning ≤60d', color: 'bg-amber-500', textColor: 'text-amber-500', count: items.filter(i => { const d = getExpiryDaysDiff(i.expiry_date); return d > 30 && d <= 60; }).length },
+              { label: 'Near ≤90d', color: 'bg-indigo-500', textColor: 'text-indigo-400', count: items.filter(i => { const d = getExpiryDaysDiff(i.expiry_date); return d > 60 && d <= 90; }).length },
+            ].map(stat => (
+              <div key={stat.label} className="flex items-center justify-between py-1.5 px-2 rounded-lg bg-bg3/40 border border-glass-border/30">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${stat.color} shrink-0`} />
+                  <span className="text-[11px] font-semibold text-text">{stat.label}</span>
+                </div>
+                <span className={`font-mono text-sm font-bold ${stat.textColor}`}>{stat.count}</span>
+              </div>
+            ))}
+
+            <div className="mt-1 pt-2 border-t border-glass-border/30 flex justify-between items-center">
+              <span className="text-[10px] text-muted font-semibold">Total showing</span>
+              <span className="font-mono text-xs font-bold text-text">{items.length}</span>
+            </div>
+          </div>
+
+          {/* Quick Qty Filter */}
+          <div className="glass-panel p-4">
+            <h3 className="font-bold text-[10px] text-muted uppercase tracking-wider mb-3">Stock Qty Filter</h3>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={minQty}
+                onChange={e => setMinQty(e.target.value)}
+                placeholder="Min"
+                min="0"
+                className="w-1/2 px-2 py-1.5 bg-bg3 border border-glass-border rounded-lg text-xs text-text focus:outline-none focus:border-primary/50"
+              />
+              <input
+                type="number"
+                value={maxQty}
+                onChange={e => setMaxQty(e.target.value)}
+                placeholder="Max"
+                min="0"
+                className="w-1/2 px-2 py-1.5 bg-bg3 border border-glass-border rounded-lg text-xs text-text focus:outline-none focus:border-primary/50"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: Table — fills remaining space */}
+        <div className="flex-1 glass-panel flex flex-col overflow-hidden bg-bg2/80 border-glass-border min-h-0 shadow-sm rounded-2xl">
+          
+          {/* Table Toolbar */}
+          <div className="px-3 py-2.5 border-b border-glass-border bg-bg3/40 flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                type="text"
+                placeholder="Search medicine or batch..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-bg3/80 border border-glass-border rounded-xl text-xs text-text focus:outline-none focus:border-primary/50 transition-colors"
+              />
+            </div>
+            <span className="text-[11px] text-muted font-bold shrink-0">{filteredItems.length} items</span>
+          </div>
+
+          {/* ── FILTER BAR (Investigation Style) ── */}
+          <div className="px-3 py-2 bg-bg2/40 border-b border-glass-border/40 flex flex-wrap items-center gap-2 shrink-0 select-none">
+            {/* Label */}
+            <div className="flex items-center gap-1 text-[9px] text-muted/70 font-black uppercase tracking-widest shrink-0">
+              <Sliders size={11} className="text-primary" />
+              Filter
+            </div>
+
+            {/* Medicine Filter */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-green/50" size={12} />
+              <input
+                type="text"
+                placeholder="Medicine..."
+                value={colFilterMedName}
+                onChange={e => setColFilterMedName(e.target.value)}
+                className="w-40 bg-bg3/70 border border-glass-border/50 rounded-xl pl-7 pr-6 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-green/40 focus:bg-green/5 transition-all"
+              />
+              {colFilterMedName && (
+                <button onClick={() => setColFilterMedName('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+
+            {/* Batch Filter */}
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-sky-400/60 font-black">#</span>
+              <input
+                type="text"
+                placeholder="Batch..."
+                value={colFilterBatchNo}
+                onChange={e => setColFilterBatchNo(e.target.value)}
+                className="w-28 bg-bg3/70 border border-glass-border/50 rounded-xl pl-6 pr-6 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-sky-400/40 focus:bg-sky-500/5 transition-all"
+              />
+              {colFilterBatchNo && (
+                <button onClick={() => setColFilterBatchNo('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+
+            {/* Status Segmented Tabs */}
+            <div className="flex items-center bg-bg3/60 border border-glass-border/40 rounded-xl overflow-hidden text-[10px] font-bold h-[26px] shrink-0">
+              {[
+                { v: 'All', label: 'All' },
+                { v: 'EXPIRED', label: 'Expired', color: 'text-red' },
+                { v: 'CRITICAL', label: 'Critical (≤30d)', color: 'text-orange-500' },
+                { v: 'WARNING', label: 'Warning (≤60d)', color: 'text-amber-500' },
+                { v: 'NEAR EXPIRY', label: 'Near Expiry', color: 'text-indigo-400' },
+              ].map(({ v, label, color }) => (
+                <button
+                  key={v}
+                  onClick={() => setColFilterStatus(v)}
+                  className={`px-2.5 h-full flex items-center transition-all cursor-pointer border-r border-glass-border/30 last:border-r-0 ${
+                    colFilterStatus === v
+                      ? 'bg-primary/15 text-primary shadow-inner'
+                      : `text-muted hover:text-text hover:bg-bg2/50 ${color || ''}`
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Location Filter */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Rack Location..."
+                value={colFilterLocation}
+                onChange={e => setColFilterLocation(e.target.value)}
+                className="w-32 bg-bg3/70 border border-glass-border/50 rounded-xl px-3 py-1 text-xs text-text placeholder:text-muted/40 focus:outline-none focus:border-primary/40 transition-all"
+              />
+              {colFilterLocation && (
+                <button onClick={() => setColFilterLocation('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer">
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+
+            {/* Right: Reset Button */}
+            {(colFilterMedName || colFilterBatchNo || colFilterDate || colFilterLocation || colFilterStatus !== 'All' || minQty || maxQty || colFilterMinMrp || colFilterMaxMrp) && (
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setColFilterMedName('');
+                    setColFilterBatchNo('');
+                    setColFilterDate('');
+                    setColFilterLocation('');
+                    setColFilterStatus('All');
+                    setMinQty('');
+                    setMaxQty('');
+                    setColFilterMinMrp('');
+                    setColFilterMaxMrp('');
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-red/10 border border-red/20 text-red hover:bg-red hover:text-white transition-all text-[10px] font-bold cursor-pointer"
+                >
+                  <RotateCcw size={10} />
+                  Reset
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Table Container */}
+          <div className="flex-1 overflow-auto bg-bg/40">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead className="sticky top-0 bg-bg2/95 backdrop-blur-md z-10 select-none border-b border-glass-border">
+                <tr className="border-b border-glass-border/60">
+                  <th className="p-3 text-left w-10">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded accent-primary cursor-pointer" 
+                      onChange={e => {
+                        if (e.target.checked) {
+                          const selectable = filteredItems
+                            .filter(i => i.purchase_invoice_no && !getItemStagedInfo(i).isFullyStaged)
+                            .map(i => i.id);
+                          setSelectedIds(new Set(selectable));
+                        } else {
+                          setSelectedIds(new Set());
+                        }
+                      }} 
+                      checked={
+                        filteredItems.filter(i => i.purchase_invoice_no && !getItemStagedInfo(i).isFullyStaged).length > 0 &&
+                        selectedIds.size === filteredItems.filter(i => i.purchase_invoice_no && !getItemStagedInfo(i).isFullyStaged).length
+                      } 
+                      readOnly 
+                    />
+                  </th>
+                  <th className="p-3 text-left text-xs font-bold text-muted uppercase tracking-wider">Medicine Name</th>
+                  <th className="p-3 text-left text-xs font-bold text-muted uppercase tracking-wider">Batch Number</th>
+                  <th className="p-3 text-center text-xs font-bold text-muted uppercase tracking-wider">Expiry Date</th>
+                  <th className="p-3 text-center text-xs font-bold text-muted uppercase tracking-wider">Remaining Time</th>
+                  <th className="p-3 text-center text-xs font-bold text-muted uppercase tracking-wider">Stock / Actionable Qty</th>
+                  <th className="p-3 text-right text-xs font-bold text-muted uppercase tracking-wider">MRP Price</th>
+                  <th className="p-3 text-left text-xs font-bold text-muted uppercase tracking-wider">Invoice Ref / Supplier</th>
+                  <th className="p-3 text-left text-xs font-bold text-muted uppercase tracking-wider">Rack Location</th>
+                  <th className="p-3 text-center text-xs font-bold text-muted uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={10} className="p-12 text-center text-muted font-semibold text-sm">
+                      <RefreshCw size={24} className="animate-spin mx-auto mb-3 text-primary opacity-60" />
+                      Loading expiry register...
+                    </td>
+                  </tr>
+                ) : filteredItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="p-16 text-center text-muted font-semibold text-base">
+                      <CheckCircle2 size={40} className="mx-auto mb-3 text-muted/30" />
+                      <span>No items matching expiry thresholds in inventory.</span>
+                      {colFilterMedName && colFilterMedName.trim().length >= 2 && (
+                        <div className="mt-2 text-sm text-amber-500 font-medium">
+                          🔍 No expiring items match "{colFilterMedName}". Please check spelling or clear medicine filter.
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredItems.map(item => {
+                    const daysDiff = getExpiryDaysDiff(item.expiry_date);
+                    const details = getExpiryStatusDetails(daysDiff);
+                    const { stagedQty, physicalStock, actionableQty, isFullyStaged, isPartiallyStaged } = getItemStagedInfo(item);
+                    const isSelected = selectedIds.has(item.id);
+                    return (
+                      <tr 
+                        key={item.id} 
+                        className={`transition-all border-b border-glass-border/30 ${
+                          isSelected 
+                            ? 'bg-primary/15 border-l-4 border-l-primary text-text font-bold shadow-sm' 
+                            : isFullyStaged
+                              ? 'opacity-65 bg-bg3/20'
+                              : `hover:bg-bg3/40 ${details.rowClass}`
+                        }`}
+                      >
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded accent-primary cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(item.id)}
+                              disabled={!item.purchase_invoice_no || isFullyStaged}
+                              title={isFullyStaged ? 'Already fully staged in return draft' : (!item.purchase_invoice_no ? 'No invoice found' : '')}
+                            />
+                            {isSelected && (
+                              <span className="px-1.5 py-0.5 rounded bg-primary text-white text-[11px] font-black uppercase tracking-wider shadow-sm animate-in fade-in">
+                                Selected
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3 font-bold text-text text-base">
+                          {item.medicine_name}
+                        </td>
+                        <td className="p-3 select-none">
+                          <span className="font-mono bg-bg3/60 border border-glass-border/40 rounded-lg px-2.5 py-1 font-bold text-text text-sm">
+                            {item.batch_no}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center font-mono select-none text-muted font-semibold text-sm">
+                          {new Date(item.expiry_date).toLocaleDateString([], { month: '2-digit', year: '2-digit' })}
+                        </td>
+                        <td className="p-3 text-center font-semibold select-none">
+                          <div className="flex flex-col items-center gap-1">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold border ${details.colorClass}`}>
+                              {details.label}
+                            </span>
+                            <span className="text-xs text-muted font-medium">{details.daysText}</span>
+                          </div>
+                        </td>
+                        <td className="p-3 text-center select-none">
+                          {isFullyStaged ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="font-mono text-muted/60 line-through text-xs font-bold">{physicalStock}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-500 font-bold text-[9px] font-mono">
+                                STAGED IN DRAFT ({stagedQty})
+                              </span>
+                            </div>
+                          ) : isPartiallyStaged ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="font-extrabold font-mono text-emerald-500 text-base">{actionableQty}</span>
+                              <span className="text-[10px] text-amber-500 font-semibold font-mono">
+                                ({stagedQty} in draft / {physicalStock} total)
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-extrabold font-mono text-text text-base">
+                              {item.quantity}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right font-mono font-extrabold text-sky text-base">
+                          ₹{item.mrp?.toFixed(2) || '0.00'}
+                        </td>
+                        <td className="p-3 select-none">
+                          {item.purchase_invoice_no ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-0.5 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded-lg text-[11px] font-bold font-mono w-max">
+                                {item.purchase_invoice_no}
+                              </span>
+                              <span className="text-xs text-muted truncate max-w-[130px] font-semibold" title={item.distributor_name}>
+                                {item.distributor_name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted/65 italic font-medium">Unmatched (match manually)</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-muted font-medium select-none text-sm">
+                          {item.rack_location || '-'}
+                        </td>
+                        <td className="p-3 text-center select-none">
+                          {isFullyStaged ? (
+                            <button
+                              disabled
+                              className="flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded-xl text-xs font-bold border opacity-60 bg-bg3 border-glass-border text-amber-500 cursor-not-allowed"
+                              title={`All ${physicalStock} unit(s) are already staged in active return draft`}
+                            >
+                              <RotateCcw size={13} />
+                              In Draft
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                if (item.purchase_invoice_no) {
+                                  navigate('/returns', { state: { prefilledReturnItems: [{ ...item, quantity: actionableQty }] } });
+                                }
+                              }}
+                              disabled={!item.purchase_invoice_no || actionableQty === 0}
+                              className={`flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                                item.purchase_invoice_no && actionableQty > 0
+                                  ? 'bg-red-500/15 border-red-500/30 text-red hover:bg-red-500/25 active:scale-95'
+                                  : 'opacity-40 bg-bg3 border-glass-border text-muted cursor-not-allowed'
+                              }`}
+                              title={item.purchase_invoice_no ? `Create Return for ${actionableQty} actionable unit(s)` : 'Cannot return: no purchase invoice found, match manually'}
+                            >
+                              <RotateCcw size={13} />
+                              Return {isPartiallyStaged ? `(${actionableQty})` : ''}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Live Multi-Distributor Selection Summary Bar */}
+          {selectedIds.size > 0 && (() => {
+            const selectedList = filteredItems
+              .filter(i => selectedIds.has(i.id))
+              .map(item => {
+                const { actionableQty } = getItemStagedInfo(item);
+                return {
+                  ...item,
+                  quantity: actionableQty > 0 ? actionableQty : item.quantity
+                };
+              });
+            const totalVal = selectedList.reduce((sum, item) => sum + (item.mrp || 0) * (item.quantity || 1), 0);
+            
+            const distCounts: Record<string, number> = {};
+            selectedList.forEach(item => {
+              const dName = item.distributor_name ? item.distributor_name.trim() : 'Unknown Supplier';
+              distCounts[dName] = (distCounts[dName] || 0) + 1;
+            });
+            const distEntries = Object.entries(distCounts);
+
+            return (
+              <div className="p-3 border-t border-primary/30 bg-primary/10 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 px-5 animate-in slide-in-from-bottom-2">
+                <div className="flex items-center gap-3 flex-wrap text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="font-extrabold text-text">
+                      {selectedIds.size} Medicine{selectedIds.size !== 1 ? 's' : ''} Selected
+                    </span>
+                  </div>
+                  <span className="text-muted font-bold">|</span>
+                  <span className="font-extrabold text-emerald-400 font-mono">
+                    Est. Value: ₹{totalVal.toFixed(2)}
+                  </span>
+                  <span className="text-muted font-bold">|</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-muted font-semibold">Suppliers ({distEntries.length}):</span>
+                    {distEntries.map(([dName, count]) => (
+                      <span key={dName} className="px-2 py-0.5 rounded-lg bg-bg2/90 border border-primary/30 text-text text-[10px] font-bold font-mono shadow-sm">
+                        🏭 {dName}: <span className="text-primary">{count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedIds(new Set())}
+                    className="text-xs text-muted hover:text-red font-bold px-2 py-1"
+                  >
+                    Deselect All
+                  </button>
+                  <button
+                    onClick={handleSendToReturns}
+                    className="bg-red-500 hover:bg-red-600 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <RotateCcw size={14} />
+                    <span>Generate Supplier Return Drafts ({distEntries.length} Supplier{distEntries.length !== 1 ? 's' : ''})</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Table Footer */}
+          <div className="p-3.5 border-t border-glass-border bg-bg3/40 text-muted select-none flex justify-between items-center px-5 font-semibold">
+            <span>Expired/Expiring Items: <strong className="text-text font-mono font-black">{filteredItems.length}</strong></span>
+            {items.some(item => getExpiryDaysDiff(item.expiry_date) <= 0) && (
+              <span className="flex items-center gap-1.5 text-xs text-red font-bold animate-pulse">
+                <AlertTriangle size={13} />
+                Attention required: Expired batches in stock
+              </span>
+            )}
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* Floating Action Buttons */}
+      <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3">
+        <button 
+          onClick={() => queryClient.invalidateQueries({ queryKey: expiryKey })} 
+          disabled={refreshing}
+          className="p-3 rounded-full bg-glass-bg border border-glass-border hover:bg-bg3 text-text transition-all shadow-xl hover:scale-105 active:scale-95 cursor-pointer"
+          title="Refresh Expiry List"
+        >
+          <RefreshCw size={18} className={refreshing ? 'animate-spin text-primary' : ''} />
+        </button>
+
+        <button
+          onClick={() => handleExport('csv')}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass-bg border border-glass-border hover:bg-bg3 text-text transition-all hover:scale-105 active:scale-95 shadow-xl font-bold text-xs cursor-pointer"
+        >
+          <FileText size={16} className="text-primary" />
+          Export CSV
+        </button>
+
+        <button
+          onClick={() => handleExport('pdf')}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass-bg border border-glass-border hover:bg-bg3 text-text transition-all hover:scale-105 active:scale-95 shadow-xl font-bold text-xs cursor-pointer"
+        >
+          <FileText size={16} className="text-red" />
+          Export PDF
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default Expiry;

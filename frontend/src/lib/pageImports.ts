@@ -1,0 +1,24 @@
+import type { ComponentType } from 'react';
+
+export const pageImports: Record<string, () => Promise<{ default: ComponentType }>> = {
+  '/dashboard': () => import('../pages/Dashboard'),
+  '/inventory': () => import('../pages/Inventory'),
+  '/pos': () => import('../pages/POS'),
+  '/purchases': () => import('../pages/Purchases'),
+  '/crm': () => import('../pages/CRM'),
+  '/purchase-history': () => import('../pages/PurchaseHistory'),
+  '/migration': () => import('../pages/Migration'),
+  '/reports': () => import('../pages/Reports'),
+  '/settings': () => import('../pages/Settings'),
+  '/mail': () => import('../pages/Mail'),
+  '/returns': () => import('../pages/Returns'),
+  '/sells': () => import('../pages/Sells'),
+  '/database': () => import('../pages/Database'),
+  '/ai-engineering': () => import('../pages/AIEngineering'),
+  '/pharmarack-cart': () => import('../pages/PharmarackCart'),
+  '/investigation': () => import('../pages/Investigation'),
+  '/phone-sales': () => import('../pages/PhoneSales'),
+  '/dispatch': () => import('../pages/Dispatch'),
+  '/learning': () => import('../pages/Learning'),
+  '/audit': () => import('../pages/AuditCenter'),
+};

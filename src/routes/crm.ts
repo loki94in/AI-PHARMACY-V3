@@ -1,0 +1,787 @@
+import express from 'express';
+import { dbManager } from '../database/connection.js';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { sendDailyDoctorReports } from '../services/doctorReportingService.js';
+import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
+import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
+import { normalizeWhatsAppPhone } from '../whatsappClient.js';
+import { getMessage } from '../i18n/getMessage.js';
+import { sanitizeDoctorName } from '../utils/doctorUtils.js';
+import { getAppDataDir } from '../config/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+
+const router = express.Router();
+
+// Get patients
+router.get('/patients', async (req, res) => {
+  const { q, limit } = req.query;
+  try {
+    const db = await dbManager.getConnection();
+    let query = 'SELECT * FROM customers';
+    const params = [];
+    
+    if (q) {
+      query += ' WHERE name LIKE ? OR phone LIKE ?';
+      params.push(`%${q}%`, `%${q}%`);
+    }
+    
+    query += ' ORDER BY id DESC';
+    
+    if (limit) {
+      const limitVal = parseInt(limit as string, 10);
+      if (!isNaN(limitVal)) {
+        query += ' LIMIT ?';
+        params.push(limitVal);
+      }
+    } else {
+      query += ' LIMIT 1000';
+    }
+    
+    const patients = await db.all(query, params);
+
+    // Enrich with lightweight returning/refill signals (chunked to respect SQLite param limits).
+    if (patients.length > 0) {
+      try {
+        const ids: number[] = patients.map((p: any) => p.id);
+        const chunks: number[][] = [];
+        for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
+        const salesMap = new Map<number, { purchase_count: number; last_sale_date: string }>();
+        const refillSet = new Set<number>();
+        for (const chunk of chunks) {
+          const ph = chunk.map(() => '?').join(',');
+          const salesRows = await db.all(
+            `SELECT customer_id, COUNT(*) AS purchase_count, MAX(date) AS last_sale_date
+             FROM sales_invoices WHERE customer_id IN (${ph}) GROUP BY customer_id`,
+            chunk
+          );
+          for (const r of salesRows) {
+            salesMap.set(r.customer_id, { purchase_count: r.purchase_count, last_sale_date: r.last_sale_date });
+          }
+          const refillRows = await db.all(
+            `SELECT DISTINCT customer_id FROM patient_refills WHERE is_active = 1 AND customer_id IN (${ph})`,
+            chunk
+          );
+          for (const r of refillRows) refillSet.add(r.customer_id);
+        }
+        for (const p of patients) {
+          const s = salesMap.get(p.id);
+          p.purchase_count = s ? s.purchase_count : 0;
+          p.last_sale_date = s ? s.last_sale_date : null;
+          p.active_refill = refillSet.has(p.id) ? 1 : 0;
+        }
+      } catch (enrichErr) {
+        console.warn('[CRM] Patient enrichment failed, returning unenriched rows:', enrichErr);
+      }
+    }
+
+    if (q && patients.length === 0) {
+      try {
+        const allCustomers = await db.all('SELECT id, name, phone, address FROM customers LIMIT 300');
+        const candidateNames = allCustomers.map((c: any) => c.name);
+        const { findSimilarNames } = await import('../services/similarityService.js');
+        const similarNames = findSimilarNames(q as string, candidateNames, 4, 0.25);
+        const suggestions = allCustomers.filter((c: any) => similarNames.includes(c.name));
+        return res.json({ data: [], suggestions, isSuggestion: true });
+      } catch (sugErr) {
+        console.warn('[CRM] Failed to compute patient suggestions:', sugErr);
+      }
+    }
+
+    res.json(patients);
+  } catch (error) {
+    console.error('Failed to fetch patients:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create patient
+router.post('/patients', async (req, res) => {
+  const { name, phone, address, notes, language } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const db = await dbManager.getConnection();
+    const result = await db.run(
+      'INSERT INTO customers (name, phone, address, notes, language) VALUES (?, ?, ?, ?, ?)',
+      [name, phone || '', address || '', notes || '', language || 'en']
+    );
+    const newPatient = await db.get('SELECT * FROM customers WHERE id = ?', result.lastID);
+    res.status(201).json(newPatient);
+  } catch (error) {
+    console.error('Failed to create patient:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update patient
+router.put('/patients/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, phone, address, notes, language } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    await db.run(
+      'UPDATE customers SET name=?, phone=?, address=?, notes=?, language=? WHERE id=?',
+      [name, phone || '', address || '', notes || '', language || 'en', id]
+    );
+
+    // Cascade update linked operational tables (patient_refills, special_orders) to prevent phone/contact inconsistencies
+    if (phone || name) {
+      if (phone && name) {
+        await db.run('UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?', [name, phone, id]);
+        await db.run('UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?', [name, phone, id]);
+      } else if (phone) {
+        await db.run('UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?', [phone, id]);
+        await db.run('UPDATE special_orders SET phone = ? WHERE customer_id = ?', [phone, id]);
+      } else if (name) {
+        await db.run('UPDATE patient_refills SET patient_name = ? WHERE customer_id = ?', [name, id]);
+        await db.run('UPDATE special_orders SET requester = ? WHERE customer_id = ?', [name, id]);
+      }
+    }
+
+    const updated = await db.get('SELECT * FROM customers WHERE id = ?', id);
+    res.json(updated);
+  } catch (error) {
+    console.error('Failed to update patient:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete patient
+router.delete('/patients/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM customers WHERE id = ?', id);
+    // Cascade delete linked operational records to prevent stale unlinked phone references
+    await db.run('DELETE FROM patient_refills WHERE customer_id = ?', [id]);
+    await db.run('DELETE FROM special_orders WHERE customer_id = ?', [id]);
+    await db.run('DELETE FROM held_bills WHERE customer_id = ?', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete patient:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get customers (legacy alias)
+router.get('/', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const customers = await db.all('SELECT * FROM customers ORDER BY id DESC LIMIT 1000');
+        res.json(customers);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get customer sales invoice history (with items & legacy_id support)
+router.get('/:id/history', async (req, res) => {
+  const customerId = req.params.id;
+  try {
+    const db = await dbManager.getConnection();
+    const customer = await db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
+    
+    let matchingCustomerIds = [Number(customerId)];
+    if (customer) {
+      const cleanPhone = (customer.phone || '').trim();
+      const digitsOnly = cleanPhone.replace(/\D/g, '').slice(-10);
+      const cleanName = (customer.name || '').trim();
+
+      if (digitsOnly.length === 10 || (cleanName && cleanName.toLowerCase() !== 'walk-in customer' && cleanName.toLowerCase() !== 'customer')) {
+        const dupeRows = await db.all(
+          `SELECT id FROM customers 
+           WHERE (length(?) = 10 AND (phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?))
+              OR (length(?) > 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)))`,
+          [digitsOnly, cleanPhone, `%${digitsOnly}`, cleanName, cleanName]
+        );
+        if (dupeRows && dupeRows.length > 0) {
+          matchingCustomerIds = Array.from(new Set([...matchingCustomerIds, ...dupeRows.map(r => r.id)]));
+        }
+      }
+    }
+
+    const placeholders = matchingCustomerIds.map(() => '?').join(',');
+    const invoices = await db.all(
+      `SELECT si.*, c.name as customer_name, c.phone as customer_phone, d.name as doctor_name
+       FROM sales_invoices si
+       LEFT JOIN customers c ON si.customer_id = c.id
+       LEFT JOIN doctors d ON d.id = si.doctor_id
+       WHERE si.customer_id IN (${placeholders})
+          OR (c.legacy_id IS NOT NULL AND c.legacy_id != '' AND si.legacy_id = c.legacy_id)
+       ORDER BY si.date DESC`,
+      [...matchingCustomerIds]
+    );
+
+    for (const inv of invoices) {
+      const items = await db.all(
+        `SELECT sli.*, COALESCE(m.name, 'Medicine') as medicine_name, im.batch_no as batch_number, im.expiry_date, im.mrp, COALESCE(m.pack_size, 10) as pack_size
+         FROM sale_items sli
+         LEFT JOIN inventory_master im ON im.id = sli.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sli.invoice_id = ?`,
+        [inv.id]
+      );
+      inv.items = items;
+    }
+
+    res.json(invoices);
+  } catch (error: any) {
+    console.error('Failed to fetch history:', error);
+    res.status(500).json({ error: 'Failed to fetch history: ' + error.message });
+  }
+});
+
+// Get customer sales invoice history by phone number (supports patient lookup without pre-existing customer ID)
+router.get('/history-by-phone/:phone', async (req, res) => {
+  const phone = req.params.phone;
+  try {
+    const db = await dbManager.getConnection();
+    const cleanPhone = (phone || '').trim();
+    const digitsOnly = cleanPhone.replace(/\D/g, '').slice(-10);
+
+    let matchingCustomerIds: number[] = [];
+    if (digitsOnly.length === 10) {
+      const customers = await db.all(
+        `SELECT id FROM customers 
+         WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?`,
+        [cleanPhone, `%${digitsOnly}`]
+      );
+      matchingCustomerIds = customers.map((c: any) => c.id);
+    }
+
+    if (matchingCustomerIds.length === 0) {
+      return res.json([]);
+    }
+
+    const placeholders = matchingCustomerIds.map(() => '?').join(',');
+    const query = `
+      SELECT si.*, c.name as customer_name, c.phone as customer_phone, d.name as doctor_name
+      FROM sales_invoices si
+      LEFT JOIN customers c ON si.customer_id = c.id
+      LEFT JOIN doctors d ON d.id = si.doctor_id
+      WHERE si.customer_id IN (${placeholders})
+      ORDER BY si.date DESC LIMIT 100
+    `;
+
+    const invoices = await db.all(query, matchingCustomerIds);
+
+    for (const inv of invoices) {
+      const items = await db.all(
+        `SELECT sli.*, COALESCE(m.name, 'Medicine') as medicine_name, im.batch_no as batch_number, im.expiry_date, im.mrp, COALESCE(m.pack_size, 10) as pack_size
+         FROM sale_items sli
+         LEFT JOIN inventory_master im ON im.id = sli.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sli.invoice_id = ?`,
+        [inv.id]
+      );
+      inv.items = items;
+    }
+
+    res.json(invoices);
+  } catch (error: any) {
+    console.error('Failed to fetch history by phone:', error);
+    res.status(500).json({ error: 'Failed to fetch history: ' + error.message });
+  }
+});
+
+// Get doctors list
+router.get('/doctors', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const doctors = await db.all('SELECT * FROM doctors ORDER BY name ASC LIMIT 1000');
+        res.json(doctors);
+  } catch (error) {
+    console.error('Failed to fetch doctors:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a doctor
+router.post('/doctors', async (req, res) => {
+  const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
+  if (!name) return res.status(400).json({ error: 'Doctor name is required' });
+  const cleanName = sanitizeDoctorName(name) || name.trim();
+  try {
+    const db = await dbManager.getConnection();
+    const existing = await db.get('SELECT * FROM doctors WHERE LOWER(TRIM(name)) = LOWER(?)', [cleanName]);
+    if (existing) {
+      // Update existing doctor instead of creating duplicate Dr. vs non-Dr entry
+      await db.run(
+        `UPDATE doctors 
+         SET speciality = COALESCE(NULLIF(?, ''), speciality),
+             phone = COALESCE(NULLIF(?, ''), phone),
+             hospital = COALESCE(NULLIF(?, ''), hospital),
+             degree = COALESCE(NULLIF(?, ''), degree),
+             reg_no = COALESCE(NULLIF(?, ''), reg_no),
+             send_daily_summary = CASE WHEN ? = 1 THEN 1 ELSE send_daily_summary END
+         WHERE id = ?`,
+        [speciality || '', phone || '', hospital || '', degree || '', reg_no || '', send_daily_summary ? 1 : 0, existing.id]
+      );
+      return res.json({ success: true, message: 'Doctor profile updated', doctorId: existing.id });
+    }
+
+    const result = await db.run(
+      `INSERT INTO doctors (name, speciality, phone, hospital, degree, reg_no, send_daily_summary)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
+    );
+    res.json({ success: true, message: 'Doctor added successfully', doctorId: result.lastID });
+  } catch (error) {
+    console.error('Failed to add doctor:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update a doctor
+router.put('/doctors/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
+  if (!name) return res.status(400).json({ error: 'Doctor name is required' });
+  const cleanName = sanitizeDoctorName(name) || name.trim();
+  try {
+    const db = await dbManager.getConnection();
+    await db.run(
+      `UPDATE doctors 
+       SET name = ?, speciality = ?, phone = ?, hospital = ?, degree = ?, reg_no = ?, send_daily_summary = ?
+       WHERE id = ?`,
+      [cleanName, speciality || null, phone || null, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
+    );
+    const updated = await db.get('SELECT * FROM doctors WHERE id = ?', id);
+    res.json({ success: true, doctor: updated });
+  } catch (error) {
+    console.error('Failed to update doctor:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete a doctor
+router.delete('/doctors/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM doctors WHERE id = ?', id);
+    res.json({ success: true, message: 'Doctor deleted successfully' });
+  } catch (error) {
+    console.error('Failed to delete doctor:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Trigger daily doctor WhatsApp reports manually for testing
+router.post('/doctors/send-daily-reports', async (req, res) => {
+  const { date } = req.body; // e.g. "2026-06-22", optional
+  try {
+    const result = await sendDailyDoctorReports(date);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Failed to manually trigger doctor reports:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Get suggestions for a doctor
+router.get('/doctors/:id/suggestions', async (req, res) => {
+  const doctorId = req.params.id;
+  const limit = parseInt(req.query.limit as string, 10) || 25;
+  try {
+    const db = await dbManager.getConnection();
+    // Fetch top most frequently prescribed medicines by this doctor, including statistical MODE for strip & loose qty
+    const suggestions = await db.all(
+      `SELECT m.id, m.name, COUNT(*) as frequency,
+        COALESCE(
+          (SELECT si.quantity FROM sale_items si
+           JOIN inventory_master im2 ON si.inventory_id = im2.id
+           JOIN sales_invoices s2 ON si.invoice_id = s2.id
+           WHERE im2.medicine_id = m.id AND s2.doctor_id = ?
+           GROUP BY si.quantity
+           ORDER BY COUNT(*) DESC, MAX(si.id) DESC LIMIT 1), 1
+        ) as most_common_qty,
+        COALESCE(
+          (SELECT si.loose_qty FROM sale_items si
+           JOIN inventory_master im2 ON si.inventory_id = im2.id
+           JOIN sales_invoices s2 ON si.invoice_id = s2.id
+           WHERE im2.medicine_id = m.id AND s2.doctor_id = ?
+           GROUP BY si.loose_qty
+           ORDER BY COUNT(*) DESC, MAX(si.id) DESC LIMIT 1), 0
+        ) as most_common_loose_qty,
+        (SELECT si.quantity FROM sale_items si
+         JOIN inventory_master im2 ON si.inventory_id = im2.id
+         WHERE im2.medicine_id = m.id
+           AND si.invoice_id IN (SELECT id FROM sales_invoices WHERE doctor_id = ?)
+         ORDER BY si.id DESC LIMIT 1) as last_qty,
+        (SELECT si.loose_qty FROM sale_items si
+         JOIN inventory_master im2 ON si.inventory_id = im2.id
+         WHERE im2.medicine_id = m.id
+           AND si.invoice_id IN (SELECT id FROM sales_invoices WHERE doctor_id = ?)
+         ORDER BY si.id DESC LIMIT 1) as last_loose_qty
+       FROM sale_items si
+       JOIN sales_invoices s ON si.invoice_id = s.id
+       JOIN inventory_master im ON si.inventory_id = im.id
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE s.doctor_id = ?
+         AND EXISTS (
+           SELECT 1 FROM inventory_master im_stock
+           WHERE im_stock.medicine_id = m.id
+             AND (im_stock.quantity > 0 OR im_stock.loose_quantity > 0)
+             AND (im_stock.expiry_date IS NULL OR im_stock.expiry_date >= date('now'))
+         )
+       GROUP BY m.id ORDER BY frequency DESC LIMIT ?`,
+      [doctorId, doctorId, doctorId, doctorId, doctorId, limit]
+    );
+    res.json(suggestions);
+  } catch (error: any) {
+    console.error('Failed to fetch doctor suggestions:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Get medicine combinations for a doctor and a specific medicine
+router.get('/doctors/:id/combinations/:medicineId', async (req, res) => {
+  const doctorId = req.params.id;
+  const medicineId = req.params.medicineId;
+  try {
+    const db = await dbManager.getConnection();
+    const combinations = await db.all(
+      `SELECT m.id, m.name, COUNT(*) as co_count,
+        COALESCE(
+          (SELECT si2.quantity FROM sale_items si2
+           JOIN inventory_master im3 ON si2.inventory_id = im3.id
+           JOIN sales_invoices s2 ON si2.invoice_id = s2.id
+           WHERE im3.medicine_id = m.id AND s2.doctor_id = ?
+           GROUP BY si2.quantity
+           ORDER BY COUNT(*) DESC, MAX(si2.id) DESC LIMIT 1), 1
+        ) as most_common_qty,
+        COALESCE(
+          (SELECT si2.loose_qty FROM sale_items si2
+           JOIN inventory_master im3 ON si2.inventory_id = im3.id
+           JOIN sales_invoices s2 ON si2.invoice_id = s2.id
+           WHERE im3.medicine_id = m.id AND s2.doctor_id = ?
+           GROUP BY si2.loose_qty
+           ORDER BY COUNT(*) DESC, MAX(si2.id) DESC LIMIT 1), 0
+        ) as most_common_loose_qty,
+        (SELECT si2.quantity FROM sale_items si2
+         JOIN inventory_master im3 ON si2.inventory_id = im3.id
+         WHERE im3.medicine_id = m.id
+           AND si2.invoice_id IN (SELECT s2.id FROM sales_invoices s2 WHERE s2.doctor_id = ?)
+         ORDER BY si2.id DESC LIMIT 1) as last_qty,
+        (SELECT si2.loose_qty FROM sale_items si2
+         JOIN inventory_master im3 ON si2.inventory_id = im3.id
+         WHERE im3.medicine_id = m.id
+           AND si2.invoice_id IN (SELECT s2.id FROM sales_invoices s2 WHERE s2.doctor_id = ?)
+         ORDER BY si2.id DESC LIMIT 1) as last_loose_qty
+       FROM sale_items si
+       JOIN sales_invoices s ON si.invoice_id = s.id
+       JOIN inventory_master im ON si.inventory_id = im.id
+       JOIN medicines m ON m.id = im.medicine_id
+       WHERE s.doctor_id = ?
+         AND s.id IN (
+           SELECT s2.id FROM sales_invoices s2
+           JOIN sale_items si2 ON s2.id = si2.invoice_id
+           JOIN inventory_master im2 ON si2.inventory_id = im2.id
+           WHERE im2.medicine_id = ?
+         )
+         AND m.id != ?
+       GROUP BY m.id
+       ORDER BY co_count DESC
+       LIMIT 6`,
+      [doctorId, doctorId, doctorId, doctorId, doctorId, medicineId, medicineId]
+    );
+    res.json(combinations);
+  } catch (error: any) {
+    console.error('Failed to fetch doctor combinations:', error);
+    res.status(500).json({ error: 'Internal server error: ' + error.message });
+  }
+});
+
+// Customer Credit Ledger - List all credit customers with dues & dates (High-Performance Single-Pass Indexed Query)
+router.get('/credit-customers', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+
+    const rows = await db.all(
+      `WITH unpaid_invoices AS (
+         SELECT customer_id, 
+                SUM(total_amount) as invoice_due, 
+                COUNT(id) as unpaid_count, 
+                MAX(date) as last_unpaid_date
+         FROM sales_invoices
+         WHERE (payment_medium = 'CREDIT' OR payment_status IN ('UNPAID', 'PENDING')) AND payment_status != 'PAID'
+         GROUP BY customer_id
+       )
+       SELECT c.id, c.name, c.phone, c.address, c.language, c.credit_due_date, c.credit_enabled,
+              CASE 
+                WHEN c.credit_balance IS NOT NULL AND c.credit_balance > 0 THEN c.credit_balance
+                ELSE COALESCE(ui.invoice_due, 0)
+              END as credit_balance,
+              COALESCE(ui.unpaid_count, 0) as unpaid_bills_count,
+              ui.last_unpaid_date as last_sale_date
+       FROM customers c
+       LEFT JOIN unpaid_invoices ui ON ui.customer_id = c.id
+       WHERE c.credit_balance > 0 OR ui.unpaid_count > 0 OR c.credit_enabled = 1
+       ORDER BY credit_balance DESC`
+    );
+    res.json(rows);
+  } catch (error: any) {
+    console.error('Failed to fetch credit customers:', error);
+    res.status(500).json({ error: 'Failed to fetch credit customers: ' + error.message });
+  }
+});
+
+// Clear / Remove Customer Credit entry manually
+router.post('/credit-customers/:id/clear', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('BEGIN TRANSACTION');
+    await db.run('UPDATE customers SET credit_balance = 0, credit_enabled = 0 WHERE id = ?', [id]);
+    await db.run(
+      "UPDATE sales_invoices SET payment_status = 'PAID' WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING')",
+      [id]
+    );
+    await db.run('COMMIT');
+    res.json({ success: true, message: 'Customer credit cleared successfully' });
+  } catch (error: any) {
+    console.error('Failed to clear customer credit:', error);
+    try {
+      const db = await dbManager.getConnection();
+      await db.run('ROLLBACK');
+    } catch {}
+    res.status(500).json({ error: 'Failed to clear credit: ' + error.message });
+  }
+});
+
+// Update Customer Due Date
+router.put('/credit-customers/:id/due-date', async (req, res) => {
+  const { id } = req.params;
+  const { due_date } = req.body || {};
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('UPDATE customers SET credit_due_date = ? WHERE id = ?', [due_date || null, id]);
+    res.json({ success: true, message: 'Credit due date updated successfully' });
+  } catch (error: any) {
+    console.error('Failed to update credit due date:', error);
+    res.status(500).json({ error: 'Failed to update due date: ' + error.message });
+  }
+});
+
+// Send Manual Credit WhatsApp Reminder to Patient
+router.post('/credit-customers/:id/send-reminder', async (req, res) => {
+  const { id } = req.params;
+  const { custom_message } = req.body || {};
+  try {
+    const db = await dbManager.getConnection();
+
+    const enabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_credit_reminder_enabled'");
+    if (enabledRow?.value === 'false') {
+      return res.status(409).json({ error: 'Credit reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
+    }
+
+    const customer = await db.get('SELECT * FROM customers WHERE id = ?', [id]);
+    if (!customer || !customer.phone) {
+      return res.status(400).json({ error: 'Customer phone number not found' });
+    }
+
+    const cleanPhone = normalizeWhatsAppPhone(customer.phone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Customer phone number is invalid' });
+    }
+
+    const dueDateStr = customer.credit_due_date ? new Date(customer.credit_due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'As agreed';
+
+    const formatDate = (dStr?: string) => {
+      if (!dStr) return '';
+      try {
+        const d = new Date(dStr);
+        return isNaN(d.getTime()) ? dStr : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      } catch {
+        return dStr || '';
+      }
+    };
+
+    // Fetch all unpaid credit invoices for itemized summary breakdown
+    const pendingInvoices = await db.all(
+      `SELECT invoice_no, total_amount, date FROM sales_invoices
+       WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING') AND payment_status != 'PAID'
+       ORDER BY date ASC, id ASC`,
+      [id]
+    );
+
+    let billsBreakdownStr = '';
+    let computedTotal = 0;
+    if (pendingInvoices && pendingInvoices.length > 0) {
+      billsBreakdownStr += `📜 *Pending Bills Breakdown (${pendingInvoices.length})*\n`;
+      for (const inv of pendingInvoices) {
+        const amt = Number(inv.total_amount || 0);
+        computedTotal += amt;
+        const dFormatted = formatDate(inv.date);
+        billsBreakdownStr += `• Bill #${inv.invoice_no} (${dFormatted}): ₹${amt.toFixed(2)}\n`;
+      }
+      billsBreakdownStr += `\n`;
+    }
+
+    const finalOutstanding = customer.credit_balance !== undefined && customer.credit_balance !== null 
+      ? Number(customer.credit_balance)
+      : computedTotal;
+
+    let message = custom_message;
+    if (!message) {
+      const storeSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL LIMIT 1");
+      const storeName = storeSetting?.value || 'AI Pharmacy';
+      const lang = (customer.language === 'hi' || customer.language === 'mr') ? customer.language : 'en';
+
+      message = getMessage(lang, 'whatsapp.creditReminder', {
+        name: customer.name || 'Customer',
+        billsBreakdown: billsBreakdownStr ? billsBreakdownStr : '',
+        dueDate: dueDateStr,
+        total: finalOutstanding.toFixed(2),
+        storeName: storeName
+      });
+    }
+
+    let pdfPath: string | undefined = undefined;
+    try {
+      const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      const pdfFilename = `credit_statement_cust_${id}_${Date.now()}.pdf`;
+      const fullPdfPath = path.join(uploadsDir, pdfFilename);
+      await pdfInvoiceService.generateCreditStatementPdf(Number(id), fullPdfPath);
+      pdfPath = fullPdfPath;
+    } catch (pdfErr) {
+      console.warn(`[CRM Credit Reminder] PDF generation note for customer ${id}:`, pdfErr);
+    }
+
+    const queueId = await whatsappQueueWorker.enqueue(
+      cleanPhone,
+      message,
+      'credit_reminder',
+      customer.name || 'Customer',
+      undefined,
+      pdfPath
+    );
+
+    whatsappQueueWorker.triggerProcessing();
+
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['manual_credit_reminder', customer.name, cleanPhone, message, 'queued', `customer_${id}`]
+    );
+
+    res.json({ success: true, queueId, message: `Credit reminder queued for ${customer.name} (${cleanPhone})` });
+  } catch (error: any) {
+    console.error('Failed to send credit reminder:', error);
+    res.status(500).json({ error: 'Failed to send reminder: ' + error.message });
+  }
+});
+
+// Pay ledger balance & automatically send WhatsApp receipt
+router.post('/ledger/pay', async (req, res) => {
+  const { customer_id, amount } = req.body || {};
+  const payAmt = parseFloat(amount);
+  if (!customer_id || isNaN(payAmt) || payAmt <= 0) {
+    return res.status(400).json({ error: 'Customer ID and valid payment amount are required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('BEGIN TRANSACTION');
+
+    await db.run(
+      'UPDATE customers SET credit_balance = MAX(0, COALESCE(credit_balance, 0) - ?) WHERE id = ?',
+      [payAmt, customer_id]
+    );
+
+    const unpaidInvoices = await db.all(
+      `SELECT id, total_amount FROM sales_invoices
+       WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING') AND payment_status != 'PAID'
+       ORDER BY id ASC`,
+      [customer_id]
+    );
+
+    let remaining = payAmt;
+    for (const inv of unpaidInvoices) {
+      if (remaining <= 0) break;
+      await db.run(
+        "UPDATE sales_invoices SET payment_status = 'PAID' WHERE id = ?",
+        [inv.id]
+      );
+      remaining -= (inv.total_amount || 0);
+    }
+
+    await db.run('COMMIT');
+
+    // Fetch updated customer info to send WhatsApp payment receipt ONLY IF user requested it
+    const customer = await db.get('SELECT name, phone, credit_balance, language FROM customers WHERE id = ?', [customer_id]);
+    let whatsappSent = false;
+    let whatsappError = '';
+
+    const paymentReceiptRequested = Boolean(req.body.sendWhatsApp) && customer && customer.phone;
+    const paymentReceiptEnabledRow = paymentReceiptRequested
+      ? await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_payment_receipt_enabled'")
+      : null;
+
+    if (paymentReceiptRequested && paymentReceiptEnabledRow?.value === 'false') {
+      whatsappError = 'Payment receipt automation is disabled in the Automation Hub';
+    } else if (paymentReceiptRequested) {
+      try {
+        const cleanPhone = normalizeWhatsAppPhone(customer.phone);
+        if (cleanPhone && cleanPhone.length >= 10) {
+          const remainingBal = (customer.credit_balance || 0);
+          const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+          const storeSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL LIMIT 1");
+          const storeName = storeSetting?.value || 'AI Pharmacy';
+          const lang = (customer.language === 'hi' || customer.language === 'mr') ? customer.language : 'en';
+
+          const message = getMessage(lang, 'whatsapp.paymentReceipt', {
+            name: customer.name || 'Customer',
+            amount: payAmt.toFixed(2),
+            remaining: remainingBal.toFixed(2),
+            date: dateStr,
+            storeName: storeName
+          });
+
+          await whatsappQueueWorker.enqueue(
+            cleanPhone,
+            message,
+            'credit_payment_receipt',
+            customer.name || 'Customer'
+          );
+
+          whatsappQueueWorker.triggerProcessing();
+
+          await db.run(
+            `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            ['credit_payment_receipt', customer.name, cleanPhone, message, 'queued', `customer_${customer_id}`]
+          );
+          whatsappSent = true;
+        }
+      } catch (waErr: any) {
+        console.error('Failed to enqueue automated WhatsApp payment receipt:', waErr);
+        whatsappError = waErr.message || 'WhatsApp message dispatch failed';
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Collected ₹${payAmt.toFixed(2)} payment successfully${whatsappSent ? ' & WhatsApp receipt queued for customer' : ''}`,
+      whatsapp_sent: whatsappSent,
+      whatsapp_error: whatsappError || undefined
+    });
+  } catch (error: any) {
+    console.error('Failed to pay ledger:', error);
+    try {
+      const db = await dbManager.getConnection();
+      await db.run('ROLLBACK');
+    } catch {}
+    res.status(500).json({ error: 'Failed to process payment: ' + error.message });
+  }
+});
+
+export default router;
+

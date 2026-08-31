@@ -1,0 +1,625 @@
+import express from 'express';
+import fs from 'fs';
+import { dbManager } from '../database/connection.js';
+import { runEnrichment, getEnrichmentRunningState } from '../worker/compositionEnricher.js';
+import { medicineService } from '../services/medicineService.js';
+
+const router = express.Router();
+
+router.get('/catalog/job/:id', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const job = await db.get(`SELECT * FROM catalog_jobs WHERE id = ?`, req.params.id);
+    await dbManager.close();
+    
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    
+    let previewData: any[] = [];
+    let headers: string[] = [];
+    let suggestedMapping = {};
+    
+    if (job.extracted_data) {
+      try {
+        const extracted = JSON.parse(job.extracted_data);
+        if (extracted.previewData) previewData = extracted.previewData;
+        if (extracted.headers) headers = extracted.headers;
+        if (extracted.suggestedMapping) suggestedMapping = extracted.suggestedMapping;
+      } catch (e) {
+        console.error('Failed to parse extracted_data JSON', e);
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      jobId: job.id, 
+      status: job.status,
+      totalCount: job.total_count || 0,
+      existingCount: job.existing_count || 0,
+      newCount: job.new_count || 0,
+      duplicateCount: job.duplicate_count || 0,
+      progress: job.progress || 0,
+      processedCount: job.processed_count || 0,
+      errorLog: job.error_log || null,
+      original_filename: job.original_filename,
+      extractedData: job.extracted_data ? JSON.parse(job.extracted_data) : [],
+      previewData,
+      headers,
+      suggestedMapping,
+      mappingConfig: job.mapping_config ? JSON.parse(job.mapping_config) : null,
+      matchedPreviousJobId: job.matched_previous_job_id || null,
+      newlyDetectedColumns: job.newly_detected_columns ? JSON.parse(job.newly_detected_columns) : []
+    });
+  } catch (error) {
+    console.error('Fetch job error:', error);
+    res.status(500).json({ error: 'Internal server error fetching job' });
+  }
+});
+
+// Pause a catalog ingestion job
+router.post('/catalog/job/:id/pause', async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id, 10);
+    const db = await dbManager.getConnection();
+    const job = await db.get('SELECT * FROM catalog_jobs WHERE id = ?', jobId);
+    
+    if (!job) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'processing') {
+      await dbManager.close();
+      return res.status(400).json({ error: 'Only actively processing jobs can be paused' });
+    }
+
+    await db.run("UPDATE catalog_jobs SET status = 'paused' WHERE id = ?", jobId);
+    await dbManager.close();
+
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('catalog_job_update', { 
+      id: jobId, 
+      status: 'paused', 
+      progress: job.progress || 0,
+      total_count: job.total_count || 0,
+      new_count: job.new_count || 0,
+      existing_count: job.existing_count || 0,
+      duplicate_count: job.duplicate_count || 0
+    });
+
+    res.json({ success: true, message: 'Ingestion paused' });
+  } catch (error) {
+    console.error('Pause job error:', error);
+    res.status(500).json({ error: 'Internal server error pausing job' });
+  }
+});
+
+// Resume a catalog ingestion job
+router.post('/catalog/job/:id/resume', async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id, 10);
+    const db = await dbManager.getConnection();
+    const job = await db.get('SELECT * FROM catalog_jobs WHERE id = ?', jobId);
+    
+    if (!job) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'paused') {
+      await dbManager.close();
+      return res.status(400).json({ error: 'Only paused jobs can be resumed' });
+    }
+
+    await db.run("UPDATE catalog_jobs SET status = 'pending' WHERE id = ?", jobId);
+    await dbManager.close();
+
+    // Nudge the (possibly stretched) job poller so a resumed import starts fast.
+    import('../worker/catalogWorker.js').then(m => m.nudgeCatalogJobPoller()).catch(() => {});
+
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('catalog_job_update', { 
+      id: jobId, 
+      status: 'pending', 
+      progress: job.progress || 0,
+      total_count: job.total_count || 0,
+      new_count: job.new_count || 0,
+      existing_count: job.existing_count || 0,
+      duplicate_count: job.duplicate_count || 0
+    });
+
+    import('../worker/catalogWorker.js')
+      .then(({ runCatalogImport }) => {
+        runCatalogImport(jobId).catch(err => console.error('Resumed background catalog import failed:', err));
+      })
+      .catch(err => console.error('Failed to load runCatalogImport from worker:', err));
+
+    res.json({ success: true, message: 'Ingestion resumed' });
+  } catch (error) {
+    console.error('Resume job error:', error);
+    res.status(500).json({ error: 'Internal server error resuming job' });
+  }
+});
+
+// Trigger Catalogue Background Import Job with customized mappings
+router.post('/catalog/import-job/:id', async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id, 10);
+    const { mappings, filters } = req.body;
+
+    if (!mappings || typeof mappings !== 'object') {
+      return res.status(400).json({ error: 'Invalid or missing mappings configuration' });
+    }
+
+    const db = await dbManager.getConnection();
+    const job = await db.get('SELECT * FROM catalog_jobs WHERE id = ?', jobId);
+    
+    if (!job) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Save mappings to catalog_mappings for smart learning
+    const headers = Object.keys(mappings);
+    const headerKey = headers.slice().sort().join(',');
+    try {
+      await db.run(
+        'INSERT OR REPLACE INTO catalog_mappings (file_headers, mapping_json) VALUES (?, ?)',
+        [headerKey, JSON.stringify(mappings)]
+      );
+    } catch (learnErr) {
+      console.warn('Smart learning mapping save failed:', learnErr);
+    }
+
+    // Set status to pending and save mapping config on the job
+    await db.run(
+      'UPDATE catalog_jobs SET mapping_config = ?, data_filters = ?, status = "pending", progress = 0, processed_count = 0, new_count = 0, existing_count = 0, duplicate_count = 0 WHERE id = ?',
+      [JSON.stringify(mappings), JSON.stringify(filters || {}), jobId]
+    );
+    await dbManager.close();
+
+    // Start background import worker process asynchronously
+    import('../worker/catalogWorker.js')
+      .then(({ runCatalogImport }) => {
+        runCatalogImport(jobId).catch(err => console.error('Background catalog import failed:', err));
+      })
+      .catch(err => console.error('Failed to load runCatalogImport from worker:', err));
+
+    res.json({ success: true, message: 'Import started in the background' });
+  } catch (error) {
+    console.error('Import job trigger error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+async function findSimilarMedicine(db: any, name: string): Promise<any | null> {
+  const firstWord = name.split(' ')[0] || '';
+  if (firstWord.length < 3) return null;
+  
+  const candidates = await db.all(
+    'SELECT id, name, api_reference, strength, manufacturer FROM medicines WHERE name LIKE ?',
+    [`${firstWord}%`]
+  );
+  
+  const { scoreProductName } = await import('../services/pharmarackCatalogCache.js');
+  
+  let bestCandidate = null;
+  let bestScore = 0;
+  
+  for (const cand of candidates) {
+    if (cand.name.toLowerCase() === name.toLowerCase()) continue;
+    
+    const score = scoreProductName(name, cand.name);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = cand;
+    }
+  }
+  
+  if (bestScore >= 0.75) {
+    return bestCandidate;
+  }
+  return null;
+}
+
+// New Catalog Import Endpoint (Receives confirmed preview data)
+router.post('/catalog/import', async (req, res) => {
+  const { medicines } = req.body;
+  if (!Array.isArray(medicines)) {
+    return res.status(400).json({ error: 'Invalid payload, expected array of medicines' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    
+    const { normalizeMedicineName } = await import('../utils/nameNormalizer.js');
+    const { recordApiSubstance } = await import('../worker/compositionEnricher.js');
+    
+    for (const med of medicines) {
+      if (!med.name) continue;
+      
+      const cleanName = med.name.trim();
+      const adjustedName = normalizeMedicineName(cleanName, med.manufacturer);
+      
+      await medicineService.addOrUpdateMedicine(db, {
+        name: adjustedName,
+        apiReference: med.api_reference || undefined,
+        strength: med.strength || undefined,
+        packaging: med.packaging_type || undefined,
+        manufacturer: med.manufacturer || undefined,
+        marketedBy: med.marketed_by || undefined
+      });
+    }
+    
+    await dbManager.close();
+
+    // [DISABLED] Auto-feed enrichment after catalog import — only runs on explicit user action.
+    // if (!getEnrichmentRunningState()) {
+    //   runEnrichment().catch(err => console.warn('[CatalogRoute] Background enrichment failed:', err));
+    // }
+
+    res.json({ success: true, message: 'Catalog imported successfully' });
+  } catch (error) {
+    await dbManager.close();
+    console.error('Import error:', error);
+    res.status(500).json({ error: 'Internal server error during import' });
+  }
+});
+
+// API to fetch all catalog jobs
+router.get('/jobs', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const jobs = await db.all('SELECT * FROM catalog_jobs ORDER BY created_at DESC LIMIT 1000');
+    await dbManager.close();
+    res.json(jobs);
+  } catch (error) {
+    await dbManager.close();
+    console.error('Failed to fetch jobs:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete a catalog ingestion job
+router.delete('/catalog/job/:id', async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id, 10);
+    const db = await dbManager.getConnection();
+    const job = await db.get('SELECT * FROM catalog_jobs WHERE id = ?', jobId);
+    
+    if (!job) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Attempt to delete physical file if it exists
+    if (job.file_path && fs.existsSync(job.file_path)) {
+      try {
+        fs.unlinkSync(job.file_path);
+      } catch (err) {
+        console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
+      }
+    }
+
+    await db.run('DELETE FROM catalog_jobs WHERE id = ?', jobId);
+    await dbManager.close();
+
+    res.json({ success: true, message: 'Job deleted successfully' });
+  } catch (error) {
+    console.error('Delete job error:', error);
+    res.status(500).json({ error: 'Internal server error deleting job' });
+  }
+});
+
+// Fetch pending staged reviews for WhatsApp or other sources
+router.get('/catalog/reviews/pending', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const source = req.query.source || 'whatsapp';
+    const reviews = await db.all(
+      'SELECT * FROM staged_medicine_reviews WHERE status = ? AND source = ? ORDER BY id DESC LIMIT 1000',
+      ['pending', source]
+    );
+
+    const parsedReviews = [];
+    for (const r of reviews) {
+      let duplicateProduct = null;
+      if (r.possible_duplicate_of) {
+        duplicateProduct = await db.get(
+          'SELECT id, name, api_reference, strength, manufacturer, marketed_by FROM medicines WHERE id = ?',
+          [r.possible_duplicate_of]
+        );
+      }
+      parsedReviews.push({
+        ...r,
+        original_row_data: r.original_row_data ? JSON.parse(r.original_row_data) : null,
+        extracted_json: r.extracted_json ? JSON.parse(r.extracted_json) : null,
+        approved_json: r.approved_json ? JSON.parse(r.approved_json) : null,
+        duplicateProduct
+      });
+    }
+    await dbManager.close();
+
+    res.json({ success: true, reviews: parsedReviews });
+  } catch (error: any) {
+    console.error('Fetch pending reviews error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// Fetch staged reviews for a catalog job
+router.get('/catalog/job/:id/reviews', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const reviews = await db.all(
+      'SELECT * FROM staged_medicine_reviews WHERE job_id = ? ORDER BY id ASC',
+      req.params.id
+    );
+
+    const parsedReviews = [];
+    for (const r of reviews) {
+      let duplicateProduct = null;
+      if (r.possible_duplicate_of) {
+        duplicateProduct = await db.get(
+          'SELECT id, name, api_reference, strength, manufacturer, marketed_by FROM medicines WHERE id = ?',
+          [r.possible_duplicate_of]
+        );
+      }
+      parsedReviews.push({
+        ...r,
+        original_row_data: r.original_row_data ? JSON.parse(r.original_row_data) : null,
+        extracted_json: r.extracted_json ? JSON.parse(r.extracted_json) : null,
+        approved_json: r.approved_json ? JSON.parse(r.approved_json) : null,
+        duplicateProduct
+      });
+    }
+    await dbManager.close();
+
+    res.json({ success: true, reviews: parsedReviews });
+  } catch (error: any) {
+    console.error('Fetch reviews error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// Approve staged review record
+router.post('/catalog/review/:id/approve', async (req, res) => {
+  const { approvedData } = req.body;
+  try {
+    const db = await dbManager.getConnection();
+    const review = await db.get('SELECT * FROM staged_medicine_reviews WHERE id = ?', req.params.id);
+    
+    if (!review) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Review not found' });
+    }
+    
+    let mapping: any = {};
+    if (review.job_id) {
+      try {
+        const job = await db.get('SELECT * FROM catalog_jobs WHERE id = ?', review.job_id);
+        if (job && job.mapping_config) {
+          mapping = JSON.parse(job.mapping_config);
+        }
+      } catch (_) {}
+    }
+    const row = review.original_row_data ? JSON.parse(review.original_row_data) : {};
+    
+    // 1. Create or update medicine
+    const key = review.medicine_name.toLowerCase().trim();
+    
+    let med = await db.get('SELECT id FROM medicines WHERE lower(name) = ?', key);
+    if (!med) {
+      const alias = await db.get('SELECT medicine_id FROM medicine_aliases WHERE lower(alias_name) = ?', key);
+      if (alias) {
+        med = await db.get('SELECT id FROM medicines WHERE id = ?', alias.medicine_id);
+      }
+    }
+    
+    let medId = med ? med.id : null;
+    const choice = req.body.choice || (approvedData && approvedData.choice);
+    if (!medId && review.possible_duplicate_of && choice === 'merge') {
+      medId = review.possible_duplicate_of;
+    }
+    
+    const customMappings = Object.entries(mapping)
+      .filter(([csvCol, targetCol]) => targetCol && String(targetCol).startsWith('custom_col_'))
+      .map(([csvCol, targetCol]) => ({
+        csvCol,
+        dbCol: String(targetCol).substring(11).trim().replace(/\s+/g, '_').toLowerCase()
+      }));
+      
+    // Build medicine data object
+    const medData: any = {
+      name: approvedData.name || review.medicine_name,
+      apiReference: approvedData.api_reference || undefined,
+      strength: approvedData.strength || undefined,
+      packaging: approvedData.packaging || undefined,
+      manufacturer: approvedData.manufacturer || undefined,
+      marketedBy: approvedData.marketed_by || undefined,
+      hsnCode: row.hsn_code || undefined,
+      scheduleType: row.schedule_type || undefined,
+      mrp: parseFloat(row.mrp) || undefined
+    };
+
+    for (const cm of customMappings) {
+      if (row[cm.csvCol] !== undefined) {
+        medData[cm.dbCol] = row[cm.csvCol];
+      }
+    }
+
+    const writeResult = await medicineService.addOrUpdateMedicine(db, medData, {
+      skipSimilarityCheck: true,
+      choice: choice
+    });
+
+    medId = writeResult.medicine.id;
+    
+    // 2. Learning
+    if (approvedData.api_reference) {
+      try {
+        await db.run(
+          `INSERT OR REPLACE INTO medicine_reference (name, composition1, composition2, manufacturer) VALUES (?, ?, ?, ?)`,
+          [
+            approvedData.name || review.medicine_name,
+            approvedData.api_reference,
+            null,
+            approvedData.manufacturer || null
+          ]
+        );
+
+        const { recordApiSubstance } = await import('../worker/compositionEnricher.js');
+        await recordApiSubstance(approvedData.api_reference);
+
+        // Precompute substitutes in the background
+        import('../worker/substituteCacheWorker.js')
+          .then(({ precomputeSubstitutes }) => {
+            precomputeSubstitutes().catch(err => console.error('[Catalog] Background substitute precompute failed:', err));
+          })
+          .catch(err => console.error('[Catalog] Failed to load substituteCacheWorker:', err));
+      } catch (refErr) {
+        console.warn('Continuous learning save failed:', refErr);
+      }
+    }
+    
+    // 3. Catalog review updates medicine master catalog only. Stock is created exclusively via purchase invoices.
+
+    
+    // 4. Update status
+    await db.run(
+      "UPDATE staged_medicine_reviews SET status = 'approved', approved_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [JSON.stringify(approvedData), req.params.id]
+    );
+    
+    // 5. Update catalog job counter
+    if (review.job_id) {
+      await db.run(
+        "UPDATE catalog_jobs SET new_count = new_count + 1 WHERE id = ?",
+        review.job_id
+      );
+    }
+
+    // [DISABLED] Auto-feed enrichment after catalog approve — only runs on explicit user action.
+    // if (!getEnrichmentRunningState()) {
+    //   runEnrichment().catch(err => console.warn('[CatalogRoute] Background enrichment failed:', err));
+    // }
+    
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('catalog_review_updated', {
+      jobId: review.job_id,
+      reviewId: review.id,
+      status: 'approved'
+    });
+    
+    res.json({ success: true, message: 'Approved successfully.' });
+  } catch (error: any) {
+    console.error('Approve review error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// Reject staged review record
+router.post('/catalog/review/:id/reject', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    await db.run(
+      "UPDATE staged_medicine_reviews SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      req.params.id
+    );
+    
+    const review = await db.get('SELECT job_id FROM staged_medicine_reviews WHERE id = ?', req.params.id);
+    await dbManager.close();
+    
+    const { eventService } = await import('../services/eventService.js');
+    eventService.broadcast('catalog_review_updated', {
+      jobId: review ? review.job_id : null,
+      reviewId: req.params.id,
+      status: 'rejected'
+    });
+    
+    res.json({ success: true, message: 'Rejected successfully.' });
+  } catch (error: any) {
+    console.error('Reject review error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// Manually trigger enrichment for a staged review record
+router.post('/catalog/review/:id/enrich', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const review = await db.get('SELECT * FROM staged_medicine_reviews WHERE id = ?', req.params.id);
+    
+    if (!review) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Staged review not found' });
+    }
+    
+    await dbManager.close();
+    
+    res.json({ success: true, message: 'Enrichment triggered in background.' });
+    
+    (async () => {
+      try {
+        const { googleSearchService } = await import('../services/googleSearchService.js');
+        const searchResult = await googleSearchService.discoverMedicineInfo(review.medicine_name);
+        
+        if (searchResult) {
+          const extractedJson = JSON.stringify({
+            api_reference: searchResult.api_reference || '',
+            strength: searchResult.strength || '',
+            manufacturer: searchResult.manufacturer || '',
+            dosage_form: searchResult.dosage_form || '',
+            pack_info: searchResult.pack_info || '',
+            therapeutic_class: searchResult.therapeutic_class || ''
+          });
+          
+          const activeDb = await dbManager.getConnection();
+          await activeDb.run(
+            "UPDATE staged_medicine_reviews SET screenshot_path = ?, raw_ocr_text = ?, extracted_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [
+              searchResult.screenshot_path || null,
+              searchResult.raw_text || null,
+              extractedJson,
+              review.id
+            ]
+          );
+          await activeDb.close();
+          
+          const { eventService } = await import('../services/eventService.js');
+          eventService.broadcast('catalog_review_updated', {
+            jobId: review.job_id,
+            reviewId: review.id,
+            status: 'enriched'
+          });
+        }
+      } catch (enrichErr) {
+        console.error('Manual background enrichment failed:', enrichErr);
+      }
+    })();
+    
+  } catch (error: any) {
+    console.error('Trigger enrichment error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// Get daily google search usage stats
+router.get('/catalog/search-status', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const limitRow = await db.get("SELECT value FROM app_settings WHERE key = 'google_search_daily_limit'");
+    const limit = limitRow ? parseInt(limitRow.value, 10) : 100;
+    
+    const countRow = await db.get(
+      "SELECT COUNT(*) as count FROM google_search_logs WHERE created_at >= datetime('now', '-1 day')"
+    );
+    const count = countRow ? countRow.count : 0;
+    await dbManager.close();
+    
+    res.json({ success: true, count, limit });
+  } catch (error: any) {
+    console.error('Search status check error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+export default router;

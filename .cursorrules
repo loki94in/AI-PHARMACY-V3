@@ -1,0 +1,28 @@
+# Cursor Rules
+
+## Bug Fix & Issue Resolution (MANDATORY)
+
+When the user reports a **bug**, **issue**, **regression**, or asks to **fix** something broken, read **before coding**:
+
+1. `AGENT_BUG_FIX_RULEBOOK.md` - Universal workflow, guardrails, and checklist (any agent, any issue)
+2. `AGENTS.md` - This project's contracts and page ownership
+3. `SMALL_BUG_FIX_PLAN.md` - This project's bug catalog (open vs fixed)
+
+Shortcut pointer: `BUG_FIX_RULE_GUIDE.md`. Always-on: `.agents/rules/bug-fix.md`.
+
+## Auto-Knowledge Graph
+
+Before starting work, ALWAYS read these files first:
+
+1. `AGENTS.md` - Agent rules and auto-update instructions
+2. `.understand-anything/knowledge-graph.json` - Full project architecture (274 nodes, 338 edges)
+3. `.understand-anything/PROJECT_AUDIT.md` - Human-readable project audit
+
+## After Code Changes
+
+Run this command to keep the knowledge graph updated:
+```bash
+node scripts/quick-update.mjs
+```
+
+This takes ~30 seconds and updates the project map.

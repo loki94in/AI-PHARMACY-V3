@@ -1,0 +1,657 @@
+import express from 'express';
+import { eventService } from '../services/eventService.js';
+import { dbManager } from '../database/connection.js';
+import QRCode from 'qrcode';
+import os from 'os';
+
+import { config } from '../config/index.js';
+
+const router = express.Router();
+
+// Get server connection info (IPs, Port, pre-generated QR code) for mobile app setup
+router.get('/notifications/connection-info', async (req, res) => {
+  try {
+    const interfaces = os.networkInterfaces();
+    const ips: string[] = [];
+    for (const interfaceName of Object.keys(interfaces)) {
+      const addresses = interfaces[interfaceName];
+      if (addresses) {
+        for (const addr of addresses) {
+          if (addr.family === 'IPv4' && !addr.internal) {
+            ips.push(addr.address);
+          }
+        }
+      }
+    }
+
+    const port = config.port;
+    const serverUrls = ips.map(ip => `http://${ip}:${port}`);
+
+    // If no external IPs found, fall back to localhost
+    if (serverUrls.length === 0) {
+      serverUrls.push(`http://localhost:${port}`);
+    }
+
+    const qrData = JSON.stringify({ serverUrls });
+    // Generate QR code data URL (base64 image)
+    const qrCodeUrl = await QRCode.toDataURL(qrData, { width: 250, margin: 1 });
+
+    res.json({
+      success: true,
+      ips,
+      port,
+      serverUrls,
+      qrCodeUrl
+    });
+  } catch (err: any) {
+    console.error('Failed to generate connection info:', err);
+    res.status(500).json({ error: 'Failed to generate connection info: ' + err.message });
+  }
+});
+
+// Download Android APK file for mobile installation and pairing
+router.get('/notifications/download-apk', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const candidatePaths = [
+    path.join(process.cwd(), 'data', 'pharmacy-mobile.apk'),
+    path.join(process.cwd(), 'public', 'pharmacy-mobile.apk'),
+    path.join(process.cwd(), 'pharmacy-mobile', 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
+    path.join(process.cwd(), 'pharmacy-mobile', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+  ];
+
+  const foundPath = candidatePaths.find(p => fs.existsSync(p));
+  if (foundPath) {
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    return res.download(foundPath, 'AI-Pharmacy-Mobile.apk');
+  }
+
+  res.status(404).json({
+    error: 'APK file not found on server.',
+    message: 'Place pharmacy-mobile.apk inside the data/ folder to enable direct mobile APK downloads.'
+  });
+});
+
+// Real-time notifications SSE Stream
+router.get('/notifications/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const listener = (eventData: any) => {
+    res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+  };
+
+  eventService.on('server_event', listener);
+
+  // Send lightweight comment keepalive ping every 25s to keep connection alive through NAT/proxies
+  const keepAliveTimer = setInterval(() => {
+    try {
+      res.write(':ping\n\n');
+    } catch {
+      clearInterval(keepAliveTimer);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAliveTimer);
+    eventService.removeListener('server_event', listener);
+  });
+
+  res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Connected to notifications stream' })}\n\n`);
+});
+
+// Memory cache of online/offline status of devices to detect status changes
+const deviceOnlineStateCache = new Map<string, number>();
+
+// Throttle map so a blocked phone pinging every 15s doesn't spam PC toasts
+const blockedNoticeAt = new Map<string, number>();
+
+// Stable multi-device identity: push_tokens.device_uuid may not exist on older DBs.
+// Lazy PRAGMA ensure runs regardless of the schema-version boot fast-path.
+let deviceUuidColumnReady = false;
+async function ensureDeviceUuidColumn(db: any): Promise<void> {
+  if (deviceUuidColumnReady) return;
+  try {
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS push_tokens (
+        token TEXT PRIMARY KEY,
+        device_name TEXT,
+        os TEXT,
+        device_uuid TEXT,
+        is_blocked INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    const cols = await db.all('PRAGMA table_info(push_tokens)');
+    const names = new Set(cols.map((c: any) => c.name));
+    if (cols.length > 0 && !names.has('device_uuid')) {
+      await db.run('ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT').catch(() => {});
+    }
+    if (cols.length > 0 && !names.has('is_blocked')) {
+      await db.run('ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0').catch(() => {});
+    }
+    deviceUuidColumnReady = true;
+  } catch (err) {
+    console.warn('[Devices] device registry column ensure failed:', err);
+  }
+}
+
+// Register push notification token from mobile device
+router.post('/notifications/register-token', async (req, res) => {
+  const { token, deviceName, os, device_uuid } = req.body;
+  if (!token) {
+    return res.status(400).json({ error: 'Token is required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    await ensureDeviceUuidColumn(db);
+    const devName = deviceName || 'Unknown';
+    const devOs = os || 'Unknown';
+    // Stable identity: uuid survives Expo token rotation; legacy clients fall back to token
+    const identity = device_uuid || token;
+
+    // Reject devices that have been explicitly blocked by the owner
+    const blockRow = await db.get(
+      'SELECT is_blocked FROM push_tokens WHERE (device_uuid IS NOT NULL AND device_uuid = ?) OR token = ? LIMIT 1',
+      [device_uuid || '', token]
+    );
+    if (blockRow && blockRow.is_blocked === 1) {
+      // Throttled admin notice — the blocked phone pings every 15s, don't spam toasts
+      const now = Date.now();
+      if (now - (blockedNoticeAt.get(identity) || 0) > 5 * 60 * 1000) {
+        blockedNoticeAt.set(identity, now);
+        eventService.emit('server_event', {
+          type: 'notification',
+          message: `Blocked device "${devName}" tried to connect`,
+          payload: {
+            type: 'error',
+            message: `Blocked device "${devName}" tried to connect`,
+            link: '/settings'
+          }
+        });
+      }
+      return res.status(403).json({ error: 'This device has been blocked by the pharmacy owner.', blocked: true });
+    }
+
+    // Check if device was previously offline in cache (or not cached yet)
+    const isNewOrOffline = !deviceOnlineStateCache.has(identity) || deviceOnlineStateCache.get(identity) === 0;
+
+    if (device_uuid) {
+      // Upsert by stable uuid — preserves created_at and prevents duplicate rows per phone
+      const existing = await db.get('SELECT token FROM push_tokens WHERE device_uuid = ? LIMIT 1', [device_uuid]);
+      if (existing) {
+        await db.run(
+          'UPDATE push_tokens SET token = ?, device_name = ?, os = ?, last_seen = CURRENT_TIMESTAMP WHERE device_uuid = ?',
+          [token, devName, devOs, device_uuid]
+        );
+      } else {
+        await db.run(
+          'INSERT INTO push_tokens (token, device_name, os, device_uuid, last_seen) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+          [token, devName, devOs, device_uuid]
+        );
+      }
+    } else {
+      await db.run(
+        'INSERT OR REPLACE INTO push_tokens (token, device_name, os, last_seen) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        [token, devName, devOs]
+      );
+    }
+
+    if (isNewOrOffline) {
+      deviceOnlineStateCache.set(identity, 1);
+      // Log to database
+      await db.run(
+        'INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)',
+        [token, devName, devOs, 'connected']
+      );
+      // Log connection to action_logs
+      await db.run(
+        'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+        ['DEVICE_CONNECT', `Mobile device "${devName}" (${devOs}) connected successfully`]
+      );
+      // Emit real-time SSE stream events
+      eventService.emit('server_event', {
+        type: 'notification',
+        message: `Mobile device "${devName}" connected successfully!`,
+        payload: {
+          type: 'success',
+          message: `Mobile device "${devName}" connected successfully!`,
+          link: '/settings'
+        }
+      });
+      eventService.emit('server_event', {
+        type: 'device_status_change',
+        payload: { token, device_id: identity, device_name: devName, os: devOs, status: 'connected', timestamp: new Date().toISOString() }
+      });
+    } else {
+      // Just update cache/last seen
+      deviceOnlineStateCache.set(identity, 1);
+    }
+
+    res.json({ success: true, message: 'Push token registered successfully' });
+  } catch (err: any) {
+    console.error('Failed to register push token:', err);
+    res.status(500).json({ error: 'Failed to register token: ' + err.message });
+  }
+});
+
+// Get all registered devices and check if they are currently online
+router.get('/notifications/devices', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    await ensureDeviceUuidColumn(db);
+    // Deduplicate by stable identity (uuid, falling back to token for legacy rows):
+    // keep only the most-recently-seen row per device.
+    // A device offline = no last_seen update in 40 seconds (mobile pings every 15s)
+    const rows = await db.all(`
+      SELECT
+        token,
+        COALESCE(device_uuid, 'tok-' || token) AS device_id,
+        device_name,
+        os,
+        created_at,
+        last_seen,
+        COALESCE(is_blocked, 0) as is_blocked,
+        CASE
+          WHEN last_seen IS NOT NULL AND (strftime('%s', 'now') - strftime('%s', last_seen) < 40) THEN 1
+          ELSE 0
+        END as is_online,
+        CASE
+          WHEN last_seen IS NULL THEN 999999
+          ELSE (strftime('%s', 'now') - strftime('%s', last_seen))
+        END as offline_seconds
+      FROM push_tokens
+      WHERE rowid IN (
+        SELECT rowid FROM push_tokens p2
+        WHERE COALESCE(p2.device_uuid, 'tok-' || p2.token) = COALESCE(push_tokens.device_uuid, 'tok-' || push_tokens.token)
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 1
+      )
+      ORDER BY last_seen DESC
+    `);
+    res.json({ success: true, devices: rows });
+  } catch (err: any) {
+    console.error('Failed to get registered devices:', err);
+    res.status(500).json({ error: 'Failed to get devices: ' + err.message });
+  }
+});
+
+// Block or unblock a device — blocked phones are refused at registration (403)
+router.put('/notifications/devices/:token/block', async (req, res) => {
+  const { token } = req.params;
+  const { blocked } = req.body;
+  if (typeof blocked !== 'boolean') {
+    return res.status(400).json({ error: 'blocked (boolean) is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    await ensureDeviceUuidColumn(db);
+    const row = await db.get('SELECT device_name, os, device_uuid FROM push_tokens WHERE token = ? LIMIT 1', [token]);
+    if (!row) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+    await db.run('UPDATE push_tokens SET is_blocked = ? WHERE token = ?', [blocked ? 1 : 0, token]);
+    const identity = row.device_uuid || token;
+    if (blocked) {
+      // Force offline transition so the monitor doesn't wait for missed pings
+      deviceOnlineStateCache.set(identity, 0);
+    } else {
+      // Allow immediate re-registration on next ping
+      blockedNoticeAt.delete(identity);
+    }
+    await db.run(
+      'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+      [blocked ? 'DEVICE_BLOCKED' : 'DEVICE_UNBLOCKED', `Mobile device "${row.device_name}" (${row.os}) was ${blocked ? 'blocked' : 'unblocked'}`]
+    );
+    eventService.emit('server_event', {
+      type: 'device_block_change',
+      payload: { token, device_id: identity, device_name: row.device_name, os: row.os, blocked, timestamp: new Date().toISOString() }
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Failed to update device block state:', err);
+    res.status(500).json({ error: 'Failed to update block state: ' + err.message });
+  }
+});
+
+// Rename a registered device
+router.patch('/notifications/devices/:token/rename', async (req, res) => {
+  const { token } = req.params;
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Name is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('UPDATE push_tokens SET device_name = ? WHERE token = ?', [name.trim(), token]);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Failed to rename device:', err);
+    res.status(500).json({ error: 'Failed to rename device: ' + err.message });
+  }
+});
+
+// Get device activity logs
+router.get('/notifications/devices/logs', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all('SELECT * FROM device_connection_logs ORDER BY timestamp DESC LIMIT 150');
+    res.json({ success: true, logs: rows });
+  } catch (err: any) {
+    console.error('Failed to fetch device logs:', err);
+    res.status(500).json({ error: 'Failed to fetch logs: ' + err.message });
+  }
+});
+
+// Clear device activity logs
+router.post('/notifications/devices/logs/clear', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM device_connection_logs');
+    res.json({ success: true, message: 'Logs cleared successfully' });
+  } catch (err: any) {
+    console.error('Failed to clear device logs:', err);
+    res.status(500).json({ error: 'Failed to clear logs: ' + err.message });
+  }
+});
+
+// Get general app action logs with filtering & pagination
+router.get('/notifications/action-logs', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const { category, status, search, limit = '250', offset = '0' } = req.query;
+
+    let query = 'SELECT * FROM action_logs WHERE 1=1';
+    const params: any[] = [];
+
+    if (category && category !== 'all') {
+      if (category === 'sales') {
+        query += " AND (action_type IN ('SALE', 'CUSTOMER_RETURN', 'CREDIT_NOTE') OR description LIKE '%Bill%' OR description LIKE '%Sale%')";
+      } else if (category === 'inventory') {
+        query += " AND (action_type IN ('ADD', 'EDIT', 'DELETE', 'STOCK_OVERRIDE', 'INVENTORY_DELETE') OR description LIKE '%Medicine%' OR description LIKE '%Stock%')";
+      } else if (category === 'automations') {
+        query += " AND (action_type IN ('AUTOMATION', 'AUTOMATION_ALERT', 'WHATSAPP_SEND', 'EMAIL_SEND') OR description LIKE '%WhatsApp%' OR description LIKE '%Email%')";
+      } else if (category === 'backup') {
+        query += " AND (action_type IN ('BACKUP', 'CLOUD_PUSH', 'DATABASE_RESTORE') OR description LIKE '%Backup%' OR description LIKE '%S3%')";
+      } else if (category === 'errors') {
+        query += " AND (action_type IN ('PROCESS_FAIL', 'ERROR') OR description LIKE '%fail%' OR description LIKE '%error%')";
+      }
+    }
+
+    if (status && status !== 'all') {
+      if (status === 'done') {
+        query += " AND (action_type IN ('PROCESS_DONE', 'SALE', 'PURCHASE', 'ADD', 'SAVE', 'BACKUP') AND description NOT LIKE '%fail%')";
+      } else if (status === 'fail') {
+        query += " AND (action_type IN ('PROCESS_FAIL', 'ERROR') OR description LIKE '%fail%' OR description LIKE '%error%')";
+      } else if (status === 'adding') {
+        query += " AND (action_type = 'ADD' OR description LIKE 'Added%')";
+      } else if (status === 'editing') {
+        query += " AND (action_type = 'EDIT' OR description LIKE 'Edited%')";
+      } else if (status === 'deleting') {
+        query += " AND (action_type = 'DELETE' OR description LIKE 'Deleted%')";
+      }
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      query += ' AND (description LIKE ? OR action_type LIKE ?)';
+      const term = `%${search.trim()}%`;
+      params.push(term, term);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit as string, 10) || 250, parseInt(offset as string, 10) || 0);
+
+    const rows = await db.all(query, params);
+    res.json({ success: true, logs: rows });
+  } catch (err: any) {
+    console.error('Failed to fetch action logs:', err);
+    res.status(500).json({ error: 'Failed to fetch logs: ' + err.message });
+  }
+});
+
+// Clear general app action logs
+router.post('/notifications/action-logs/clear', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM action_logs');
+    res.json({ success: true, message: 'Action logs cleared successfully' });
+  } catch (err: any) {
+    console.error('Failed to clear action logs:', err);
+    res.status(500).json({ error: 'Failed to clear logs: ' + err.message });
+  }
+});
+
+// Delete a single action log by id
+router.delete('/notifications/action-logs/:id', async (req, res) => {
+  const { id } = req.params;
+  const numId = parseInt(id, 10);
+  if (isNaN(numId)) {
+    return res.status(400).json({ error: 'Valid numeric log id is required' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM action_logs WHERE id = ?', [numId]);
+    res.json({ success: true, message: 'Action log deleted successfully' });
+  } catch (err: any) {
+    console.error('Failed to delete action log:', err);
+    res.status(500).json({ error: 'Failed to delete action log: ' + err.message });
+  }
+});
+
+// Save assistant chat log
+router.post('/notifications/chat-logs', async (req, res) => {
+  const { sessionId, deviceName, sender, messageText, metadata } = req.body;
+  if (!sessionId || !sender || !messageText) {
+    return res.status(400).json({ error: 'sessionId, sender and messageText are required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    const metaStr = metadata ? (typeof metadata === 'string' ? metadata : JSON.stringify(metadata)) : null;
+    await db.run(
+      'INSERT INTO assistant_chat_logs (session_id, device_name, sender, message_text, metadata) VALUES (?, ?, ?, ?, ?)',
+      [sessionId, deviceName || 'Unknown Device', sender, messageText, metaStr]
+    );
+
+    // Write queries and result listings to system action_logs
+    if (sender === 'user') {
+      const cleanText = messageText.toLowerCase().trim();
+      const hasSearchKeywords = cleanText.startsWith('find ') || 
+                               cleanText.startsWith('search ') || 
+                               cleanText.includes('dolo') || 
+                               cleanText.includes('clavam') || 
+                               cleanText.includes('crocin') || 
+                               cleanText.includes('ondem') || 
+                               cleanText.includes('pan');
+      if (hasSearchKeywords) {
+        const query = messageText.replace(/^(find|search)\s+/i, '').trim();
+        await db.run(
+          'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+          ['ASSISTANT_REQ', `User on "${deviceName || 'Mobile'}" asked to find product "${query}"`]
+        );
+      }
+    } else if (sender === 'assistant' && metadata) {
+      let products: any[] = [];
+      try {
+        products = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+      } catch (e) {}
+
+      if (Array.isArray(products) && products.length > 0) {
+        const resultsStr = products.map((p: any) => 
+          `${p.medicine_name || p.name || 'Unknown'} (Stock: ${p.quantity ?? 0}, Batch: ${p.batch_no || 'N/A'}, Exp: ${p.expiry_date || 'N/A'}, MRP: ₹${p.mrp || 0})`
+        ).join(', ');
+        
+        await db.run(
+          'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+          ['ASSISTANT_RES', `Assistant found ${products.length} matches: ${resultsStr}`]
+        );
+      } else {
+        await db.run(
+          'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+          ['ASSISTANT_RES', `Assistant searched but found no matches.`]
+        );
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Failed to save assistant chat log:', err);
+    res.status(500).json({ error: 'Failed to save assistant chat log: ' + err.message });
+  }
+});
+
+// Get assistant chat logs
+router.get('/notifications/chat-logs', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all('SELECT * FROM assistant_chat_logs ORDER BY created_at ASC LIMIT 1000');
+    res.json({ success: true, logs: rows });
+  } catch (err: any) {
+    console.error('Failed to get assistant chat logs:', err);
+    res.status(500).json({ error: 'Failed to get assistant chat logs: ' + err.message });
+  }
+});
+
+// Clear assistant chat logs
+router.post('/notifications/chat-logs/clear', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM assistant_chat_logs');
+    res.json({ success: true, message: 'Assistant chat logs cleared successfully' });
+  } catch (err: any) {
+    console.error('Failed to clear assistant chat logs:', err);
+    res.status(500).json({ error: 'Failed to clear assistant chat logs: ' + err.message });
+  }
+});
+
+// Background connection state checking
+async function checkDeviceConnections() {
+  try {
+    const db = await dbManager.getConnection();
+    await ensureDeviceUuidColumn(db);
+    const rows = await db.all(`
+      SELECT
+        token,
+        COALESCE(device_uuid, 'tok-' || token) AS device_id,
+        device_name,
+        os,
+        CASE
+          WHEN last_seen IS NOT NULL AND (strftime('%s', 'now') - strftime('%s', last_seen) < 40) THEN 1
+          ELSE 0
+        END as is_online
+      FROM push_tokens
+      WHERE rowid IN (
+        SELECT rowid FROM push_tokens p2
+        WHERE COALESCE(p2.device_uuid, 'tok-' || p2.token) = COALESCE(push_tokens.device_uuid, 'tok-' || push_tokens.token)
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 1
+      )
+    `);
+
+    for (const row of rows) {
+      const { token, device_id, device_name, os, is_online } = row;
+      const cached = deviceOnlineStateCache.get(device_id);
+
+      if (cached !== undefined) {
+        if (cached === 0 && is_online === 1) {
+          deviceOnlineStateCache.set(device_id, 1);
+          await db.run(
+            'INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)',
+            [token, device_name, os, 'connected']
+          );
+          await db.run(
+            'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+            ['DEVICE_CONNECT', `Mobile device "${device_name}" (${os}) connected successfully`]
+          );
+          eventService.emit('server_event', {
+            type: 'notification',
+            message: `Mobile device "${device_name}" connected successfully!`,
+            payload: {
+              type: 'success',
+              message: `Mobile device "${device_name}" connected successfully!`,
+              link: '/settings'
+            }
+          });
+          eventService.emit('server_event', {
+            type: 'device_status_change',
+            payload: { token, device_id, device_name, os, status: 'connected', timestamp: new Date().toISOString() }
+          });
+        } else if (cached === 1 && is_online === 0) {
+          deviceOnlineStateCache.set(device_id, 0);
+          await db.run(
+            'INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)',
+            [token, device_name, os, 'disconnected']
+          );
+          await db.run(
+            'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+            ['DEVICE_DISCONNECT', `Mobile device "${device_name}" (${os}) disconnected`]
+          );
+          eventService.emit('server_event', {
+            type: 'notification',
+            message: `Mobile device "${device_name}" disconnected.`,
+            payload: {
+              type: 'error',
+              message: `Mobile device "${device_name}" disconnected.`,
+              link: '/settings'
+            }
+          });
+          eventService.emit('server_event', {
+            type: 'device_status_change',
+            payload: { token, device_id, device_name, os, status: 'disconnected', timestamp: new Date().toISOString() }
+          });
+        }
+      } else {
+        deviceOnlineStateCache.set(device_id, is_online);
+        // Ensure initial connection log exists to populate charts and logs immediately
+        const status = is_online === 1 ? 'connected' : 'disconnected';
+        const lastLog = await db.get(
+          'SELECT status FROM device_connection_logs WHERE token = ? ORDER BY timestamp DESC LIMIT 1',
+          [token]
+        );
+        if (!lastLog || lastLog.status !== status) {
+          await db.run(
+            'INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)',
+            [token, device_name, os, status]
+          );
+          await db.run(
+            'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+            [is_online === 1 ? 'DEVICE_CONNECT' : 'DEVICE_DISCONNECT', `Mobile device "${device_name}" (${os}) is initial ${status}`]
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error during periodic device monitoring:', err);
+  }
+}
+
+// P3 gated worker (API_OPTIMIZATION plan): device connection monitor.
+// Registry key `bg.deviceMonitor` (default manual) + idle backoff —
+// 10s while the user is active, 2 min when idle >30 min, off when disabled.
+(async () => {
+  const { getBackendFetchMode } = await import('../services/dataFetchControl.js');
+  const { activityTracker } = await import('../utils/activityTracker.js');
+
+  const tick = async () => {
+    let delay = 10000;
+    try {
+      const mode = await getBackendFetchMode('bg.deviceMonitor', 'auto');
+      if (mode === 'off') return; // stay off until next process start
+      if (activityTracker.isIdle()) {
+        delay = mode === 'auto' ? 120000 : 600000;
+      }
+    } catch (_) {}
+    setTimeout(async () => {
+      await checkDeviceConnections();
+      tick();
+    }, delay);
+  };
+  checkDeviceConnections();
+  tick();
+})();
+
+export default router;

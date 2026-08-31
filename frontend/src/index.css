@@ -1,0 +1,660 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.z-toast {
+  z-index: 10050 !important;
+}
+.z-submodal {
+  z-index: 10015 !important;
+}
+.z-global-modal {
+  z-index: 10000 !important;
+}
+.z-dropdown {
+  z-index: 999 !important;
+}
+.z-sticky-header {
+  z-index: 1000 !important;
+}
+
+/* ═══════════════════════════════════════════
+   DARK THEME (Default)
+   ═══════════════════════════════════════════ */
+:root {
+  --bg: #09090b;
+  --bg2: #18181b;
+  --bg3: #27272a;
+  --border: #3f3f46;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --glass-bg: rgba(24, 24, 27, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  /* Notification/toast accent (dark mode) */
+  --notif-border: rgba(139, 92, 246, 0.3);
+}
+
+/* ═══════════════════════════════════════════
+   DAY (LIGHT) THEME
+   Plain White base · Clean crisp look
+   Green accents on text/buttons · Purple notification borders
+   ═══════════════════════════════════════════ */
+:root.light, html.light, body.light, .light {
+  /* Backgrounds — neutral plain-white palette (owner request 2026-08) */
+  --bg:         #ffffff;          /* pure white page base */
+  --bg2:        #f9fafb;          /* hair-grey surface for card/input contrast */
+  --bg3:        #f3f4f6;          /* light grey for nested panels */
+
+  /* Borders & lines */
+  --border:     #e5e7eb;          /* neutral hairline border */
+
+  /* Typography */
+  --text:       #14532d;          /* deep green — maximum readability, brand-aligned */
+  --muted:      #44604f;          /* darkened green-grey — ≥5:1 contrast on white */
+
+  /* Glass panels — white frosted */
+  --glass-bg:   rgba(255, 255, 255, 0.97);
+  --glass-border: rgba(0, 0, 0, 0.08); /* neutral glass border */
+
+  /* Notification / Toast borders — soft purple */
+  --notif-border: rgba(167, 139, 250, 0.55);
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — BODY BACKGROUND (PLAIN WHITE)
+   Kills the dark theme's radial colour washes;
+   no tinted gradients on the white base.
+   ═══════════════════════════════════════════ */
+.light body,
+html.light body {
+  background-image: none;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — GLASS PANELS
+   ═══════════════════════════════════════════ */
+.light .glass-panel {
+  background-color: var(--glass-bg) !important;
+  border-color: var(--glass-border) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06),
+              0 1px 6px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — HARDCODED DARK BACKGROUNDS
+   [AI/AGENT INSTRUCTION: DO NOT USE THESE IN NEW COMPONENTS!]
+   [Use semantic classes instead: `bg-bg`, `bg-bg2`, `bg-bg3`, `text-text`]
+   ═══════════════════════════════════════════ */
+.light .bg-white\/5 {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+.light .bg-white\/10 {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+.light .bg-white\/15 {
+  background-color: rgba(0, 0, 0, 0.07) !important;
+}
+.light .bg-black\/10 {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+.light .bg-black\/20 {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+.light .bg-black\/30 {
+  background-color: rgba(0, 0, 0, 0.045) !important;
+}
+.light .bg-black\/40 {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+.light .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Hardcoded hex backgrounds → pure white card */
+.light .bg-\[\#18181b\]\/95,
+.light .bg-\[\#18181b\]\/98 {
+  background-color: rgba(255, 255, 255, 0.99) !important;
+  border-color: var(--glass-border) !important;
+}
+.light .bg-\[\#18181b\] {
+  background-color: var(--bg2) !important;
+  border-color: var(--glass-border) !important;
+}
+.light .bg-\[\#18181b\]\/50 {
+  background-color: rgba(249, 250, 251, 0.8) !important;
+  border-color: var(--glass-border) !important;
+}
+.light .bg-\[\#121214\]\/95 {
+  background-color: rgba(255, 255, 255, 0.99) !important;
+  border-color: var(--glass-border) !important;
+}
+.light .bg-\[\#121214\] {
+  background-color: var(--bg2) !important;
+}
+
+/* bg-bg2 */
+.light .bg-bg2 {
+  background-color: var(--bg2) !important;
+}
+
+/* premium-input background override */
+.light .premium-input {
+  background-color: #ffffff !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+}
+.light .premium-input:focus {
+  border-color: #16a34a !important;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — SELECT / OPTION ELEMENTS
+   ═══════════════════════════════════════════ */
+.light select {
+  background-color: #ffffff !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+  color: var(--text) !important;
+}
+.light option,
+.light select option {
+  background-color: #ffffff !important;
+  color: var(--text) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — TEXT COLORS
+   ═══════════════════════════════════════════ */
+/* Override elements that hardcode text-white */
+/* Override elements that hardcode text-white */
+.light .bg-glass-bg h1,
+.light .bg-glass-bg h2,
+.light .bg-glass-bg a,
+.light header h2,
+.light header button {
+  color: var(--text) !important;
+}
+
+/* Smarter text-white override: turns to black EXCEPT if it has a colored background */
+.light .text-white:not([class*="bg-primary"]):not([class*="bg-red"]):not([class*="bg-green"]):not([class*="bg-blue"]):not([class*="bg-purple"]):not([class*="bg-emerald"]):not([class*="from-primary"]):not([class*="bg-sky"]):not([class*="bg-indigo"]):not([class*="bg-yellow"]):not([class*="bg-amber"]):not([class*="bg-cyan"]):not([class*="bg-orange"]) {
+  color: var(--text) !important;
+}
+.light .hover\:text-white:hover:not([class*="bg-primary"]):not([class*="bg-red"]):not([class*="bg-green"]):not([class*="bg-blue"]):not([class*="bg-purple"]):not([class*="bg-emerald"]):not([class*="from-primary"]):not([class*="bg-sky"]):not([class*="bg-indigo"]):not([class*="bg-yellow"]):not([class*="bg-amber"]):not([class*="bg-cyan"]):not([class*="bg-orange"]) {
+  color: var(--text) !important;
+}
+
+.light .text-text   { color: var(--text)   !important; }
+.light .text-muted  { color: var(--muted)  !important; }
+.light .text-gray-100 { color: #1f2937 !important; }
+.light .text-gray-200 { color: #374151 !important; }
+
+/* Bulletproof Select & Option overrides for Day & Night Modes to prevent white-on-white native option text bugs */
+select,
+option,
+select option {
+  background-color: #18181b !important;
+  color: #fafafa !important;
+}
+
+.light select,
+.light select *,
+.light option,
+.light select option,
+.light select option * {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+/* Semantic colour overrides — stay vivid but readable on white */
+.light .text-sky    { color: #0284c7 !important; }
+.light .text-green  { color: #16a34a !important; }
+.light .text-red    { color: #dc2626 !important; }
+.light .text-amber-500 { color: #d97706 !important; }
+.light .text-primary   { color: #2563eb !important; }
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — HOVER OVERRIDES
+   ═══════════════════════════════════════════ */
+.light .hover\:bg-white\/5:hover {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+.light .hover\:bg-white\/10:hover {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — NOTIFICATION / TOAST BORDERS
+   Soft purple accent borders
+   ═══════════════════════════════════════════ */
+.light [class*="border-primary"],
+.light [class*="border-primary\/"] {
+  border-color: rgba(167, 139, 250, 0.5) !important;
+}
+/* Toast / notification boxes */
+.light .bg-primary\/10 {
+  background-color: rgba(167, 139, 250, 0.1) !important;
+  border-color: rgba(167, 139, 250, 0.35) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — INPUTS, TABLES
+   ═══════════════════════════════════════════ */
+.light input,
+.light textarea,
+.light table,
+.light th,
+.light td {
+  color: var(--text);
+}
+.light th {
+  background-color: rgba(243, 244, 246, 0.95) !important;
+}
+.light tr:hover td {
+  background-color: rgba(243, 244, 246, 0.6) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — SCROLLBAR
+   ═══════════════════════════════════════════ */
+.light ::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.25) !important;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — STICKY TABLE HEADERS
+   (2026-08 solid-background sweep: the raw-palette
+   shims for bg-gray/zinc/#18181b/#121214 surfaces were
+   removed — those sources now use semantic tokens.)
+   ═══════════════════════════════════════════ */
+.light thead.sticky,
+.light thead .sticky,
+.light thead[class*="sticky"] {
+  background-color: rgba(243, 244, 246, 0.98) !important;
+  border-bottom-color: rgba(34, 197, 94, 0.2) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — FILE INPUT BUTTON (Settings)
+   file:bg-zinc-700  file:text-zinc-300
+   ═══════════════════════════════════════════ */
+.light input[type="file"]::file-selector-button {
+  background-color: #e5e7eb !important;
+  color: #374151 !important;
+  border-color: transparent !important;
+}
+.light input[type="file"]:hover::file-selector-button {
+  background-color: #d1d5db !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — DROPDOWN <option> with bg-[#18181b]
+   ═══════════════════════════════════════════ */
+.light option.bg-\[\#18181b\],
+.light select option.bg-\[\#18181b\] {
+  background-color: #ffffff !important;
+  color: var(--text) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — EXPIRY STAT CARDS
+   bg-[#18181b]/50
+   ═══════════════════════════════════════════ */
+.light .bg-\[\#18181b\]\/50 {
+  background-color: rgba(249, 250, 251, 0.9) !important;
+  border-color: rgba(34, 197, 94, 0.2) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — GRAY TEXT INSIDE POPUPS/MODALS
+   text-gray-400, text-gray-300 → use muted var
+   ═══════════════════════════════════════════ */
+.light .text-gray-400 { color: var(--muted) !important; }
+.light .text-gray-300 { color: #4b5563 !important; }
+.light .text-gray-500 { color: var(--muted) !important; }
+.light .text-slate-400 { color: var(--muted) !important; }
+.light .text-slate-500 { color: var(--muted) !important; }
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — MODAL OVERLAY BACKDROP
+   bg-black/50, bg-black/60, bg-black/80
+   Slightly softer in light mode
+   ═══════════════════════════════════════════ */
+.light .bg-black\/80 {
+  background-color: rgba(0, 0, 0, 0.35) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — BORDER OVERRIDES FOR POPUPS
+   border-white/20  border-white/10 in popups
+   ═══════════════════════════════════════════ */
+.light .border-white\/20 {
+  border-color: rgba(34, 197, 94, 0.25) !important;
+}
+.light .border-white\/10 {
+  border-color: rgba(34, 197, 94, 0.15) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — PURCHASES INLINE POPUPS
+   bg-gray-900 with blue/purple borders
+   ═══════════════════════════════════════════ */
+.light .border-blue-500 {
+  border-color: #3b82f6 !important;
+}
+.light .border-purple-500 {
+  border-color: #a855f7 !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — CRM WhatsApp CHAT PANEL
+   bg-[#0b141a]  (custom dark teal-green)
+   ═══════════════════════════════════════════ */
+.light .bg-\[\#0b141a\] {
+  background-color: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — TABLE / CART SCROLL CONTAINERS
+   bg-black/10  bg-black/20  bg-black/40  bg-black/50
+   Used as scrollable region backgrounds in POS, Orders, Reports
+   ═══════════════════════════════════════════ */
+.light .bg-black\/10 { background-color: rgba(0, 0, 0, 0.015) !important; }
+.light .bg-black\/20 { background-color: rgba(0, 0, 0, 0.02)  !important; }
+.light .bg-black\/40 { background-color: rgba(0, 0, 0, 0.03)  !important; }
+.light .bg-black\/50 { background-color: rgba(0, 0, 0, 0.04)  !important; }
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — QUICKORDERMODAL PRIORITY BADGE
+   bg-zinc-700 text-zinc-300 (inactive low priority)
+   ═══════════════════════════════════════════ */
+.light .bg-zinc-700    { background-color: #e5e7eb !important; }
+.light .text-zinc-300  { color: #6b7280 !important; }
+.light .text-zinc-700  { color: #374151 !important; }
+
+/* ═══════════════════════════════════════════
+   LIGHT MODE — PLACEHOLDER TEXT
+   ═══════════════════════════════════════════ */
+.light ::placeholder {
+  color: #9ca3af !important;
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════
+   BASE LAYER
+   ═══════════════════════════════════════════ */
+@layer base {
+  body {
+    @apply bg-bg text-text min-h-screen font-sans transition-all duration-500 ease-in-out;
+    background-image:
+      radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 30%),
+      radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.08), transparent 30%);
+  }
+
+  * {
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar        { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track  { background: transparent; }
+  ::-webkit-scrollbar-thumb  { @apply bg-border rounded-full transition-all duration-300; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted; }
+}
+
+/* ═══════════════════════════════════════════
+   COMPONENT LAYER
+   ═══════════════════════════════════════════ */
+@layer components {
+  .glass-panel {
+    @apply bg-glass-bg border border-glass-border backdrop-blur-xl rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-500 hover:-translate-y-1;
+  }
+
+  .premium-input {
+    @apply bg-black/5 border border-border rounded-2xl px-4 py-3 text-text text-sm
+           outline-none transition-all duration-300 ease-out shadow-sm hover:shadow-md hover:bg-black/10
+           focus:border-primary focus:ring-4 focus:ring-primary-glow/40 focus:-translate-y-0.5 focus:shadow-lg focus:bg-transparent;
+  }
+
+  .premium-btn {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl
+           text-sm font-semibold transition-all duration-300 ease-out relative overflow-hidden
+           shadow-sm hover:shadow-lg hover:-translate-y-0.5 active:scale-95 active:translate-y-0;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   HIDE NUMBER INPUT SPINNERS
+   ═══════════════════════════════════════════ */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ═══════════════════════════════════════════
+   GLOBAL INPUT SIZE & PADDING ENHANCEMENTS
+   ═══════════════════════════════════════════ */
+
+/* Target form text, search, date, and general input fields globally, except those inside table grids */
+.premium-input:not(table *):not(td *):not(input[type="number"]):not(.font-mono):not(.text-xs):not([class*="py-"]),
+input[type="text"]:not(table *):not(td *):not(.font-mono):not(.text-xs):not([class*="py-"]),
+input[type="search"]:not(table *):not(td *):not(.text-xs):not([class*="py-"]),
+input[type="date"]:not(table *):not(td *):not(.text-xs):not([class*="py-"]),
+input[type="tel"]:not(table *):not(td *):not(.text-xs):not([class*="py-"]),
+input[type="email"]:not(table *):not(td *):not(.text-xs):not([class*="py-"]),
+select:not(table *):not(td *):not(.w-10):not(.w-12):not(.w-16):not(.text-xs):not([class*="py-"]) {
+  padding-top: 0.625rem !important; /* ~ py-2.5 equivalent */
+  padding-bottom: 0.625rem !important;
+  padding-left: 0.875rem !important; /* ~ px-3.5 equivalent */
+  padding-right: 0.875rem !important;
+  font-size: 0.9375rem !important; /* Clean text-sm/base transition (15px) */
+  line-height: 1.25rem !important;
+  min-height: 2.75rem !important; /* Consistent, comfortable height */
+}
+
+/* Specific focus state transition to keep them visible and premium */
+.premium-input:focus,
+input[type="text"]:focus,
+input[type="search"]:focus,
+input[type="date"]:focus {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15) !important;
+}
+
+/* ═══════════════════════════════════════════
+   POS SCANNER & CHECKOUT ANIMATIONS
+   ═══════════════════════════════════════════ */
+@keyframes scanSlow {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 100%; }
+}
+
+@keyframes scanBar {
+  0% { top: 2%; }
+  50% { top: 96%; }
+  100% { top: 2%; }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { transform: scale(1); box-shadow: 0 4px 14px rgba(16,185,129,0.3); }
+  50% { transform: scale(0.985); box-shadow: 0 2px 8px rgba(16,185,129,0.15); }
+}
+
+.animate-scan-slow {
+  animation: scanSlow 12s linear infinite;
+}
+
+.animate-scan-bar {
+  animation: scanBar 3s ease-in-out infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 2.5s ease-in-out infinite;
+}
+
+/* ──────────────────────────────────────────────
+   SOFT & SLOW TOAST LIFECYCLE ANIMATION
+   ────────────────────────────────────────────── */
+@keyframes softToastLifecycle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -16px) scale(0.96);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  88% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.98);
+  }
+}
+
+.animate-soft-toast {
+  animation: softToastLifecycle 4.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ──────────────────────────────────────────────
+   PHARMARACK OVERSTOCK & DUPLICATE PULSE GLOW
+   ────────────────────────────────────────────── */
+@keyframes pulseAmberGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4), 0 0 12px rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.0), 0 0 20px rgba(245, 158, 11, 0.4);
+    border-color: rgba(245, 158, 11, 0.9);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseAmberGlow 2s ease-in-out infinite;
+}
+
+/* ──────────────────────────────────────────────
+   PRINT MEDIA RULES — CLEAN BILL & RECEIPT PRINT
+   Gated by body.printing-bill (utils/printBill.ts).
+   Bill portals live as direct <body> children with
+   data-print-root; everything else is display:none.
+   ────────────────────────────────────────────── */
+@media print {
+  body.printing-bill > *:not([data-print-root]) {
+    display: none !important;
+  }
+  body.printing-bill [data-print-root] {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: system-ui, -apple-system, sans-serif !important;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   PHONE VALIDATION SHAKE ANIMATION
+   ═══════════════════════════════════════════ */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+/* ═══════════════════════════════════════════
+   CLEAN & CRISP STATUS BADGES, CHIPS & ACTION CONTROLS (ALL 22+ PAGES)
+   Removes heavy solid/tinted background fills from badges, status pills,
+   chips, and action controls across every page so text is directly
+   and cleanly readable with high-contrast borders and text colors.
+   ═══════════════════════════════════════════ */
+
+/* Universal Status Badges, Tags & Pills: Transparent background with crisp text & border */
+span[class*="px-"][class*="bg-"]:not([class*="bg-primary"]):not([class*="bg-accent"]):not([class*="peer-checked"]),
+span[class*="py-"][class*="bg-"]:not([class*="bg-primary"]):not([class*="bg-accent"]):not([class*="peer-checked"]),
+div[class*="px-"][class*="bg-"][class*="rounded-full"]:not([class*="peer-checked"]),
+div[class*="px-"][class*="bg-"][class*="rounded-xl"]:not([class*="peer-checked"]),
+div[class*="px-"][class*="bg-"][class*="rounded-lg"]:not([class*="peer-checked"]),
+div[class*="px-"][class*="bg-"][class*="rounded-md"]:not([class*="peer-checked"]) {
+  background-color: transparent !important;
+}
+
+/* Secondary Action Buttons & Chips with color tint classes */
+button[class*="bg-emerald-500/"],
+button[class*="bg-emerald-600/"],
+button[class*="bg-green-500/"],
+button[class*="bg-green/"],
+button[class*="bg-sky-500/"],
+button[class*="bg-sky/"],
+button[class*="bg-blue-500/"],
+button[class*="bg-amber-500/"],
+button[class*="bg-yellow-500/"],
+button[class*="bg-orange-500/"],
+button[class*="bg-rose-500/"],
+button[class*="bg-red-500/"],
+button[class*="bg-red/"],
+button[class*="bg-purple-500/"],
+button[class*="bg-violet-500/"],
+button[class*="bg-indigo-500/"],
+button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primary/8"]):not([class*="bg-primary/7"]) {
+  background-color: transparent !important;
+}
+
+/* Crisp subtle hover state for transparent action buttons */
+button[class*="bg-emerald-500/"]:hover,
+button[class*="bg-emerald-600/"]:hover,
+button[class*="bg-green-500/"]:hover,
+button[class*="bg-green/"]:hover,
+button[class*="bg-sky-500/"]:hover,
+button[class*="bg-sky/"]:hover,
+button[class*="bg-blue-500/"]:hover,
+button[class*="bg-amber-500/"]:hover,
+button[class*="bg-yellow-500/"]:hover,
+button[class*="bg-orange-500/"]:hover,
+button[class*="bg-rose-500/"]:hover,
+button[class*="bg-red-500/"]:hover,
+button[class*="bg-red/"]:hover,
+button[class*="bg-purple-500/"]:hover,
+button[class*="bg-violet-500/"]:hover,
+button[class*="bg-indigo-500/"]:hover,
+button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primary/8"]):not([class*="bg-primary/7"]):hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+.light button[class*="bg-emerald-500/"]:hover,
+.light button[class*="bg-emerald-600/"]:hover,
+.light button[class*="bg-green-500/"]:hover,
+.light button[class*="bg-green/"]:hover,
+.light button[class*="bg-sky-500/"]:hover,
+.light button[class*="bg-sky/"]:hover,
+.light button[class*="bg-blue-500/"]:hover,
+.light button[class*="bg-amber-500/"]:hover,
+.light button[class*="bg-yellow-500/"]:hover,
+.light button[class*="bg-orange-500/"]:hover,
+.light button[class*="bg-rose-500/"]:hover,
+.light button[class*="bg-red-500/"]:hover,
+.light button[class*="bg-red/"]:hover,
+.light button[class*="bg-purple-500/"]:hover,
+.light button[class*="bg-violet-500/"]:hover,
+.light button[class*="bg-indigo-500/"]:hover,
+.light button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primary/8"]):not([class*="bg-primary/7"]):hover {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}

@@ -1,0 +1,1388 @@
+import express from 'express';
+import { dbManager } from '../database/connection.js';
+import { inventoryCache } from '../services/inventoryCache.js';
+import { rebuildPurchaseSummaryCache, triggerBackgroundSummaryRebuild } from '../services/summaryCacheService.js';
+
+const router = express.Router();
+
+// Timeline result cache (filter-signature keyed, 60s TTL). One computation
+// serves every infinite-scroll page request (pages 2..N become O(1) slices)
+// instead of re-running 4 unbounded SELECTs + the running-stock replay each time.
+const TIMELINE_CACHE_TTL_MS = 60_000;
+const TIMELINE_CACHE_MAX_ENTRIES = 40;
+const timelineCache = new Map<string, { at: number; filtered: any[]; totalItems: number }>();
+
+export function invalidateInvestigationTimelineCache() {
+  timelineCache.clear();
+}
+
+const nextDayString = (day: string): string => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+
+// Numeric timestamp parsed ONCE per row (dates arrive in mixed formats:
+// ISO-T vs space-separated), so sorts/filtering never re-parse strings.
+const rowTs = (value: unknown): number => {
+  const t = Date.parse(String(value ?? ''));
+  return Number.isNaN(t) ? 0 : t;
+};
+
+// Helper to log changes to action_logs. `metadata` is stored as structured JSON
+// alongside the human-readable description so forensics/compliance reads (see
+// /timeline below) don't depend on regex-parsing the description text.
+async function logAction(db: any, actionType: string, description: string, metadata?: Record<string, any>) {
+  await db.run(
+    'INSERT INTO action_logs (action_type, description, metadata) VALUES (?, ?, ?)',
+    [actionType, description, metadata ? JSON.stringify(metadata) : null]
+  );
+}
+
+// Timeline endpoint aggregating POS sales, purchases, customer returns, and adjustments with running stock calculation
+router.get('/timeline', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const {
+      q,
+      dateFrom,
+      dateTo,
+      medicineName,
+      batchNo,
+      salesBillNo,
+      purchaseBillNo,
+      patientName,
+      distributor,
+      reference,
+      party,
+      type
+    } = req.query;
+
+    // Decide whether to apply date filtering at the database level.
+    // If we have a medicineName or batchNo filter, we want to fetch the entire history
+    // so we can compute the chronologically accurate running stock (opening/closing/medicine totals),
+    // and then filter by date in memory.
+    // If we DO NOT have medicineName or batchNo, we apply date filters directly in SQL to prevent loading too much data.
+    const hasMedicineOrBatchFilter = !!(medicineName || batchNo || q);
+    const sqlDateFilter = !hasMedicineOrBatchFilter;
+
+    let salesQuery = `
+      SELECT
+        'Sale' AS type,
+        sinv.id AS invoice_id,
+        sinv.invoice_no AS reference,
+        sinv.date AS date,
+        sinv.discount AS discount,
+        sinv.total_amount AS total_amount,
+        sinv.subtotal AS subtotal,
+        c.name AS customer_name,
+        si.quantity AS quantity,
+        si.loose_qty AS loose_quantity,
+        im.batch_no AS batch_no,
+        m.name AS medicine_name,
+        m.id AS medicine_id,
+        im.id AS inventory_id,
+        im.expiry_date AS expiry_date,
+        im.mrp AS mrp
+      FROM sale_items si
+      JOIN sales_invoices sinv ON si.invoice_id = sinv.id
+      JOIN inventory_master im ON si.inventory_id = im.id
+      JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN customers c ON sinv.customer_id = c.id
+      WHERE 1=1
+    `;
+    const salesParams: any[] = [];
+
+    let purchasesQuery = `
+      SELECT
+        'Purchase' AS type,
+        p.id AS purchase_id,
+        p.invoice_no AS reference,
+        p.date AS date,
+        d.name AS distributor_name,
+        pi.quantity AS quantity,
+        pi.free_qty AS free_qty,
+        pi.batch_no AS batch_no,
+        m.name AS medicine_name,
+        m.id AS medicine_id,
+        im.id AS inventory_id,
+        pi.expiry_date AS expiry_date,
+        pi.mrp AS mrp
+      FROM purchase_items pi
+      JOIN purchases p ON pi.purchase_id = p.id
+      JOIN medicines m ON pi.medicine_id = m.id
+      LEFT JOIN distributors d ON p.distributor_id = d.id
+      LEFT JOIN inventory_master im ON im.medicine_id = pi.medicine_id AND im.batch_no = pi.batch_no
+      WHERE 1=1
+    `;
+    const purchasesParams: any[] = [];
+
+    let returnsQuery = `
+      SELECT
+        'Return' AS type,
+        r.id AS return_id,
+        r.return_no AS reference,
+        r.date AS date,
+        c.name AS customer_name,
+        d.name AS distributor_name,
+        ri.quantity AS quantity,
+        ri.batch_no AS batch_no,
+        m.name AS medicine_name,
+        m.id AS medicine_id,
+        im.id AS inventory_id,
+        im.expiry_date AS expiry_date,
+        ri.mrp AS mrp,
+        r.type AS return_type,
+        r.reason AS reason
+      FROM return_items ri
+      JOIN returns r ON ri.return_id = r.id
+      JOIN medicines m ON ri.medicine_id = m.id
+      LEFT JOIN distributors d ON r.distributor_id = d.id
+      LEFT JOIN sales_invoices si ON r.original_invoice_id = si.id
+      LEFT JOIN customers c ON si.customer_id = c.id
+      LEFT JOIN inventory_master im ON im.medicine_id = ri.medicine_id AND im.batch_no = ri.batch_no
+      WHERE 1=1
+    `;
+    const returnsParams: any[] = [];
+
+    let logsQuery = `
+      SELECT
+        'Adjustment' AS type,
+        al.id AS log_id,
+        al.action_type AS reference,
+        al.created_at AS date,
+        al.description AS detail,
+        al.metadata AS metadata
+      FROM action_logs al
+      WHERE al.action_type IN ('INVENTORY_CORRECTION', 'SALES_BILL_CORRECTION', 'PURCHASE_BILL_CORRECTION')
+    `;
+    const logsParams: any[] = [];
+
+    // Apply filters directly in SQL queries to minimize database transfer size
+    if (medicineName) {
+      const medFilter = `%${medicineName}%`;
+      salesQuery += ` AND m.name LIKE ?`;
+      salesParams.push(medFilter);
+      purchasesQuery += ` AND m.name LIKE ?`;
+      purchasesParams.push(medFilter);
+      returnsQuery += ` AND m.name LIKE ?`;
+      returnsParams.push(medFilter);
+      logsQuery += ` AND al.description LIKE ?`;
+      logsParams.push(medFilter);
+    }
+
+    if (batchNo) {
+      const batchFilter = `%${batchNo}%`;
+      salesQuery += ` AND im.batch_no LIKE ?`;
+      salesParams.push(batchFilter);
+      purchasesQuery += ` AND pi.batch_no LIKE ?`;
+      purchasesParams.push(batchFilter);
+      returnsQuery += ` AND ri.batch_no LIKE ?`;
+      returnsParams.push(batchFilter);
+      logsQuery += ` AND al.description LIKE ?`;
+      logsParams.push(batchFilter);
+    }
+
+    if (reference) {
+      const refFilter = `%${reference}%`;
+      salesQuery += ` AND sinv.invoice_no LIKE ?`;
+      salesParams.push(refFilter);
+      purchasesQuery += ` AND p.invoice_no LIKE ?`;
+      purchasesParams.push(refFilter);
+      returnsQuery += ` AND r.return_no LIKE ?`;
+      returnsParams.push(refFilter);
+    }
+
+    if (party) {
+      const partyFilter = `%${party}%`;
+      salesQuery += ` AND c.name LIKE ?`;
+      salesParams.push(partyFilter);
+      purchasesQuery += ` AND d.name LIKE ?`;
+      purchasesParams.push(partyFilter);
+      returnsQuery += ` AND (c.name LIKE ? OR d.name LIKE ?)`;
+      returnsParams.push(partyFilter, partyFilter);
+    }
+
+    if (q) {
+      const qFilter = `%${q}%`;
+      salesQuery += ` AND (m.name LIKE ? OR im.batch_no LIKE ? OR sinv.invoice_no LIKE ? OR c.name LIKE ?)`;
+      salesParams.push(qFilter, qFilter, qFilter, qFilter);
+      purchasesQuery += ` AND (m.name LIKE ? OR pi.batch_no LIKE ? OR p.invoice_no LIKE ? OR d.name LIKE ?)`;
+      purchasesParams.push(qFilter, qFilter, qFilter, qFilter);
+      returnsQuery += ` AND (m.name LIKE ? OR ri.batch_no LIKE ? OR r.return_no LIKE ? OR c.name LIKE ? OR d.name LIKE ?)`;
+      returnsParams.push(qFilter, qFilter, qFilter, qFilter, qFilter);
+      logsQuery += ` AND al.description LIKE ?`;
+      logsParams.push(qFilter);
+    }
+
+    if (sqlDateFilter) {
+      // Sargable range bounds (bare column vs 'YYYY-MM-DD' strings prune via
+      // idx_sales_invoices_date / idx_purchases_date_dist / idx_returns_date).
+      // DATE(col) wrappers defeated those indexes and full-scanned per request.
+      if (dateFrom) {
+        salesQuery += ` AND sinv.date >= ?`;
+        salesParams.push(dateFrom);
+        purchasesQuery += ` AND p.date >= ?`;
+        purchasesParams.push(dateFrom);
+        returnsQuery += ` AND r.date >= ?`;
+        returnsParams.push(dateFrom);
+        logsQuery += ` AND al.created_at >= ?`;
+        logsParams.push(dateFrom);
+      }
+      if (dateTo) {
+        const toExclusive = nextDayString(String(dateTo));
+        salesQuery += ` AND sinv.date < ?`;
+        salesParams.push(toExclusive);
+        purchasesQuery += ` AND p.date < ?`;
+        purchasesParams.push(toExclusive);
+        returnsQuery += ` AND r.date < ?`;
+        returnsParams.push(toExclusive);
+        logsQuery += ` AND al.created_at < ?`;
+        logsParams.push(toExclusive);
+      }
+    }
+
+    // Determine query routing based on requested transaction type filter
+    const querySales = !type || type === 'All' || type === 'Sale';
+    const queryPurchases = !type || type === 'All' || type === 'Purchase';
+    const queryReturns = !type || type === 'All' || type === 'Return';
+    const queryLogs = !type || type === 'All' || type === 'Adjustment';
+
+    // Filter-signature cache: identical filters (any page) reuse one computation
+    const cacheSig = JSON.stringify([
+      q, dateFrom, dateTo, medicineName, batchNo, salesBillNo,
+      purchaseBillNo, patientName, distributor, reference, party, type
+    ]);
+    const cachedEntry = timelineCache.get(cacheSig);
+    if (cachedEntry && Date.now() - cachedEntry.at < TIMELINE_CACHE_TTL_MS) {
+      cachedEntry.at = Date.now();
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 100;
+      const totalPages = Math.ceil(cachedEntry.totalItems / limit);
+      const offset = (page - 1) * limit;
+      return res.json({
+        data: cachedEntry.filtered.slice(offset, offset + limit),
+        totalPages,
+        currentPage: page,
+        totalItems: cachedEntry.totalItems
+      });
+    }
+
+    const salesPromise = querySales ? db.all(salesQuery, salesParams) : Promise.resolve([]);
+    const purchasesPromise = queryPurchases ? db.all(purchasesQuery, purchasesParams) : Promise.resolve([]);
+    const returnsPromise = queryReturns ? db.all(returnsQuery, returnsParams) : Promise.resolve([]);
+    const logsPromise = queryLogs ? db.all(logsQuery, logsParams) : Promise.resolve([]);
+
+    // Run queries in parallel
+    const [sales, purchases, returns, logs] = await Promise.all([
+      salesPromise,
+      purchasesPromise,
+      returnsPromise,
+      logsPromise
+    ]);
+
+    // Master caches resolve adjustment medicine/inventory references. They are
+    // LAZY: 291k medicines + 37k inventory rows are only loaded when adjustment
+    // logs actually exist — never on the hot sale/purchase/return path.
+    let medicinesList: Array<{ id: number; name: string }> = [];
+    const medMapByName = new Map<string, number>();
+    const medMapById = new Map<number, string>();
+    const invMapById = new Map<number, { medicine_id: number; batch_no: string; expiry_date: string; mrp: number }>();
+    if (logs.length > 0) {
+      medicinesList = await db.all('SELECT id, name FROM medicines');
+      for (const m of medicinesList) {
+        medMapByName.set(String(m.name).toLowerCase().trim(), m.id);
+        medMapById.set(m.id, m.name);
+      }
+      const inventoryList = await db.all('SELECT id, medicine_id, batch_no, expiry_date, mrp FROM inventory_master');
+      for (const im of inventoryList) {
+        invMapById.set(im.id, im);
+      }
+    }
+
+    // Map logs to timeline items
+    const adjustments: any[] = [];
+    for (const log of logs) {
+      // Prefer the structured metadata column; only fall back to regex-parsing
+      // the human-readable description for rows logged before it existed.
+      let meta: any = null;
+      if (log.metadata) {
+        try { meta = JSON.parse(log.metadata); } catch (_e) { meta = null; }
+      }
+
+      const parsedMedName = meta?.medicineName
+        ? meta.medicineName.toLowerCase().trim()
+        : (log.detail.match(/Inventory correction for "([^"]+)"/i)?.[1]?.toLowerCase().trim() || '');
+      const parsedBatch = meta?.batchNo?.to ?? (log.detail.match(/Batch:\s*"([^"]+)"/i)?.[1] || '');
+      const parsedInvId = meta?.inventoryId ?? (() => {
+        const m = log.detail.match(/ID\s+(\d+)/i);
+        return m ? parseInt(m[1], 10) : null;
+      })();
+
+      let medicine_id = meta?.medicineId ?? (parsedMedName ? medMapByName.get(parsedMedName) : null);
+      let batch_no = parsedBatch;
+      let expiry_date = null;
+      let mrp = 0;
+      let inventory_id = parsedInvId;
+
+      if (parsedInvId && invMapById.has(parsedInvId)) {
+        const inv = invMapById.get(parsedInvId)!;
+        medicine_id = inv.medicine_id;
+        batch_no = inv.batch_no;
+        expiry_date = inv.expiry_date;
+        mrp = inv.mrp;
+      }
+
+      // Find medicine name
+      let medicine_name = '';
+      if (medicine_id) {
+        const medName = medMapById.get(medicine_id);
+        if (medName) medicine_name = medName;
+      }
+
+      adjustments.push({
+        type: 'Adjustment',
+        log_id: log.log_id,
+        reference: log.reference,
+        date: log.date,
+        customer_name: null,
+        distributor_name: null,
+        quantity: 0,
+        loose_quantity: 0,
+        batch_no,
+        medicine_name,
+        medicine_id,
+        inventory_id,
+        expiry_date,
+        mrp,
+        detail: log.detail,
+        metadata: meta
+      });
+    }
+
+    // Combine all transactions
+    let allTransactions: any[] = [];
+
+    // Format sales
+    for (const s of sales) {
+      allTransactions.push({
+        ...s,
+        purchase_qty: 0,
+        sale_qty: s.quantity,
+        sale_loose: s.loose_quantity,
+        purchase_return_qty: 0,
+        sales_return_qty: 0,
+        adj_qty: 0,
+        adj_loose: 0,
+        party: s.customer_name || 'Walk-in'
+      });
+    }
+
+    // Format purchases
+    for (const p of purchases) {
+      allTransactions.push({
+        ...p,
+        purchase_qty: p.quantity,
+        sale_qty: 0,
+        sale_loose: 0,
+        purchase_return_qty: 0,
+        sales_return_qty: 0,
+        adj_qty: 0,
+        adj_loose: 0,
+        party: p.distributor_name || 'Unknown'
+      });
+    }
+
+    // Format returns
+    for (const r of returns) {
+      const isSaleReturn = r.return_type === 'sale';
+      allTransactions.push({
+        ...r,
+        purchase_qty: 0,
+        sale_qty: 0,
+        sale_loose: 0,
+        purchase_return_qty: isSaleReturn ? 0 : r.quantity,
+        sales_return_qty: isSaleReturn ? r.quantity : 0,
+        adj_qty: 0,
+        adj_loose: 0,
+        party: isSaleReturn ? (r.customer_name || 'Walk-in') : (r.distributor_name || 'Unknown')
+      });
+    }
+
+    // Format adjustments
+    for (const adj of adjustments) {
+      // Prefer structured metadata; fall back to parsing the detail text for
+      // rows logged before the metadata column existed.
+      let adj_qty = 0;
+      let adj_loose = 0;
+      let target_qty = null;
+      let target_loose = null;
+
+      if (adj.metadata?.quantity) {
+        const oldVal = Number(adj.metadata.quantity.from);
+        const newVal = Number(adj.metadata.quantity.to);
+        adj_qty = newVal - oldVal;
+        target_qty = newVal;
+      } else {
+        const qtyMatch = adj.detail.match(/Quantity:\s*(\d+)\s*->\s*(\d+)/i);
+        if (qtyMatch) {
+          const oldVal = parseInt(qtyMatch[1], 10);
+          const newVal = parseInt(qtyMatch[2], 10);
+          adj_qty = newVal - oldVal;
+          target_qty = newVal;
+        }
+      }
+
+      if (adj.metadata?.looseQuantity) {
+        const oldVal = Number(adj.metadata.looseQuantity.from);
+        const newVal = Number(adj.metadata.looseQuantity.to);
+        adj_loose = newVal - oldVal;
+        target_loose = newVal;
+      } else {
+        const looseMatch = adj.detail.match(/Loose(?:_quantity)?:\s*(\d+)\s*->\s*(\d+)/i);
+        if (looseMatch) {
+          const oldVal = parseInt(looseMatch[1], 10);
+          const newVal = parseInt(looseMatch[2], 10);
+          adj_loose = newVal - oldVal;
+          target_loose = newVal;
+        }
+      }
+
+      allTransactions.push({
+        ...adj,
+        purchase_qty: 0,
+        sale_qty: 0,
+        sale_loose: 0,
+        purchase_return_qty: 0,
+        sales_return_qty: 0,
+        adj_qty,
+        adj_loose,
+        target_qty,
+        target_loose,
+        party: 'Admin'
+      });
+    }
+
+    // Sort all chronologically (oldest first) to compute running totals.
+    // Timestamps are precomputed once per row — never inside the comparator.
+    for (const tx of allTransactions) {
+      tx._ts = rowTs(tx.date);
+    }
+    allTransactions.sort((a, b) => a._ts - b._ts);
+
+    // Maps for tracking running totals
+    // Key: medicine_id + '_' + batch_no
+    const batchRunning = new Map<string, { qty: number; loose: number }>();
+    // Key: medicine_id
+    const medRunning = new Map<number, { qty: number; loose: number }>();
+
+    for (const tx of allTransactions) {
+      if (!tx.medicine_id) continue;
+
+      const batchKey = `${tx.medicine_id}_${tx.batch_no || ''}`;
+      
+      // Get previous batch stock
+      if (!batchRunning.has(batchKey)) {
+        batchRunning.set(batchKey, { qty: 0, loose: 0 });
+      }
+      const prevBatch = batchRunning.get(batchKey)!;
+      tx.opening_qty = prevBatch.qty;
+      tx.opening_loose = prevBatch.loose;
+
+      // Get previous med stock
+      if (!medRunning.has(tx.medicine_id)) {
+        medRunning.set(tx.medicine_id, { qty: 0, loose: 0 });
+      }
+      const prevMed = medRunning.get(tx.medicine_id)!;
+
+      // Update stocks
+      let newBatchQty = prevBatch.qty;
+      let newBatchLoose = prevBatch.loose;
+
+      let newMedQty = prevMed.qty;
+      let newMedLoose = prevMed.loose;
+
+      if (tx.type === 'Purchase') {
+        newBatchQty += tx.purchase_qty;
+        newMedQty += tx.purchase_qty;
+      } else if (tx.type === 'Sale') {
+        newBatchQty -= tx.sale_qty;
+        newBatchLoose -= tx.sale_loose;
+        newMedQty -= tx.sale_qty;
+        newMedLoose -= tx.sale_loose;
+      } else if (tx.type === 'Return') {
+        if (tx.return_type === 'sale') {
+          newBatchQty += tx.sales_return_qty;
+          newMedQty += tx.sales_return_qty;
+        } else {
+          newBatchQty -= tx.purchase_return_qty;
+          newMedQty -= tx.purchase_return_qty;
+        }
+      } else if (tx.type === 'Adjustment') {
+        if (tx.target_qty !== null) {
+          newMedQty += (tx.target_qty - newBatchQty);
+          newBatchQty = tx.target_qty;
+        } else {
+          newBatchQty += tx.adj_qty;
+          newMedQty += tx.adj_qty;
+        }
+        if (tx.target_loose !== null) {
+          newMedLoose += (tx.target_loose - newBatchLoose);
+          newBatchLoose = tx.target_loose;
+        } else {
+          newBatchLoose += tx.adj_loose;
+          newMedLoose += tx.adj_loose;
+        }
+      }
+
+      // Update maps
+      batchRunning.set(batchKey, { qty: newBatchQty, loose: newBatchLoose });
+      medRunning.set(tx.medicine_id, { qty: newMedQty, loose: newMedLoose });
+
+      tx.closing_qty = newBatchQty;
+      tx.closing_loose = newBatchLoose;
+
+      tx.medicine_stock_qty = newMedQty;
+      tx.medicine_stock_loose = newMedLoose;
+    }
+
+    // In-memory query filter checks (secondary pass, highly performant on SQL-restricted subset)
+    let filtered = allTransactions;
+    if (q) {
+      const qLower = String(q).toLowerCase();
+      filtered = filtered.filter(tx => 
+        (tx.medicine_name && tx.medicine_name.toLowerCase().includes(qLower)) ||
+        (tx.batch_no && tx.batch_no.toLowerCase().includes(qLower)) ||
+        (tx.reference && tx.reference.toLowerCase().includes(qLower)) ||
+        (tx.party && tx.party.toLowerCase().includes(qLower)) ||
+        (tx.detail && tx.detail.toLowerCase().includes(qLower))
+      );
+    }
+
+    // In-memory date bounds are only needed when SQL skipped them (medicine/batch
+    // full-history mode); with _ts precomputed they cost one numeric compare.
+    if (!sqlDateFilter) {
+      if (dateFrom) {
+        const fromTs = rowTs(`${dateFrom}T00:00:00`);
+        filtered = filtered.filter(tx => tx._ts >= fromTs);
+      }
+      if (dateTo) {
+        const toTs = rowTs(`${nextDayString(String(dateTo))}T00:00:00`);
+        filtered = filtered.filter(tx => tx._ts < toTs);
+      }
+    }
+
+    if (medicineName) {
+      const medLower = String(medicineName).toLowerCase();
+      filtered = filtered.filter(tx => tx.medicine_name && tx.medicine_name.toLowerCase().includes(medLower));
+    }
+
+    if (batchNo) {
+      const batchLower = String(batchNo).toLowerCase();
+      filtered = filtered.filter(tx => tx.batch_no && tx.batch_no.toLowerCase().includes(batchLower));
+    }
+
+    if (salesBillNo) {
+      const sBillLower = String(salesBillNo).toLowerCase();
+      filtered = filtered.filter(tx => tx.type === 'Sale' && tx.reference && tx.reference.toLowerCase().includes(sBillLower));
+    }
+
+    if (purchaseBillNo) {
+      const pBillLower = String(purchaseBillNo).toLowerCase();
+      filtered = filtered.filter(tx => tx.type === 'Purchase' && tx.reference && tx.reference.toLowerCase().includes(pBillLower));
+    }
+
+    if (patientName) {
+      const patientLower = String(patientName).toLowerCase();
+      filtered = filtered.filter(tx => tx.type === 'Sale' && tx.party && tx.party.toLowerCase().includes(patientLower));
+    }
+
+    if (distributor) {
+      const distLower = String(distributor).toLowerCase();
+      filtered = filtered.filter(tx => tx.type === 'Purchase' && tx.party && tx.party.toLowerCase().includes(distLower));
+    }
+
+    if (reference) {
+      const refLower = String(reference).toLowerCase();
+      filtered = filtered.filter(tx => tx.reference && tx.reference.toLowerCase().includes(refLower));
+    }
+
+    if (party) {
+      const partyLower = String(party).toLowerCase();
+      filtered = filtered.filter(tx => tx.party && tx.party.toLowerCase().includes(partyLower));
+    }
+
+    if (type && type !== 'All') {
+      filtered = filtered.filter(tx => tx.type === type);
+    }
+
+    // Descending display order via reverse of the ascending running-stock sort —
+    // a second full sort (with per-comparison date parsing) is pure waste.
+    filtered.reverse();
+
+    const totalItems = filtered.length;
+
+    // Store for sibling page requests (any page/limit combination)
+    timelineCache.set(cacheSig, { at: Date.now(), filtered, totalItems });
+    if (timelineCache.size > TIMELINE_CACHE_MAX_ENTRIES) {
+      const oldestKey = timelineCache.keys().next().value;
+      if (oldestKey !== undefined) timelineCache.delete(oldestKey);
+    }
+
+    // Paginate results
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 100;
+    const totalPages = Math.ceil(totalItems / limit);
+    const offset = (page - 1) * limit;
+    const paginated = filtered.slice(offset, offset + limit);
+
+    res.json({
+      data: paginated,
+      totalPages,
+      currentPage: page,
+      totalItems
+    });
+  } catch (error) {
+    const err = error as Error;
+    console.error('Timeline fetch failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Search endpoint with multi-criteria filters
+router.get('/search', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const {
+      q,
+      patientName,
+      medicineName,
+      salesBillNo,
+      purchaseBillNo,
+      batchNo,
+      distributor,
+      expiryDate,
+      mrp,
+      quantity,
+      looseQuantity
+    } = req.query;
+
+    let query = `
+      SELECT DISTINCT
+        im.id AS inventory_id,
+        im.medicine_id,
+        m.name AS medicine_name,
+        im.batch_no,
+        im.expiry_date,
+        im.quantity,
+        im.loose_quantity,
+        im.mrp,
+        im.cost_price,
+        im.rack_location,
+        d.name AS distributor_name
+      FROM inventory_master im
+      JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN purchase_items pi ON pi.medicine_id = im.medicine_id AND pi.batch_no = im.batch_no
+      LEFT JOIN purchases p ON pi.purchase_id = p.id
+      LEFT JOIN sale_items si ON si.inventory_id = im.id
+      LEFT JOIN sales_invoices sinv ON si.invoice_id = sinv.id
+      LEFT JOIN customers c ON sinv.customer_id = c.id
+      LEFT JOIN distributors d ON p.distributor_id = d.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (q) {
+      query += ` AND (m.name LIKE ? OR im.batch_no LIKE ? OR sinv.invoice_no LIKE ? OR p.invoice_no LIKE ? OR c.name LIKE ?)`;
+      const likeQ = `%${q}%`;
+      params.push(likeQ, likeQ, likeQ, likeQ, likeQ);
+    }
+    if (medicineName) {
+      query += ` AND m.name LIKE ?`;
+      params.push(`%${medicineName}%`);
+    }
+    if (batchNo) {
+      query += ` AND im.batch_no LIKE ?`;
+      params.push(`%${batchNo}%`);
+    }
+    if (expiryDate) {
+      query += ` AND im.expiry_date LIKE ?`;
+      params.push(`%${expiryDate}%`);
+    }
+    if (mrp) {
+      query += ` AND im.mrp = ?`;
+      params.push(Number(mrp));
+    }
+    if (quantity) {
+      query += ` AND im.quantity = ?`;
+      params.push(Number(quantity));
+    }
+    if (looseQuantity) {
+      query += ` AND im.loose_quantity = ?`;
+      params.push(Number(looseQuantity));
+    }
+    if (distributor) {
+      query += ` AND d.name LIKE ?`;
+      params.push(`%${distributor}%`);
+    }
+    if (patientName) {
+      query += ` AND c.name LIKE ?`;
+      params.push(`%${patientName}%`);
+    }
+    if (salesBillNo) {
+      query += ` AND sinv.invoice_no LIKE ?`;
+      params.push(`%${salesBillNo}%`);
+    }
+    if (purchaseBillNo) {
+      query += ` AND p.invoice_no LIKE ?`;
+      params.push(`%${purchaseBillNo}%`);
+    }
+
+    query += ` ORDER BY m.name ASC LIMIT 50`;
+
+    const results = await db.all(query, params);
+    res.json(results);
+  } catch (error) {
+    const err = error as Error;
+    console.error('Search failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Detailed history timeline trace and references
+router.get('/details/:inventoryId', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const { inventoryId } = req.params;
+
+    const inventory = await db.get(
+      `SELECT im.*, m.name AS medicine_name, m.generic_name, m.manufacturer, m.category, m.hsn_code, m.cgst_per, m.sgst_per, m.igst_per
+       FROM inventory_master im
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE im.id = ?`,
+      [inventoryId]
+    );
+
+    if (!inventory) {
+      return res.status(404).json({ error: 'Inventory record not found' });
+    }
+
+    // Purchase history (matching medicine & batch)
+    const purchases = await db.all(
+      `SELECT pi.*, p.invoice_no, p.date, d.name AS distributor_name
+       FROM purchase_items pi
+       JOIN purchases p ON pi.purchase_id = p.id
+       LEFT JOIN distributors d ON p.distributor_id = d.id
+       WHERE pi.medicine_id = ? AND pi.batch_no = ?`,
+      [inventory.medicine_id, inventory.batch_no]
+    );
+
+    // Sales history (referencing inventory ID)
+    const sales = await db.all(
+      `SELECT si.*, sinv.invoice_no, sinv.date, c.name AS customer_name
+       FROM sale_items si
+       JOIN sales_invoices sinv ON si.invoice_id = sinv.id
+       LEFT JOIN customers c ON sinv.customer_id = c.id
+       WHERE si.inventory_id = ?`,
+      [inventoryId]
+    );
+
+    // Build timeline trace chronologically
+    const timeline: any[] = [];
+
+    for (const p of purchases) {
+      timeline.push({
+        date: p.date,
+        type: 'Purchase',
+        reference: p.invoice_no,
+        detail: `Purchased from ${p.distributor_name || 'Unknown Supplier'}`,
+        qtyChange: p.quantity,
+        cost: p.cost_price,
+        mrp: p.mrp
+      });
+    }
+
+    for (const s of sales) {
+      timeline.push({
+        date: s.date,
+        type: 'Sale',
+        reference: s.invoice_no,
+        detail: `Sold to Patient ${s.customer_name || 'Walk-in Customer'}`,
+        qtyChange: -s.quantity,
+        price: s.unit_price
+      });
+    }
+
+    // Sort descending by date
+    timeline.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    res.json({
+      inventory,
+      purchases,
+      sales,
+      timeline
+    });
+  } catch (error) {
+    const err = error as Error;
+    console.error('Details fetch failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Direct Inventory Correction
+router.put('/inventory/:inventoryId', async (req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const { inventoryId } = req.params;
+    const { quantity, loose_quantity, batch_no, expiry_date, mrp, cost_price, rack_location } = req.body;
+
+    if (quantity < 0 || loose_quantity < 0) {
+      return res.status(400).json({ error: 'Quantity cannot be negative' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+
+    const oldRecord = await db.get(
+      'SELECT im.*, m.name FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?',
+      [inventoryId]
+    );
+
+    if (!oldRecord) {
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'Inventory record not found' });
+    }
+
+    await db.run(
+      `UPDATE inventory_master
+       SET quantity = ?, loose_quantity = ?, batch_no = ?, expiry_date = ?, mrp = ?, cost_price = ?, rack_location = ?
+       WHERE id = ?`,
+      [quantity, loose_quantity, batch_no, expiry_date, mrp, cost_price, rack_location, inventoryId]
+    );
+
+    // Cascading updates to transaction items to keep them in sync
+    await db.run(
+      `UPDATE purchase_items
+       SET batch_no = ?, expiry_date = ?
+       WHERE medicine_id = ? AND batch_no = ?`,
+      [batch_no, expiry_date, oldRecord.medicine_id, oldRecord.batch_no]
+    );
+
+    try {
+      await db.run(
+        `UPDATE sale_items
+         SET batch_no = ?
+         WHERE inventory_id = ?`,
+        [batch_no, inventoryId]
+      );
+    } catch (_e) {
+      // Ignore if column not present or not populated
+    }
+
+    // Audit trace logging
+    const desc = `Inventory correction for "${oldRecord.name}" (ID ${inventoryId}). Quantity: ${oldRecord.quantity} -> ${quantity}, Loose: ${oldRecord.loose_quantity} -> ${loose_quantity}, Batch: "${oldRecord.batch_no}" -> "${batch_no}", Expiry: "${oldRecord.expiry_date}" -> "${expiry_date}".`;
+    await logAction(db, 'INVENTORY_CORRECTION', desc, {
+      inventoryId: Number(inventoryId),
+      medicineId: oldRecord.medicine_id,
+      medicineName: oldRecord.name,
+      quantity: { from: oldRecord.quantity, to: quantity },
+      looseQuantity: { from: oldRecord.loose_quantity, to: loose_quantity },
+      batchNo: { from: oldRecord.batch_no, to: batch_no },
+      expiryDate: { from: oldRecord.expiry_date, to: expiry_date }
+    });
+
+    await db.run('COMMIT');
+    inventoryCache.invalidate();
+    invalidateInvestigationTimelineCache();
+    res.json({ success: true, message: 'Inventory record corrected successfully' });
+  } catch (error) {
+    if (db) await db.run('ROLLBACK');
+    const err = error as Error;
+    console.error('Inventory correction failed:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Sales Bill correction and inventory sync
+router.put('/sales/:invoiceId', async (req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const { invoiceId } = req.params;
+    const { items, discount = 0 } = req.body;
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'Items must be an array' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+
+    // Fetch existing bill details
+    const existingBill = await db.get('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);
+    if (!existingBill) {
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'Sales invoice not found' });
+    }
+
+    // Step 1: Fetch old items to calculate deltas
+    const oldItems = await db.all('SELECT inventory_id, quantity, loose_qty, batch_no FROM sale_items WHERE invoice_id = ?', [invoiceId]);
+
+    // Group items by inventory_id to calculate net changes (accumulating duplicates if any)
+    const deltaMap = new Map<number, {
+      inventory_id: number;
+      oldQty: number;
+      oldLoose: number;
+      newQty: number;
+      newLoose: number;
+    }>();
+
+    for (const oi of oldItems) {
+      if (!oi.inventory_id) continue;
+      const invId = Number(oi.inventory_id);
+      const existing = deltaMap.get(invId);
+      if (existing) {
+        existing.oldQty += Number(oi.quantity || 0);
+        existing.oldLoose += Number(oi.loose_qty || 0);
+      } else {
+        deltaMap.set(invId, {
+          inventory_id: invId,
+          oldQty: Number(oi.quantity || 0),
+          oldLoose: Number(oi.loose_qty || 0),
+          newQty: 0,
+          newLoose: 0
+        });
+      }
+    }
+
+    // Resolve any item in `items` missing inventory_id
+    for (const ni of items) {
+      if (!ni.inventory_id && (ni.medicine_id || ni.medicine_name) && ni.batch_no) {
+        const invRow = await db.get(
+          `SELECT id FROM inventory_master 
+           WHERE (medicine_id = ? OR medicine_id IN (SELECT id FROM medicines WHERE LOWER(name) = LOWER(?))) 
+             AND batch_no = ? LIMIT 1`,
+          [ni.medicine_id || 0, (ni.medicine_name || '').trim(), (ni.batch_no || '').trim()]
+        );
+        if (invRow) ni.inventory_id = invRow.id;
+      }
+
+      if (!ni.inventory_id) continue;
+      const invId = Number(ni.inventory_id);
+      const existing = deltaMap.get(invId);
+      if (existing) {
+        existing.newQty += Number(ni.quantity || 0);
+        existing.newLoose += Number(ni.loose_qty || 0);
+      } else {
+        deltaMap.set(invId, {
+          inventory_id: invId,
+          oldQty: 0,
+          oldLoose: 0,
+          newQty: Number(ni.quantity || 0),
+          newLoose: Number(ni.loose_qty || 0)
+        });
+      }
+    }
+
+    // Step 2: Validate and apply net changes in inventory_master
+    const { applyStockDelta, recordStockLedger } = await import('../utils/stockRebuild.js');
+    const itemAdjustments: Array<{ inventoryId: number; medicineName: string; qtyDelta: number; looseDelta: number }> = [];
+
+    for (const [invId, entry] of deltaMap.entries()) {
+      const netQty = entry.newQty - entry.oldQty;
+      const netLoose = entry.newLoose - entry.oldLoose;
+      if (netQty === 0 && netLoose === 0) continue;
+
+      const currentStock = await db.get(
+        `SELECT im.quantity, im.loose_quantity, im.batch_no, im.medicine_id, COALESCE(m.pack_size, 1) as pack_size, m.name as medicine_name
+         FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?`,
+        [invId]
+      );
+
+      if (!currentStock) {
+        throw new Error(`Inventory item ID ${invId} does not exist.`);
+      }
+
+      const packSize = currentStock.pack_size || 1;
+      const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
+      const netUnitsSold = netQty * packSize + netLoose;
+
+      if (netUnitsSold > 0 && currentTotalUnits < netUnitsSold) {
+        throw new Error(
+          `Insufficient stock for "${currentStock.medicine_name}". ` +
+          `Available: ${currentStock.quantity} strips & ${currentStock.loose_quantity} loose. ` +
+          `Requested net addition of ${netQty} strips & ${netLoose} loose.`
+        );
+      }
+
+      const newStock = applyStockDelta(
+        { quantity: currentStock.quantity, loose_quantity: currentStock.loose_quantity },
+        -netQty,
+        -netLoose,
+        packSize
+      );
+
+      if (newStock.quantity < 0 || newStock.loose_quantity < 0) {
+        throw new Error(`Reconciliation resulted in negative stock for "${currentStock.medicine_name}".`);
+      }
+
+      await db.run(
+        'UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?',
+        [newStock.quantity, newStock.loose_quantity, invId]
+      );
+
+      await recordStockLedger(db, {
+        medicine_id: currentStock.medicine_id,
+        batch_no: currentStock.batch_no,
+        quantity: -netQty,
+        loose_quantity: -netLoose,
+        transaction_type: 'investigation_sale_edit',
+        transaction_id: invoiceId
+      });
+
+      itemAdjustments.push({
+        inventoryId: invId,
+        medicineName: currentStock.medicine_name,
+        qtyDelta: netQty,
+        looseDelta: netLoose
+      });
+    }
+
+    // Step 3: Remove old items and insert corrected items
+    await db.run('DELETE FROM sale_items WHERE invoice_id = ?', [invoiceId]);
+    let subtotal = 0;
+    for (const item of items) {
+      const { inventory_id, quantity = 0, unit_price = 0, loose_qty = 0, batch_no } = item;
+      const cleanInvId = inventory_id ? Number(inventory_id) : null;
+      
+      const currentStock = cleanInvId ? await db.get(
+        'SELECT im.batch_no, COALESCE(m.pack_size, 1) as pack_size FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?',
+        [cleanInvId]
+      ) : null;
+
+      const pSize = currentStock ? (currentStock.pack_size || 1) : 1;
+      const bNo = batch_no || currentStock?.batch_no || null;
+
+      await db.run(
+        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, batch_no) VALUES (?, ?, ?, ?, ?, ?)',
+        [invoiceId, cleanInvId, Number(quantity), Number(unit_price), Number(loose_qty), bNo]
+      );
+
+      subtotal += (Number(quantity) * Number(unit_price)) + (Number(loose_qty) * (Number(unit_price) / pSize));
+    }
+
+    // Recalculate totals
+    const taxRate = 0.05;
+    const tax = subtotal * taxRate;
+    const rawTotal = subtotal + tax - Number(discount || 0);
+    const total = Math.round(rawTotal);
+    const roundOff = Number((total - rawTotal).toFixed(2));
+
+    await db.run(
+      `UPDATE sales_invoices
+       SET total_amount = ?, tax_amount = ?, discount = ?, subtotal = ?, round_off = ?
+       WHERE id = ?`,
+      [total, tax, Number(discount || 0), subtotal, roundOff, invoiceId]
+    );
+
+    // Recalculate customer credit balance if customer exists
+    if (existingBill.customer_id) {
+      const unpaidRow = await db.get(
+        `SELECT COALESCE(SUM(total_amount), 0) as total 
+         FROM sales_invoices 
+         WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING')`,
+        [existingBill.customer_id]
+      );
+      const newBalance = Math.max(0, Number(unpaidRow?.total || 0));
+      await db.run(
+        'UPDATE customers SET credit_balance = ? WHERE id = ?',
+        [newBalance, existingBill.customer_id]
+      );
+    }
+
+    // Save snapshot of the edit in history for backup
+    const originalData = JSON.stringify({
+      bill: existingBill,
+      items: oldItems
+    });
+    const updatedData = JSON.stringify({
+      bill: { total_amount: total, tax_amount: tax, discount: Number(discount || 0), subtotal },
+      items: items
+    });
+    await db.run(
+      'INSERT INTO sales_bill_edit_history (invoice_id, invoice_no, original_data, updated_data) VALUES (?, ?, ?, ?)',
+      [invoiceId, existingBill.invoice_no, originalData, updatedData]
+    );
+
+    // Audit logging
+    const desc = `Corrected Sales Invoice #${existingBill.invoice_no}. Subtotal: ₹${existingBill.subtotal} -> ₹${subtotal}, Discount: ₹${existingBill.discount} -> ₹${discount}, Total: ₹${existingBill.total_amount} -> ₹${total}.`;
+    await logAction(db, 'SALES_BILL_CORRECTION', desc, {
+      invoiceId: Number(invoiceId),
+      invoiceNo: existingBill.invoice_no,
+      subtotal: { from: existingBill.subtotal, to: subtotal },
+      discount: { from: existingBill.discount, to: Number(discount || 0) },
+      total: { from: existingBill.total_amount, to: total },
+      itemAdjustments
+    });
+
+    await db.run('COMMIT');
+    inventoryCache.invalidate();
+    invalidateInvestigationTimelineCache();
+
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('sales_sync', { success: true, action: 'update', id: Number(invoiceId) });
+      eventService.broadcast('inventory_sync', { success: true });
+    } catch (_e) {}
+
+    res.json({ success: true, message: 'Sales invoice corrected and inventory reconciled successfully', total, tax });
+  } catch (error) {
+    if (db) {
+      try {
+        await db.run('ROLLBACK');
+      } catch (rbErr) {
+        console.error('Rollback failed:', rbErr);
+      }
+    }
+    const err = error as Error;
+    console.error('Sales invoice correction failed:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Purchase Bill correction and inventory sync
+router.put('/purchases/:purchaseId', async (req, res) => {
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const { purchaseId } = req.params;
+    const { items } = req.body;
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'Items must be an array' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+
+    const existingPurchase = await db.get('SELECT * FROM purchases WHERE id = ?', [purchaseId]);
+    if (!existingPurchase) {
+      await db.run('ROLLBACK');
+      return res.status(404).json({ error: 'Purchase bill not found' });
+    }
+
+    // Step 1: Fetch old items to calculate deltas
+    const oldItems = await db.all(
+      'SELECT medicine_id, batch_no, quantity, expiry_date, cost_price, mrp FROM purchase_items WHERE purchase_id = ?',
+      [purchaseId]
+    );
+
+    // Group items by medicine_id and batch_no to calculate net changes (accumulating duplicates if any)
+    const deltaMap = new Map<string, {
+      medicine_id: number;
+      batch_no: string;
+      oldQty: number;
+      newQty: number;
+      expiry_date: string;
+      mrp: number;
+      cost_price: number;
+    }>();
+
+    for (const oi of oldItems) {
+      const key = `${oi.medicine_id}_${oi.batch_no}`;
+      const existing = deltaMap.get(key);
+      if (existing) {
+        existing.oldQty += Number(oi.quantity || 0);
+      } else {
+        deltaMap.set(key, {
+          medicine_id: Number(oi.medicine_id),
+          batch_no: oi.batch_no,
+          oldQty: Number(oi.quantity || 0),
+          newQty: 0,
+          expiry_date: oi.expiry_date || null,
+          mrp: Number(oi.mrp || 0),
+          cost_price: Number(oi.cost_price || 0)
+        });
+      }
+    }
+
+    for (const ni of items) {
+      if (!ni.batch_no || String(ni.batch_no).trim() === '') {
+        throw new Error('Batch number is required for all purchase items.');
+      }
+      const batchNo = String(ni.batch_no).trim();
+      const medId = Number(ni.medicine_id);
+      const key = `${medId}_${batchNo}`;
+      const existing = deltaMap.get(key);
+      if (existing) {
+        existing.newQty += Number(ni.quantity) || 0;
+        existing.expiry_date = ni.expiry_date || existing.expiry_date;
+        existing.mrp = Number(ni.mrp) || existing.mrp;
+        existing.cost_price = Number(ni.cost_price) || existing.cost_price;
+      } else {
+        deltaMap.set(key, {
+          medicine_id: medId,
+          batch_no: batchNo,
+          oldQty: 0,
+          newQty: Number(ni.quantity) || 0,
+          expiry_date: ni.expiry_date || null,
+          mrp: Number(ni.mrp) || 0,
+          cost_price: Number(ni.cost_price) || 0
+        });
+      }
+    }
+
+    // Step 2: Validate and apply net changes in inventory_master
+    const { recordStockLedger } = await import('../utils/stockRebuild.js');
+    for (const [_, entry] of deltaMap.entries()) {
+      const netChange = entry.newQty - entry.oldQty;
+      if (netChange === 0) continue;
+
+      const invRecord = await db.get(
+        `SELECT id, quantity FROM inventory_master 
+         WHERE medicine_id = ? AND (COALESCE(batch_no, '') = COALESCE(?, '') OR batch_no = ?)`,
+        [entry.medicine_id, entry.batch_no || '', entry.batch_no]
+      );
+
+      if (netChange < 0) {
+        // We are reducing the purchased quantity. This means we must deduct stock from inventory.
+        const deductQty = Math.abs(netChange);
+        if (!invRecord || invRecord.quantity < deductQty) {
+          throw new Error(
+            `Cannot reduce purchase quantity for "${entry.batch_no}". ` +
+            `Available stock is ${invRecord ? invRecord.quantity : 0}, but trying to reduce purchase by ${deductQty}.`
+          );
+        }
+        await db.run(
+          'UPDATE inventory_master SET quantity = quantity - ? WHERE id = ?',
+          [deductQty, invRecord.id]
+        );
+      } else {
+        // We are increasing the purchased quantity. This means we add stock to inventory.
+        if (invRecord) {
+          await db.run(
+            'UPDATE inventory_master SET quantity = quantity + ? WHERE id = ?',
+            [netChange, invRecord.id]
+          );
+        } else {
+          await db.run(
+            `INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, mrp, cost_price, loose_quantity)
+             VALUES (?, ?, ?, ?, ?, ?, 0)`,
+            [entry.medicine_id, netChange, entry.batch_no, entry.expiry_date, entry.mrp, entry.cost_price]
+          );
+        }
+      }
+
+      await recordStockLedger(db, {
+        medicine_id: entry.medicine_id,
+        batch_no: entry.batch_no,
+        quantity: netChange,
+        loose_quantity: 0,
+        transaction_type: 'investigation_purchase_edit',
+        transaction_id: purchaseId
+      });
+    }
+
+    // Step 3: Remove old and insert new purchase items
+    await db.run('DELETE FROM purchase_items WHERE purchase_id = ?', [purchaseId]);
+    let totalAmount = 0;
+    let totalCgst = 0;
+    let totalSgst = 0;
+    for (const item of items) {
+      if (!item.batch_no || String(item.batch_no).trim() === '') {
+        throw new Error('Batch number is required for all purchase items.');
+      }
+      const batchNo = String(item.batch_no).trim();
+      const { medicine_id, expiry_date = null, quantity, free_qty = 0, cost_price = 0, mrp = 0 } = item;
+      const cgstPer = parseFloat(item.cgst_per) || 0;
+      const sgstPer = parseFloat(item.sgst_per) || 0;
+      const cdValue = parseFloat(item.cd_value) || 0;
+      const baseAmt = Number(quantity) * Number(cost_price);
+      const taxable = baseAmt - cdValue;
+      const cgstValue = taxable * (cgstPer / 100);
+      const sgstValue = taxable * (sgstPer / 100);
+      await db.run(
+        `INSERT INTO purchase_items (purchase_id, medicine_id, batch_no, expiry_date, quantity, free_qty, cost_price, mrp, cgst_per, cgst_value, sgst_per, sgst_value, cd_value)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [purchaseId, medicine_id, batchNo, expiry_date, quantity, free_qty, cost_price, mrp, cgstPer, cgstValue, sgstPer, sgstValue, cdValue]
+      );
+      totalAmount += taxable + cgstValue + sgstValue;
+      totalCgst += cgstValue;
+      totalSgst += sgstValue;
+    }
+
+    // Update purchase invoice total (preserving GST breakdown for audit trail)
+    await db.run(
+      'UPDATE purchases SET total_amount = ?, cgst_value = ?, sgst_value = ?, original_amount = ? WHERE id = ?',
+      [totalAmount, totalCgst, totalSgst, totalAmount, purchaseId]
+    );
+
+    // Audit logging
+    const desc = `Corrected Purchase Bill #${existingPurchase.invoice_no || purchaseId}. Total Amount: ₹${existingPurchase.total_amount} -> ₹${totalAmount}.`;
+    await logAction(db, 'PURCHASE_BILL_CORRECTION', desc, {
+      purchaseId,
+      invoiceNo: existingPurchase.invoice_no || null,
+      totalAmount: { from: existingPurchase.total_amount, to: totalAmount }
+    });
+
+    await db.run('COMMIT');
+    inventoryCache.invalidate();
+    invalidateInvestigationTimelineCache();
+    await rebuildPurchaseSummaryCache();
+    triggerBackgroundSummaryRebuild();
+
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('purchase_sync', { success: true, action: 'update', id: Number(purchaseId) });
+      eventService.broadcast('inventory_sync', { success: true });
+    } catch (_e) {}
+
+    res.json({ success: true, message: 'Purchase bill corrected and inventory reconciled successfully', totalAmount });
+  } catch (error) {
+    if (db) {
+      try {
+        await db.run('ROLLBACK');
+      } catch (rbErr) {
+        console.error('Rollback failed:', rbErr);
+      }
+    }
+    const err = error as Error;
+    console.error('Purchase bill correction failed:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Audit Logs fetch endpoint (matching terms in description)
+router.get('/audit-logs/:inventoryId', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const { inventoryId } = req.params;
+
+    // Get inventory medicine name and batch to query matches
+    const record = await db.get(
+      'SELECT im.batch_no, m.name FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?',
+      [inventoryId]
+    );
+
+    if (!record) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    const likeName = `%${record.name}%`;
+    const likeBatch = `%${record.batch_no}%`;
+    const likeId = `%ID ${inventoryId}%`;
+
+    const logs = await db.all(
+      `SELECT * FROM action_logs
+       WHERE description LIKE ? OR description LIKE ? OR description LIKE ?
+       ORDER BY created_at DESC LIMIT 50`,
+      [likeName, likeBatch, likeId]
+    );
+
+    res.json(logs);
+  } catch (error) {
+    const err = error as Error;
+    console.error('Fetch audit logs failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+export default router;
