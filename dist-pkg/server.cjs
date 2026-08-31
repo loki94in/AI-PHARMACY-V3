@@ -9109,21 +9109,71 @@ async function ensureSchema(dbPath) {
   if (!existingMedCols.has("allow_loose_sale")) {
     await db2.run("ALTER TABLE medicines ADD COLUMN allow_loose_sale INTEGER DEFAULT 1").catch(() => {
     });
-    await db2.run(`
-        UPDATE medicines 
-        SET allow_loose_sale = 0 
-        WHERE LOWER(packaging) LIKE '%bottle%' 
-           OR LOWER(packaging) LIKE '%syrup%' 
-           OR LOWER(packaging) LIKE '%suspension%' 
-           OR LOWER(packaging) LIKE '%drops%' 
-           OR LOWER(packaging) LIKE '%inj%' 
-           OR LOWER(packaging) LIKE '%ml%' 
-           OR LOWER(name) LIKE '%syrup%' 
-           OR LOWER(name) LIKE '%suspension%' 
-           OR LOWER(name) LIKE '%bottle%'
-      `).catch(() => {
-    });
   }
+  await db2.run(`
+      UPDATE medicines 
+      SET allow_loose_sale = 0 
+      WHERE allow_loose_sale IS NULL
+         OR (
+           allow_loose_sale = 1 AND (
+             LOWER(COALESCE(packaging, '')) LIKE '%bottle%' 
+             OR LOWER(COALESCE(packaging, '')) LIKE '%syrup%' 
+             OR LOWER(COALESCE(packaging, '')) LIKE '%suspension%' 
+             OR LOWER(COALESCE(packaging, '')) LIKE '%drop%' 
+             OR LOWER(COALESCE(packaging, '')) LIKE '%inj%' 
+             OR LOWER(COALESCE(packaging, '')) LIKE '%liquid%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%lotion%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%spray%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%ointment%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%gel%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%cream%'
+             OR LOWER(COALESCE(packaging, '')) LIKE '%ml%' 
+             OR LOWER(COALESCE(name, '')) LIKE '%syrup%' 
+             OR LOWER(COALESCE(name, '')) LIKE '%suspension%' 
+             OR LOWER(COALESCE(name, '')) LIKE '%bottle%'
+             OR LOWER(COALESCE(name, '')) LIKE '%drop%'
+             OR LOWER(COALESCE(name, '')) LIKE '%liquid%'
+             OR LOWER(COALESCE(name, '')) LIKE '%spray%'
+             OR LOWER(COALESCE(name, '')) LIKE '%gel%'
+             OR LOWER(COALESCE(name, '')) LIKE '%cream%'
+             OR LOWER(COALESCE(name, '')) LIKE '%lotion%'
+             OR LOWER(COALESCE(name, '')) LIKE '%ointment%'
+             OR LOWER(COALESCE(name, '')) LIKE '%inj%'
+           )
+         )
+    `).catch(() => {
+  });
+  await db2.run(`
+      UPDATE medicines 
+      SET allow_loose_sale = 1 
+      WHERE (allow_loose_sale IS NULL OR allow_loose_sale = 0)
+        AND NOT (
+          LOWER(COALESCE(packaging, '')) LIKE '%bottle%' 
+          OR LOWER(COALESCE(packaging, '')) LIKE '%syrup%' 
+          OR LOWER(COALESCE(packaging, '')) LIKE '%suspension%' 
+          OR LOWER(COALESCE(packaging, '')) LIKE '%drop%' 
+          OR LOWER(COALESCE(packaging, '')) LIKE '%inj%' 
+          OR LOWER(COALESCE(packaging, '')) LIKE '%liquid%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%lotion%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%spray%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%ointment%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%gel%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%cream%'
+          OR LOWER(COALESCE(packaging, '')) LIKE '%ml%' 
+          OR LOWER(COALESCE(name, '')) LIKE '%syrup%' 
+          OR LOWER(COALESCE(name, '')) LIKE '%suspension%' 
+          OR LOWER(COALESCE(name, '')) LIKE '%bottle%'
+          OR LOWER(COALESCE(name, '')) LIKE '%drop%'
+          OR LOWER(COALESCE(name, '')) LIKE '%liquid%'
+          OR LOWER(COALESCE(name, '')) LIKE '%spray%'
+          OR LOWER(COALESCE(name, '')) LIKE '%gel%'
+          OR LOWER(COALESCE(name, '')) LIKE '%cream%'
+          OR LOWER(COALESCE(name, '')) LIKE '%lotion%'
+          OR LOWER(COALESCE(name, '')) LIKE '%ointment%'
+          OR LOWER(COALESCE(name, '')) LIKE '%inj%'
+        )
+    `).catch(() => {
+  });
   await db2.exec(`
     CREATE TABLE IF NOT EXISTS distributor_historical_files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14733,6 +14783,72 @@ AI Pharmacy Team`
           return [];
         }
       }
+      /**
+       * Deletes an email and its associated attachments from the local database and uploads directory.
+       */
+      async deleteEmail(uid) {
+        try {
+          await ensureSchema(getDbPath());
+          const db2 = await dbManager.getConnection();
+          const emailRow = await db2.get("SELECT * FROM emails WHERE uid = ?", [uid]);
+          if (emailRow) {
+            const invNo = (emailRow.extracted_invoice_no || "").trim();
+            const distName = (emailRow.distributor_name || emailRow.extracted_distributor || "").trim();
+            if (invNo || distName) {
+              try {
+                const matchTerms = [];
+                const matchParams = [];
+                if (invNo && invNo !== "N/A") {
+                  matchTerms.push("message LIKE ?");
+                  matchParams.push(`%${invNo}%`);
+                }
+                if (distName && distName !== "Distributor") {
+                  matchTerms.push("target_name = ? OR message LIKE ?");
+                  matchParams.push(distName, `%${distName}%`);
+                }
+                if (matchTerms.length > 0) {
+                  await db2.run(
+                    `DELETE FROM whatsapp_send_queue 
+                 WHERE status IN ('pending', 'failed_offline') 
+                   AND type IN ('distributor_invoice', 'delivery_boy_invoice') 
+                   AND (${matchTerms.join(" OR ")})`,
+                    matchParams
+                  );
+                  await db2.run(
+                    `DELETE FROM automation_notifications 
+                 WHERE status IN ('pending', 'queued', 'failed') 
+                   AND type IN ('distributor_invoice', 'delivery_boy_invoice') 
+                   AND (${matchTerms.map((t) => t.replace("target_name", "recipient_name")).join(" OR ")})`,
+                    matchParams
+                  );
+                  eventService.broadcast("automation_hub_updated", { type: "cancelled", emailUid: uid });
+                }
+              } catch (cancelErr) {
+                console.warn("[Mail] Could not cancel linked WhatsApp queue items for deleted email:", cancelErr);
+              }
+            }
+          }
+          const attachments = await db2.all("SELECT local_path FROM email_attachments WHERE uid = ?", [uid]);
+          for (const att of attachments || []) {
+            if (att.local_path && import_fs14.default.existsSync(att.local_path)) {
+              try {
+                import_fs14.default.unlinkSync(att.local_path);
+              } catch (_) {
+              }
+            }
+          }
+          await db2.run("DELETE FROM email_attachments WHERE uid = ?", [uid]);
+          const res = await db2.run("DELETE FROM emails WHERE uid = ?", [uid]);
+          const deleted = (res.changes || 0) > 0;
+          if (deleted) {
+            eventService.broadcast("email_update", { success: true, deletedUid: uid, message: `Email #${uid} deleted` });
+          }
+          return { success: true, deleted };
+        } catch (err) {
+          console.error("[Mail] deleteEmail error:", err);
+          return { success: false, deleted: false };
+        }
+      }
       async getImapStatus() {
         try {
           const { imapConfig, isConfigured } = await this.buildImapConfig();
@@ -18277,9 +18393,12 @@ function launchClientInstance(forceQr) {
     const paths = [
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      process.env.LOCALAPPDATA ? import_path18.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.PROGRAMFILES ? import_path18.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
       "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
-    ];
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      process.env.LOCALAPPDATA ? import_path18.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+    ].filter(Boolean);
     for (const p of paths) {
       if (import_fs16.default.existsSync(p)) {
         execPath = p;
@@ -19434,6 +19553,19 @@ var init_whatsappQueueWorker = __esm({
         } catch (_) {
         }
         if (scheduledAt <= now) {
+          try {
+            const { hasSavedSession: checkSaved, getWhatsAppStatus: checkStatus, initClient: wakeClient, isWhatsAppExplicitlyDisabled: checkDisabled } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+            if (!await checkDisabled() && checkSaved()) {
+              checkStatus().then((st) => {
+                if (!st.isReady && !st.initializing) {
+                  wakeClient().catch(() => {
+                  });
+                }
+              }).catch(() => {
+              });
+            }
+          } catch (_) {
+          }
           this.triggerProcessing();
         } else {
           const wakeDelay = Math.max(0, scheduledAt - now - 12e4);
@@ -19531,7 +19663,17 @@ var init_whatsappQueueWorker = __esm({
           try {
             const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
             if (activityTracker2.isIdle() && !this.isProcessing) {
-              delay = IDLE_TICK_MS;
+              const db2 = await dbManager.getConnection();
+              const pendingRow = await db2.get(
+                `SELECT COUNT(*) as cnt FROM whatsapp_send_queue 
+             WHERE status IN ('pending', 'failed_offline') 
+               AND (scheduled_at IS NULL OR scheduled_at <= ?)
+               AND retry_count < 3`,
+                [Date.now()]
+              );
+              if (!pendingRow || pendingRow.cnt === 0) {
+                delay = IDLE_TICK_MS;
+              }
             }
           } catch (_) {
           }
@@ -19559,52 +19701,50 @@ var init_whatsappQueueWorker = __esm({
           }
           await this.loadPacingConfig();
           const db2 = await dbManager.getConnection();
-          const now = Date.now();
-          const pendingItems = await db2.all(
-            `SELECT * FROM whatsapp_send_queue 
-         WHERE status IN ('pending', 'failed_offline') 
-           AND (scheduled_at IS NULL OR scheduled_at <= ?)
-           AND retry_count < 3 
-         ORDER BY created_at ASC`,
-            [now]
-          );
-          if (pendingItems.length === 0) {
-            this.isProcessing = false;
-            this.nextDispatchTimestamp = null;
-            this.currentSendingItemId = null;
-            this.lastWasOffline = false;
-            return false;
-          }
-          const useBusiness = await shouldRouteToBusiness();
-          let status = await getWhatsAppStatus();
-          if (!useBusiness && !status.isReady) {
-            const logNow = Date.now();
-            if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 6e5) {
-              console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving ${pendingItems.length} item(s) pending in queue until user connects on UI.`);
-              this.lastOfflineLogTime = logNow;
-            }
-            this.lastWasOffline = true;
-            if (hasSavedSession() && !status.initializing && logNow - this.lastAutoInitAttempt > 6e4) {
-              this.lastAutoInitAttempt = logNow;
-              console.log("[WhatsAppQueueWorker] Saved session present but client idle \u2014 attempting silent WhatsApp restore...");
-              initClient().catch(() => {
-              });
-            }
-            this.isProcessing = false;
-            return false;
-          }
-          this.lastWasOffline = false;
-          console.log(`[WhatsAppQueueWorker] Processing ${pendingItems.length} queued item(s) with ${this.pacingMinMs / 1e3}s-${this.pacingMaxMs / 1e3}s pacing...`);
-          for (let i = 0; i < pendingItems.length; i++) {
-            const item = pendingItems[i];
-            this.currentSendingItemId = item.id;
-            this.nextDispatchTimestamp = null;
-            const isBizNow = await shouldRouteToBusiness();
-            const currentWaStatus = await getWhatsAppStatus();
-            if (!isBizNow && !currentWaStatus.isReady) {
-              console.warn("[WhatsAppQueueWorker] WhatsApp client offline. Leaving remaining queue items pending for next attempt.");
+          while (true) {
+            if (this.isPaused) break;
+            const now = Date.now();
+            const item = await db2.get(
+              `SELECT * FROM whatsapp_send_queue 
+           WHERE status IN ('pending', 'failed_offline') 
+             AND (scheduled_at IS NULL OR scheduled_at <= ?)
+             AND retry_count < 3 
+           ORDER BY created_at ASC
+           LIMIT 1`,
+              [now]
+            );
+            if (!item) {
               break;
             }
+            const useBusiness = await shouldRouteToBusiness();
+            let status = await getWhatsAppStatus();
+            if (!useBusiness && !status.isReady) {
+              if (hasSavedSession() && !await isWhatsAppExplicitlyDisabled()) {
+                console.log("[WhatsAppQueueWorker] WhatsApp not yet ready \u2014 awaiting on-demand session wake-up...");
+                const ready = await waitForWhatsAppReady(2e4);
+                if (ready) {
+                  status = await getWhatsAppStatus();
+                }
+              }
+            }
+            if (!useBusiness && !status.isReady) {
+              const logNow = Date.now();
+              if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 6e5) {
+                console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving pending item(s) in queue until user connects on UI.`);
+                this.lastOfflineLogTime = logNow;
+              }
+              this.lastWasOffline = true;
+              if (hasSavedSession() && !status.initializing && logNow - this.lastAutoInitAttempt > 6e4) {
+                this.lastAutoInitAttempt = logNow;
+                console.log("[WhatsAppQueueWorker] Saved session present but client idle \u2014 attempting silent WhatsApp restore...");
+                initClient().catch(() => {
+                });
+              }
+              break;
+            }
+            this.lastWasOffline = false;
+            this.currentSendingItemId = item.id;
+            this.nextDispatchTimestamp = null;
             await db2.run("UPDATE whatsapp_send_queue SET status = 'sending' WHERE id = ?", [item.id]);
             await db2.run(
               "UPDATE automation_notifications SET status = 'sending' WHERE reference_id = ? OR reference_id = ?",
@@ -19776,12 +19916,11 @@ var init_whatsappQueueWorker = __esm({
               `SELECT COUNT(*) as cnt FROM whatsapp_send_queue
            WHERE status IN ('pending', 'failed_offline')
              AND (scheduled_at IS NULL OR scheduled_at <= ?)
-             AND retry_count < 3
-             AND id != ?`,
-              [Date.now(), item.id]
+             AND retry_count < 3`,
+              [Date.now()]
             );
-            const hasMoreItems = (remainingCheck?.cnt || 0) > 0 || i < pendingItems.length - 1;
-            if (hasMoreItems) {
+            const hasMoreItems = (remainingCheck?.cnt || 0) > 0;
+            if (hasMoreItems && !this.isPaused) {
               const delayRange = this.pacingMaxMs - this.pacingMinMs;
               const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
               this.nextDispatchTimestamp = Date.now() + randomDelay;
@@ -19837,10 +19976,16 @@ var init_whatsappQueueWorker = __esm({
             changed = true;
           } else {
             const res = await db2.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
+            await db2.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {
+            });
             changed = (res.changes || 0) > 0;
           }
           if (changed) {
             this.broadcastQueueState(this.isProcessing);
+            try {
+              eventService.broadcast("automation_hub_updated", { type: "deleted", id });
+            } catch (_) {
+            }
           }
           return changed;
         } catch (err) {
@@ -21708,7 +21853,8 @@ var init_inventoryCache = __esm({
             m.item_code,
             m.manufacturer,
             m.packaging,
-            m.pack_size
+            m.pack_size,
+            COALESCE(m.allow_loose_sale, 1) AS allow_loose_sale
            FROM inventory_master im
            JOIN medicines m ON im.medicine_id = m.id
            WHERE ${INVENTORY_ACTIVE_WHERE}
@@ -37897,6 +38043,22 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to mark email as saved" });
       }
     });
+    router10.delete("/:uid", async (req, res) => {
+      const uid = parseInt(req.params.uid);
+      if (isNaN(uid)) {
+        return res.status(400).json({ error: "Invalid email UID" });
+      }
+      try {
+        const result = await emailService.deleteEmail(uid);
+        if (!result.deleted) {
+          return res.status(404).json({ error: `Email #${uid} not found` });
+        }
+        res.json({ success: true, message: `Email #${uid} deleted successfully` });
+      } catch (error) {
+        console.error("Delete email error:", error);
+        res.status(500).json({ error: error.message || "Failed to delete email" });
+      }
+    });
     router10.post("/import-manual", async (req, res) => {
       const { subject, from, body, date, attachments } = req.body;
       if (!subject || !from) {
@@ -47685,7 +47847,9 @@ var init_automation = __esm({
             resolvedAt: r.resolved_at || null
           }))
         ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        const activeSendingRow = queueRows.find((r) => ["pending", "sending", "waiting"].includes(r.status));
+        const sendingRow = queueRows.find((r) => r.status === "sending");
+        const pendingRow = [...queueRows].reverse().find((r) => ["pending", "waiting"].includes(r.status));
+        const activeSendingRow = sendingRow || pendingRow;
         const hasActiveSend = Boolean(activeSendingRow);
         const unresolvedFailures = activity.filter((a) => String(a.status).startsWith("failed") && a.acknowledged === 0);
         const unresolvedFailuresCount = unresolvedFailures.length;
@@ -56444,9 +56608,44 @@ var init_orders = __esm({
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
+        const existing = await db2.get("SELECT * FROM special_orders WHERE id = ?", id);
+        if (!existing) {
+          return res.status(404).json({ error: "Order not found" });
+        }
         const result = await db2.run("DELETE FROM special_orders WHERE id = ?", id);
         if (result.changes === 0) {
           return res.status(404).json({ error: "Order not found" });
+        }
+        const cleanPhone = existing.phone ? existing.phone.replace(/\D/g, "") : "";
+        const last10 = cleanPhone.slice(-10);
+        const reqName = (existing.requester || "").trim();
+        const prodName = (existing.product || "").trim();
+        try {
+          const matchConditions = [];
+          const matchArgs = [];
+          if (last10 && last10.length >= 7) {
+            matchConditions.push("number LIKE ?");
+            matchArgs.push(`%${last10}%`);
+          }
+          if (reqName) {
+            matchConditions.push("target_name = ?");
+            matchArgs.push(reqName);
+          }
+          if (prodName) {
+            matchConditions.push("message LIKE ?");
+            matchArgs.push(`%${prodName}%`);
+          }
+          if (matchConditions.length > 0) {
+            await db2.run(
+              `DELETE FROM whatsapp_send_queue 
+           WHERE status IN ('pending', 'failed_offline') 
+             AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled')
+             AND (${matchConditions.join(" OR ")})`,
+              matchArgs
+            );
+          }
+        } catch (cancelErr) {
+          console.warn("[Orders] Could not delete pending WhatsApp queue items for deleted order:", cancelErr);
         }
         await db2.run(
           `DELETE FROM automation_notifications 
@@ -58453,7 +58652,7 @@ var init_medicines = __esm({
             rackVal,
             disable_auto_barcode ? 1 : 0,
             tb_medicine ? 1 : 0,
-            allow_loose_sale !== void 0 ? allow_loose_sale ? 1 : 0 : 1,
+            allow_loose_sale !== void 0 ? allow_loose_sale ? 1 : 0 : `${packaging || ""} ${adjustedName || ""}`.toLowerCase().match(/bottle|syrup|suspension|drop|inj|liquid|lotion|spray|ointment|gel|cream|\bml\b/i) ? 0 : 1,
             parseInt(max_stock_level, 10) || null,
             item_code || null,
             metaStr,

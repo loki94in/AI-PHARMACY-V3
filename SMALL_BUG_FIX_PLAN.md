@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-13 — WhatsApp send stalled on sleeping/installed client; missing email inbox deletion; unwanted message send persistence
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. In installed builds, creating a Special Request failed to send WhatsApp messages until the entire app was restarted or manual reconnect clicked.<br>2. Deleting an email was not possible from the local inbox.<br>3. When user turned WhatsApp Alert OFF in Special Order modal, the toggle auto-reset to ON every time and attempted sending unwanted messages. |
+| **Root cause** | 1. `launchClientInstance` lacked `process.env.LOCALAPPDATA` Chrome paths for per-user installations in production, and `whatsappQueueWorker.enqueue` didn't auto-wake sleeping clients when enqueuing immediate messages.<br>2. No `DELETE /api/email/:uid` backend route or UI delete button existed for local inbox rows.<br>3. `QuickOrderModal` and `CRM` reset `sendWhatsApp(true)` unconditionally rather than persisting the user's toggle preference in `localStorage`. |
+| **How it was fixed** | 1. Added `LOCALAPPDATA` and `PROGRAMFILES` paths to `whatsappClient.ts` Chrome launcher, and added proactive silent wake-up on immediate `enqueue()` in `whatsappQueueWorker.ts`.<br>2. Added `deleteEmail(uid)` in `emailService.ts`, `DELETE /api/email/:uid` in `routes/email.ts`, `api.deleteEmail` in `frontend/src/services/api.ts`, and delete actions with cache-synchronization in `frontend/src/pages/Mail/index.tsx`.<br>3. Persisted `sendWhatsApp` state in `localStorage` in `QuickOrderModal.tsx` and `CRM/index.tsx` so turning OFF WhatsApp is remembered and not overwritten on reset.<br>4. Updated `deleteItem()` in `whatsappQueueWorker.ts` to cascade delete linked notification rows and broadcast SSE events. |
+| **Priority** | P1 |
+| **What not to touch** | Saved session credentials preservation in `.wwebjs_auth`; anti-ban pacing rules; single-flight mutex. |
+| **Verified by** | `npm run build` (0 errors); `npm --prefix frontend run build` (0 errors); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P2-12 — WhatsApp Automation Hub popover showed blocking "Loading automation details..." spinner on open due to missing SWR module cache
 
 | Field | Content |

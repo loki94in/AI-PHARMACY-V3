@@ -136,7 +136,13 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const [advancePayment, setAdvancePayment] = useState<number | ''>('');
   const [priority, setPriority] = useState<'Low' | 'Normal' | 'High'>('Normal');
   const [language, setLanguage] = useState('en');
-  const [sendWhatsApp, setSendWhatsApp] = useState(true);
+  const [sendWhatsApp, setSendWhatsApp] = useState(() => {
+    try {
+      return localStorage.getItem('quick_order_send_whatsapp') !== 'false';
+    } catch {
+      return true;
+    }
+  });
   
   const [selectedDistributor, setSelectedDistributor] = useState('');
   const [selectedRate, setSelectedRate] = useState<number | ''>('');
@@ -638,7 +644,9 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     setQty(1);
     setAdvancePayment('');
     setPriority('Normal');
-    setSendWhatsApp(true);
+    try {
+      setSendWhatsApp(localStorage.getItem('quick_order_send_whatsapp') !== 'false');
+    } catch {}
     setSelectedDistributor('');
     setSelectedRate('');
     setSelectedMrp('');
@@ -1059,7 +1067,13 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSendWhatsApp(!sendWhatsApp)}
+                      onClick={() => {
+                        const next = !sendWhatsApp;
+                        setSendWhatsApp(next);
+                        try {
+                          localStorage.setItem('quick_order_send_whatsapp', String(next));
+                        } catch {}
+                      }}
                       className={`px-2.5 py-0.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
                         sendWhatsApp 
                           ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm' 

@@ -3147,6 +3147,81 @@ export class EmailService {
     }
   }
 
+  /**
+   * Deletes an email and its associated attachments from the local database and uploads directory.
+   */
+  public async deleteEmail(uid: number): Promise<{ success: boolean; deleted: boolean }> {
+    try {
+      await ensureSchema(getDbPath());
+      const db = await dbManager.getConnection();
+
+      // 1. Check and cancel any pending unsent WhatsApp queue items or notifications for this email/invoice
+      const emailRow = await db.get('SELECT * FROM emails WHERE uid = ?', [uid]);
+      if (emailRow) {
+        const invNo = (emailRow.extracted_invoice_no || '').trim();
+        const distName = (emailRow.distributor_name || emailRow.extracted_distributor || '').trim();
+        if (invNo || distName) {
+          try {
+            const matchTerms: string[] = [];
+            const matchParams: any[] = [];
+            if (invNo && invNo !== 'N/A') {
+              matchTerms.push('message LIKE ?');
+              matchParams.push(`%${invNo}%`);
+            }
+            if (distName && distName !== 'Distributor') {
+              matchTerms.push('target_name = ? OR message LIKE ?');
+              matchParams.push(distName, `%${distName}%`);
+            }
+            if (matchTerms.length > 0) {
+              await db.run(
+                `DELETE FROM whatsapp_send_queue 
+                 WHERE status IN ('pending', 'failed_offline') 
+                   AND type IN ('distributor_invoice', 'delivery_boy_invoice') 
+                   AND (${matchTerms.join(' OR ')})`,
+                matchParams
+              );
+              await db.run(
+                `DELETE FROM automation_notifications 
+                 WHERE status IN ('pending', 'queued', 'failed') 
+                   AND type IN ('distributor_invoice', 'delivery_boy_invoice') 
+                   AND (${matchTerms.map(t => t.replace('target_name', 'recipient_name')).join(' OR ')})`,
+                matchParams
+              );
+              eventService.broadcast('automation_hub_updated', { type: 'cancelled', emailUid: uid });
+            }
+          } catch (cancelErr) {
+            console.warn('[Mail] Could not cancel linked WhatsApp queue items for deleted email:', cancelErr);
+          }
+        }
+      }
+
+      // 2. Get attachments to delete cached files from disk
+      const attachments = await db.all('SELECT local_path FROM email_attachments WHERE uid = ?', [uid]);
+      for (const att of attachments || []) {
+        if (att.local_path && fs.existsSync(att.local_path)) {
+          try {
+            fs.unlinkSync(att.local_path);
+          } catch (_) {}
+        }
+      }
+
+      // 3. Delete attachment records and email record
+      await db.run('DELETE FROM email_attachments WHERE uid = ?', [uid]);
+      const res = await db.run('DELETE FROM emails WHERE uid = ?', [uid]);
+      const deleted = (res.changes || 0) > 0;
+
+      // 4. Broadcast SSE update so open pages immediately refresh their inbox cache
+      if (deleted) {
+        eventService.broadcast('email_update', { success: true, deletedUid: uid, message: `Email #${uid} deleted` });
+      }
+
+      return { success: true, deleted };
+    } catch (err: any) {
+      console.error('[Mail] deleteEmail error:', err);
+      return { success: false, deleted: false };
+    }
+  }
+
   public async getImapStatus(): Promise<{ isConfigured: boolean; user?: string }> {
     try {
       const { imapConfig, isConfigured } = await this.buildImapConfig();

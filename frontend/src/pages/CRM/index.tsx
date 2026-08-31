@@ -3793,7 +3793,13 @@ const SpecialOrdersSection: React.FC = () => {
   const [advancePayment, setAdvancePayment] = useState<number | ''>('');
   const [priority, setPriority] = useState('Normal');
   const [language, setLanguage] = useState('en');
-  const [sendWhatsApp, setSendWhatsApp] = useState(true);
+  const [sendWhatsApp, setSendWhatsApp] = useState(() => {
+    try {
+      return localStorage.getItem('crm_order_send_whatsapp') !== 'false';
+    } catch {
+      return true;
+    }
+  });
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   // Edit Request Form State
@@ -4174,7 +4180,9 @@ const SpecialOrdersSection: React.FC = () => {
       setAdvancePayment('');
       setPriority('Normal');
       setLanguage('en');
-      setSendWhatsApp(true);
+      try {
+        setSendWhatsApp(localStorage.getItem('crm_order_send_whatsapp') !== 'false');
+      } catch {}
       setSelectedDistributor('');
       setSelectedRate('');
       setSelectedMrp('');
@@ -5008,7 +5016,13 @@ const SpecialOrdersSection: React.FC = () => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSendWhatsApp(!sendWhatsApp)}
+                  onClick={() => {
+                    const next = !sendWhatsApp;
+                    setSendWhatsApp(next);
+                    try {
+                      localStorage.setItem('crm_order_send_whatsapp', String(next));
+                    } catch {}
+                  }}
                   className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
                     sendWhatsApp 
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm' 

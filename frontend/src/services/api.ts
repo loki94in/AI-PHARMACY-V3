@@ -1105,6 +1105,7 @@ export const api = {
   importManualEmail: (data: ManualEmailPayload) => apiClient.post('/email/import-manual', data).then(res => res.data),
   markEmailSeen: (emailId: number) => apiClient.post(`/email/${emailId}/seen`).then(res => res.data),
   markEmailSaved: (uid: number) => apiClient.post(`/email/${uid}/saved`).then(res => res.data),
+  deleteEmail: (uid: number) => apiClient.delete<{ success: boolean; message: string }>(`/email/${uid}`).then(res => res.data),
   triggerEmailSync: () => apiClient.post('/email/sync').then(res => res.data),
   clearAttachmentsCache: () => apiClient.delete('/email/attachments/cache').then(res => res.data),
   getAttachmentPreview: (filename: string) => apiClient.get('/email/attachments/preview', { params: { filename } }).then(res => res.data),

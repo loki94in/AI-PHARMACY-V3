@@ -499,6 +499,30 @@ const Mail = () => {
     }
   };
 
+  const handleDeleteEmail = async (emailToDelete: EmailRecord, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!emailToDelete.id) return;
+    try {
+      await api.deleteEmail(emailToDelete.id);
+      toastEvent.trigger('Email deleted from local inbox.', 'success', '/mail');
+      setEmails((prev) => {
+        const next = prev.filter((em) => em.id !== emailToDelete.id);
+        cachedEmails = next;
+        return next;
+      });
+      if (selectedEmail?.id === emailToDelete.id) {
+        setSelectedEmail(null);
+        setAttachments([]);
+        cachedAttachments = [];
+        cachedSelectedEmail = null;
+        setProcessResult(null);
+      }
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || err?.message || 'Failed to delete email';
+      toastEvent.trigger(`Delete failed: ${errorMsg}`, 'error', '/mail');
+    }
+  };
+
   const handleSelectEmail = (email: EmailRecord) => {
     setSelectedEmail(email);
     setAttachments([]);
@@ -984,6 +1008,15 @@ const Mail = () => {
                             <Calendar size={10} />
                             {email.date ? formatDate(email.date) : 'Today'}
                           </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => handleDeleteEmail(email, e)}
+                            className="p-1 rounded text-muted hover:text-red hover:bg-red/10 transition-colors cursor-pointer"
+                            title="Delete email"
+                          >
+                            <Trash2 size={11} />
+                          </span>
                         </div>
                       </div>
                       <h4 className="text-xs font-bold text-sky truncate">{email.subject}</h4>
@@ -1052,12 +1085,22 @@ const Mail = () => {
               <div className="p-4 border-b border-glass-border space-y-2 flex-shrink-0">
                 <div className="flex justify-between items-start gap-2">
                   <h4 className="text-xs font-bold text-sky uppercase tracking-wide">Email Details</h4>
-                  <button
-                    onClick={() => { setSelectedEmail(null); setAttachments([]); setProcessResult(null); }}
-                    className="text-[10px] font-bold text-muted hover:text-text hover:bg-white/5 px-2 py-0.5 rounded border border-glass-border/30"
-                  >
-                    Close
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => handleDeleteEmail(selectedEmail, e)}
+                      className="text-[10px] font-bold text-red hover:text-red-400 hover:bg-red/10 px-2 py-0.5 rounded border border-red/30 flex items-center gap-1 transition-all"
+                      title="Delete Email from Local Inbox"
+                    >
+                      <Trash2 size={11} />
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => { setSelectedEmail(null); setAttachments([]); setProcessResult(null); }}
+                      className="text-[10px] font-bold text-muted hover:text-text hover:bg-bg3 px-2 py-0.5 rounded border border-glass-border/30"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-1 text-xs">
                   <div>

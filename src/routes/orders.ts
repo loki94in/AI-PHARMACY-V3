@@ -631,10 +631,50 @@ router.delete('/:id', async (req, res) => {
     const db = await dbManager.getConnection();
     await initOrdersTable(db);
     
+    const existing = await db.get('SELECT * FROM special_orders WHERE id = ?', id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const result = await db.run('DELETE FROM special_orders WHERE id = ?', id);
-        
     if (result.changes === 0) {
       return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Cancel and remove any pending unsent WhatsApp queue items for this deleted order
+    const cleanPhone = existing.phone ? existing.phone.replace(/\D/g, '') : '';
+    const last10 = cleanPhone.slice(-10);
+    const reqName = (existing.requester || '').trim();
+    const prodName = (existing.product || '').trim();
+
+    try {
+      const matchConditions: string[] = [];
+      const matchArgs: any[] = [];
+
+      if (last10 && last10.length >= 7) {
+        matchConditions.push('number LIKE ?');
+        matchArgs.push(`%${last10}%`);
+      }
+      if (reqName) {
+        matchConditions.push('target_name = ?');
+        matchArgs.push(reqName);
+      }
+      if (prodName) {
+        matchConditions.push('message LIKE ?');
+        matchArgs.push(`%${prodName}%`);
+      }
+
+      if (matchConditions.length > 0) {
+        await db.run(
+          `DELETE FROM whatsapp_send_queue 
+           WHERE status IN ('pending', 'failed_offline') 
+             AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled')
+             AND (${matchConditions.join(' OR ')})`,
+          matchArgs
+        );
+      }
+    } catch (cancelErr) {
+      console.warn('[Orders] Could not delete pending WhatsApp queue items for deleted order:', cancelErr);
     }
 
     await db.run(

@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, initClient, hasSavedSession, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled } from '../whatsappClient.js';
+import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, initClient, hasSavedSession, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, waitForWhatsAppReady } from '../whatsappClient.js';
 
 export interface QueueItem {
   id: number;
@@ -365,6 +365,17 @@ class WhatsAppQueueWorker {
     // one-shot timer so a delayed send still fires without needing the poll
     // loop to be running (lazy loop — owner rule 2026-08).
     if (scheduledAt <= now) {
+      // Proactively trigger silent wake-up if WhatsApp is sleeping with a saved session
+      try {
+        const { hasSavedSession: checkSaved, getWhatsAppStatus: checkStatus, initClient: wakeClient, isWhatsAppExplicitlyDisabled: checkDisabled } = await import('../whatsappClient.js');
+        if (!(await checkDisabled()) && checkSaved()) {
+          checkStatus().then(st => {
+            if (!st.isReady && !st.initializing) {
+              wakeClient().catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      } catch (_) {}
       this.triggerProcessing();
     } else {
       // 2-MINUTE PRE-WAKE: If WhatsApp is sleeping, pre-warm it 2 minutes prior to scheduled dispatch
@@ -539,7 +550,18 @@ class WhatsAppQueueWorker {
         const useBusiness = await shouldRouteToBusiness();
         let status = await getWhatsAppStatus();
 
-        // If client is not ready, leave items pending until user connects on UI
+        // If client is not ready, attempt graceful wait for waking browser if saved session exists
+        if (!useBusiness && !status.isReady) {
+          if (hasSavedSession() && !(await isWhatsAppExplicitlyDisabled())) {
+            console.log('[WhatsAppQueueWorker] WhatsApp not yet ready — awaiting on-demand session wake-up...');
+            const ready = await waitForWhatsAppReady(20_000);
+            if (ready) {
+              status = await getWhatsAppStatus();
+            }
+          }
+        }
+
+        // If client is still not ready, leave items pending until user connects on UI
         if (!useBusiness && !status.isReady) {
           const logNow = Date.now();
           if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 600000) {
@@ -814,10 +836,14 @@ class WhatsAppQueueWorker {
         changed = true;
       } else {
         const res = await db.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
+        await db.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {});
         changed = (res.changes || 0) > 0;
       }
       if (changed) {
         this.broadcastQueueState(this.isProcessing);
+        try {
+          eventService.broadcast('automation_hub_updated', { type: 'deleted', id });
+        } catch (_) {}
       }
       return changed;
     } catch (err) {

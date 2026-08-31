@@ -160,6 +160,24 @@ router.post('/:uid/saved', async (req, res) => {
   }
 });
 
+// DELETE /api/email/:uid — delete single email from local inbox & disk cache
+router.delete('/:uid', async (req, res) => {
+  const uid = parseInt(req.params.uid);
+  if (isNaN(uid)) {
+    return res.status(400).json({ error: 'Invalid email UID' });
+  }
+  try {
+    const result = await emailService.deleteEmail(uid);
+    if (!result.deleted) {
+      return res.status(404).json({ error: `Email #${uid} not found` });
+    }
+    res.json({ success: true, message: `Email #${uid} deleted successfully` });
+  } catch (error: any) {
+    console.error('Delete email error:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete email' });
+  }
+});
+
 
 // POST /api/email/import-manual
 router.post('/import-manual', async (req, res) => {
