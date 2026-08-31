@@ -3044,7 +3044,49 @@ const POS = () => {
   };
 
   const clearCart = () => {
-    updateCart([]);
+    setEditingInvoiceId(null);
+    setEditingInvoiceNo(null);
+    setPatientSalutation('Mr.');
+    setPatientCustomSalutation('');
+    setPatientName('');
+    setPatientPhone('');
+    setSelectedCustomerId(null);
+    selectedCustomerIdRef.current = null;
+    setDoctor('');
+    setSelectedDoctorId(null);
+    setDoctorSuggestions([]);
+    setDoctorComboSuggestions([]);
+    setDiscount(0);
+    setPaymentMedium('CASH');
+    setRefillEnabled(false);
+    setActiveRefillId(null);
+    setRefillDays(30);
+    pendingRefillIdsRef.current = [];
+    setSearchTerm('');
+    setSearchResults([]);
+    updateCart([makeEmptyCartRow()]);
+    setTabs(prev => prev.map(t => {
+      if (t.id === activeTabId) {
+        return {
+          ...t,
+          items: [makeEmptyCartRow()],
+          patientName: '',
+          patientPhone: '',
+          refillEnabled: false,
+          refillDays: 30,
+          doctor: '',
+          discount: 0,
+          sendWhatsApp: true,
+          paymentMedium: 'CASH',
+          selectedDoctorId: null
+        };
+      }
+      return t;
+    }));
+    toastEvent.trigger('POS cleared. Ready for new bill.', 'info');
+    setTimeout(() => {
+      focusCartMedicineInput();
+    }, 50);
   };
 
   const handleScanResult = (result: ScanResultInfo) => {
@@ -3446,21 +3488,30 @@ const POS = () => {
       // Clear cart and states
       setEditingInvoiceId(null);
       setEditingInvoiceNo(null);
-      updateCart([]);
+      setPatientSalutation('Mr.');
+      setPatientCustomSalutation('');
       setPatientName('');
       setPatientPhone('');
+      setSelectedCustomerId(null);
+      selectedCustomerIdRef.current = null;
       setDoctor('');
       setSelectedDoctorId(null);
       setDoctorSuggestions([]);
       setDoctorComboSuggestions([]);
       setDiscount(0);
       setPaymentMedium('CASH');
+      setRefillEnabled(false);
       setActiveRefillId(null);
+      setRefillDays(30);
+      pendingRefillIdsRef.current = [];
+      setSearchTerm('');
+      setSearchResults([]);
+      updateCart([makeEmptyCartRow()]);
       setTabs(prev => prev.map(t => {
         if (t.id === activeTabId) {
           return {
             ...t,
-            items: [],
+            items: [makeEmptyCartRow()],
             patientName: '',
             patientPhone: '',
             refillEnabled: false,
