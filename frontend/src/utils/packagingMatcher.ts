@@ -216,14 +216,17 @@ export const parsePackSizeFromPackaging = (packaging: string | null | undefined)
     const size = parseInt(stripOfMatch[1], 10);
     if (size > 0) return size;
   }
-  const bottleOfMatch = trimmed.match(/^\s*BOTTLE\s+OF\s+(\d+)/i);
-  if (bottleOfMatch) {
-    const size = parseInt(bottleOfMatch[1], 10);
+  const prefixTypeMatch = trimmed.match(/\b(?:TAB|TABS|CAP|CAPS|STRIP)\s+(\d+)\b/i);
+  if (prefixTypeMatch) {
+    const size = parseInt(prefixTypeMatch[1], 10);
     if (size > 0) return size;
   }
   if (/\b\d+\s*x\s*\d+\b/i.test(trimmed)) {
     const parts = trimmed.split(/x/i);
     return (parseInt(parts[0], 10) || 1) * (parseInt(parts[1], 10) || 1);
+  }
+  if (/\b\d+(\.\d+)?\s*(ML|LTR|LITER|LITRE|G|GM|GRAM|KG|MG|MCG)\b/i.test(trimmed)) {
+    return null;
   }
   const match = trimmed.match(/^(\d+)/);
   if (match) {

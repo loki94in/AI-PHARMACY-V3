@@ -373,8 +373,8 @@ export async function recalculateStockLimits(): Promise<void> {
       // Grouped 90-day daily sales calculation in ONE set-based query
       const salesGroupRows = await db.all<{ medicine_id: number; avg_daily_sales: number }[]>(`
         SELECT
-          im.medicine_id,
-          COALESCE(AVG(daily_qty), 0) as avg_daily_sales
+          daily.medicine_id,
+          COALESCE(AVG(daily.daily_qty), 0) as avg_daily_sales
         FROM (
           SELECT
             im.medicine_id,
@@ -385,8 +385,8 @@ export async function recalculateStockLimits(): Promise<void> {
           JOIN inventory_master im ON im.id = sit.inventory_id
           WHERE si.date >= datetime('now', '-90 days')
           GROUP BY im.medicine_id, DATE(si.date)
-        )
-        GROUP BY im.medicine_id
+        ) daily
+        GROUP BY daily.medicine_id
       `);
 
       const avgSalesMap = new Map<number, number>();

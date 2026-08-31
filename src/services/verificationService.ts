@@ -159,6 +159,17 @@ export class VerificationService {
 
       const db = await dbManager.getConnection();
 
+      // Check if Doctor is required (Default: ON / Mandatory)
+      const reqDocSetting = await db.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+      const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== 'false' : true;
+      if (isDoctorRequired && !doctor_id && (!billData.doctor_name || !String(billData.doctor_name).trim())) {
+        return {
+          success: false,
+          layer: 'Validation',
+          message: 'Doctor name is required to save the bill. Please select or enter a doctor name.'
+        };
+      }
+
       // If editing an existing bill, retrieve its already-invoiced quantities so they are credited to available stock
       const oldInvoiceItemsMap = new Map<number, { qty: number; loose: number }>();
       if (editId) {

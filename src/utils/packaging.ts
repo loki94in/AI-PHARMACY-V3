@@ -1,10 +1,10 @@
 // Countable unit suffixes that mean "N per strip/pack" (tablets, capsules, pads, etc).
-// Weight/volume units (G, KG, ML, L) are not a per-strip count and must not be parsed as one.
-const COUNTABLE_UNIT_PATTERN = /^\s*(\d+)\s*(NO'?S|TAB|TABS|CAP|CAPS|PAD|PADS)\b/i;
+// Weight/volume units (G, KG, ML, L, MG) are not a per-strip count and must not be parsed as one.
+const COUNTABLE_UNIT_PATTERN = /^\s*(\d+)\s*(NO'?S|TAB|TABS|CAP|CAPS|PAD|PADS)?\b/i;
 
 /**
  * Extracts a numeric pack size (units per strip) from a free-text packaging
- * field like "15 NO'S", "10 NO'S", or "10x10". Returns null for non-countable units
+ * field like "15 NO'S", "10 NO'S", "10", "15", "TAB 10", or "10x10". Returns null for non-countable units
  * (e.g. "200 ML", "50 G") or unparseable/zero values, so callers can fall
  * back to their own default rather than treating a volume/weight as a count.
  */
@@ -25,11 +25,16 @@ export function parsePackSizeFromPackaging(packaging: string | null | undefined)
     if (size > 0) return size;
   }
 
-  // Handle "BOTTLE OF 100ML"
-  const bottleOfMatch = trimmed.match(/^\s*BOTTLE\s+OF\s+(\d+)\s*ML\b/i);
-  if (bottleOfMatch) {
-    const size = parseInt(bottleOfMatch[1], 10);
+  // Handle "TAB 10", "CAP 15", "TAB 6"
+  const prefixTypeMatch = trimmed.match(/\b(?:TAB|TABS|CAP|CAPS|STRIP)\s+(\d+)\b/i);
+  if (prefixTypeMatch) {
+    const size = parseInt(prefixTypeMatch[1], 10);
     if (size > 0) return size;
+  }
+
+  // Exclude liquid volumes and weights (ML, L, G, GM, KG, MG)
+  if (/\b\d+(\.\d+)?\s*(ML|LTR|LITER|LITRE|G|GM|GRAM|KG|MG|MCG)\b/i.test(trimmed)) {
+    return null;
   }
 
   const match = trimmed.match(COUNTABLE_UNIT_PATTERN);

@@ -299,6 +299,10 @@ router.post('/', async (req, res) => {
       throw new Error('Calculated totals resulted in NaN value.');
     }
 
+    // Check if Doctor is required (Default: ON / Mandatory)
+    const reqDocSetting = await db.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+    const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== 'false' : true;
+
     // Generate invoice number
     const invoice_no = await generateInvoiceNo(db);
 
@@ -314,6 +318,11 @@ router.post('/', async (req, res) => {
         const newDoc = await db.run('INSERT INTO doctors (name) VALUES (?)', [cleanDocName]);
         resolvedDoctorId = newDoc.lastID;
       }
+    }
+
+    if (isDoctorRequired && !resolvedDoctorId) {
+      await conn.run('ROLLBACK');
+      return res.status(400).json({ error: 'Doctor name is required to save the bill. Please select or enter a doctor name.' });
     }
 
     const result = await db.run(
@@ -2193,6 +2202,12 @@ router.put('/:id', async (req, res) => {
       } else {
         resolvedDoctorId = null;
       }
+    }
+
+    const reqDocSetting = await db.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+    const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== 'false' : true;
+    if (isDoctorRequired && !resolvedDoctorId) {
+      return res.status(400).json({ error: 'Doctor name is required to save the bill. Please select or enter a doctor name.' });
     }
 
     // If items changed, reverse old stock and replace

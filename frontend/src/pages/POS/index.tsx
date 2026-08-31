@@ -52,6 +52,19 @@ const parsePackSizeFromPackaging = (packaging: string | null | undefined): numbe
   return size > 0 ? size : null;
 };
 
+export const isLiquidOrSingleUnitForm = (name?: string, packaging?: string | null): boolean => {
+  const combined = `${packaging || ''} ${name || ''}`.toLowerCase();
+  return /bottle|syrup|syp|suspension|susp|drop|inj|liquid|lotion|spray|ointment|oint|gel|cream|\bml\b|respule|sachet|vial|amp/i.test(combined);
+};
+
+export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null } | null): number => {
+  if (!item) return 1;
+  if (item.allow_loose_sale !== undefined && item.allow_loose_sale !== null) {
+    return item.allow_loose_sale ? 1 : 0;
+  }
+  return isLiquidOrSingleUnitForm(item.name || item.medicine_name, item.packaging) ? 0 : 1;
+};
+
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
 
 const ModalSkeleton = () => (
@@ -527,6 +540,8 @@ const EMPTY_ARRAY: never[] = [];
 const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatchItem[] => {
   if (!query || query.trim().length < 2) return [];
   const term = query.trim().toLowerCase();
+  const tokens = term.split(/\s+/).filter(Boolean);
+  const compactTerm = term.replace(/[^a-z0-9]/g, '');
   const index = getCompactInventoryIndex();
   const useIndex = index.length === inventory.length;
 
@@ -535,8 +550,11 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
 
   const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
-  const prefixMap = new Map<string, PosBatchItem>();
-  const infixMap = new Map<string, PosBatchItem>();
+  const tier1Map = new Map<string, PosBatchItem>(); // Exact prefix
+  const tier2Map = new Map<string, PosBatchItem>(); // Acronym / Shorthand (e.g. CD 12 -> Crocin DS 12)
+  const tier3Map = new Map<string, PosBatchItem>(); // Multi-token (e.g. "cro 12", "clav 625", "dolo 30")
+  const tier4Map = new Map<string, PosBatchItem>(); // Infix / Contains
+  const tier5Map = new Map<string, PosBatchItem>(); // Batch / MRP numeric
 
   const len = inventory.length;
   for (let i = 0; i < len; i++) {
@@ -549,13 +567,60 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
     const name = useIndex ? index[i].nameLower : (item.medicine_name || item.name || '').toLowerCase();
     const code = useIndex ? index[i].itemCodeLower : (item.item_code || '').toLowerCase();
     const batch = useIndex ? index[i].batchNoLower : (item.batch_no || '').toLowerCase();
+    const mrpNum = Number(item.mrp || 0);
+    const mrpStr = useIndex ? index[i].mrpStr : (mrpNum > 0 ? String(mrpNum) : '');
+    const mrpIntStr = useIndex ? index[i].mrpIntStr : (mrpNum > 0 ? String(Math.round(mrpNum)) : '');
+    const initials = useIndex ? index[i].initials : '';
+    const initialsNoNum = useIndex ? index[i].initialsNoNum : '';
+    const words = useIndex ? index[i].words : name.split(/[^a-z0-9]+/).filter(Boolean);
 
-    const isPrefix = name.startsWith(term) || code.startsWith(term) || batch.startsWith(term);
-    const isInfix = !isPrefix && (name.includes(term) || code.includes(term) || batch.includes(term));
+    let tier = 0;
 
-    if (!isPrefix && !isInfix) continue;
+    // 1. Direct Prefix on Name, Item Code, or Batch
+    if (name.startsWith(term) || code.startsWith(term) || batch.startsWith(term)) {
+      tier = 1;
+    }
+    // 2. Acronym / Shorthand (e.g. "cd 12" or "cd12" matching "crocin ds 12")
+    else if (compactTerm.length >= 2 && (
+      (initials && initials.startsWith(compactTerm)) ||
+      (initialsNoNum && initialsNoNum.startsWith(compactTerm)) ||
+      (initials && compactTerm.length <= initials.length && initials.includes(compactTerm))
+    )) {
+      tier = 2;
+    }
+    // 3. Multi-token match where every token matches word prefix, name, batch, or MRP
+    else if (tokens.length > 1) {
+      let allMatch = true;
+      for (const t of tokens) {
+        const wordMatch = words.some(w => w.startsWith(t) || w === t);
+        const nameMatch = name.includes(t);
+        const batchMatch = batch.includes(t);
+        const mrpMatch = (mrpStr && mrpStr.startsWith(t)) || (mrpIntStr && mrpIntStr === t);
+        if (!wordMatch && !nameMatch && !batchMatch && !mrpMatch) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        tier = 3;
+      }
+    }
+    // 4. Infix / Contains on Name or Code
+    if (!tier && (name.includes(term) || code.includes(term))) {
+      tier = 4;
+    }
+    // 5. Batch or MRP search (e.g. typing "625", "AX99", or "30")
+    if (!tier && (
+      batch.includes(term) ||
+      (mrpStr && (mrpStr === term || mrpStr.startsWith(term))) ||
+      (mrpIntStr && mrpIntStr === term)
+    )) {
+      tier = 5;
+    }
 
-    const targetMap = isPrefix ? prefixMap : infixMap;
+    if (!tier) continue;
+
+    const targetMap = tier === 1 ? tier1Map : (tier === 2 ? tier2Map : (tier === 3 ? tier3Map : (tier === 4 ? tier4Map : tier5Map)));
     const key = normKey(item.medicine_name || item.name) || String(item.medicine_id || item.inventory_id || i);
     const stripQty = Number(item.stock_qty || item.quantity || 0);
     const looseQty = Number(item.loose_quantity || item.loose_qty || 0);
@@ -591,22 +656,20 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
     }
   }
 
-  const prefixes = Array.from(prefixMap.values());
-  const infixes = Array.from(infixMap.values());
-
   const sortAlpha = (a: PosBatchItem, b: PosBatchItem) => {
     const nameA = String(a.medicine_name || a.name || '');
     const nameB = String(b.medicine_name || b.name || '');
     return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
   };
 
-  prefixes.sort(sortAlpha);
-  infixes.sort(sortAlpha);
+  const t1 = Array.from(tier1Map.values()).sort(sortAlpha);
+  const t2 = Array.from(tier2Map.values()).sort(sortAlpha);
+  const t3 = Array.from(tier3Map.values()).sort(sortAlpha);
+  const t4 = Array.from(tier4Map.values()).sort(sortAlpha);
+  const t5 = Array.from(tier5Map.values()).sort(sortAlpha);
 
-  if (prefixes.length >= 15) {
-    return prefixes.slice(0, 30);
-  }
-  return [...prefixes, ...infixes].slice(0, 30);
+  const combined = [...t1, ...t2, ...t3, ...t4, ...t5];
+  return combined.slice(0, 30);
 };
 
 const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
@@ -819,7 +882,11 @@ export function allocateMedicineBatches(params: {
           unitPrice: unitPrice,
           discount: discount || 0,
           packSize: pSize,
-          allow_loose_sale: batch.allow_loose_sale !== undefined ? (batch.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : 1),
+          allow_loose_sale: resolveAllowLooseSale({
+            allow_loose_sale: batch.allow_loose_sale !== undefined ? (batch.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
+            name: batch.medicine_name || params.medicineName,
+            packaging: batch.packaging || params.fallbackItem?.packaging
+          }),
           costPrice: batch.cost_price != null ? batch.cost_price : (params.fallbackItem?.costPrice || null),
           availableStock: batch.stock_qty,
           availableLooseStock: batch.loose_quantity,
@@ -1145,7 +1212,7 @@ const POS = () => {
                 unitPrice: matched.unit_price || matched.sell_price || matched.mrp || 0,
                 looseQty: 0,
                 discount: autoDisc,
-                packSize: parsePackSizeFromPackaging(matched.packaging) || matched.pack_size || 1
+                packSize: matched.pack_size || parsePackSizeFromPackaging(matched.packaging) || 1
               };
               const emptyTrailingRow = makeEmptyCartRow();
               setCart([cartItem, emptyTrailingRow]);
@@ -1253,7 +1320,7 @@ const POS = () => {
               const targetName = (med.medicineName || med.medicine_name || med.name || '').trim();
               const targetQty = Number(med.quantity_needed || med.quantity || med.qty) || 1;
               const targetLooseQty = Number(med.looseQty || med.loose_qty || med.loose_quantity) || 0;
-              const pSize = parsePackSizeFromPackaging(med.packaging) || med.pack_size || med.packSize || 1;
+              const pSize = med.pack_size || med.packSize || parsePackSizeFromPackaging(med.packaging) || 1;
 
               const fallbackItem = {
                 medicine_id: targetId,
@@ -1316,7 +1383,7 @@ const POS = () => {
                         unitPrice: Number(bestInv.unit_price || m.sell_price || m.mrp || 0),
                         looseQty: targetLooseQty,
                         discount: Number(med.discount || lastSale?.discount || 0),
-                        packSize: parsePackSizeFromPackaging(m.packaging) || m.pack_size || 1,
+                        packSize: m.pack_size || parsePackSizeFromPackaging(m.packaging) || 1,
                         availableStock: Number(bestInv.quantity || 0),
                         availableLooseStock: Number(bestInv.loose_quantity || 0),
                         isEmptyRow: false
@@ -1351,7 +1418,7 @@ const POS = () => {
                       unitPrice: Number(m.unit_price || m.sell_price || m.mrp || 0),
                       looseQty: targetLooseQty,
                       discount: Number(med.discount || 0),
-                      packSize: parsePackSizeFromPackaging(m.packaging) || m.pack_size || 1,
+                      packSize: m.pack_size || parsePackSizeFromPackaging(m.packaging) || 1,
                       availableStock: Number(m.quantity || 0),
                       availableLooseStock: Number(m.loose_quantity || 0),
                       isEmptyRow: false
@@ -1887,7 +1954,7 @@ const POS = () => {
               localMap.set(idKey, masterItem);
             }
           }
-          const ranked = rankAndSortMedicines(merged, term).slice(0, 30);
+          const ranked = rankAndSortMedicines(merged, term, { onlySellable: true }).slice(0, 30);
           setRowSearchResults(ranked);
         }
       } catch (err: any) {
@@ -2045,7 +2112,7 @@ const POS = () => {
         const targetId = Number(med.medicineId || med.medicine_id || med.id || 0);
         const targetQty = Number(med.quantity || med.quantity_needed || med.qty || 1);
         const targetLooseQty = Number(med.loose_qty || med.looseQty || 0);
-        const pSize = parsePackSizeFromPackaging(med.packaging) || med.pack_size || med.packSize || 1;
+        const pSize = med.pack_size || med.packSize || parsePackSizeFromPackaging(med.packaging) || 1;
 
         const fallbackItem = {
           medicine_id: targetId,
@@ -2532,7 +2599,7 @@ const POS = () => {
         discount: initialDiscount,
         gst_percent: initialGst,
         packSize: Number(med.packSize || med.pack_size || 1),
-        allow_loose_sale: med.allow_loose_sale !== undefined ? (med.allow_loose_sale ? 1 : 0) : 1,
+        allow_loose_sale: resolveAllowLooseSale(med),
         mrp: initialMrp, 
         sell_price: med.sell_price != null ? Number(med.sell_price) : null,
         unitPrice: Number(initialUnitPrice),
@@ -2588,7 +2655,7 @@ const POS = () => {
   const toggleAllowLooseSale = async (item: CartRow | PosBatchItem) => {
     const medId = item.medicine_id || item.id;
     if (!medId) return;
-    const currentFlag = item.allow_loose_sale !== undefined ? (item.allow_loose_sale ? 1 : 0) : 1;
+    const currentFlag = resolveAllowLooseSale(item);
     const newFlag = currentFlag ? 0 : 1;
 
     updateCart(prev => prev.map(row => {
@@ -2633,7 +2700,7 @@ const POS = () => {
       costPrice: item.cost_price != null ? item.cost_price : null,
       salts: item.salts || item.api_reference || item.hsn_code || '',
       discount: autoDisc,
-      packSize: parsePackSizeFromPackaging(item.packaging) || item.pack_size || 1,
+      packSize: item.pack_size || parsePackSizeFromPackaging(item.packaging) || 1,
       availableStock: item.quantity !== undefined ? item.quantity : (item.stock_qty !== undefined ? item.stock_qty : 0),
       availableLooseStock: item.loose_quantity !== undefined ? item.loose_quantity : 0,
       scanImage: item.scanImage,
@@ -2663,7 +2730,7 @@ const POS = () => {
           sell_price: fetchedSellPrice,
           discount: autoDiscount,
           salts: details.api_reference || details.hsn_code || updated[idx].salts,
-          packSize: parsePackSizeFromPackaging(details.packaging) || details.pack_size || updated[idx].packSize,
+          packSize: details.pack_size || parsePackSizeFromPackaging(details.packaging) || updated[idx].packSize || 1,
           alternatives: details.alternatives || [],
         };
         return updated;
@@ -2759,7 +2826,7 @@ const POS = () => {
               localMap.set(idKey, masterItem);
             }
           }
-          const ranked = rankAndSortMedicines(merged, term).slice(0, 30);
+          const ranked = rankAndSortMedicines(merged, term, { onlySellable: true }).slice(0, 30);
           setSearchResults(ranked);
         }
       } catch (err: any) {
@@ -2955,9 +3022,15 @@ const POS = () => {
           }
         }
 
-        if (field === 'mrp' && typeof id === 'number' && id < 1000000) {
-          api.updateMedicine(id, { mrp: Number(value) })
-            .catch(err => console.error('Error updating MRP in DB:', err));
+        if (field === 'mrp') {
+          const numMrp = Math.max(0, Number(value) || 0);
+          updatedItem.mrp = numMrp;
+          updatedItem.unitPrice = numMrp;
+          updatedItem.sell_price = numMrp;
+          if (typeof id === 'number' && id < 1000000) {
+            api.updateMedicine(id, { mrp: numMrp })
+              .catch(err => console.error('Error updating MRP in DB:', err));
+          }
         }
 
         if (field === 'costPrice' && typeof id === 'number' && id < 1000000) {
@@ -3107,6 +3180,17 @@ const POS = () => {
       alert('⚠️ CANNOT SAVE BILL:\n\nPlease add at least one valid medicine to the cart before saving the bill.');
       return;
     }
+
+    if (!doctor || !doctor.trim()) {
+      toastEvent.trigger('⚠️ Doctor name is required to save the bill. Please select or enter a doctor name.', 'error');
+      const docEl = document.getElementById('doctor-name-input');
+      if (docEl) {
+        docEl.focus();
+        (docEl as HTMLInputElement).select?.();
+      }
+      return;
+    }
+
     const phoneToUse = sanitizePhoneInput(overridePhone !== undefined ? overridePhone : patientPhone);
 
     if (isLoss) {
@@ -3895,9 +3979,9 @@ const POS = () => {
                     name="doctor_name"
                     type="text"
                     autoComplete="off"
-                    aria-label="Prescribing Doctor"
-                    className="premium-input text-sm font-semibold h-9 pl-3 pr-6 bg-bg2/60 border-border/70 w-full text-text focus:border-sky rounded-xl placeholder:text-muted/40"
-                    placeholder="Select Doctor..."
+                    aria-label="Prescribing Doctor (Required)"
+                    className="premium-input text-sm font-semibold h-9 pl-3 pr-6 bg-bg2/60 border-border/70 w-full text-text focus:border-sky rounded-xl placeholder:text-muted/60"
+                    placeholder="Doctor * (Required)"
                     value={doctor}
                     onChange={e => {
                       justSelectedDoctorRef.current = false;
@@ -4621,7 +4705,6 @@ const POS = () => {
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-center">Loose</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-center">Live Stock</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-center">Disc %</th>
-                    <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">Rate</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">MRP</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">Total</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted tracking-wider border-b-2 border-border"></th>
@@ -5076,7 +5159,7 @@ const POS = () => {
                             if (item.isEmptyRow) {
                               return <div className="font-mono text-sm font-bold text-muted">-</div>;
                             }
-                            const isLooseAllowed = item.allow_loose_sale === undefined || !!item.allow_loose_sale;
+                            const isLooseAllowed = !!resolveAllowLooseSale(item);
                             return (
                               <div className="flex items-center justify-center">
                                 <div className={`flex items-center gap-0.5 border rounded-lg px-1.5 py-0.5 h-8 transition-all ${
@@ -5131,17 +5214,6 @@ const POS = () => {
                                       }
                                     }}
                                   />
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleAllowLooseSale(item);
-                                    }}
-                                    className="text-xs p-0.5 opacity-60 hover:opacity-100 transition-opacity"
-                                    title={isLooseAllowed ? "Loose sale allowed (Click to lock to Full Pack Only)" : "Full Pack Only (Click to allow loose tablet sales)"}
-                                  >
-                                    {isLooseAllowed ? '🔓' : '🔒'}
-                                  </button>
                                 </div>
                               </div>
                             );
@@ -5272,10 +5344,10 @@ const POS = () => {
                                       }
                                     } else {
                                       e.preventDefault();
-                                      const rateIn = document.getElementById(`row-rate-input-${curIdx}`) as HTMLInputElement | null;
-                                      if (rateIn) {
-                                        rateIn.focus();
-                                        rateIn.select?.();
+                                      const mrpIn = document.getElementById(`row-mrp-input-${curIdx}`) as HTMLInputElement | null;
+                                      if (mrpIn) {
+                                        mrpIn.focus();
+                                        mrpIn.select?.();
                                       } else {
                                         focusCartMedicineInput();
                                       }
@@ -5288,55 +5360,6 @@ const POS = () => {
                               )}
                             </div>
                           </div>
-                        </td>
-
-                        {/* Rate / Sale Price */}
-                        <td className="py-1 px-2.5 text-right">
-                          <input 
-                            id={`row-rate-input-${cart.indexOf(item)}`}
-                            name={`row_rate_${cart.indexOf(item)}`}
-                            data-pos-row-index={cart.indexOf(item)}
-                            data-pos-field="unitPrice"
-                            type="number"
-                            autoComplete="off" 
-                            className={`w-20 text-right font-mono bg-bg/40 border border-border/40 hover:border-border/80 focus:border-primary/50 focus:ring-1 focus:ring-primary/20 text-sm py-0.5 px-1 h-8 rounded-lg font-bold text-emerald-400 ${item.isEmptyRow ? 'opacity-40 cursor-not-allowed' : ''}`} 
-                            value={item.isEmptyRow ? '' : (item.unitPrice !== undefined && item.unitPrice !== null ? item.unitPrice : (item.sell_price !== undefined && item.sell_price !== null ? item.sell_price : (item.mrp || '')))}
-                            placeholder="0.00"
-                            onChange={e => {
-                              const val = e.target.value === '' ? 0 : Math.max(0, Number(e.target.value));
-                              updateCartItem(item.id, 'unitPrice', val);
-                              updateCartItem(item.id, 'sell_price', val);
-                            }}
-                            disabled={item.isEmptyRow}
-                            onKeyDown={e => {
-                              if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                                handlePosRowInputKeyDown(e, cart.indexOf(item), 'unitPrice');
-                              } else if (e.key === 'Enter') {
-                                e.preventDefault();
-                                focusCartMedicineInput();
-                              } else if (e.key === 'Tab') {
-                                const curIdx = cart.indexOf(item);
-                                if (e.shiftKey) {
-                                  e.preventDefault();
-                                  const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
-                                  if (discIn) {
-                                    discIn.focus();
-                                    discIn.select?.();
-                                  }
-                                } else {
-                                  e.preventDefault();
-                                  const mrpIn = document.getElementById(`row-mrp-input-${curIdx}`) as HTMLInputElement | null;
-                                  if (mrpIn) {
-                                    mrpIn.focus();
-                                    mrpIn.select?.();
-                                  } else {
-                                    focusCartMedicineInput();
-                                  }
-                                }
-                              }
-                            }}
-                            title="Set Sale Price (Rate per Strip)"
-                          />
                         </td>
 
                         {/* MRP */}
@@ -5363,10 +5386,10 @@ const POS = () => {
                                 const curIdx = cart.indexOf(item);
                                 if (e.shiftKey) {
                                   e.preventDefault();
-                                  const rateIn = document.getElementById(`row-rate-input-${curIdx}`) as HTMLInputElement | null;
-                                  if (rateIn) {
-                                    rateIn.focus();
-                                    rateIn.select?.();
+                                  const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
+                                  if (discIn) {
+                                    discIn.focus();
+                                    discIn.select?.();
                                   }
                                 } else {
                                   e.preventDefault();
@@ -6080,7 +6103,7 @@ const POS = () => {
               if (!currentMedId) return;
               try {
                 const details = await api.getMedicineQuickDetails(currentMedId);
-                const newPackSize = parsePackSizeFromPackaging(details.packaging) || details.pack_size || 1;
+                const newPackSize = details.pack_size || parsePackSizeFromPackaging(details.packaging) || 1;
                 
                 updateCart(prevCart => {
                   const updatedCart = prevCart.map(item => {

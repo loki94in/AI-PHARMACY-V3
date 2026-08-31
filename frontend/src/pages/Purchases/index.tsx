@@ -424,22 +424,92 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
     return [];
   }
   const lower = term.toLowerCase().trim();
+  const tokens = lower.split(/\s+/).filter(Boolean);
+  const compactTerm = lower.replace(/[^a-z0-9]/g, '');
   const index = getCompactInventoryIndex();
   const useIndex = index.length === compact.length;
-  const prefixMatched: CompactInventoryItem[] = [];
-  const infixMatched: CompactInventoryItem[] = [];
+
+  const t1List: CompactInventoryItem[] = [];
+  const t2List: CompactInventoryItem[] = [];
+  const t3List: CompactInventoryItem[] = [];
+  const t4List: CompactInventoryItem[] = [];
+  const t5List: CompactInventoryItem[] = [];
+
   for (let i = 0; i < compact.length; i++) {
     const item = compact[i];
     const name = useIndex ? index[i].nameLower : (item.name || '').toLowerCase();
-    if (name.startsWith(lower)) {
-      prefixMatched.push(item);
-    } else if (name.includes(lower)) {
-      infixMatched.push(item);
+    const code = useIndex ? index[i].itemCodeLower : (item.item_code || '').toLowerCase();
+    const batch = useIndex ? index[i].batchNoLower : (item.batch_no || '').toLowerCase();
+    const mrpNum = Number(item.mrp || 0);
+    const mrpStr = useIndex ? index[i].mrpStr : (mrpNum > 0 ? String(mrpNum) : '');
+    const mrpIntStr = useIndex ? index[i].mrpIntStr : (mrpNum > 0 ? String(Math.round(mrpNum)) : '');
+    const initials = useIndex ? index[i].initials : '';
+    const initialsNoNum = useIndex ? index[i].initialsNoNum : '';
+    const words = useIndex ? index[i].words : name.split(/[^a-z0-9]+/).filter(Boolean);
+
+    let tier = 0;
+
+    // 1. Direct Prefix on Name, Item Code, or Batch
+    if (name.startsWith(lower) || code.startsWith(lower) || batch.startsWith(lower)) {
+      tier = 1;
     }
+    // 2. Acronym / Shorthand (e.g. "cd 12" -> "cd12" matching "crocin ds 12")
+    else if (compactTerm.length >= 2 && (
+      (initials && initials.startsWith(compactTerm)) ||
+      (initialsNoNum && initialsNoNum.startsWith(compactTerm)) ||
+      (initials && compactTerm.length <= initials.length && initials.includes(compactTerm))
+    )) {
+      tier = 2;
+    }
+    // 3. Multi-token match
+    else if (tokens.length > 1) {
+      let allMatch = true;
+      for (const t of tokens) {
+        const wordMatch = words.some(w => w.startsWith(t) || w === t);
+        const nameMatch = name.includes(t);
+        const batchMatch = batch.includes(t);
+        const mrpMatch = (mrpStr && mrpStr.startsWith(t)) || (mrpIntStr && mrpIntStr === t);
+        if (!wordMatch && !nameMatch && !batchMatch && !mrpMatch) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        tier = 3;
+      }
+    }
+    // 4. Infix / Contains on Name or Code
+    if (!tier && (name.includes(lower) || code.includes(lower))) {
+      tier = 4;
+    }
+    // 5. Batch or MRP search (e.g. typing "625", "AX99", or "30")
+    if (!tier && (
+      batch.includes(lower) ||
+      (mrpStr && (mrpStr === lower || mrpStr.startsWith(lower))) ||
+      (mrpIntStr && mrpIntStr === lower)
+    )) {
+      tier = 5;
+    }
+
+    if (!tier) continue;
+
+    if (tier === 1) t1List.push(item);
+    else if (tier === 2) t2List.push(item);
+    else if (tier === 3) t3List.push(item);
+    else if (tier === 4) t4List.push(item);
+    else t5List.push(item);
   }
-  prefixMatched.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
-  infixMatched.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }));
-  const matched = [...prefixMatched, ...infixMatched].slice(0, 30);
+
+  const sortAlpha = (a: CompactInventoryItem, b: CompactInventoryItem) =>
+    (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+
+  t1List.sort(sortAlpha);
+  t2List.sort(sortAlpha);
+  t3List.sort(sortAlpha);
+  t4List.sort(sortAlpha);
+  t5List.sort(sortAlpha);
+
+  const matched = [...t1List, ...t2List, ...t3List, ...t4List, ...t5List].slice(0, 30);
   return matched.map(c => ({
     id: c.medicine_id || (c as any).id,
     name: c.name,

@@ -185,6 +185,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
     defaultPaymentMode: rawSettings.default_payment_mode || 'Cash',
     lowStockThreshold: rawSettings.low_stock_threshold || '10',
     expiryAlertDays: rawSettings.expiry_alert_days || '90',
+    requireDoctorOnBill: rawSettings.require_doctor_on_bill !== 'false',
   });
 
   const [saving, setSaving] = useState(false);
@@ -434,6 +435,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         default_payment_mode: formData.defaultPaymentMode,
         low_stock_threshold: formData.lowStockThreshold,
         expiry_alert_days: formData.expiryAlertDays,
+        require_doctor_on_bill: formData.requireDoctorOnBill ? 'true' : 'false',
         stamp_pos_x: String(Math.round(stampPosX)),
         stamp_pos_y: String(Math.round(stampPosY)),
         stamp_scale: String(Math.round(stampScale)),
@@ -475,6 +477,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         default_payment_mode: formData.defaultPaymentMode,
         low_stock_threshold: formData.lowStockThreshold,
         expiry_alert_days: formData.expiryAlertDays,
+        require_doctor_on_bill: formData.requireDoctorOnBill ? 'true' : 'false',
         stamp_pos_x: String(Math.round(stampPosX)),
         stamp_pos_y: String(Math.round(stampPosY)),
         stamp_scale: String(Math.round(stampScale)),
@@ -538,6 +541,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
       defaultPaymentMode: rawSettings.default_payment_mode || 'Cash',
       lowStockThreshold: rawSettings.low_stock_threshold || '10',
       expiryAlertDays: rawSettings.expiry_alert_days || '90',
+      requireDoctorOnBill: rawSettings.require_doctor_on_bill !== 'false',
     });
     toastEvent.trigger('Store profile form reset to saved parameters', 'info');
   };
@@ -730,6 +734,19 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
               />
               <label htmlFor="autoPrint" className="text-xs font-semibold text-text cursor-pointer">
                 Auto-print receipt immediately on sale completion
+              </label>
+            </div>
+
+            <div className="flex items-center gap-3 pt-4">
+              <input
+                type="checkbox"
+                id="requireDoctorOnBill"
+                checked={formData.requireDoctorOnBill}
+                onChange={(e) => setFormData({ ...formData, requireDoctorOnBill: e.target.checked })}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+              />
+              <label htmlFor="requireDoctorOnBill" className="text-xs font-semibold text-text cursor-pointer">
+                Require Doctor Name to save bills in POS (Default: Mandatory)
               </label>
             </div>
           </div>

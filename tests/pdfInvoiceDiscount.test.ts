@@ -120,4 +120,33 @@ describe('PDF Invoice Discount & Loose Qty rendering', () => {
     expect(fs.existsSync(multiBatchPdfPath)).toBe(true);
     expect(fs.statSync(multiBatchPdfPath).size).toBeGreaterThan(0);
   });
+
+  test('should generate PDF invoice with linked Doctor Name', async () => {
+    const db = await open({ filename: dbPath, driver: sqlite3.Database });
+    
+    // Seed doctor
+    await db.run('INSERT INTO doctors (id, name, speciality) VALUES (601, "Sharma", "Cardiologist")');
+
+    // Create sales_invoices record with doctor_id
+    await db.run(`
+      INSERT INTO sales_invoices (id, invoice_no, customer_id, doctor_id, total_amount, tax_amount, payment_medium, payment_status, date, discount, subtotal)
+      VALUES (503, "S-2026-0003", 501, 601, 100, 4.76, "CASH", "PAID", "2026-07-15T00:00:00.000Z", 0, 100)
+    `);
+
+    // Create sale_items record
+    await db.run(`
+      INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per)
+      VALUES (503, 501, 1, 100, 0, 0)
+    `);
+
+    await db.close();
+
+    const { pdfInvoiceService } = await import('../src/services/pdfInvoiceService.js');
+    const doctorPdfPath = path.join(tmpDir, 'doctor-invoice.pdf');
+
+    await expect(pdfInvoiceService.generateInvoicePdf(503, doctorPdfPath, true)).resolves.not.toThrow();
+
+    expect(fs.existsSync(doctorPdfPath)).toBe(true);
+    expect(fs.statSync(doctorPdfPath).size).toBeGreaterThan(0);
+  });
 });

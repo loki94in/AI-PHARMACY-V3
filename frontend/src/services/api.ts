@@ -217,6 +217,11 @@ export interface PrecomputedInventoryIndex {
   itemCodeLower: string;
   batchNoLower: string;
   manufacturerLower: string;
+  mrpStr: string;
+  mrpIntStr: string;
+  initials: string;
+  initialsNoNum: string;
+  words: string[];
   isValidForPos: boolean;
 }
 
@@ -258,6 +263,23 @@ function buildPrecomputedInventoryIndex(items: CompactInventoryItem[]): Precompu
     const itemCodeLower = (item.item_code || '').toLowerCase();
     const batchNoLower = (item.batch_no || '').toLowerCase();
     const manufacturerLower = (item.manufacturer || '').toLowerCase();
+    const mrpNum = Number(item.mrp || 0);
+    const mrpStr = mrpNum > 0 ? String(mrpNum) : '';
+    const mrpIntStr = mrpNum > 0 ? String(Math.round(mrpNum)) : '';
+
+    const words = nameLower.split(/[^a-z0-9]+/).filter(Boolean);
+    let initials = '';
+    let initialsNoNum = '';
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      if (/^\d+$/.test(word)) {
+        initials += word;
+      } else {
+        initials += word[0];
+        initialsNoNum += word[0];
+      }
+    }
+
     const stock = Number(item.stock_qty ?? item.quantity ?? 0);
     const loose = Number(item.loose_quantity ?? item.loose_qty ?? 0);
     const hasInventory = !!(item.inventory_id || item.id) && (stock > 0 || loose > 0);
@@ -267,6 +289,11 @@ function buildPrecomputedInventoryIndex(items: CompactInventoryItem[]): Precompu
       itemCodeLower,
       batchNoLower,
       manufacturerLower,
+      mrpStr,
+      mrpIntStr,
+      initials,
+      initialsNoNum,
+      words,
       isValidForPos: hasInventory && !expired,
     };
   }

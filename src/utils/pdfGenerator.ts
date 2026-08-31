@@ -14,7 +14,7 @@ export async function createPdf(
   outPath: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ autoFirstPage: false });
+    const doc = new PDFDocument({ size: 'A4', margin: 30, autoFirstPage: false });
     const stream = fs.createWriteStream(outPath);
     stream.on('error', reject);
     stream.on('finish', resolve);

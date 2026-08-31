@@ -680,7 +680,7 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
   const { id } = req.params;
   const {
     name, generic_name, manufacturer, marketed_by,
-    packaging, pack_unit, item_code, category, api_reference,
+    packaging, pack_unit, pack_size, item_code, category, api_reference,
     inventory_id, quantity, rack_location, hsn_code,
     item_type, therapeutic, sub_therapeutic, schedule_type,
     short_code, ucode, cgst_per, sgst_per, igst_per,
@@ -705,6 +705,14 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
     if (packaging !== undefined) {
       updates.push('packaging = ?');
       params.push(packaging);
+    }
+    if (pack_size !== undefined && pack_size !== null && pack_size !== '') {
+      const parsedExplicitPackSize = parseInt(pack_size, 10);
+      if (!isNaN(parsedExplicitPackSize) && parsedExplicitPackSize > 0) {
+        updates.push('pack_size = ?');
+        params.push(parsedExplicitPackSize);
+      }
+    } else if (packaging !== undefined) {
       const parsedSize = parsePackSizeFromPackaging(packaging);
       if (parsedSize !== null) {
         updates.push('pack_size = ?');

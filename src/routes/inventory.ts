@@ -594,19 +594,24 @@ router.get('/catalog-search', async (req, res) => {
       }
     }
 
-    // Pass 2: Infix / Trigram search when Pass 1 returned <15 prefix hits
+    // Pass 2: Infix / Multi-token / FTS5 search when Pass 1 returned <15 prefix hits
     // (sparse-term completeness). Uses FTS5 trigram index for <10ms response.
     if (rows.length < 15 && q.length >= 2) {
       try {
         const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+        const tokens = cleanToken.split(/\s+/).filter(t => t.length >= 1);
         if (cleanToken.length >= 2) {
+          let ftsQuery = `"${cleanToken}"`;
+          if (tokens.length > 1) {
+            ftsQuery = tokens.map(t => `${t}*`).join(' AND ');
+          }
           const ftsRows = await db.all(
             `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name
              FROM medicines_fts f
              JOIN medicines m ON f.rowid = m.id
              WHERE medicines_fts MATCH ?
              LIMIT 30`,
-            [`"${cleanToken}"`]
+            [ftsQuery]
           );
           for (const r of ftsRows) {
             if (!seenIds.has(r.id)) {
@@ -628,6 +633,44 @@ router.get('/catalog-search', async (req, res) => {
           if (!seenIds.has(r.id)) {
             seenIds.add(r.id);
             rows.push(r);
+          }
+        }
+      }
+
+      // Pass 2b: Numeric / MRP or Shorthand pattern matching if still < 15
+      if (rows.length < 15) {
+        const isNumeric = /^\d+(\.\d+)?$/.test(q);
+        if (isNumeric) {
+          const numRows = await db.all(
+            `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+             FROM medicines
+             WHERE mrp = ? OR name LIKE ? OR strength LIKE ?
+             ORDER BY name ASC LIMIT 20`,
+            [Number(q), `%${q}%`, `%${q}%`]
+          ).catch(() => []);
+          for (const r of numRows) {
+            if (!seenIds.has(r.id)) {
+              seenIds.add(r.id);
+              rows.push(r);
+            }
+          }
+        } else {
+          const letters = q.replace(/[^a-zA-Z0-9]/g, ' ').split(/\s+/).filter(Boolean);
+          if (letters.length >= 2 && letters.length <= 4) {
+            const pattern = letters.map(l => `${l}%`).join(' ');
+            const acrRows = await db.all(
+              `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+               FROM medicines
+               WHERE name LIKE ?
+               ORDER BY name ASC LIMIT 20`,
+              [`${pattern}`]
+            ).catch(() => []);
+            for (const r of acrRows) {
+              if (!seenIds.has(r.id)) {
+                seenIds.add(r.id);
+                rows.push(r);
+              }
+            }
           }
         }
       }
@@ -910,7 +953,7 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
   const { id } = req.params;
   const { 
     name, generic_name, manufacturer, marketed_by, 
-    packaging, pack_unit, item_code, category, api_reference,
+    packaging, pack_unit, pack_size, item_code, category, api_reference,
     inventory_id, quantity, rack_location, hsn_code,
     item_type, therapeutic, sub_therapeutic, schedule_type,
     short_code, ucode, cgst_per, sgst_per, igst_per,
@@ -925,7 +968,7 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
     db = await dbManager.getConnection();
     await db.run('BEGIN TRANSACTION');
  
-    // 1. Update medicines table (up to 24 fields)
+    // 1. Update medicines table (up to 25 fields)
     const updates = [];
     const params = [];
     
@@ -936,6 +979,14 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
     if (packaging !== undefined) { 
       updates.push('packaging = ?'); 
       params.push(packaging); 
+    }
+    if (pack_size !== undefined && pack_size !== null && pack_size !== '') {
+      const parsedExplicitPackSize = parseInt(pack_size, 10);
+      if (!isNaN(parsedExplicitPackSize) && parsedExplicitPackSize > 0) {
+        updates.push('pack_size = ?');
+        params.push(parsedExplicitPackSize);
+      }
+    } else if (packaging !== undefined) {
       const parsedSize = parsePackSizeFromPackaging(packaging);
       if (parsedSize !== null) {
         updates.push('pack_size = ?');

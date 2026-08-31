@@ -37,6 +37,9 @@ router.get('/', async (_req, res) => {
     if (!settingsObj['google_client_secret'] && process.env.GOOGLE_CLIENT_SECRET) {
       settingsObj['google_client_secret'] = process.env.GOOGLE_CLIENT_SECRET;
     }
+    if (!settingsObj['require_doctor_on_bill']) {
+      settingsObj['require_doctor_on_bill'] = 'true';
+    }
 
     res.json(settingsObj);
   } catch (error) {

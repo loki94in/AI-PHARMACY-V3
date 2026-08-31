@@ -62,6 +62,7 @@ describe('Sales Validation & Loose-Only Sales', () => {
       .send({
         patient_name: 'Test Customer',
         patient_phone: '1234567890',
+        doctor_name: 'Dr. Sharma',
         items: [{
           inventory_id: 200,
           medicine_name: 'LooseOnlyMed',
@@ -85,12 +86,34 @@ describe('Sales Validation & Loose-Only Sales', () => {
     expect(inv.loose_quantity).toBe(2);
   });
 
+  test('should reject sale if doctor name is missing by default', async () => {
+    const res = await request(app)
+      .post('/api/sales')
+      .send({
+        patient_name: 'Test Customer',
+        patient_phone: '1234567890',
+        items: [{
+          inventory_id: 200,
+          medicine_name: 'LooseOnlyMed',
+          quantity: 1,
+          loose_qty: 0,
+          unit_price: 100,
+          pack_size: 10
+        }],
+        total_amount: 100
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Doctor name is required to save the bill');
+  });
+
   test('should fail validation if both quantity and loose_qty are 0', async () => {
     const res = await request(app)
       .post('/api/sales')
       .send({
         patient_name: 'Test Customer',
         patient_phone: '1234567890',
+        doctor_name: 'Dr. Sharma',
         items: [{
           inventory_id: 200,
           medicine_name: 'LooseOnlyMed',
@@ -122,6 +145,7 @@ describe('Sales Validation & Loose-Only Sales', () => {
       .send({
         patient_name: 'Test Customer',
         patient_phone: '1234567890',
+        doctor_name: 'Dr. Sharma',
         items: [{
           inventory_id: 201,
           medicine_name: 'ConvertMed',

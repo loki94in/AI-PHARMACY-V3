@@ -42,61 +42,6 @@ const splitMedicineName = (name: string, packaging: string) => {
   return { baseName, packType: detectedType };
 };
 
-const getMatchingPreset = (packaging: string, _packType: string): string => {
-  const cleanPkg = packaging.trim().toUpperCase();
-
-  if (cleanPkg === 'STRIP OF 10 TAB' || cleanPkg === '10 TAB') return '10_TAB';
-  if (cleanPkg === 'STRIP OF 15 TAB' || cleanPkg === '15 TAB') return '15_TAB';
-  if (cleanPkg === 'STRIP OF 4 TAB' || cleanPkg === '4 TAB') return '4_TAB';
-  if (cleanPkg === '1 TAB') return '1_TAB';
-  if (cleanPkg === '30 TAB') return '30_TAB';
-
-  if (cleanPkg === 'STRIP OF 10 CAP' || cleanPkg === '10 CAP') return '10_CAP';
-  if (cleanPkg === 'STRIP OF 15 CAP' || cleanPkg === '15 CAP') return '15_CAP';
-  if (cleanPkg === 'STRIP OF 4 CAP' || cleanPkg === '4 CAP') return '4_CAP';
-  if (cleanPkg === '1 CAP') return '1_CAP';
-  if (cleanPkg === '30 CAP') return '30_CAP';
-
-  if (cleanPkg === 'BOTTLE OF 30ML' || cleanPkg === '30 ML') return '30_ML';
-  if (cleanPkg === 'BOTTLE OF 60ML' || cleanPkg === '60 ML') return '60_ML';
-  if (cleanPkg === 'BOTTLE OF 100ML' || cleanPkg === '100 ML') return '100_ML';
-  if (cleanPkg === 'BOTTLE OF 200ML' || cleanPkg === '200 ML') return '200_ML';
-
-  if (cleanPkg === '1 VIAL') return '1_VIAL';
-  if (cleanPkg === '1 AMP') return '1_AMP';
-  if (cleanPkg === '1 TUBE') return '1_TUBE';
-
-  return 'CUSTOM';
-};
-
-const getPackagingString = (preset: string, packType: string, customVal: string): string => {
-  if (preset === 'CUSTOM') return customVal;
-  if (preset === '10_TAB') return 'STRIP OF 10 TAB';
-  if (preset === '15_TAB') return 'STRIP OF 15 TAB';
-  if (preset === '4_TAB') return 'STRIP OF 4 TAB';
-  if (preset === '1_TAB') return '1 TAB';
-  if (preset === '30_TAB') return '30 TAB';
-
-  if (preset === '10_CAP') return 'STRIP OF 10 CAP';
-  if (preset === '15_CAP') return 'STRIP OF 15 CAP';
-  if (preset === '4_CAP') return 'STRIP OF 4 CAP';
-  if (preset === '1_CAP') return '1 CAP';
-  if (preset === '30_CAP') return '30 CAP';
-
-  if (preset === '30_ML') return 'BOTTLE OF 30ML';
-  if (preset === '60_ML') return 'BOTTLE OF 60ML';
-  if (preset === '100_ML') return 'BOTTLE OF 100ML';
-  if (preset === '200_ML') return 'BOTTLE OF 200ML';
-
-  if (preset === '1_VIAL') return '1 VIAL';
-  if (preset === '1_AMP') return '1 AMP';
-  if (preset === '1_TUBE') return '1 TUBE';
-
-  const [num, unit] = preset.split('_');
-  if (num && unit) return `${num} ${unit}`;
-
-  return customVal;
-};
 
 const THERAPEUTIC_CLASSES = [
   'Analgesic / Antipyretic',
@@ -351,13 +296,6 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
     const rawInitPkg = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
     return splitMedicineName(rawInitName, rawInitPkg).packType;
   });
-  const [packQtyUnit, setPackQtyUnit] = useState(() => {
-    const rawInitName = ocrData?.potentialName || initialData?.name || '';
-    const rawInitPkg = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
-    const parsed = splitMedicineName(rawInitName, rawInitPkg);
-    return getMatchingPreset(rawInitPkg, parsed.packType);
-  });
-  const [customPackaging, setCustomPackaging] = useState('');
   const [isManualName, setIsManualName] = useState(false);
 
   const handleMfgChange = async (val: string) => {
@@ -421,14 +359,6 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
           setBaseName(parsed.baseName);
           setPackType(parsed.packType);
           
-          const matchingPreset = getMatchingPreset(packagingVal, parsed.packType);
-          setPackQtyUnit(matchingPreset);
-          if (matchingPreset === 'CUSTOM') {
-            setCustomPackaging(packagingVal);
-          } else {
-            setCustomPackaging('');
-          }
-
           let isLooseVal = false;
           if (med.metadata) {
             try {
@@ -494,24 +424,20 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
 
   useEffect(() => {
     if (loading) return;
-    const packagingStr = getPackagingString(packQtyUnit, packType, customPackaging);
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived form-field sync from pack selectors
-    setForm(prev => {
-      const updated = { 
-        ...prev, 
-        packaging: packagingStr,
-        pack_unit: packType !== 'NONE' ? packType : (prev.pack_unit || '')
-      };
-      if (!isManualName) {
+    if (!isManualName) {
+      setForm(prev => {
+        const packagingStr = (prev.packaging || '').trim();
         const compiled = packType && packType !== 'NONE'
-          ? `${baseName} ${packType} ${packagingStr}`.trim()
-          : `${baseName} ${packagingStr}`.trim();
-        updated.name = compiled;
-      }
-      return updated;
-    });
-  }, [baseName, packType, packQtyUnit, customPackaging, isManualName, loading]);
+          ? (packagingStr ? `${baseName} ${packType} ${packagingStr}`.trim() : `${baseName} ${packType}`.trim())
+          : (packagingStr ? `${baseName} ${packagingStr}`.trim() : baseName.trim());
+        return {
+          ...prev,
+          name: compiled,
+          pack_unit: packType !== 'NONE' ? packType : (prev.pack_unit || '')
+        };
+      });
+    }
+  }, [baseName, packType, isManualName, loading]);
 
   // History prefill (create mode): debounced lookup once the typed base name is >=3 chars.
   useEffect(() => {
@@ -824,50 +750,6 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Form-Aware Packaging Preset</label>
-                      <select 
-                        value={packQtyUnit} 
-                        onChange={(e) => setPackQtyUnit(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
-                      >
-                        <optgroup label="â”€â”€ Tablet / Capsule Strips">
-                          <option value="10_TAB">STRIP OF 10 TAB</option>
-                          <option value="15_TAB">STRIP OF 15 TAB</option>
-                          <option value="4_TAB">STRIP OF 4 TAB</option>
-                          <option value="1_TAB">1 TAB</option>
-                          <option value="30_TAB">30 TAB</option>
-                          <option value="10_CAP">STRIP OF 10 CAP</option>
-                          <option value="15_CAP">STRIP OF 15 CAP</option>
-                        </optgroup>
-                        <optgroup label="â”€â”€ Liquids & Syrups">
-                          <option value="30_ML">BOTTLE OF 30ML</option>
-                          <option value="60_ML">BOTTLE OF 60ML</option>
-                          <option value="100_ML">BOTTLE OF 100ML</option>
-                          <option value="200_ML">BOTTLE OF 200ML</option>
-                        </optgroup>
-                        <optgroup label="â”€â”€ Injections & Topicals">
-                          <option value="1_VIAL">1 VIAL</option>
-                          <option value="1_AMP">1 AMP</option>
-                          <option value="1_TUBE">1 TUBE</option>
-                          <option value="CUSTOM">Custom Packaging String...</option>
-                        </optgroup>
-                      </select>
-                    </div>
-
-                    {packQtyUnit === 'CUSTOM' && (
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-semibold text-muted mb-1.5">Custom Packaging Description</label>
-                        <input 
-                          type="text" 
-                          value={customPackaging} 
-                          onChange={(e) => setCustomPackaging(e.target.value)}
-                          placeholder="e.g. BOTTLE OF 150ML or BOX OF 5 AMP"
-                          className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-bold focus:border-primary focus:outline-none"
-                        />
-                      </div>
-                    )}
-
-                    <div>
                       <label className="block text-xs font-semibold text-muted mb-1.5">Category</label>
                       <select 
                         name="category" 
@@ -884,15 +766,67 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Units Per Strip / Pack Size</label>
+                      <label className="block text-xs font-semibold text-muted mb-1.5">Custom Packaging Description (Universal Truth)</label>
+                      <input 
+                        type="text" 
+                        name="packaging"
+                        value={form.packaging || ''} 
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const autoParsedSize = parsePackSizeFromPackaging(val);
+                          setForm(prev => {
+                            const updated = {
+                              ...prev,
+                              packaging: val,
+                              ...(autoParsedSize ? { pack_size: autoParsedSize } : {})
+                            };
+                            if (!isManualName) {
+                              const packagingStr = val.trim();
+                              const compiled = packType && packType !== 'NONE'
+                                ? (packagingStr ? `${baseName} ${packType} ${packagingStr}`.trim() : `${baseName} ${packType}`.trim())
+                                : (packagingStr ? `${baseName} ${packagingStr}`.trim() : baseName.trim());
+                              updated.name = compiled;
+                            }
+                            return updated;
+                          });
+                        }}
+                        placeholder="e.g. STRIP OF 10 TAB, 10 TAB, 15 TAB, BOTTLE OF 100ML"
+                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-bold focus:border-primary focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted mb-1.5">Units Per Strip / Pack Size (Calculation Standard) *</label>
                       <input 
                         type="number" 
                         name="pack_size" 
+                        min={1}
                         value={form.pack_size !== undefined && form.pack_size !== null ? form.pack_size : ''} 
                         onChange={handleChange}
+                        placeholder="e.g. 10"
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-mono font-bold focus:border-primary focus:outline-none"
                       />
                     </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-bg3 border border-glass-border flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg">{form.allow_loose_sale !== undefined ? (form.allow_loose_sale ? '🔓' : '🔒') : (form.is_loose ? '🔓' : '🔒')}</span>
+                      <div>
+                        <p className="text-xs font-bold text-text">Allow Loose Unit Sales (Fractional Strips)</p>
+                        <p className="text-[11px] text-muted">Pharmacists can break strips to sell individual loose tablets in POS.</p>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        name="allow_loose_sale" 
+                        checked={form.allow_loose_sale !== undefined ? !!form.allow_loose_sale : !!form.is_loose} 
+                        onChange={(e) => setForm((prev) => ({ ...prev, allow_loose_sale: e.target.checked ? 1 : 0, is_loose: e.target.checked }))}
+                        className="sr-only peer" 
+                      />
+                      <div className="w-11 h-6 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-text after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-muted after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary peer-checked:after:bg-text"></div>
+                    </label>
                   </div>
                 </div>
               )}
