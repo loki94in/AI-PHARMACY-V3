@@ -18034,6 +18034,7 @@ __export(whatsappClient_exports, {
   getChatMessages: () => getChatMessages,
   getChats: () => getChats,
   getMessageMedia: () => getMessageMedia,
+  getWhatsAppReadiness: () => getWhatsAppReadiness,
   getWhatsAppStatus: () => getWhatsAppStatus,
   hasSavedSession: () => hasSavedSession,
   hashMessageBody: () => hashMessageBody,
@@ -18044,10 +18045,12 @@ __export(whatsappClient_exports, {
   isWhatsAppLoginWindowActive: () => isWhatsAppLoginWindowActive,
   markWhatsAppActivity: () => markWhatsAppActivity,
   normalizeWhatsAppPhone: () => normalizeWhatsAppPhone,
+  prewarmWhatsApp: () => prewarmWhatsApp,
   reconnectClient: () => reconnectClient,
   sendMessage: () => sendMessage,
   setCurrentQr: () => setCurrentQr,
   setIsReady: () => setIsReady,
+  setLifecycleProgress: () => setLifecycleProgress,
   setLoginWindowActive: () => setLoginWindowActive,
   shouldRouteToBusiness: () => shouldRouteToBusiness,
   waitForWhatsAppReady: () => waitForWhatsAppReady
@@ -18102,6 +18105,64 @@ function isPuppeteerDetachedError(msg) {
   const str = String(msg);
   return str.includes("detached Frame") || str.includes("Navigating frame was detached") || str.includes("LifecycleWatcher") || str.includes("ECONNREFUSED") || str.includes("Execution context was destroyed") || str.includes("Session closed") || str.includes("Target closed") || str.includes("Protocol error") || str.includes("Page crashed") || str.includes("browser has disconnected") || str.includes("CdpFrame") || str.includes("CdpPage");
 }
+function setLifecycleProgress(stage, progress, statusText, error) {
+  currentLifecycleStage = stage;
+  currentLifecycleProgress = Math.max(0, Math.min(100, Math.round(progress)));
+  currentLifecycleStatusText = statusText;
+  if (error) {
+    lastInitError = error;
+  } else if (stage === "ready") {
+    lastInitError = null;
+  }
+  try {
+    eventService.broadcast("wa_readiness_progress", {
+      stage,
+      progress: currentLifecycleProgress,
+      status: statusText,
+      isReady: isReady && !!clientInstance,
+      isSleeping: isSleeping && !isReady,
+      isInitializing: initializing || !!initPromise,
+      error: error || null
+    });
+  } catch (_) {
+  }
+}
+function getWhatsAppReadiness() {
+  let stage = "disconnected";
+  let progress = 0;
+  let statusText = "Disconnected";
+  if (isReady && clientInstance) {
+    stage = "ready";
+    progress = 100;
+    statusText = "WhatsApp Ready";
+  } else if (isSyncing) {
+    stage = "syncing";
+    progress = 85;
+    statusText = "Syncing chats & contacts...";
+  } else if (initializing || initPromise) {
+    stage = currentLifecycleStage || "connecting";
+    progress = currentLifecycleProgress || 50;
+    statusText = currentLifecycleStatusText || "Connecting...";
+  } else if (isSleeping) {
+    stage = "sleeping";
+    progress = 0;
+    statusText = "Sleeping (auto-wakes on demand)";
+  } else if (hasSavedSession()) {
+    stage = "disconnected";
+    progress = 0;
+    statusText = "Saved session present (standby)";
+  }
+  return {
+    isReady: isReady && !!clientInstance,
+    isSleeping: isSleeping && !isReady,
+    isInitializing: initializing || !!initPromise,
+    progress,
+    stage,
+    status: statusText,
+    lastError: lastInitError,
+    hasSavedSession: hasSavedSession()
+  };
+}
 function setLoginWindowActive(active) {
   isLoginWindowActive = active;
 }
@@ -18116,7 +18177,7 @@ async function getIdleSleepMinutes() {
     if (!isNaN(parsed) && parsed >= 0) return parsed;
   } catch (_) {
   }
-  return 0;
+  return 15;
 }
 function armSleepEvaluator(delayMs = WA_SLEEP_EVALUATOR_MS) {
   if (waSleepTimer) clearTimeout(waSleepTimer);
@@ -18147,6 +18208,7 @@ async function evaluateIdleSleep() {
   }
   console.log(`[WhatsApp] Idle \u2265 ${idleMin} min \u2014 sleeping WhatsApp browser to free RAM (saved session intact; auto-wakes on demand).`);
   isSleeping = true;
+  setLifecycleProgress("sleeping", 0, "Sleeping to save memory (session saved)");
   try {
     eventService.broadcast("wa_status_changed", {
       status: "sleeping",
@@ -18192,7 +18254,8 @@ async function getWhatsAppStatus() {
     isSyncing,
     pendingQueueCount: pendingCount,
     hasQr: !!currentQr,
-    sleeping: isSleeping && !isReady
+    sleeping: isSleeping && !isReady,
+    readiness: getWhatsAppReadiness()
   };
 }
 async function waitForWhatsAppReady(timeoutMs = 9e4) {
@@ -18448,6 +18511,7 @@ function launchClientInstance(forceQr) {
         activeClient = null;
         client.destroy().catch(() => {
         });
+        setLifecycleProgress("disconnected", 0, "WhatsApp requires QR scan (standby)");
         reject(new Error("WhatsApp connection requires a manual QR scan (no saved session). Connect from Settings or the Learning page."));
         return;
       }
@@ -18455,6 +18519,7 @@ function launchClientInstance(forceQr) {
       console.log(`[WhatsApp] QR code received (attempt ${qrCount}/5, standing by for scan)...`);
       currentQr = qr;
       isReady = false;
+      setLifecycleProgress("connecting", 50, `Standing by for QR scan (attempt ${qrCount}/5)...`);
       if (!qrAutoStopTimer) {
         qrAutoStopTimer = setTimeout(() => {
           console.log("[WhatsApp] QR scan timed out (2 minutes elapsed). Stopping browser process until manual connect.");
@@ -18467,6 +18532,7 @@ function launchClientInstance(forceQr) {
             activeClient = null;
           }
           clientInstance = null;
+          setLifecycleProgress("failed", 0, "QR scan timed out (2 minutes)", "QR_TIMEOUT");
           reject(new Error("WhatsApp QR scan timed out (2 minutes). Click Reconnect / Open Live Chrome Window to try again."));
         }, 12e4);
       }
@@ -18479,11 +18545,13 @@ function launchClientInstance(forceQr) {
         activeClient = null;
         client.destroy().catch(() => {
         });
+        setLifecycleProgress("failed", 0, "Max QR refresh attempts reached", "MAX_QR_EXCEEDED");
         reject(new Error("WhatsApp QR expired 5 times without being scanned. Reconnect from Settings to try again."));
       }
     });
     client.on("ready", async () => {
       console.log("WhatsApp Client is ready!");
+      lastInitFailureAt = 0;
       clearInitWatchdog();
       if (qrTimeout) clearTimeout(qrTimeout);
       if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
@@ -18493,6 +18561,7 @@ function launchClientInstance(forceQr) {
       isReady = true;
       currentQr = null;
       isSleeping = false;
+      setLifecycleProgress("ready", 100, "WhatsApp Ready");
       resolve(client);
       markWhatsAppActivity();
       try {
@@ -18536,8 +18605,12 @@ function launchClientInstance(forceQr) {
         console.warn("[WhatsApp] Could not trigger queue worker on ready:", err);
       });
       setTimeout(() => {
-        syncWhatsappData(client).catch((err) => {
+        setLifecycleProgress("syncing", 85, "Syncing chats & contacts...");
+        syncWhatsappData(client).then(() => {
+          setLifecycleProgress("ready", 100, "WhatsApp Ready");
+        }).catch((err) => {
           console.error("[WhatsApp] Background sync failed:", err);
+          setLifecycleProgress("ready", 100, "WhatsApp Ready");
         });
       }, 2500);
     });
@@ -18548,6 +18621,7 @@ function launchClientInstance(forceQr) {
       activeClient = null;
       initializing = false;
       isSleeping = false;
+      setLifecycleProgress("disconnected", 0, `WhatsApp disconnected: ${reason}`);
       if (qrTimeout) clearTimeout(qrTimeout);
       try {
         eventService.broadcast("wa_status_changed", { status: "disconnected", reason, service: "whatsapp" });
@@ -18567,6 +18641,7 @@ function launchClientInstance(forceQr) {
       isReady = false;
       activeClient = null;
       isSleeping = false;
+      setLifecycleProgress("failed", 0, `Authentication failed: ${msg}`, msg);
       eventService.broadcast("auth_failure", {
         message: `WhatsApp authentication failed: ${msg}. Please reconnect in Settings.`,
         service: "whatsapp"
@@ -18580,6 +18655,7 @@ function launchClientInstance(forceQr) {
       activeClient = null;
       clientInstance = null;
       isSleeping = false;
+      setLifecycleProgress("disconnected", 0, "WhatsApp signed out remotely");
       if (qrTimeout) clearTimeout(qrTimeout);
       eventService.broadcast("wa_status_changed", {
         status: "logged_out",
@@ -18701,13 +18777,17 @@ function launchClientInstance(forceQr) {
       isReady = false;
       clientInstance = null;
       activeClient = null;
+      setLifecycleProgress("failed", 0, `Initialization failed: ${errMsg}`, errMsg);
       reject(err);
     });
   });
 }
 async function initClient(options = {}) {
   const forceQr = options.forceQr ?? false;
-  if (clientInstance && isReady) return clientInstance;
+  if (clientInstance && isReady) {
+    setLifecycleProgress("ready", 100, "WhatsApp Ready");
+    return clientInstance;
+  }
   if (initPromise) {
     return initPromise;
   }
@@ -18719,23 +18799,35 @@ async function initClient(options = {}) {
     console.log("[WhatsApp] Auto-init skipped: WhatsApp is disabled in Settings.");
     return null;
   }
+  if (forceQr) {
+    lastInitFailureAt = 0;
+  } else if (lastInitFailureAt > 0 && Date.now() - lastInitFailureAt < INIT_FAILURE_COOLDOWN_MS) {
+    const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1e3);
+    console.log(`[WhatsApp] Auto-init deferred (${remainingSec}s cooldown remaining after previous failure).`);
+    return null;
+  }
   if (!forceQr && !hasSavedSession()) {
     console.log("[WhatsApp] Auto-init skipped: No saved session on disk. Standing down until explicit user connection.");
+    setLifecycleProgress("disconnected", 0, "No saved WhatsApp session. Click Connect to scan QR.");
     return null;
   }
   const { checkConnectivity: checkConnectivity2 } = await Promise.resolve().then(() => (init_networkDetector(), networkDetector_exports));
   const isOnline = await checkConnectivity2();
   if (!isOnline) {
     console.log("[WhatsApp] Offline: skipping WhatsApp browser launch until network is restored.");
+    setLifecycleProgress("failed", 0, "Network offline. Standing by for connection.", "OFFLINE");
     return null;
   }
   initializing = true;
+  setLifecycleProgress("waking", 20, "Cleaning profile locks and starting engine...");
   initPromise = (async () => {
     try {
       await cleanupProfileLocks();
+      setLifecycleProgress("waking", 35, "Releasing Windows file handles...");
       if (process.platform === "win32") {
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
+      setLifecycleProgress("connecting", 50, "Spawning WhatsApp Web browser instance...");
       try {
         const client = await launchClientInstance(forceQr);
         return client;
@@ -18743,6 +18835,7 @@ async function initClient(options = {}) {
         const errMsg = launchErr?.message || String(launchErr);
         if (errMsg.includes("4294967295") || errMsg.includes("exit code: -1") || errMsg.includes("exit code -1") || errMsg.includes("Failed to launch the browser process")) {
           console.warn("[WhatsApp SafeGuard] Transient lock on initial browser launch (Exit Code -1). Draining locks and retrying once silently...");
+          setLifecycleProgress("waking", 30, "Draining transient profile locks and retrying...");
           await cleanupProfileLocks();
           if (process.platform === "win32") {
             await new Promise((resolve) => setTimeout(resolve, 1e3));
@@ -18753,16 +18846,42 @@ async function initClient(options = {}) {
         throw launchErr;
       }
     } catch (err) {
+      lastInitFailureAt = Date.now();
       initializing = false;
       isReady = false;
       clientInstance = null;
       activeClient = null;
+      setLifecycleProgress("failed", 0, `Launch failed: ${err?.message || err}`, err?.message || String(err));
       throw err;
     } finally {
       initPromise = null;
     }
   })();
   return initPromise;
+}
+async function prewarmWhatsApp() {
+  markWhatsAppActivity();
+  if (isReady && clientInstance) {
+    return getWhatsAppReadiness();
+  }
+  if (await isWhatsAppExplicitlyDisabled()) {
+    return getWhatsAppReadiness();
+  }
+  if (!hasSavedSession()) {
+    return getWhatsAppReadiness();
+  }
+  if (initPromise) {
+    try {
+      await initPromise;
+    } catch (_) {
+    }
+    return getWhatsAppReadiness();
+  }
+  try {
+    await initClient();
+  } catch (_) {
+  }
+  return getWhatsAppReadiness();
 }
 async function destroyClient() {
   console.log("[WhatsApp] Destroying client to release session locks...");
@@ -19238,7 +19357,7 @@ async function downloadMessageMediaById(serializedId) {
   if (!fresh) return void 0;
   return await fresh.downloadMedia();
 }
-var import_whatsapp_web, import_fs16, import_path18, import_url15, import_child_process3, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
+var import_whatsapp_web, import_fs16, import_path18, import_url15, import_child_process3, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -19274,6 +19393,10 @@ var init_whatsappClient = __esm({
       }
       console.error("[Unhandled Rejection]", reason);
     });
+    currentLifecycleStage = "disconnected";
+    currentLifecycleProgress = 0;
+    currentLifecycleStatusText = "Disconnected";
+    lastInitError = null;
     clientInstance = null;
     activeClient = null;
     initPromise = null;
@@ -19283,6 +19406,8 @@ var init_whatsappClient = __esm({
     isLoginWindowActive = false;
     lastSyncFailureAt = 0;
     SYNC_RETRY_COOLDOWN_MS = 3e4;
+    lastInitFailureAt = 0;
+    INIT_FAILURE_COOLDOWN_MS = 6e4;
     waSleepTimer = null;
     lastWaActivityAt = Date.now();
     isSleeping = false;
@@ -19588,18 +19713,12 @@ var init_whatsappQueueWorker = __esm({
         }
         return lastId;
       }
-      /** Proactive pre-warm when user enters POS / Special Orders / Dispatch */
+      /** Proactive pre-warm when user enters POS / Special Orders / Dispatch / CRM */
       async prewarm() {
         try {
-          const { hasSavedSession: hasSavedSession2, getWhatsAppStatus: getWhatsAppStatus2, initClient: initClient2, isWhatsAppExplicitlyDisabled: isWhatsAppExplicitlyDisabled2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-          if (await isWhatsAppExplicitlyDisabled2()) return false;
-          const status = await getWhatsAppStatus2();
-          if (hasSavedSession2() && (status.sleeping || !status.isReady) && !status.initializing) {
-            console.log("[WhatsApp Pre-Warm] Proactive user action pre-warm triggered");
-            initClient2().catch(() => {
-            });
-            return true;
-          }
+          const { prewarmWhatsApp: prewarmWhatsApp2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+          const readiness = await prewarmWhatsApp2();
+          return readiness.isReady || readiness.isInitializing;
         } catch (_) {
         }
         return false;
@@ -33545,17 +33664,17 @@ async function runManualMigrationQueue(tasks) {
   }
   isQueueRunning = true;
   migrationQueue = [...tasks];
+  Object.assign(migrationStatus, {
+    active: true,
+    progress: 0,
+    message: "Starting migration queue...",
+    file: null,
+    isStagingReady: false,
+    errorCount: 0,
+    startTime: Date.now()
+  });
   (async () => {
     try {
-      Object.assign(migrationStatus, {
-        active: true,
-        progress: 0,
-        message: "Starting migration queue...",
-        file: null,
-        isStagingReady: false,
-        errorCount: 0,
-        startTime: Date.now()
-      });
       try {
         const { closeAllStagingConnections: closeAllStagingConnections2 } = await Promise.resolve().then(() => (init_migration(), migration_exports));
         const { workerSupervisor: workerSupervisor2 } = await Promise.resolve().then(() => (init_workerSupervisor(), workerSupervisor_exports));
@@ -37401,6 +37520,11 @@ var init_utilities = __esm({
         }
         const { ensureSchema: ensureSchema2 } = await Promise.resolve().then(() => (init_database(), database_exports));
         await ensureSchema2(getDbPath4());
+        try {
+          const { unlockStagingDb: unlockStagingDb2 } = await Promise.resolve().then(() => (init_migration(), migration_exports));
+          unlockStagingDb2();
+        } catch (_) {
+        }
         try {
           const freshDb = await dbManager.getConnection();
           await freshDb.run("DELETE FROM sqlite_sequence");
@@ -45027,6 +45151,24 @@ var init_messaging = __esm({
     init_config();
     init_tokenRefreshScheduler();
     router16 = import_express16.default.Router();
+    router16.get("/readiness", async (req, res) => {
+      try {
+        const readiness = getWhatsAppReadiness();
+        res.json({ success: true, readiness });
+      } catch (err) {
+        console.error("WhatsApp readiness check error:", err);
+        res.status(500).json({ error: "Failed to retrieve WhatsApp readiness status" });
+      }
+    });
+    router16.post("/prewarm", async (req, res) => {
+      try {
+        const readiness = await prewarmWhatsApp();
+        res.json({ success: true, readiness });
+      } catch (err) {
+        console.error("WhatsApp prewarm error:", err);
+        res.status(500).json({ error: "Failed to pre-warm WhatsApp client" });
+      }
+    });
     router16.get("/qr", async (req, res) => {
       try {
         if (isWhatsAppLoginWindowActive()) {
@@ -45061,13 +45203,14 @@ var init_messaging = __esm({
           return res.json({ isReady: false, qrUrl, initializing: false, status: "SCAN_QR" });
         }
         if (hasSavedSession()) {
-          console.log("[WhatsApp Session] Auto-restoring saved session...");
-          initClient({ forceQr: false }).catch((err) => {
-            if (!isPuppeteerDetachedError(err?.message)) {
-              console.warn("[WhatsApp Session] Auto-restore notice:", err?.message || err);
-            }
+          return res.json({
+            isReady: false,
+            qrUrl: null,
+            initializing: false,
+            hasSavedSession: true,
+            status: "DISCONNECTED",
+            message: 'Saved WhatsApp session present. Click "Connect WhatsApp" or send a message to activate.'
           });
-          return res.json({ isReady: false, qrUrl: null, initializing: true, status: "CONNECTING", message: "Auto-connecting saved WhatsApp session..." });
         }
         res.json({ isReady: false, qrUrl: null, initializing: false, status: "DISCONNECTED", message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
       } catch (err) {
@@ -48231,7 +48374,8 @@ var init_serviceStatus = __esm({
               isSyncing: waStatus.isSyncing,
               pendingQueueCount: waStatus.pendingQueueCount,
               hasQr: waStatus.hasQr,
-              sleeping: waStatus.sleeping
+              sleeping: waStatus.sleeping,
+              readiness: waStatus.readiness
             },
             // Config-gater states — consumed by Layout.tsx status indicators (no extra polling)
             gaters: {
