@@ -5980,6 +5980,11 @@ const CRM: React.FC = () => {
 
   const setTab = (key: string) => setSearchParams({ tab: key });
 
+  useEffect(() => {
+    // Proactively pre-warm WhatsApp client for instant customer message & payment reminder dispatch
+    api.prewarmWhatsApp().catch(() => {});
+  }, []);
+
   return (
     <div className="flex flex-col h-full gap-4">
       {/* Compact Unified Top Bar */}

@@ -143,7 +143,9 @@ import type {
   Refill,
   AutomationNotification,
   AutomationHubActivityItem,
-  AutomationHubSummary
+  AutomationHubSummary,
+  WhatsAppLifecycleStage,
+  WhatsAppReadinessState
 } from '../types/api';
 
 export type {
@@ -154,7 +156,9 @@ export type {
   Refill,
   AutomationNotification,
   AutomationHubActivityItem,
-  AutomationHubSummary
+  AutomationHubSummary,
+  WhatsAppLifecycleStage,
+  WhatsAppReadinessState
 };
 
 const COMPACT_INVENTORY_SESSION_KEY = 'pharmacy_compact_inventory_v1';
@@ -1542,7 +1546,7 @@ export const api = {
     services: {
       internet: { connected: boolean };
       pharmarack: { connected: boolean; hasToken: boolean; isRefreshing: boolean; lastCapturedAt: number | null; lastError: string | null; mode: string };
-      whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; hasQr: boolean; sleeping?: boolean };
+      whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; hasQr: boolean; sleeping?: boolean; readiness?: WhatsAppReadinessState };
     };
   }>('/system/services-status').then(res => res.data),
 
@@ -1593,6 +1597,8 @@ export const api = {
   renameDevice: (token: string, deviceName: string) => apiClient.put<{ success: boolean; message: string }>('/settings/registered-devices/rename', { token, device_name: deviceName }).then(res => res.data),
   revokeDevice: (token: string) => apiClient.delete<{ success: boolean; message: string }>(`/settings/registered-devices/${token}`).then(res => res.data),
   getWhatsAppStatus: () => apiClient.get<{ isReady: boolean; qrUrl?: string; message?: string }>('/messaging/qr').then(res => res.data),
+  getWhatsAppReadiness: () => apiClient.get<{ success: boolean; readiness: WhatsAppReadinessState }>('/messaging/readiness').then(res => res.data.readiness),
+  prewarmWhatsApp: () => apiClient.post<{ success: boolean; readiness: WhatsAppReadinessState }>('/messaging/prewarm').then(res => res.data.readiness),
 
   // Sales Reorder Suggestions API
   getSalesReorderSuggestions: () => apiClient.get<{ success: boolean; count: number; items: ReorderSuggestion[] }>('/sales/reorder-suggestions').then(res => res.data),

@@ -337,6 +337,12 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     setIsOpen(false);
     onClose();
   };
+
+  useEffect(() => {
+    // Proactively pre-warm WhatsApp and Pharmarack session when user opens Live Cart modal
+    api.prewarmWhatsApp().catch(() => {});
+    api.warmupPharmarackSession().catch(() => {});
+  }, []);
   
   // Input fields
   const [product, setProduct] = useState(initialSearch || '');

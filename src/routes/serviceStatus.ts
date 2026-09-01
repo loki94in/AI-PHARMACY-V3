@@ -60,7 +60,8 @@ router.get('/services-status', async (_req, res) => {
           isSyncing: waStatus.isSyncing,
           pendingQueueCount: waStatus.pendingQueueCount,
           hasQr: waStatus.hasQr,
-          sleeping: waStatus.sleeping
+          sleeping: waStatus.sleeping,
+          readiness: waStatus.readiness
         },
         // Config-gater states — consumed by Layout.tsx status indicators (no extra polling)
         gaters: {

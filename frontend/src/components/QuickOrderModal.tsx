@@ -122,6 +122,12 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     setIsOpen(false);
     onClose();
   }, [onClose]);
+
+  useEffect(() => {
+    // Proactively pre-warm WhatsApp and Pharmarack session when user opens Quick Order modal
+    api.prewarmWhatsApp().catch(() => {});
+    api.warmupPharmarackSession().catch(() => {});
+  }, []);
   
   // Staged Cart List
   const [cart, setCart] = useState<LocalStagedOrderItem[]>([]);

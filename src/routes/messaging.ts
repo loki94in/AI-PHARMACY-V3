@@ -1,4 +1,3 @@
-// Messaging Hub API (Agent 2)
 import express from 'express';
 import {
   initClient,
@@ -12,6 +11,8 @@ import {
   isPuppeteerDetachedError,
   hasSavedSession,
   getWhatsAppStatus,
+  getWhatsAppReadiness,
+  prewarmWhatsApp,
   isWhatsAppExplicitlyDisabled,
   setLoginWindowActive,
   isWhatsAppLoginWindowActive
@@ -28,6 +29,28 @@ import { getAppDataDir } from '../config/index.js';
 import { cleanProfileLockFiles } from '../services/tokenRefreshScheduler.js';
 
 const router = express.Router();
+
+// GET /api/messaging/readiness — Returns unified WhatsApp lifecycle readiness & progress (0-100%)
+router.get('/readiness', async (req, res) => {
+  try {
+    const readiness = getWhatsAppReadiness();
+    res.json({ success: true, readiness });
+  } catch (err: any) {
+    console.error('WhatsApp readiness check error:', err);
+    res.status(500).json({ error: 'Failed to retrieve WhatsApp readiness status' });
+  }
+});
+
+// POST /api/messaging/prewarm — Shared concurrency-safe pre-warm endpoint
+router.post('/prewarm', async (req, res) => {
+  try {
+    const readiness = await prewarmWhatsApp();
+    res.json({ success: true, readiness });
+  } catch (err: any) {
+    console.error('WhatsApp prewarm error:', err);
+    res.status(500).json({ error: 'Failed to pre-warm WhatsApp client' });
+  }
+});
 
 function findChromePath() {
   const paths = [

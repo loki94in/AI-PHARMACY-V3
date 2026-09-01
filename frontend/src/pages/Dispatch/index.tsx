@@ -241,6 +241,7 @@ const Dispatch = () => {
   };
 
   const fetchAll = useCallback(async () => {
+    api.prewarmWhatsApp().catch(() => {});
     const ordersCache = getDispatchOrdersCache();
     if (!ordersCache || (Array.isArray(ordersCache) && ordersCache.length === 0)) {
       setLoading(true);

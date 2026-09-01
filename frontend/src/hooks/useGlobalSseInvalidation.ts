@@ -37,6 +37,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   refill_updated: ['app-refills-updated'],
   return_created: ['sse-return-created'],
   wa_status_changed: ['sse-wa-status-changed'],
+  wa_readiness_progress: ['sse-wa-readiness-progress', 'sse-wa-status-changed'],
   wa_queue_update: ['sse-wa-status-changed', 'sse-wa-queue-updated'],
   wa_new_message: ['sse-wa-new-message'],
   wa_medicine_match: ['sse-wa-medicine-match'],

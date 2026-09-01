@@ -399,17 +399,12 @@ class WhatsAppQueueWorker {
     return lastId;
   }
 
-  /** Proactive pre-warm when user enters POS / Special Orders / Dispatch */
+  /** Proactive pre-warm when user enters POS / Special Orders / Dispatch / CRM */
   public async prewarm(): Promise<boolean> {
     try {
-      const { hasSavedSession, getWhatsAppStatus, initClient, isWhatsAppExplicitlyDisabled } = await import('../whatsappClient.js');
-      if (await isWhatsAppExplicitlyDisabled()) return false;
-      const status = await getWhatsAppStatus();
-      if (hasSavedSession() && (status.sleeping || !status.isReady) && !status.initializing) {
-        console.log('[WhatsApp Pre-Warm] Proactive user action pre-warm triggered');
-        initClient().catch(() => {});
-        return true;
-      }
+      const { prewarmWhatsApp } = await import('../whatsappClient.js');
+      const readiness = await prewarmWhatsApp();
+      return readiness.isReady || readiness.isInitializing;
     } catch (_) {}
     return false;
   }

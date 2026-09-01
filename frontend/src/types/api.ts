@@ -187,3 +187,23 @@ export interface Distributor {
   email?: string;
   gstin?: string;
 }
+
+export type WhatsAppLifecycleStage =
+  | 'sleeping'
+  | 'waking'
+  | 'connecting'
+  | 'syncing'
+  | 'ready'
+  | 'disconnected'
+  | 'failed';
+
+export interface WhatsAppReadinessState {
+  isReady: boolean;
+  isSleeping: boolean;
+  isInitializing: boolean;
+  progress: number; // 0 to 100
+  stage: WhatsAppLifecycleStage;
+  status: string;
+  lastError: string | null;
+  hasSavedSession: boolean;
+}

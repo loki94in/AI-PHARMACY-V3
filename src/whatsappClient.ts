@@ -109,6 +109,98 @@ process.on('unhandledRejection', (reason: any) => {
   console.error('[Unhandled Rejection]', reason);
 });
 
+export type WhatsAppLifecycleStage =
+  | 'sleeping'
+  | 'waking'
+  | 'connecting'
+  | 'syncing'
+  | 'ready'
+  | 'disconnected'
+  | 'failed';
+
+export interface WhatsAppReadinessState {
+  isReady: boolean;
+  isSleeping: boolean;
+  isInitializing: boolean;
+  progress: number; // 0 to 100
+  stage: WhatsAppLifecycleStage;
+  status: string;
+  lastError: string | null;
+  hasSavedSession: boolean;
+}
+
+let currentLifecycleStage: WhatsAppLifecycleStage = 'disconnected';
+let currentLifecycleProgress: number = 0;
+let currentLifecycleStatusText: string = 'Disconnected';
+let lastInitError: string | null = null;
+
+export function setLifecycleProgress(
+  stage: WhatsAppLifecycleStage,
+  progress: number,
+  statusText: string,
+  error?: string
+): void {
+  currentLifecycleStage = stage;
+  currentLifecycleProgress = Math.max(0, Math.min(100, Math.round(progress)));
+  currentLifecycleStatusText = statusText;
+  if (error) {
+    lastInitError = error;
+  } else if (stage === 'ready') {
+    lastInitError = null;
+  }
+
+  try {
+    eventService.broadcast('wa_readiness_progress', {
+      stage,
+      progress: currentLifecycleProgress,
+      status: statusText,
+      isReady: isReady && !!clientInstance,
+      isSleeping: isSleeping && !isReady,
+      isInitializing: initializing || !!initPromise,
+      error: error || null
+    });
+  } catch (_) {}
+}
+
+export function getWhatsAppReadiness(): WhatsAppReadinessState {
+  let stage: WhatsAppLifecycleStage = 'disconnected';
+  let progress = 0;
+  let statusText = 'Disconnected';
+
+  if (isReady && clientInstance) {
+    stage = 'ready';
+    progress = 100;
+    statusText = 'WhatsApp Ready';
+  } else if (isSyncing) {
+    stage = 'syncing';
+    progress = 85;
+    statusText = 'Syncing chats & contacts...';
+  } else if (initializing || initPromise) {
+    stage = currentLifecycleStage || 'connecting';
+    progress = currentLifecycleProgress || 50;
+    statusText = currentLifecycleStatusText || 'Connecting...';
+  } else if (isSleeping) {
+    stage = 'sleeping';
+    progress = 0;
+    statusText = 'Sleeping (auto-wakes on demand)';
+  } else if (hasSavedSession()) {
+    stage = 'disconnected';
+    progress = 0;
+    statusText = 'Saved session present (standby)';
+  }
+
+  return {
+    isReady: isReady && !!clientInstance,
+    isSleeping: isSleeping && !isReady,
+    isInitializing: initializing || !!initPromise,
+    progress,
+    stage,
+    status: statusText,
+    lastError: lastInitError,
+    hasSavedSession: hasSavedSession()
+  };
+}
+
 let clientInstance: WAClient | null = null;
 let activeClient: WAClient | null = null; // Track currently initializing or active client
 let initPromise: Promise<WAClient | null> | null = null; // Single-flight mutex
@@ -192,6 +284,7 @@ async function evaluateIdleSleep(): Promise<void> {
 
   console.log(`[WhatsApp] Idle ≥ ${idleMin} min — sleeping WhatsApp browser to free RAM (saved session intact; auto-wakes on demand).`);
   isSleeping = true;
+  setLifecycleProgress('sleeping', 0, 'Sleeping to save memory (session saved)');
   try {
     eventService.broadcast('wa_status_changed', {
       status: 'sleeping',
@@ -243,7 +336,8 @@ export async function getWhatsAppStatus() {
     isSyncing,
     pendingQueueCount: pendingCount,
     hasQr: !!currentQr,
-    sleeping: isSleeping && !isReady
+    sleeping: isSleeping && !isReady,
+    readiness: getWhatsAppReadiness()
   };
 }
 
@@ -566,6 +660,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         isReady = false;
         activeClient = null;
         client.destroy().catch(() => {});
+        setLifecycleProgress('disconnected', 0, 'WhatsApp requires QR scan (standby)');
         // Settle the init promise — otherwise every caller (sendMessage, boot auto-init,
         // Settings connect) awaits a promise that never resolves and WA stays dead until restart.
         reject(new Error('WhatsApp connection requires a manual QR scan (no saved session). Connect from Settings or the Learning page.'));
@@ -576,6 +671,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       console.log(`[WhatsApp] QR code received (attempt ${qrCount}/5, standing by for scan)...`);
       currentQr = qr;
       isReady = false;
+      setLifecycleProgress('connecting', 50, `Standing by for QR scan (attempt ${qrCount}/5)...`);
 
       if (!qrAutoStopTimer) {
         qrAutoStopTimer = setTimeout(() => {
@@ -588,6 +684,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
             activeClient = null;
           }
           clientInstance = null;
+          setLifecycleProgress('failed', 0, 'QR scan timed out (2 minutes)', 'QR_TIMEOUT');
           // Settle the init promise so awaiting callers fail fast instead of hanging forever.
           reject(new Error('WhatsApp QR scan timed out (2 minutes). Click Reconnect / Open Live Chrome Window to try again.'));
         }, 120_000);
@@ -601,6 +698,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         isReady = false;
         activeClient = null;
         client.destroy().catch(() => {});
+        setLifecycleProgress('failed', 0, 'Max QR refresh attempts reached', 'MAX_QR_EXCEEDED');
         // Settle the init promise so awaiting callers fail fast instead of hanging forever.
         reject(new Error('WhatsApp QR expired 5 times without being scanned. Reconnect from Settings to try again.'));
       }
@@ -618,6 +716,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       isReady = true;
       currentQr = null;
       isSleeping = false;
+      setLifecycleProgress('ready', 100, 'WhatsApp Ready');
       resolve(client);
       markWhatsAppActivity();
 
@@ -671,8 +770,12 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
       // Sync chats separately — failure here must not block send queue drain
       setTimeout(() => {
-        syncWhatsappData(client).catch(err => {
+        setLifecycleProgress('syncing', 85, 'Syncing chats & contacts...');
+        syncWhatsappData(client).then(() => {
+          setLifecycleProgress('ready', 100, 'WhatsApp Ready');
+        }).catch(err => {
           console.error('[WhatsApp] Background sync failed:', err);
+          setLifecycleProgress('ready', 100, 'WhatsApp Ready');
         });
       }, 2500);
     });
@@ -684,6 +787,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       activeClient = null;
       initializing = false;
       isSleeping = false; // a real disconnect must not be reported as deliberate sleep
+      setLifecycleProgress('disconnected', 0, `WhatsApp disconnected: ${reason}`);
       if (qrTimeout) clearTimeout(qrTimeout);
 
       // P4: session folder on disk stays intact — reconnect reuses saved credentials.
@@ -705,6 +809,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       isReady = false;
       activeClient = null;
       isSleeping = false;
+      setLifecycleProgress('failed', 0, `Authentication failed: ${msg}`, msg);
 
       eventService.broadcast('auth_failure', {
         message: `WhatsApp authentication failed: ${msg}. Please reconnect in Settings.`,
@@ -723,6 +828,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       activeClient = null;
       clientInstance = null;
       isSleeping = false;
+      setLifecycleProgress('disconnected', 0, 'WhatsApp signed out remotely');
       if (qrTimeout) clearTimeout(qrTimeout);
 
       eventService.broadcast('wa_status_changed', {
@@ -862,6 +968,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       isReady = false;
       clientInstance = null;
       activeClient = null;
+      setLifecycleProgress('failed', 0, `Initialization failed: ${errMsg}`, errMsg);
       reject(err);
     });
   });
@@ -871,7 +978,10 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 export async function initClient(options: { forceQr?: boolean } = {}): Promise<WAClient | null> {
   const forceQr = options.forceQr ?? false;
 
-  if (clientInstance && isReady) return clientInstance;
+  if (clientInstance && isReady) {
+    setLifecycleProgress('ready', 100, 'WhatsApp Ready');
+    return clientInstance;
+  }
 
   // Single-flight in-flight Promise: if initialization is already running, join it
   if (initPromise) {
@@ -903,6 +1013,7 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
   // do NOT launch Puppeteer / Chrome to generate unsolicited QR codes.
   if (!forceQr && !hasSavedSession()) {
     console.log('[WhatsApp] Auto-init skipped: No saved session on disk. Standing down until explicit user connection.');
+    setLifecycleProgress('disconnected', 0, 'No saved WhatsApp session. Click Connect to scan QR.');
     return null;
   }
 
@@ -911,15 +1022,18 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
   const isOnline = await checkConnectivity();
   if (!isOnline) {
     console.log('[WhatsApp] Offline: skipping WhatsApp browser launch until network is restored.');
+    setLifecycleProgress('failed', 0, 'Network offline. Standing by for connection.', 'OFFLINE');
     return null;
   }
 
   initializing = true;
+  setLifecycleProgress('waking', 20, 'Cleaning profile locks and starting engine...');
 
   initPromise = (async () => {
     try {
       // 1. Terminate stale processes and remove lingering profile locks
       await cleanupProfileLocks();
+      setLifecycleProgress('waking', 35, 'Releasing Windows file handles...');
 
       // 2. Windows Kernel Drain Grace Period: allow OS 600ms to cleanly release file handles & mutexes
       if (process.platform === 'win32') {
@@ -927,6 +1041,7 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
       }
 
       // 3. Launch internal client with single silent retry on transient Windows process lock contention
+      setLifecycleProgress('connecting', 50, 'Spawning WhatsApp Web browser instance...');
       try {
         const client = await launchClientInstance(forceQr);
         return client;
@@ -939,6 +1054,7 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
           errMsg.includes('Failed to launch the browser process')
         ) {
           console.warn('[WhatsApp SafeGuard] Transient lock on initial browser launch (Exit Code -1). Draining locks and retrying once silently...');
+          setLifecycleProgress('waking', 30, 'Draining transient profile locks and retrying...');
           await cleanupProfileLocks();
           if (process.platform === 'win32') {
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -954,6 +1070,7 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
       isReady = false;
       clientInstance = null;
       activeClient = null;
+      setLifecycleProgress('failed', 0, `Launch failed: ${err?.message || err}`, err?.message || String(err));
       throw err;
     } finally {
       initPromise = null;
@@ -961,6 +1078,34 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
   })();
 
   return initPromise;
+}
+
+/**
+ * Shared pre-warm entry point: returns current readiness or initiates concurrency-safe warm-up.
+ */
+export async function prewarmWhatsApp(): Promise<WhatsAppReadinessState> {
+  markWhatsAppActivity();
+  if (isReady && clientInstance) {
+    return getWhatsAppReadiness();
+  }
+  if (await isWhatsAppExplicitlyDisabled()) {
+    return getWhatsAppReadiness();
+  }
+  if (!hasSavedSession()) {
+    return getWhatsAppReadiness();
+  }
+
+  if (initPromise) {
+    try {
+      await initPromise;
+    } catch (_) {}
+    return getWhatsAppReadiness();
+  }
+
+  try {
+    await initClient();
+  } catch (_) {}
+  return getWhatsAppReadiness();
 }
 
 /** Destroy the WhatsApp client to release file locks on the session folder */

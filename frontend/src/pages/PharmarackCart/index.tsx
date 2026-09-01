@@ -835,6 +835,12 @@ export default function PharmarackCart() {
     };
   }, [distributors, pageActive]);
 
+  useEffect(() => {
+    // Proactively pre-warm WhatsApp and Pharmarack session for instant PO dispatch
+    api.prewarmWhatsApp().catch(() => {});
+    api.warmupPharmarackSession().catch(() => {});
+  }, []);
+
   // Saved distributor contacts, delivery boys, and store settings
   const [storeInfo, setStoreInfo] = useState<{ name: string; phone: string; address: string; email: string; adminPhone: string; deliveryBoyName1: string; deliveryBoyPhone: string; deliveryBoyName2: string; deliveryBoyPhone2: string; invoiceFileFormat: string }>({
     name: 'AI Pharmacy',

@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
-import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle } from 'lucide-react';
+import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle, Zap, RefreshCw, Moon } from 'lucide-react';
 import { api } from '../services/api';
 import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
-import { whatsappQueueEvent, automationHubEvent, messageSendEvent } from '../services/events';
-import type { AutomationHubActivityItem } from '../types/api';
+import { whatsappQueueEvent, automationHubEvent, messageSendEvent, whatsappReadinessEvent } from '../services/events';
+import type { AutomationHubActivityItem, WhatsAppReadinessState } from '../types/api';
 import { useModalEscape } from '../services/keyboardShortcuts';
 
 interface CatalogEntry {
@@ -21,18 +21,21 @@ interface AutomationHubPopoverProps {
 let cachedCatalog: CatalogEntry[] = [];
 let cachedActivity: AutomationHubActivityItem[] = [];
 let cachedUnresolvedCount = 0;
+let cachedReadiness: WhatsAppReadinessState | null = null;
 let isHydrated = false;
 
 /** Pre-warms the automation hub cache in the background or on hover */
 export const prefetchAutomationHub = async () => {
   try {
-    const [catalogRes, summaryRes] = await Promise.all([
+    const [catalogRes, summaryRes, readinessRes] = await Promise.all([
       api.getAutomationCatalog(),
       api.getAutomationHubSummary(),
+      api.getWhatsAppReadiness().catch(() => null),
     ]);
     cachedCatalog = catalogRes;
     cachedActivity = summaryRes.activity;
     cachedUnresolvedCount = summaryRes.unresolvedFailuresCount || 0;
+    if (readinessRes) cachedReadiness = readinessRes;
     isHydrated = true;
   } catch (_) {
     // Non-fatal background prefetch
@@ -44,6 +47,8 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   const [catalog, setCatalog] = useState<CatalogEntry[]>(() => cachedCatalog);
   const [activity, setActivity] = useState<AutomationHubActivityItem[]>(() => cachedActivity);
   const [unresolvedCount, setUnresolvedCount] = useState<number>(() => cachedUnresolvedCount);
+  const [readiness, setReadiness] = useState<WhatsAppReadinessState | null>(() => cachedReadiness);
+  const [isPrewarming, setIsPrewarming] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(() => !isHydrated && cachedCatalog.length === 0);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
@@ -63,18 +68,21 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   const loadData = async (silent = isHydrated || cachedCatalog.length > 0) => {
     if (!silent) setLoading(true);
     try {
-      const [catalogRes, summaryRes] = await Promise.all([
+      const [catalogRes, summaryRes, readinessRes] = await Promise.all([
         api.getAutomationCatalog(),
         api.getAutomationHubSummary(),
+        api.getWhatsAppReadiness().catch(() => null),
       ]);
       cachedCatalog = catalogRes;
       cachedActivity = summaryRes.activity;
       cachedUnresolvedCount = summaryRes.unresolvedFailuresCount || 0;
+      if (readinessRes) cachedReadiness = readinessRes;
       isHydrated = true;
 
       setCatalog(catalogRes);
       setActivity(summaryRes.activity);
       setUnresolvedCount(summaryRes.unresolvedFailuresCount || 0);
+      if (readinessRes) setReadiness(readinessRes);
 
       // If backend reports an active sending item and no local timer is running, start 10s countdown
       if (summaryRes.activeSendingItem && !activeSending) {
@@ -84,6 +92,19 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
       console.error('Failed to load automation hub data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePrewarm = async () => {
+    setIsPrewarming(true);
+    try {
+      const res = await api.prewarmWhatsApp();
+      setReadiness(res);
+      cachedReadiness = res;
+    } catch (err) {
+      console.warn('Pre-warm error:', err);
+    } finally {
+      setIsPrewarming(false);
     }
   };
 
@@ -125,12 +146,25 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
     const unsubscribeSend = messageSendEvent.subscribeSendProgress((detail) => {
       startSendAnimation(detail.recipient, detail.messagePreview, detail.durationSec || 10);
     });
+    const unsubscribeReadiness = whatsappReadinessEvent.subscribeReadinessProgress((detail) => {
+      setReadiness(prev => ({
+        isReady: detail.isReady,
+        isSleeping: detail.isSleeping,
+        isInitializing: detail.isInitializing,
+        progress: detail.progress,
+        stage: detail.stage as any,
+        status: detail.status,
+        lastError: detail.error || null,
+        hasSavedSession: prev?.hasSavedSession ?? true
+      }));
+    });
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       unsubscribeHub();
       unsubscribeQueue();
       unsubscribeSend();
+      unsubscribeReadiness();
     };
   }, []);
 
@@ -246,6 +280,67 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
             </button>
           </div>
         </div>
+
+        {/* WhatsApp Engine Lifecycle & Readiness Card */}
+        {readiness && (
+          <div className="mx-4 mt-3 mb-1 p-3 rounded-xl bg-bg3/40 border border-border space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {readiness.isReady ? (
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" />
+                ) : readiness.isSleeping ? (
+                  <Moon size={13} className="text-amber-400 shrink-0" />
+                ) : readiness.isInitializing ? (
+                  <RefreshCw size={13} className="text-sky-400 animate-spin shrink-0" />
+                ) : (
+                  <div className="w-2 h-2 rounded-full bg-muted/60" />
+                )}
+                <span className="text-xs font-bold text-text capitalize">
+                  WhatsApp: {readiness.stage}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-bg border border-border text-muted">
+                  {readiness.progress}%
+                </span>
+                {!readiness.isReady && (readiness.isSleeping || readiness.hasSavedSession) && !readiness.isInitializing && (
+                  <button
+                    onClick={handlePrewarm}
+                    disabled={isPrewarming}
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Zap size={10} /> {isPrewarming ? 'Waking...' : 'Pre-warm'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Progress bar during waking, connecting, syncing */}
+            {(readiness.isInitializing || (readiness.progress > 0 && readiness.progress < 100)) && (
+              <div className="space-y-1">
+                <div className="w-full h-1.5 bg-bg border border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
+                  <div
+                    className="h-full rounded-full transition-all duration-300 bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400"
+                    style={{ width: `${Math.min(100, Math.max(0, readiness.progress))}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted truncate">{readiness.status}</p>
+              </div>
+            )}
+
+            {!readiness.isInitializing && readiness.isReady && (
+              <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 size={11} /> Ready for instant sending
+              </p>
+            )}
+
+            {!readiness.isInitializing && readiness.isSleeping && (
+              <p className="text-[10px] text-muted">
+                Sleeping to save RAM. Auto-wakes in ~2s on message dispatch.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Live Active Sending Card (0-100% Progress + 10-0s Countdown Animation) */}
         {activeSending && (

@@ -151,5 +151,33 @@ export const messageSendEvent = {
   },
 };
 
+export interface WhatsAppReadinessDetail {
+  stage: string;
+  progress: number;
+  status: string;
+  isReady: boolean;
+  isSleeping: boolean;
+  isInitializing: boolean;
+  error?: string | null;
+}
+
+export const whatsappReadinessEvent = {
+  triggerReadinessProgress: (detail: WhatsAppReadinessDetail) => {
+    window.dispatchEvent(
+      new CustomEvent<WhatsAppReadinessDetail>('sse-wa-readiness-progress', {
+        detail
+      })
+    );
+  },
+  subscribeReadinessProgress: (callback: (detail: WhatsAppReadinessDetail) => void) => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<WhatsAppReadinessDetail>;
+      callback(customEvent.detail);
+    };
+    window.addEventListener('sse-wa-readiness-progress', handler);
+    return () => window.removeEventListener('sse-wa-readiness-progress', handler);
+  },
+};
+
 
 

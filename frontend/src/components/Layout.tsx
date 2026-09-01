@@ -59,8 +59,9 @@ import {
 } from 'lucide-react';
 
 
-import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, automationHubEvent } from '../services/events';
+import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, automationHubEvent, whatsappReadinessEvent } from '../services/events';
 import type { ToastEventDetail } from '../services/events';
+import type { WhatsAppReadinessState } from '../types/api';
 import { QuickOrderModal } from './QuickOrderModal';
 import { LiveCartAddModal } from './LiveCartAddModal';
 import { WhatsAppQueuePopover } from './WhatsAppQueuePopover';
@@ -1050,11 +1051,13 @@ const Topbar = memo(({
 
   const [servicesStatus, setServicesStatus] = useState<{
     pharmarack: { connected: boolean; isRefreshing: boolean; lastError: string | null };
-    whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; sleeping?: boolean };
+    whatsapp: { connected: boolean; initializing: boolean; isSyncing: boolean; pendingQueueCount: number; sleeping?: boolean; readiness?: WhatsAppReadinessState };
     gaters?: { automation: boolean; whatsapp: boolean; telegram: boolean; email: boolean };
   } | null>(null);
   const servicesStatusRef = useRef(servicesStatus);
   servicesStatusRef.current = servicesStatus;
+
+  const [waReadiness, setWaReadiness] = useState<WhatsAppReadinessState | null>(null);
 
   const [waQueueDetail, setWaQueueDetail] = useState<{
     isProcessing: boolean;
@@ -1084,6 +1087,9 @@ const Topbar = memo(({
       if (res && res.success && res.services) {
         servicesStatusRef.current = res.services;
         setServicesStatus(res.services);
+        if (res.services.whatsapp?.readiness) {
+          setWaReadiness(res.services.whatsapp.readiness);
+        }
       }
     } catch (err) {
       console.warn('[Layout] Failed to fetch services status:', err);
@@ -1140,6 +1146,19 @@ const Topbar = memo(({
       fetchWhatsAppQueueStatus();
     };
 
+    const unsubReadiness = whatsappReadinessEvent.subscribeReadinessProgress((detail) => {
+      setWaReadiness(prev => ({
+        isReady: detail.isReady,
+        isSleeping: detail.isSleeping,
+        isInitializing: detail.isInitializing,
+        progress: detail.progress,
+        stage: detail.stage as any,
+        status: detail.status,
+        lastError: detail.error || null,
+        hasSavedSession: prev?.hasSavedSession ?? true
+      }));
+    });
+
     window.addEventListener('focus', handleRefreshStatus);
     window.addEventListener('refresh-pharmarack-cart', handleRefreshStatus);
     window.addEventListener('pharmarack-auth-changed', handleRefreshStatus);
@@ -1147,6 +1166,7 @@ const Topbar = memo(({
     window.addEventListener('sse-pharmarack-refreshed', fetchServicesStatus);
 
     return () => {
+      unsubReadiness();
       window.removeEventListener('focus', handleRefreshStatus);
       window.removeEventListener('refresh-pharmarack-cart', handleRefreshStatus);
       window.removeEventListener('pharmarack-auth-changed', handleRefreshStatus);
@@ -1349,6 +1369,22 @@ const Topbar = memo(({
         badge: activeMsgProgress.completed ? '100% Done' : `${activeMsgProgress.progress}% (${activeMsgProgress.secondsLeft}s)`,
         color: 'emerald',
         icon: <SendIcon size={12} className="text-emerald-400 animate-pulse shrink-0" />
+      });
+    }
+
+    // 0.5. WhatsApp Readiness Waking Progress (0-100%)
+    if (waReadiness && waReadiness.isInitializing && waReadiness.progress > 0 && waReadiness.progress < 100 && !activeMsgProgress) {
+      items.push({
+        id: 'wa-waking',
+        type: 'whatsapp',
+        title: `WhatsApp: ${waReadiness.status} (${waReadiness.progress}%)`,
+        subtitle: 'Preparing WhatsApp session & connection...',
+        progress: waReadiness.progress,
+        badge: `${waReadiness.progress}%`,
+        color: 'amber',
+        action: onOpenAutomationHub,
+        actionLabel: 'Hub',
+        icon: <RefreshCw size={12} className="text-amber-400 animate-spin shrink-0" />
       });
     }
 
@@ -1977,27 +2013,62 @@ const Topbar = memo(({
             <ShoppingCart size={18} />
           </button>
 
-          {/* WhatsApp Automation Hub */}
-          <button
-            onClick={onOpenAutomationHub}
-            onMouseEnter={() => { prefetchAutomationHub(); }}
-            className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer group ${
-              automationHubHeadline === 'failed'
-                ? 'bg-rose-500/15 border-rose-500/40 text-rose-400'
-                : automationHubHeadline === 'sending'
-                  ? 'bg-sky-500/15 border-sky-500/40 text-sky-400'
-                  : 'bg-glass-bg border-glass-border text-muted hover:text-text hover:bg-bg3/60'
-            }`}
-            aria-label="WhatsApp Automation Hub"
-            title="WhatsApp Automation Hub"
-          >
-            <MessageSquareText size={18} className="group-hover:scale-110 transition-transform" />
-            {automationHubHeadline !== 'idle' && (
-              <span className={`absolute -top-1.5 -right-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-bg ${
-                automationHubHeadline === 'failed' ? 'bg-rose-500' : 'bg-sky-500 animate-pulse'
-              }`} />
-            )}
-          </button>
+          {/* Single Shared WhatsApp Status Indicator & Automation Hub Launchpad */}
+          {(() => {
+            const isReady = waReadiness ? waReadiness.isReady : !!servicesStatus?.whatsapp?.connected;
+            const isInitializing = waReadiness ? (waReadiness.isInitializing || (waReadiness.progress > 0 && waReadiness.progress < 100)) : !!servicesStatus?.whatsapp?.initializing;
+            const isSleeping = waReadiness ? waReadiness.isSleeping : !!servicesStatus?.whatsapp?.sleeping;
+            const progress = waReadiness ? waReadiness.progress : (isReady ? 100 : 0);
+            const statusLabel = waReadiness?.status || (isReady ? 'Ready (100%)' : isInitializing ? `Connecting (${progress}%)` : isSleeping ? 'Sleeping (Auto-wakes on demand)' : 'Disconnected');
+
+            // Single shared status styling: 🟢 Green (Ready) / 🟡 Amber (Waking) / 🔴 Red (Sleeping/Error)
+            let statusBtnCls = 'bg-glass-bg border-glass-border text-muted hover:text-text hover:bg-bg3/60';
+            let dotEl = null;
+
+            if (automationHubHeadline === 'failed' || (waReadiness?.lastError && !isReady)) {
+              statusBtnCls = 'bg-rose-500/15 border-rose-500/40 text-rose-400';
+              dotEl = <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-bg animate-bounce" />;
+            } else if (isInitializing || automationHubHeadline === 'sending') {
+              statusBtnCls = 'bg-amber-500/15 border-amber-500/40 text-amber-400';
+              dotEl = (
+                <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-[9px] font-black text-bg ring-2 ring-bg animate-pulse font-mono">
+                  {progress > 0 && progress < 100 ? `${progress}%` : <RefreshCw size={8} className="animate-spin" />}
+                </span>
+              );
+            } else if (isReady) {
+              statusBtnCls = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20';
+              dotEl = (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
+                </span>
+              );
+            } else if (isSleeping) {
+              statusBtnCls = 'bg-rose-500/10 border-rose-500/20 text-rose-400/90 hover:bg-rose-500/20';
+              dotEl = <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-rose-400/80 ring-2 ring-bg" />;
+            } else {
+              statusBtnCls = 'bg-rose-500/10 border-rose-500/25 text-rose-400 hover:bg-rose-500/20';
+              dotEl = <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-bg" />;
+            }
+
+            return (
+              <button
+                type="button"
+                onClick={onOpenAutomationHub}
+                onMouseEnter={() => { prefetchAutomationHub(); }}
+                className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer group ${statusBtnCls}`}
+                aria-label="WhatsApp Status & Automation Hub"
+                title={`WhatsApp: ${statusLabel} — Click to open Automation Hub`}
+              >
+                {isInitializing ? (
+                  <RefreshCw size={18} className="animate-spin group-hover:scale-110 transition-transform" />
+                ) : (
+                  <MessageSquareText size={18} className="group-hover:scale-110 transition-transform" />
+                )}
+                {dotEl}
+              </button>
+            );
+          })()}
 
           {/* Notification bell */}
           <div className="relative">
