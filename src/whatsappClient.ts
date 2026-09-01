@@ -128,6 +128,10 @@ export function isWhatsAppLoginWindowActive(): boolean {
 let lastSyncFailureAt: number = 0;
 const SYNC_RETRY_COOLDOWN_MS = 30_000;
 
+// Timestamp (ms) of the last failed initialization — prevents rapid retry storms on locked/broken profiles
+let lastInitFailureAt: number = 0;
+const INIT_FAILURE_COOLDOWN_MS = 60_000;
+
 // ── Idle sleep (RAM diet, owner decision 2026-08) ─────────────────────────────
 // The resident headless Chrome is the app's single biggest steady-state RAM
 // consumer (~250–400 MB). All patient messaging is user-clicked (Strict
@@ -604,6 +608,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
     client.on('ready', async () => {
       console.log('WhatsApp Client is ready!');
+      lastInitFailureAt = 0;
       clearInitWatchdog();
       if (qrTimeout) clearTimeout(qrTimeout);
       if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
@@ -885,6 +890,15 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
     return null;
   }
 
+  // Failure backoff: if a previous init attempt failed recently, suppress automatic retries during the cooldown
+  if (forceQr) {
+    lastInitFailureAt = 0; // Explicit user connection resets cooldown
+  } else if (lastInitFailureAt > 0 && (Date.now() - lastInitFailureAt) < INIT_FAILURE_COOLDOWN_MS) {
+    const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1000);
+    console.log(`[WhatsApp] Auto-init deferred (${remainingSec}s cooldown remaining after previous failure).`);
+    return null;
+  }
+
   // Unless user explicitly requested connection (forceQr=true) OR an existing saved session exists on disk,
   // do NOT launch Puppeteer / Chrome to generate unsolicited QR codes.
   if (!forceQr && !hasSavedSession()) {
@@ -935,6 +949,7 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
         throw launchErr;
       }
     } catch (err: any) {
+      lastInitFailureAt = Date.now();
       initializing = false;
       isReady = false;
       clientInstance = null;

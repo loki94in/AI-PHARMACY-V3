@@ -1072,34 +1072,35 @@ export const api = {
     const formData = new FormData();
     formData.append('file', file);
     return apiClient.post('/migration/upload', formData, {
-      headers: { 'Content-Type': undefined }
+      headers: { 'Content-Type': undefined },
+      timeout: 300000
     }).then(r => r.data);
   },
   analyzeMigrationFile: (fileName: string, skipLines: number = 0) =>
-    apiClient.post('/migration/analyze', { fileName, skipLines }).then(r => r.data),
+    apiClient.post('/migration/analyze', { fileName, skipLines }, { timeout: 120000 }).then(r => r.data),
   preMigrationAnalyze: (fileName: string, skipLines: number = 0, sheetIndex: number = 0, userMapping?: unknown) =>
-    apiClient.post('/migration/pre-migration-analyze', { fileName, skipLines, sheetIndex, userMapping }).then(r => r.data),
+    apiClient.post('/migration/pre-migration-analyze', { fileName, skipLines, sheetIndex, userMapping }, { timeout: 120000 }).then(r => r.data),
   runMigration: (fileName: string, dataType: string, mapping: unknown, skipLines: number = 0, sheetIndex: number = 0, filters?: unknown, medicineActions?: unknown) =>
-    apiClient.post('/migration/run', { fileName, dataType, mapping, skipLines, sheetIndex, filters, medicineActions }).then(r => r.data),
+    apiClient.post('/migration/run', { fileName, dataType, mapping, skipLines, sheetIndex, filters, medicineActions }, { timeout: 600000 }).then(r => r.data),
   runMigrationQueue: (tasks: readonly Record<string, unknown>[]) =>
-    apiClient.post('/migration/run', { tasks }).then(r => r.data),
+    apiClient.post('/migration/run', { tasks }, { timeout: 600000 }).then(r => r.data),
   getMigrationStatus: () => apiClient.get('/migration/status').then(r => r.data),
   getMigrationSummary: () => apiClient.get('/migration/summary').then(r => r.data),
-  getStagingSummary: () => apiClient.get('/migration/staging/summary').then(r => r.data),
-  getStagingInventory: () => apiClient.get('/migration/staging/inventory').then(r => r.data),
-  getStagingSales: () => apiClient.get('/migration/staging/sales').then(r => r.data),
-  getStagingPurchases: () => apiClient.get('/migration/staging/purchases').then(r => r.data),
-  getStagingReturns: () => apiClient.get('/migration/staging/returns').then(r => r.data),
-  getStagingErrors: () => apiClient.get('/migration/staging/errors').then(r => r.data),
-  getStagingAudits: (params?: { limit?: number; offset?: number }) => apiClient.get('/migration/staging/audits', { params }).then(r => r.data),
-  getStagingAuditSummary: () => apiClient.get('/migration/staging/audit').then(r => r.data),
+  getStagingSummary: () => apiClient.get('/migration/staging/summary', { timeout: 60000 }).then(r => r.data),
+  getStagingInventory: () => apiClient.get('/migration/staging/inventory', { timeout: 60000 }).then(r => r.data),
+  getStagingSales: () => apiClient.get('/migration/staging/sales', { timeout: 60000 }).then(r => r.data),
+  getStagingPurchases: () => apiClient.get('/migration/staging/purchases', { timeout: 60000 }).then(r => r.data),
+  getStagingReturns: () => apiClient.get('/migration/staging/returns', { timeout: 60000 }).then(r => r.data),
+  getStagingErrors: () => apiClient.get('/migration/staging/errors', { timeout: 60000 }).then(r => r.data),
+  getStagingAudits: (params?: { limit?: number; offset?: number }) => apiClient.get('/migration/staging/audits', { params, timeout: 60000 }).then(r => r.data),
+  getStagingAuditSummary: () => apiClient.get('/migration/staging/audit', { timeout: 60000 }).then(r => r.data),
   finalizeMigration: (regenerateInvoices: boolean = false, reportCutoverDate?: string) =>
-    apiClient.post('/migration/staging/finalize', { regenerateInvoices, reportCutoverDate }).then(r => r.data),
+    apiClient.post('/migration/staging/finalize', { regenerateInvoices, reportCutoverDate }, { timeout: 600000 }).then(r => r.data),
   rollbackMigration: () =>
-    apiClient.delete('/migration/staging/rollback').then(r => r.data),
-  getLocalBackups: () => apiClient.get('/migration/local-backups').then(r => r.data),
+    apiClient.delete('/migration/staging/rollback', { timeout: 60000 }).then(r => r.data),
+  getLocalBackups: () => apiClient.get('/migration/local-backups', { timeout: 30000 }).then(r => r.data),
   runLocalBackupMigration: (fullPath: string, fileName?: string) =>
-    apiClient.post('/migration/run-local-backup', { fullPath, fileName }).then(r => r.data),
+    apiClient.post('/migration/run-local-backup', { fullPath, fileName }, { timeout: 600000 }).then(r => r.data),
 
   // V2 endpoints
   getProjects: () => apiClient.get('/migration/projects').then(r => r.data),
@@ -1107,10 +1108,10 @@ export const api = {
   deleteProject: (id: number) => apiClient.delete(`/migration/projects/${id}`).then(r => r.data),
   getTemplates: () => apiClient.get('/migration/templates').then(r => r.data),
   saveTemplate: (name: string, moduleType: string, mappings: Record<string, unknown>) => apiClient.post('/migration/templates', { name, moduleType, mappings }).then(r => r.data),
-  getStagingConflicts: () => apiClient.get('/migration/staging/conflicts').then(r => r.data),
-  resolveStagingConflict: (conflictId: number, resolution: string) => apiClient.post('/migration/staging/resolve', { conflictId, resolution }).then(r => r.data),
+  getStagingConflicts: () => apiClient.get('/migration/staging/conflicts', { timeout: 60000 }).then(r => r.data),
+  resolveStagingConflict: (conflictId: number, resolution: string) => apiClient.post('/migration/staging/resolve', { conflictId, resolution }, { timeout: 60000 }).then(r => r.data),
   getSnapshots: () => apiClient.get('/migration/snapshots').then(r => r.data),
-  restoreSnapshot: (snapshotId: number) => apiClient.post('/migration/snapshots/restore', { snapshotId }).then(r => r.data),
+  restoreSnapshot: (snapshotId: number) => apiClient.post('/migration/snapshots/restore', { snapshotId }, { timeout: 300000 }).then(r => r.data),
 
   
   addPatient: (data: Omit<import('../types/api').Patient, 'id'>) => apiClient.post('/crm/patients', data).then(res => res.data),
@@ -1525,8 +1526,8 @@ export const api = {
 
   // Database Force Unlock & Master Catalog Seeding
   unlockDatabase: () => apiClient.post('/utilities/db/unlock').then(res => res.data),
-  seedMasterMedicines: () => apiClient.post<{ success: boolean; message: string; loaded: number }>('/medicines/seed-master').then(res => res.data),
-  syncInventoryToMaster: () => apiClient.post<{ success: boolean; message: string; synced: number }>('/medicines/sync-from-inventory').then(res => res.data),
+  seedMasterMedicines: () => apiClient.post<{ success: boolean; message: string; loaded: number }>('/medicines/seed-master', {}, { timeout: 300000 }).then(res => res.data),
+  syncInventoryToMaster: () => apiClient.post<{ success: boolean; message: string; synced: number }>('/medicines/sync-from-inventory', {}, { timeout: 300000 }).then(res => res.data),
 
   // Pharmarack Sent Orders History
   getPharmarackSentDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/pharmarack/sent-orders/dates').then(res => res.data),

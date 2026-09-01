@@ -226,19 +226,20 @@ export async function runManualMigrationQueue(tasks: MigrationTask[]): Promise<v
   isQueueRunning = true;
   migrationQueue = [...tasks];
 
+  // Immediately assign migrationStatus synchronously before launching background worker
+  Object.assign(migrationStatus, {
+    active: true,
+    progress: 0,
+    message: 'Starting migration queue...',
+    file: null,
+    isStagingReady: false,
+    errorCount: 0,
+    startTime: Date.now()
+  });
+
   // Start background processing
   (async () => {
     try {
-      Object.assign(migrationStatus, {
-        active: true,
-        progress: 0,
-        message: 'Starting migration queue...',
-        file: null,
-        isStagingReady: false,
-        errorCount: 0,
-        startTime: Date.now()
-      });
-
       // Stop background workers to prevent database locks during migration
       try {
         const { closeAllStagingConnections } = await import('../routes/migration.js');

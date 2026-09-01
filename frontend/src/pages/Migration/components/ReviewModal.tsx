@@ -261,6 +261,13 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const handleStartImport = async () => {
     setPhase('importing');
     setErrorMessage(null);
+    setStatus({
+      active: true,
+      progress: 0,
+      message: 'Starting migration...',
+      errorCount: 0,
+      isStagingReady: false,
+    });
     try {
       await api.runMigration(
         fileEntry.uploadedFileName,
@@ -272,7 +279,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     } catch (err) {
       const e = err as LocalApiError;
       setPhase('error');
-      setErrorMessage(e.message || 'Failed to start import');
+      setErrorMessage(e.response?.data?.error || e.message || 'Failed to start import');
     }
   };
 
@@ -283,7 +290,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       await loadStagingData();
     } catch (err) {
       const e = err as LocalApiError;
-      setErrorMessage(e.message || 'Failed to resolve conflict');
+      setErrorMessage(e.response?.data?.error || e.message || 'Failed to resolve conflict');
     } finally {
       setResolvingConflictId(null);
     }
@@ -296,7 +303,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       setErrorMessage(null);
     } catch (err) {
       const e = err as LocalApiError;
-      setErrorMessage(e.message || 'Failed to discard staging');
+      setErrorMessage(e.response?.data?.error || e.message || 'Failed to discard staging');
     }
   };
 
@@ -327,7 +334,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     } catch (err) {
       const e = err as LocalApiError;
       setPhase('error');
-      setErrorMessage(e.message || 'Database finalize error');
+      setErrorMessage(e.response?.data?.error || e.message || 'Database finalize error');
     }
   };
 
@@ -361,7 +368,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         stopPolling();
         await loadStagingData();
         setPhase('staging');
-      } else if (liveStatus.message && liveStatus.message.toLowerCase().includes('failed')) {
+      } else if (!liveStatus.active && !liveStatus.isStagingReady && liveStatus.message && (liveStatus.message.startsWith('Failed:') || liveStatus.message.startsWith('Failed'))) {
         transitioning = true;
         stopPolling();
         setPhase('error');
@@ -385,7 +392,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       if (!detail) return;
       const now = Date.now();
       const terminal = detail.isStagingReady ||
-        (typeof detail.message === 'string' && detail.message.toLowerCase().includes('failed'));
+        (!detail.active && !detail.isStagingReady && typeof detail.message === 'string' && (detail.message.startsWith('Failed:') || detail.message.startsWith('Failed')));
       if (!terminal && now - lastPushAt < 500) return;
       lastPushAt = now;
       applyLiveStatus(detail);

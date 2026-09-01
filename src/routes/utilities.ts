@@ -644,6 +644,12 @@ router.post('/reset-data', async (req, res) => {
     const { ensureSchema } = await import('../database.js');
     await ensureSchema(getDbPath());
 
+    // 3.1 Always unlock staging database after schema recreation so future migrations can connect
+    try {
+      const { unlockStagingDb } = await import('./migration.js');
+      unlockStagingDb();
+    } catch (_) {}
+
     // 3a. Clear SQLite sequence counter so primary key IDs start cleanly from 1
     try {
       const freshDb = await dbManager.getConnection();

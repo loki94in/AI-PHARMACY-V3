@@ -18116,7 +18116,7 @@ async function getIdleSleepMinutes() {
     if (!isNaN(parsed) && parsed >= 0) return parsed;
   } catch (_) {
   }
-  return 15;
+  return 0;
 }
 function armSleepEvaluator(delayMs = WA_SLEEP_EVALUATOR_MS) {
   if (waSleepTimer) clearTimeout(waSleepTimer);
@@ -20781,8 +20781,8 @@ async function recalculateStockLimits() {
       console.log(`[StockCalculatorWorker] Recalculating stock limits for ${medicines.length} medicines`);
       const salesGroupRows = await db2.all(`
         SELECT
-          im.medicine_id,
-          COALESCE(AVG(daily_qty), 0) as avg_daily_sales
+          daily.medicine_id,
+          COALESCE(AVG(daily.daily_qty), 0) as avg_daily_sales
         FROM (
           SELECT
             im.medicine_id,
@@ -20793,8 +20793,8 @@ async function recalculateStockLimits() {
           JOIN inventory_master im ON im.id = sit.inventory_id
           WHERE si.date >= datetime('now', '-90 days')
           GROUP BY im.medicine_id, DATE(si.date)
-        )
-        GROUP BY im.medicine_id
+        ) daily
+        GROUP BY daily.medicine_id
       `);
       const avgSalesMap = /* @__PURE__ */ new Map();
       for (const r of salesGroupRows) {
@@ -21893,10 +21893,13 @@ function parsePackSizeFromPackaging(packaging) {
     const size2 = parseInt(stripOfMatch[1], 10);
     if (size2 > 0) return size2;
   }
-  const bottleOfMatch = trimmed.match(/^\s*BOTTLE\s+OF\s+(\d+)\s*ML\b/i);
-  if (bottleOfMatch) {
-    const size2 = parseInt(bottleOfMatch[1], 10);
+  const prefixTypeMatch = trimmed.match(/\b(?:TAB|TABS|CAP|CAPS|STRIP)\s+(\d+)\b/i);
+  if (prefixTypeMatch) {
+    const size2 = parseInt(prefixTypeMatch[1], 10);
     if (size2 > 0) return size2;
+  }
+  if (/\b\d+(\.\d+)?\s*(ML|LTR|LITER|LITRE|G|GM|GRAM|KG|MG|MCG)\b/i.test(trimmed)) {
+    return null;
   }
   const match = trimmed.match(COUNTABLE_UNIT_PATTERN);
   if (!match) return null;
@@ -21908,7 +21911,7 @@ var COUNTABLE_UNIT_PATTERN;
 var init_packaging = __esm({
   "src/utils/packaging.ts"() {
     "use strict";
-    COUNTABLE_UNIT_PATTERN = /^\s*(\d+)\s*(NO'?S|TAB|TABS|CAP|CAPS|PAD|PADS)\b/i;
+    COUNTABLE_UNIT_PATTERN = /^\s*(\d+)\s*(NO'?S|TAB|TABS|CAP|CAPS|PAD|PADS)?\b/i;
   }
 });
 
@@ -22463,14 +22466,19 @@ var init_inventory = __esm({
         if (rows.length < 15 && q.length >= 2) {
           try {
             const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
+            const tokens = cleanToken.split(/\s+/).filter((t) => t.length >= 1);
             if (cleanToken.length >= 2) {
+              let ftsQuery = `"${cleanToken}"`;
+              if (tokens.length > 1) {
+                ftsQuery = tokens.map((t) => `${t}*`).join(" AND ");
+              }
               const ftsRows = await db2.all(
                 `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name
              FROM medicines_fts f
              JOIN medicines m ON f.rowid = m.id
              WHERE medicines_fts MATCH ?
              LIMIT 30`,
-                [`"${cleanToken}"`]
+                [ftsQuery]
               );
               for (const r of ftsRows) {
                 if (!seenIds.has(r.id)) {
@@ -22491,6 +22499,42 @@ var init_inventory = __esm({
               if (!seenIds.has(r.id)) {
                 seenIds.add(r.id);
                 rows.push(r);
+              }
+            }
+          }
+          if (rows.length < 15) {
+            const isNumeric = /^\d+(\.\d+)?$/.test(q);
+            if (isNumeric) {
+              const numRows = await db2.all(
+                `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+             FROM medicines
+             WHERE mrp = ? OR name LIKE ? OR strength LIKE ?
+             ORDER BY name ASC LIMIT 20`,
+                [Number(q), `%${q}%`, `%${q}%`]
+              ).catch(() => []);
+              for (const r of numRows) {
+                if (!seenIds.has(r.id)) {
+                  seenIds.add(r.id);
+                  rows.push(r);
+                }
+              }
+            } else {
+              const letters = q.replace(/[^a-zA-Z0-9]/g, " ").split(/\s+/).filter(Boolean);
+              if (letters.length >= 2 && letters.length <= 4) {
+                const pattern = letters.map((l) => `${l}%`).join(" ");
+                const acrRows = await db2.all(
+                  `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+               FROM medicines
+               WHERE name LIKE ?
+               ORDER BY name ASC LIMIT 20`,
+                  [`${pattern}`]
+                ).catch(() => []);
+                for (const r of acrRows) {
+                  if (!seenIds.has(r.id)) {
+                    seenIds.add(r.id);
+                    rows.push(r);
+                  }
+                }
               }
             }
           }
@@ -22721,6 +22765,7 @@ var init_inventory = __esm({
         marketed_by,
         packaging,
         pack_unit,
+        pack_size,
         item_code,
         category,
         api_reference,
@@ -22773,6 +22818,14 @@ var init_inventory = __esm({
         if (packaging !== void 0) {
           updates.push("packaging = ?");
           params.push(packaging);
+        }
+        if (pack_size !== void 0 && pack_size !== null && pack_size !== "") {
+          const parsedExplicitPackSize = parseInt(pack_size, 10);
+          if (!isNaN(parsedExplicitPackSize) && parsedExplicitPackSize > 0) {
+            updates.push("pack_size = ?");
+            params.push(parsedExplicitPackSize);
+          }
+        } else if (packaging !== void 0) {
           const parsedSize = parsePackSizeFromPackaging(packaging);
           if (parsedSize !== null) {
             updates.push("pack_size = ?");
@@ -28151,9 +28204,11 @@ var init_pdfInvoiceService = __esm({
         });
         const invoice = await db2.get(
           `SELECT si.invoice_no, si.date, si.total_amount, si.tax_amount, si.payment_medium, si.payment_status, si.discount, si.subtotal,
-              c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+              c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+              d.name as doctor_name
        FROM sales_invoices si
        LEFT JOIN customers c ON si.customer_id = c.id
+       LEFT JOIN doctors d ON si.doctor_id = d.id
        WHERE si.id = ?`,
           [invoiceId]
         );
@@ -28177,66 +28232,74 @@ var init_pdfInvoiceService = __esm({
         const barcodeData = await generateInvoiceBarcodeData(invoice.invoice_no, invoice.date);
         return new Promise((resolve, reject) => {
           try {
-            const doc = new import_pdfkit3.default({ margin: 40 });
+            const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
             const stream = import_fs23.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
-            doc.font("Helvetica-Bold").fontSize(20).fillColor("#0284c7").text(shopName, { align: "center" });
+            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
             if (shopAddress) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(shopAddress, { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
             }
             const contactParts = [];
             if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
             if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
             if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
             if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
             }
-            doc.moveDown(1.5);
-            doc.moveTo(40, doc.y).lineTo(550, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.6);
             const infoTop = doc.y;
-            doc.fontSize(10).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text(`Invoice No: ${invoice.invoice_no}`, 40, infoTop);
-            doc.font("Helvetica").text(`Date: ${new Date(invoice.date).toLocaleString()}`, 40, doc.y + 4);
-            doc.text(`Payment: ${invoice.payment_medium || "CASH"} (${invoice.payment_status || "PAID"})`, 40, doc.y + 4);
-            doc.font("Helvetica-Bold").text("Billed To:", 300, infoTop);
-            doc.font("Helvetica").text(`Name: ${invoice.customer_name || "Walk-in Customer"}`, 300, doc.y + 4);
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text(`Invoice No: `, 30, infoTop, { continued: true }).font("Helvetica").text(invoice.invoice_no);
+            doc.font("Helvetica-Bold").text(`Date: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(new Date(invoice.date).toLocaleString("en-IN"));
+            doc.font("Helvetica-Bold").text(`Payment: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(`${invoice.payment_medium || "CASH"} (${invoice.payment_status || "PAID"})`);
+            const docNameRaw = (invoice.doctor_name || "").trim();
+            if (docNameRaw) {
+              const docDisplayName = docNameRaw.toLowerCase().startsWith("dr") ? docNameRaw : `Dr. ${docNameRaw}`;
+              doc.font("Helvetica-Bold").fillColor("#0284c7").text(`Prescribed By: `, 30, doc.y + 3, { continued: true }).font("Helvetica-Bold").text(docDisplayName);
+            }
+            doc.fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Billed To:", 320, infoTop);
+            doc.font("Helvetica").text(`Name: ${invoice.customer_name || "Walk-in Customer"}`, 320, doc.y + 3);
             if (invoice.customer_phone) {
-              doc.text(`Phone: ${invoice.customer_phone}`, 300, doc.y + 4);
+              doc.text(`Phone: ${invoice.customer_phone}`, 320, doc.y + 3);
             }
             if (invoice.customer_address) {
-              doc.text(`Address: ${invoice.customer_address}`, 300, doc.y + 4);
+              doc.text(`Address: ${invoice.customer_address}`, 320, doc.y + 3);
             }
-            doc.moveDown(2);
+            doc.moveDown(1.2);
             const tableTop = doc.y;
-            doc.fontSize(9).fillColor("#64748b");
-            doc.text("Medicine / Product Name", 40, tableTop, { width: 190 });
-            doc.text("Batch No.", 235, tableTop, { width: 75 });
-            doc.text("Qty", 315, tableTop, { width: 50, align: "right" });
-            doc.text("Unit Price", 375, tableTop, { width: 80, align: "right" });
-            doc.text("Total", 465, tableTop, { width: 85, align: "right" });
-            doc.moveTo(40, tableTop + 12).lineTo(550, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Medicine / Product Name", 30, tableTop, { width: 200 });
+            doc.text("Batch No.", 235, tableTop, { width: 80 });
+            doc.text("Qty", 320, tableTop, { width: 55, align: "right" });
+            doc.text("Unit Price", 380, tableTop, { width: 85, align: "right" });
+            doc.text("Total", 470, tableTop, { width: 95, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
             items.forEach((item) => {
               const itemY = doc.y;
-              doc.fontSize(9).fillColor("#0f172a");
+              doc.fontSize(8.5).fillColor("#0f172a").font("Helvetica");
               const discPer = item.discount_per || 0;
               const discountedPrice = item.unit_price * (1 - discPer / 100);
               const packSize = item.pack_size || 1;
               const looseQty = item.loose_qty || 0;
               const itemTotal = discountedPrice * item.quantity + discountedPrice / packSize * looseQty;
               const nameText = discPer > 0 ? `${item.medicine_name} (${discPer}% Off)` : item.medicine_name;
-              doc.text(nameText, 40, itemY, { width: 190 });
-              doc.text(item.batch_no ? String(item.batch_no) : "-", 235, itemY, { width: 75 });
+              doc.text(nameText, 30, itemY, { width: 200 });
+              doc.text(item.batch_no ? String(item.batch_no) : "-", 235, itemY, { width: 80 });
               const qtyText = looseQty > 0 ? `${item.quantity} S + ${looseQty} L` : String(item.quantity);
-              doc.text(qtyText, 315, itemY, { width: 50, align: "right" });
-              doc.text(`\u20B9${discountedPrice.toFixed(2)}`, 375, itemY, { width: 80, align: "right" });
-              doc.text(`\u20B9${itemTotal.toFixed(2)}`, 465, itemY, { width: 85, align: "right" });
-              doc.moveDown(1.2);
+              doc.text(qtyText, 320, itemY, { width: 55, align: "right" });
+              doc.text(`\u20B9${discountedPrice.toFixed(2)}`, 380, itemY, { width: 85, align: "right" });
+              doc.text(`\u20B9${itemTotal.toFixed(2)}`, 470, itemY, { width: 95, align: "right" });
+              doc.moveDown(0.9);
             });
-            doc.moveDown(1);
+            doc.moveDown(0.5);
+            doc.moveTo(380, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(0.5).stroke();
+            doc.moveDown(0.4);
             let discount = invoice.discount || 0;
             let tax = invoice.tax_amount || 0;
             let total = invoice.total_amount;
@@ -28252,28 +28315,28 @@ var init_pdfInvoiceService = __esm({
               tax = invoice.tax_amount || 0;
               total = invoice.total_amount;
             }
-            doc.fontSize(9).fillColor("#64748b");
-            doc.text("Subtotal:", 380, doc.y, { width: 80, align: "right" });
-            doc.fillColor("#0f172a").text(`\u20B9${subtotal.toFixed(2)}`, 480, doc.y - 9, { width: 70, align: "right" });
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica");
+            doc.text("Subtotal:", 380, doc.y, { width: 85, align: "right" });
+            doc.fillColor("#0f172a").text(`\u20B9${subtotal.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
             if (discount > 0 && invoice.payment_medium !== "CREDIT") {
               const discountExclusive = discount / 1.05;
-              doc.moveDown(0.5);
-              doc.fillColor("#64748b").text("Discount:", 380, doc.y, { width: 80, align: "right" });
-              doc.fillColor("#e11d48").text(`-\u20B9${discountExclusive.toFixed(2)}`, 480, doc.y - 9, { width: 70, align: "right" });
+              doc.moveDown(0.3);
+              doc.fillColor("#64748b").text("Discount:", 380, doc.y, { width: 85, align: "right" });
+              doc.fillColor("#e11d48").text(`-\u20B9${discountExclusive.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
             }
+            doc.moveDown(0.3);
+            doc.fillColor("#64748b").text("Tax (5%):", 380, doc.y, { width: 85, align: "right" });
+            doc.fillColor("#0f172a").text(`\u20B9${tax.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
             doc.moveDown(0.5);
-            doc.fillColor("#64748b").text("Tax (5%):", 380, doc.y, { width: 80, align: "right" });
-            doc.fillColor("#0f172a").text(`\u20B9${tax.toFixed(2)}`, 480, doc.y - 9, { width: 70, align: "right" });
-            doc.moveDown(0.8);
             const grandTotalY = doc.y;
-            doc.fontSize(12).fillColor("#0f172a").font("Helvetica-Bold");
-            doc.text("Grand Total:", 360, grandTotalY, { width: 100, align: "right" });
-            doc.text(`\u20B9${total.toFixed(2)}`, 480, grandTotalY, { width: 70, align: "right" });
-            const barcodeY = Math.max(doc.y + 25, 625);
+            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.text("Grand Total:", 360, grandTotalY, { width: 105, align: "right" });
+            doc.text(`\u20B9${total.toFixed(2)}`, 470, grandTotalY, { width: 95, align: "right" });
+            const barcodeY = Math.min(Math.max(doc.y + 15, 660), 730);
             try {
-              doc.image(barcodeData.qrBuffer, 40, barcodeY, { width: 52, height: 52 });
-              doc.image(barcodeData.code128Buffer, 102, barcodeY + 4, { width: 140, height: 44 });
-              doc.fontSize(7).font("Helvetica").fillColor("#64748b").text(`Scannable Bill Barcode: ${barcodeData.barcodeText}`, 40, barcodeY + 56);
+              doc.image(barcodeData.qrBuffer, 30, barcodeY, { width: 48, height: 48 });
+              doc.image(barcodeData.code128Buffer, 88, barcodeY + 2, { width: 130, height: 40 });
+              doc.fontSize(6.5).font("Helvetica").fillColor("#64748b").text(`Scannable Bill Barcode: ${barcodeData.barcodeText}`, 30, barcodeY + 50);
             } catch (bcErr) {
               console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
             }
@@ -28282,11 +28345,11 @@ var init_pdfInvoiceService = __esm({
             const customSigPath = import_path27.default.join(uploadsDir, "custom_signature.png");
             if (includeStampAndSig) {
               const defaultStampX = 410;
-              const defaultStampY = Math.max(grandTotalY - 10, 520) - 32;
+              const defaultStampY = Math.min(Math.max(grandTotalY + 5, 540), 650);
               const stampX = settings.stamp_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.stamp_pos_x))) : defaultStampX;
-              const stampY = settings.stamp_pos_y ? Math.max(300, Math.min(700, parseFloat(settings.stamp_pos_y))) : defaultStampY;
+              const stampY = settings.stamp_pos_y ? Math.max(300, Math.min(680, parseFloat(settings.stamp_pos_y))) : defaultStampY;
               const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
-              const stampWidth = Math.round(85 * (stampScale / 100));
+              const stampWidth = Math.round(80 * (stampScale / 100));
               const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
               if (import_fs23.default.existsSync(customStampPath)) {
                 doc.save();
@@ -28299,41 +28362,47 @@ var init_pdfInvoiceService = __esm({
                 doc.save();
                 doc.translate(stampX + stampWidth / 2, stampY + stampWidth / 2);
                 doc.rotate(stampRot);
-                const radiusOuter = Math.round(36 * (stampScale / 100));
-                const radiusInner = Math.round(32 * (stampScale / 100));
+                const radiusOuter = Math.round(34 * (stampScale / 100));
+                const radiusInner = Math.round(30 * (stampScale / 100));
                 const stampColor = invoice.payment_status === "UNPAID" ? "#f59e0b" : "#10b981";
-                doc.strokeColor(stampColor).lineWidth(1.8);
+                doc.strokeColor(stampColor).lineWidth(1.5);
                 doc.circle(0, 0, radiusOuter).stroke();
                 doc.circle(0, 0, radiusInner).stroke();
-                doc.fillColor(stampColor).fontSize(6.5 * (stampScale / 100)).font("Helvetica");
-                doc.text(shopName, -30 * (stampScale / 100), -18 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                doc.fontSize(7.5 * (stampScale / 100));
+                doc.fillColor(stampColor).fontSize(6 * (stampScale / 100)).font("Helvetica");
+                doc.text(shopName, -30 * (stampScale / 100), -16 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                doc.fontSize(7 * (stampScale / 100));
                 if (invoice.payment_status === "UNPAID") {
                   doc.font("Helvetica-Bold").text("CREDIT ACCOUNT", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                  doc.font("Helvetica").fontSize(6.5 * (stampScale / 100)).text("PAYMENT PENDING", -30 * (stampScale / 100), 10 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("PAYMENT PENDING", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
                 } else {
                   doc.font("Helvetica-Bold").text("PAID & VERIFIED", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                  doc.font("Helvetica").fontSize(6.5 * (stampScale / 100)).text("THANK YOU", -30 * (stampScale / 100), 10 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("THANK YOU", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
                 }
                 doc.restore();
               }
-              const defaultSigX = 415;
-              const defaultSigY = barcodeY - 12;
+              const defaultSigX = 425;
+              const defaultSigY = barcodeY - 5;
               const sigX = settings.sig_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.sig_pos_x))) : defaultSigX;
-              const sigY = settings.sig_pos_y ? Math.max(300, Math.min(710, parseFloat(settings.sig_pos_y))) : defaultSigY;
+              const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
               const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
-              const sigWidth = Math.round(80 * (sigScale / 100));
+              const sigWidth = Math.round(75 * (sigScale / 100));
               if (import_fs23.default.existsSync(customSigPath)) {
                 doc.image(customSigPath, sigX, sigY, { width: sigWidth });
               }
-              doc.moveTo(sigX - 10, sigY + 52).lineTo(sigX + sigWidth + 10, sigY + 52).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
-              doc.fontSize(8).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX - 10, sigY + 56, { width: sigWidth + 20, align: "center" });
-              doc.fontSize(8).fillColor("#94a3b8").text("This is a computer generated document. Stamped digitally.", 40, 750, { align: "center" });
+              doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
+              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX - 10, sigY + 51, { width: sigWidth + 20, align: "center" });
             } else {
-              doc.moveTo(405, barcodeY + 40).lineTo(515, barcodeY + 40).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
-              doc.fontSize(8).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", 405, barcodeY + 44, { width: 110, align: "center" });
-              doc.fontSize(8).fillColor("#94a3b8").text("This is a physical document. Signed and stamped manually.", 40, 750, { align: "center" });
+              const sigX = 430;
+              const sigY = barcodeY + 25;
+              doc.moveTo(sigX, sigY).lineTo(sigX + 110, sigY).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
+              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX, sigY + 4, { width: 110, align: "center" });
             }
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              includeStampAndSig ? "This is a computer generated document. Stamped digitally." : "This is an official document. Signed and stamped manually.",
+              30,
+              doc.page.height - 25,
+              { align: "center", width: doc.page.width - 60 }
+            );
             doc.end();
           } catch (err) {
             reject(err);
@@ -28368,82 +28437,88 @@ var init_pdfInvoiceService = __esm({
         const shopGstin = settings.gstin || "";
         return new Promise((resolve, reject) => {
           try {
-            const doc = new import_pdfkit3.default({ margin: 40 });
+            const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
             const stream = import_fs23.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
             doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
             if (shopAddress) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(shopAddress, { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
             }
             const contactParts = [];
             if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
             if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
             if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
             if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
             }
-            doc.moveDown(1);
-            doc.moveTo(40, doc.y).lineTo(550, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(1);
-            doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text("CUSTOMER CREDIT STATEMENT & LEDGER SUMMARY", { align: "center" });
-            doc.moveDown(1);
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("CUSTOMER CREDIT STATEMENT & LEDGER SUMMARY", { align: "center" });
+            doc.moveDown(0.8);
             const infoTop = doc.y;
-            doc.fontSize(10).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Customer Details:", 40, infoTop);
-            doc.font("Helvetica").text(`Name: ${customer.name || "Customer"}`, 40, doc.y + 4);
-            if (customer.phone) doc.text(`Phone: ${customer.phone}`, 40, doc.y + 4);
-            if (customer.address) doc.text(`Address: ${customer.address}`, 40, doc.y + 4);
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${customer.name || "Customer"}`, 30, doc.y + 3);
+            if (customer.phone) doc.text(`Phone: ${customer.phone}`, 30, doc.y + 3);
+            if (customer.address) doc.text(`Address: ${customer.address}`, 30, doc.y + 3);
             const dueDateStr = customer.credit_due_date ? new Date(customer.credit_due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "As agreed";
-            doc.font("Helvetica-Bold").text("Account Summary:", 300, infoTop);
-            doc.font("Helvetica").text(`Statement Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 300, doc.y + 4);
-            doc.text(`Due Date: ${dueDateStr}`, 300, doc.y + 4);
+            doc.font("Helvetica-Bold").text("Account Summary:", 320, infoTop);
+            doc.font("Helvetica").text(`Statement Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
+            doc.text(`Due Date: ${dueDateStr}`, 320, doc.y + 3);
             const creditBal = Number(customer.credit_balance || 0);
-            doc.font("Helvetica-Bold").fillColor("#e11d48").text(`Outstanding Balance: \u20B9${creditBal.toFixed(2)}`, 300, doc.y + 4);
-            doc.moveDown(2);
+            doc.font("Helvetica-Bold").fillColor("#e11d48").text(`Outstanding Balance: \u20B9${creditBal.toFixed(2)}`, 320, doc.y + 3);
+            doc.moveDown(1.2);
             const tableTop = doc.y;
-            doc.fontSize(9).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Bill / Invoice #", 40, tableTop, { width: 150 });
-            doc.text("Date", 200, tableTop, { width: 100 });
-            doc.text("Status", 320, tableTop, { width: 100 });
-            doc.text("Amount (\u20B9)", 440, tableTop, { width: 110, align: "right" });
-            doc.moveTo(40, tableTop + 12).lineTo(550, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Bill / Invoice #", 30, tableTop, { width: 160 });
+            doc.text("Date", 200, tableTop, { width: 110 });
+            doc.text("Status", 320, tableTop, { width: 110 });
+            doc.text("Amount (\u20B9)", 440, tableTop, { width: 125, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
             let totalCalculated = 0;
             if (pendingInvoices.length > 0) {
               pendingInvoices.forEach((inv) => {
                 const itemY = doc.y;
-                doc.fontSize(9).fillColor("#0f172a").font("Helvetica");
+                doc.fontSize(8.5).fillColor("#0f172a").font("Helvetica");
                 const amt = Number(inv.total_amount || 0);
                 totalCalculated += amt;
                 const dFormatted = inv.date ? new Date(inv.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
-                doc.text(inv.invoice_no, 40, itemY, { width: 150 });
-                doc.text(dFormatted, 200, itemY, { width: 100 });
-                doc.text(inv.payment_status || "UNPAID", 320, itemY, { width: 100 });
-                doc.text(`\u20B9${amt.toFixed(2)}`, 440, itemY, { width: 110, align: "right" });
-                doc.moveDown(1.2);
+                doc.text(inv.invoice_no, 30, itemY, { width: 160 });
+                doc.text(dFormatted, 200, itemY, { width: 110 });
+                doc.text(inv.payment_status || "UNPAID", 320, itemY, { width: 110 });
+                doc.text(`\u20B9${amt.toFixed(2)}`, 440, itemY, { width: 125, align: "right" });
+                doc.moveDown(0.9);
               });
             } else {
-              doc.fontSize(9).fillColor("#64748b").font("Helvetica").text("No pending credit bills recorded.", 40, doc.y, { align: "center" });
-              doc.moveDown(1.5);
+              doc.fontSize(8.5).fillColor("#64748b").font("Helvetica").text("No pending credit bills recorded.", 30, doc.y, { align: "center" });
+              doc.moveDown(1.2);
             }
-            doc.moveTo(40, doc.y).lineTo(550, doc.y).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
             const finalTotal = creditBal > 0 ? creditBal : totalCalculated;
-            doc.fontSize(12).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
             doc.text("Total Outstanding Payable:", 250, doc.y, { width: 180, align: "right" });
-            doc.fillColor("#e11d48").text(`\u20B9${finalTotal.toFixed(2)}`, 440, doc.y - 12, { width: 110, align: "right" });
+            doc.fillColor("#e11d48").text(`\u20B9${finalTotal.toFixed(2)}`, 440, doc.y - 11, { width: 125, align: "right" });
+            const stampY = Math.min(Math.max(doc.y + 15, 650), 730);
             doc.save();
-            doc.translate(450, doc.y + 20);
+            doc.translate(480, stampY);
             doc.rotate(-10);
-            doc.strokeColor("#f59e0b").lineWidth(2);
-            doc.circle(0, 0, 36).stroke();
-            doc.fillColor("#f59e0b").fontSize(7).font("Helvetica-Bold");
-            doc.text("CREDIT ACCOUNT", -30, -10, { width: 60, align: "center" });
-            doc.text("STATEMENT", -30, 2, { width: 60, align: "center" });
+            doc.strokeColor("#f59e0b").lineWidth(1.8);
+            doc.circle(0, 0, 32).stroke();
+            doc.fillColor("#f59e0b").fontSize(6.5).font("Helvetica-Bold");
+            doc.text("CREDIT ACCOUNT", -28, -8, { width: 56, align: "center" });
+            doc.text("STATEMENT", -28, 2, { width: 56, align: "center" });
             doc.restore();
-            doc.fontSize(8).fillColor("#94a3b8").text("This is an official pharmacy credit ledger statement. Stamped digitally.", 40, 750, { align: "center" });
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is an official pharmacy credit ledger statement. Stamped digitally.",
+              30,
+              doc.page.height - 25,
+              { align: "center", width: doc.page.width - 60 }
+            );
             doc.end();
           } catch (err) {
             reject(err);
@@ -28477,56 +28552,61 @@ var init_pdfInvoiceService = __esm({
         const shopGstin = settings.gstin || "";
         return new Promise((resolve, reject) => {
           try {
-            const doc = new import_pdfkit3.default({ margin: 40 });
+            const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
             const stream = import_fs23.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
             doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
             if (shopAddress) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(shopAddress, { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
             }
             const contactParts = [];
             if (shopPhone) contactParts.push(`Helpline: ${shopPhone}`);
             if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
             if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
             if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
             }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("PRESCRIPTION REFILL ADVISORY & SCHEDULE", { align: "center" });
             doc.moveDown(1);
-            doc.moveTo(40, doc.y).lineTo(550, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(1);
-            doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text("PRESCRIPTION REFILL ADVISORY & SCHEDULE", { align: "center" });
-            doc.moveDown(1.5);
             const infoTop = doc.y;
-            doc.fontSize(10).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Patient Information:", 40, infoTop);
-            doc.font("Helvetica").text(`Name: ${refill.patient_name || refill.customer_name || "Patient"}`, 40, doc.y + 4);
-            doc.text(`Phone: ${refill.patient_phone || refill.customer_phone || "-"}`, 40, doc.y + 4);
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Patient Information:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${refill.patient_name || refill.customer_name || "Patient"}`, 30, doc.y + 3);
+            doc.text(`Phone: ${refill.patient_phone || refill.customer_phone || "-"}`, 30, doc.y + 3);
             const nextDateStr = refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Immediate";
-            doc.font("Helvetica-Bold").text("Refill Schedule Details:", 300, infoTop);
-            doc.font("Helvetica").text(`Refill Due Date: ${nextDateStr}`, 300, doc.y + 4);
-            doc.text(`Cycle Interval: ${refill.refill_days || 30} Days`, 300, doc.y + 4);
-            doc.moveDown(2);
+            doc.font("Helvetica-Bold").text("Refill Schedule Details:", 320, infoTop);
+            doc.font("Helvetica").text(`Refill Due Date: ${nextDateStr}`, 320, doc.y + 3);
+            doc.text(`Cycle Interval: ${refill.refill_days || 30} Days`, 320, doc.y + 3);
+            doc.moveDown(1.2);
             const tableTop = doc.y;
-            doc.fontSize(9).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Prescribed Medicine", 40, tableTop, { width: 280 });
-            doc.text("Dosage / Frequency", 330, tableTop, { width: 110 });
-            doc.text("Quantity", 450, tableTop, { width: 100, align: "right" });
-            doc.moveTo(40, tableTop + 12).lineTo(550, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Prescribed Medicine", 30, tableTop, { width: 280 });
+            doc.text("Dosage / Frequency", 320, tableTop, { width: 130 });
+            doc.text("Quantity", 460, tableTop, { width: 105, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
             const medY = doc.y;
-            doc.fontSize(10).fillColor("#0f172a").font("Helvetica");
-            doc.text(refill.medicine_name || "Prescribed Medicine", 40, medY, { width: 280 });
-            doc.text(refill.dosage || "As directed", 330, medY, { width: 110 });
-            doc.text(String(refill.quantity_needed || refill.quantity || 1), 450, medY, { width: 100, align: "right" });
-            doc.moveDown(2);
-            doc.fontSize(9).fillColor("#0284c7").font("Helvetica-Bold").text("Refill Advisory Note:");
-            doc.fontSize(9).fillColor("#334155").font("Helvetica").text(
+            doc.fontSize(9).fillColor("#0f172a").font("Helvetica");
+            doc.text(refill.medicine_name || "Prescribed Medicine", 30, medY, { width: 280 });
+            doc.text(refill.dosage || "As directed", 320, medY, { width: 130 });
+            doc.text(String(refill.quantity_needed || refill.quantity || 1), 460, medY, { width: 105, align: "right" });
+            doc.moveDown(1.5);
+            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Refill Advisory Note:");
+            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
               "To ensure uninterrupted course continuity of your essential medications, please collect your scheduled refill at your earliest convenience or contact our pharmacy desk for prompt delivery.",
-              { width: 500, align: "justify" }
+              { width: 535, align: "justify" }
             );
-            doc.fontSize(8).fillColor("#94a3b8").text("This is a verified pharmacy refill advisory slip.", 40, 750, { align: "center" });
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is a verified pharmacy refill advisory slip.",
+              30,
+              doc.page.height - 25,
+              { align: "center", width: doc.page.width - 60 }
+            );
             doc.end();
           } catch (err) {
             reject(err);
@@ -28554,54 +28634,59 @@ var init_pdfInvoiceService = __esm({
         const shopGstin = settings.gstin || "";
         return new Promise((resolve, reject) => {
           try {
-            const doc = new import_pdfkit3.default({ margin: 40 });
+            const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
             const stream = import_fs23.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
             doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
             if (shopAddress) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(shopAddress, { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
             }
             const contactParts = [];
             if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
             if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
             if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
             if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(9).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
             }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("SPECIAL MEDICINE ORDER ARRIVAL & PICKUP SLIP", { align: "center" });
             doc.moveDown(1);
-            doc.moveTo(40, doc.y).lineTo(550, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(1);
-            doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text("SPECIAL MEDICINE ORDER ARRIVAL & PICKUP SLIP", { align: "center" });
-            doc.moveDown(1.5);
             const infoTop = doc.y;
-            doc.fontSize(10).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Customer Details:", 40, infoTop);
-            doc.font("Helvetica").text(`Name: ${order.requester || "Customer"}`, 40, doc.y + 4);
-            doc.text(`Phone: ${order.phone || "-"}`, 40, doc.y + 4);
-            doc.font("Helvetica-Bold").text("Order Details:", 300, infoTop);
-            doc.font("Helvetica").text(`Order Reference: #SO-${order.id}`, 300, doc.y + 4);
-            doc.text(`Arrival Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 300, doc.y + 4);
-            doc.font("Helvetica-Bold").fillColor("#10b981").text("Status: READY FOR PICKUP", 300, doc.y + 4);
-            doc.moveDown(2);
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${order.requester || "Customer"}`, 30, doc.y + 3);
+            doc.text(`Phone: ${order.phone || "-"}`, 30, doc.y + 3);
+            doc.font("Helvetica-Bold").text("Order Details:", 320, infoTop);
+            doc.font("Helvetica").text(`Order Reference: #SO-${order.id}`, 320, doc.y + 3);
+            doc.text(`Arrival Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
+            doc.font("Helvetica-Bold").fillColor("#10b981").text("Status: READY FOR PICKUP", 320, doc.y + 3);
+            doc.moveDown(1.2);
             const tableTop = doc.y;
-            doc.fontSize(9).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Requested Product / Medicine", 40, tableTop, { width: 350 });
-            doc.text("Quantity", 400, tableTop, { width: 150, align: "right" });
-            doc.moveTo(40, tableTop + 12).lineTo(550, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(1);
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Requested Product / Medicine", 30, tableTop, { width: 370 });
+            doc.text("Quantity", 410, tableTop, { width: 155, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
             const prodY = doc.y;
-            doc.fontSize(10).fillColor("#0f172a").font("Helvetica-Bold");
-            doc.text(order.product || "Special Requested Medicine", 40, prodY, { width: 350 });
-            doc.text(`${order.qty || 1} units`, 400, prodY, { width: 150, align: "right" });
-            doc.moveDown(2);
-            doc.fontSize(9).fillColor("#0284c7").font("Helvetica-Bold").text("Pickup Instructions:");
-            doc.fontSize(9).fillColor("#334155").font("Helvetica").text(
+            doc.fontSize(9.5).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.text(order.product || "Special Requested Medicine", 30, prodY, { width: 370 });
+            doc.text(`${order.qty || 1} units`, 410, prodY, { width: 155, align: "right" });
+            doc.moveDown(1.5);
+            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Pickup Instructions:");
+            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
               "Your specially requested medicine has arrived and is securely reserved at the pharmacy counter. Please present this slip or your phone number upon collection.",
-              { width: 500, align: "justify" }
+              { width: 535, align: "justify" }
             );
-            doc.fontSize(8).fillColor("#94a3b8").text("This is an authentic pharmacy collection slip.", 40, 750, { align: "center" });
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is an authentic pharmacy collection slip.",
+              30,
+              doc.page.height - 25,
+              { align: "center", width: doc.page.width - 60 }
+            );
             doc.end();
           } catch (err) {
             reject(err);
@@ -38472,6 +38557,15 @@ var init_verificationService = __esm({
             };
           }
           const db2 = await dbManager.getConnection();
+          const reqDocSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+          const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== "false" : true;
+          if (isDoctorRequired && !doctor_id && (!billData.doctor_name || !String(billData.doctor_name).trim())) {
+            return {
+              success: false,
+              layer: "Validation",
+              message: "Doctor name is required to save the bill. Please select or enter a doctor name."
+            };
+          }
           const oldInvoiceItemsMap = /* @__PURE__ */ new Map();
           if (editId) {
             const oldRows = await db2.all(
@@ -40699,6 +40793,9 @@ var init_settings = __esm({
         }
         if (!settingsObj["google_client_secret"] && process.env.GOOGLE_CLIENT_SECRET) {
           settingsObj["google_client_secret"] = process.env.GOOGLE_CLIENT_SECRET;
+        }
+        if (!settingsObj["require_doctor_on_bill"]) {
+          settingsObj["require_doctor_on_bill"] = "true";
         }
         res.json(settingsObj);
       } catch (error) {
@@ -48543,6 +48640,8 @@ var init_sales = __esm({
         if (isNaN(subtotal) || isNaN(tax) || isNaN(total)) {
           throw new Error("Calculated totals resulted in NaN value.");
         }
+        const reqDocSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+        const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== "false" : true;
         const invoice_no = await generateInvoiceNo(db2);
         const invoiceDateValue = sale_date ? new Date(sale_date).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
         let resolvedDoctorId = doctor_id || null;
@@ -48555,6 +48654,10 @@ var init_sales = __esm({
             const newDoc = await db2.run("INSERT INTO doctors (name) VALUES (?)", [cleanDocName]);
             resolvedDoctorId = newDoc.lastID;
           }
+        }
+        if (isDoctorRequired && !resolvedDoctorId) {
+          await conn.run("ROLLBACK");
+          return res.status(400).json({ error: "Doctor name is required to save the bill. Please select or enter a doctor name." });
         }
         const result = await db2.run(
           "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -50156,6 +50259,11 @@ var init_sales = __esm({
           } else {
             resolvedDoctorId = null;
           }
+        }
+        const reqDocSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'require_doctor_on_bill'");
+        const isDoctorRequired = reqDocSetting ? reqDocSetting.value !== "false" : true;
+        if (isDoctorRequired && !resolvedDoctorId) {
+          return res.status(400).json({ error: "Doctor name is required to save the bill. Please select or enter a doctor name." });
         }
         if (Array.isArray(items)) {
           const oldItems = await db2.all("SELECT inventory_id, quantity, loose_qty FROM sale_items WHERE invoice_id = ?", [id]);
@@ -58998,6 +59106,7 @@ var init_medicines = __esm({
         marketed_by,
         packaging,
         pack_unit,
+        pack_size,
         item_code,
         category,
         api_reference,
@@ -59052,6 +59161,14 @@ var init_medicines = __esm({
         if (packaging !== void 0) {
           updates.push("packaging = ?");
           params.push(packaging);
+        }
+        if (pack_size !== void 0 && pack_size !== null && pack_size !== "") {
+          const parsedExplicitPackSize = parseInt(pack_size, 10);
+          if (!isNaN(parsedExplicitPackSize) && parsedExplicitPackSize > 0) {
+            updates.push("pack_size = ?");
+            params.push(parsedExplicitPackSize);
+          }
+        } else if (packaging !== void 0) {
           const parsedSize = parsePackSizeFromPackaging(packaging);
           if (parsedSize !== null) {
             updates.push("pack_size = ?");

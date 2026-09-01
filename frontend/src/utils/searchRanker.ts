@@ -9,20 +9,20 @@
  */
 
 export interface SearchableMedicineItem {
-  name?: string;
-  medicine_name?: string;
-  item_code?: string;
-  batch_no?: string;
-  batch?: string;
-  strength?: string;
-  mrp?: number | string;
-  manufacturer?: string;
-  generic_name?: string;
-  api_reference?: string;
-  stock_qty?: number | string;
-  quantity?: number | string;
-  loose_qty?: number | string;
-  loose_quantity?: number | string;
+  name?: string | null;
+  medicine_name?: string | null;
+  item_code?: string | null;
+  batch_no?: string | null;
+  batch?: string | null;
+  strength?: string | null;
+  mrp?: number | string | null;
+  manufacturer?: string | null;
+  generic_name?: string | null;
+  api_reference?: string | null;
+  stock_qty?: number | string | null;
+  quantity?: number | string | null;
+  loose_qty?: number | string | null;
+  loose_quantity?: number | string | null;
   expiry_date?: string | null;
   expiry?: string | null;
   isValidForPos?: boolean;

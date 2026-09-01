@@ -1650,7 +1650,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [pharmarackPass, setPharmarackPass] = useState(rawSettings.pharmarack_password || '');
   const [pharmarackRefreshing, setPharmarackRefreshing] = useState(false);
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
-  const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '15');
+  const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
 
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
@@ -1705,7 +1705,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setPharmarackUser(rawSettings.pharmarack_username || '');
     setPharmarackPass(rawSettings.pharmarack_password || '');
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
-    setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '15');
+    setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
     toastEvent.trigger('Integration credentials reset to saved parameters', 'info');
   };
 
@@ -1837,7 +1837,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
                     value={waIdleSleepMin}
                     onChange={(e) => setWaIdleSleepMin(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                    placeholder="15"
+                    placeholder="0"
                   />
                   <p className="text-[10px] text-muted mt-1">
                     Frees ~250–400 MB RAM while idle. Queued messages wake it automatically. 0 = never sleep.
@@ -2327,7 +2327,7 @@ function ResetDataModal({ initialMode = 'data', onClose, refetchSettings }: Rese
     if (!isConfirmed) return;
     setResetting(true);
     try {
-      const res = await apiClient.post('/utilities/reset-data', { wipeAll: resetType === 'factory' });
+      const res = await apiClient.post('/utilities/reset-data', { wipeAll: resetType === 'factory' }, { timeout: 300000 });
       
       // 1. Purge all localStorage sent order history keys & cached state
       try {

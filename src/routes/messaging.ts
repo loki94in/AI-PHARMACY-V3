@@ -92,14 +92,14 @@ router.get('/qr', async (req, res) => {
     }
 
     if (hasSavedSession()) {
-      // Auto-start connection in background if saved session exists on disk
-      console.log('[WhatsApp Session] Auto-restoring saved session...');
-      initClient({ forceQr: false }).catch(err => {
-        if (!isPuppeteerDetachedError(err?.message)) {
-          console.warn('[WhatsApp Session] Auto-restore notice:', err?.message || err);
-        }
+      return res.json({
+        isReady: false,
+        qrUrl: null,
+        initializing: false,
+        hasSavedSession: true,
+        status: 'DISCONNECTED',
+        message: 'Saved WhatsApp session present. Click "Connect WhatsApp" or send a message to activate.'
       });
-      return res.json({ isReady: false, qrUrl: null, initializing: true, status: 'CONNECTING', message: 'Auto-connecting saved WhatsApp session...' });
     }
 
     res.json({ isReady: false, qrUrl: null, initializing: false, status: 'DISCONNECTED', message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
