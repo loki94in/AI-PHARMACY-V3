@@ -700,6 +700,11 @@ server.on('error', (err: any) => {
           }
         }, 5000);
 
+        // T+6s: Dynamic trigger scheduler and background crons (staggered to prevent boot-time event loop collisions)
+        setTimeout(() => {
+          setupCrons(db);
+        }, 6000);
+
         // T+8s: Telegram bot service
         setTimeout(async () => {
           try {
@@ -742,10 +747,7 @@ server.on('error', (err: any) => {
         }, 50_000);
       });
 
-      // Register crons
-      setupCrons(db);
-
-      // One-line boot health summary, ~T+10s (covers the T+2/5/8s staggers).
+      // One-line boot health summary, ~T+10s (covers the T+2/5/6/8s staggers).
       // Later failures (WhatsApp T+45s, cart warm-up) still log their own errors.
       setTimeout(() => {
         console.log(`[Boot] Startup complete: ${((performance.now() - BOOT_T0) / 1000).toFixed(1)}s total, ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
