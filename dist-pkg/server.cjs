@@ -63001,6 +63001,9 @@ var init_server = __esm({
               console.error("[Boot:Phase4] Failed to start scispaCy sidecar:", err);
             }
           }, 5e3);
+          setTimeout(() => {
+            setupCrons(db2);
+          }, 6e3);
           setTimeout(async () => {
             try {
               const { telegramBotService: telegramBotService2 } = await Promise.resolve().then(() => (init_telegramBot(), telegramBot_exports));
@@ -63038,7 +63041,6 @@ var init_server = __esm({
             Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot:Phase4] Cart warm-up fallback failed:", err?.message || err));
           }, 5e4);
         });
-        setupCrons(db2);
         setTimeout(() => {
           console.log(`[Boot] Startup complete: ${((performance.now() - BOOT_T0) / 1e3).toFixed(1)}s total, ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
         }, 1e4);
