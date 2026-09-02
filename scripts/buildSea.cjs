@@ -42,7 +42,8 @@ console.log('[build-sea] Done ->', outExe);
 const isccCandidates = [
   'iscc',
   'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
-  'C:\\Program Files\\Inno Setup 6\\ISCC.exe'
+  'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
+  'C:\\Program Files\\Inno Setup 7\\ISCC.exe'
 ];
 
 let isccExe = null;
