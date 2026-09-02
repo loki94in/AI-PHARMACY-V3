@@ -21,8 +21,6 @@ import {
   Bell,
   BellRing,
   X,
-  Sun,
-  Moon,
   Trash2,
   ExternalLink,
   Info,
@@ -884,8 +882,6 @@ const LiveHeaderClock = () => {
 // Topbar
 // ──────────────────────────────────────────────
 const Topbar = memo(({
-  theme,
-  setTheme,
   notifications,
   hasUnread,
   onNewNotification,
@@ -900,8 +896,6 @@ const Topbar = memo(({
   onMenuClick,
   compactCacheLoaded = false,
 }: {
-  theme: string;
-  setTheme: React.Dispatch<React.SetStateAction<string>>;
   notifications: AppNotification[];
   hasUnread: boolean;
   onNewNotification: (n: ToastEventDetail) => void;
@@ -2113,16 +2107,6 @@ const Topbar = memo(({
             isOpen={showShortcutHelp}
             onClose={() => setShowShortcutHelp(false)}
           />
-
-          {/* Theme toggle */}
-          <button
-            onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
-            className="p-2 rounded-xl transition-all duration-200 flex items-center justify-center border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer"
-            aria-label="Toggle theme"
-            title={theme === 'light' ? 'Switch to Night Mode' : 'Switch to Day Mode'}
-          >
-            {theme === 'light' ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
         </div>
       </header>
     </>
@@ -3213,12 +3197,8 @@ const NO_REFILLS: Refill[] = [];
 // ──────────────────────────────────────────────
 export const Layout = ({
   children,
-  theme,
-  setTheme,
 }: {
   children: React.ReactNode;
-  theme: string;
-  setTheme: React.Dispatch<React.SetStateAction<string>>;
 }) => {
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -3681,7 +3661,7 @@ export const Layout = ({
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {!isSystemReady && (
-          <div className="bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 px-4 py-2 text-xs font-semibold flex items-center justify-between shrink-0 z-global-modal">
+          <div className="bg-amber-500/15 border-b border-amber-500/30 text-amber-700 px-4 py-2 text-xs font-semibold flex items-center justify-between shrink-0 z-global-modal">
             <div className="flex items-center gap-2">
               <RefreshCw size={14} className="animate-spin text-amber-500" />
               <span>Database initialization in progress — verifying schemas & integrity...</span>
@@ -3689,8 +3669,6 @@ export const Layout = ({
           </div>
         )}
         <Topbar
-          theme={theme}
-          setTheme={setTheme}
           notifications={notifications}
           hasUnread={hasUnread}
           onNewNotification={handleNewNotification}

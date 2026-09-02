@@ -83,23 +83,6 @@ const pageRoutes: KeepAliveRoute[] = [
 // App Component
 // ──────────────────────────────────────────────
 function App() {
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('theme') || 'dark'; }
-    catch { return 'dark'; }
-  });
-
-  useEffect(() => {
-    if (theme === 'light') {
-      document.documentElement.classList.add('light');
-      document.body.classList.add('light');
-      try { localStorage.setItem('feedback-toolbar-theme', 'light'); } catch { }
-    } else {
-      document.documentElement.classList.remove('light');
-      document.body.classList.remove('light');
-      try { localStorage.setItem('feedback-toolbar-theme', 'dark'); } catch { }
-    }
-    try { localStorage.setItem('theme', theme); } catch { }
-  }, [theme]);
 
   useEffect(() => {
     // Prefetch page chunks in the background during idle moments to make page transitions instant.
@@ -278,7 +261,7 @@ function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
-          <Layout theme={theme} setTheme={setTheme}>
+          <Layout>
             <Routes>
               <Route path="/" element={<Navigate to="/pos" replace />} />
               <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
@@ -316,7 +299,7 @@ function App() {
         </Suspense>
         {import.meta.env.DEV && AgentationDev && (
           <Suspense fallback={null}>
-            <AgentationDev key={theme} />
+            <AgentationDev />
           </Suspense>
         )}
       </BrowserRouter>
