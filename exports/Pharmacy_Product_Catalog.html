@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pharmaceutical Product Catalog & Competitor Rate Sheet</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 10mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #1e293b;
+      background: #fff;
+      margin: 0;
+      padding: 10px;
+      font-size: 11px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+    .pharmacy-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0369a1;
+      letter-spacing: -0.5px;
+    }
+    .sub-title {
+      font-size: 11.5px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    .badge {
+      display: inline-block;
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+    }
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-weight: 700;
+      text-align: left;
+      padding: 7px 8px;
+      border: 1px solid #cbd5e1;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td {
+      padding: 7px 8px;
+      border: 1px solid #e2e8f0;
+      vertical-align: middle;
+      font-size: 10.5px;
+    }
+    tr:nth-child(even) {
+      background-color: #f8fafc;
+    }
+    .category-row {
+      background: #e2e8f0 !important;
+      font-weight: 800;
+      color: #0f172a;
+      font-size: 11.5px;
+      padding: 6px 8px;
+    }
+    .product-name {
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .company-name {
+      color: #0369a1;
+      font-weight: 600;
+    }
+    .salt-name {
+      color: #475569;
+      font-style: italic;
+    }
+    .rate {
+      font-weight: 700;
+      color: #059669;
+    }
+    .old-mrp {
+      text-decoration: line-through;
+      color: #94a3b8;
+      font-size: 9.5px;
+      margin-right: 4px;
+    }
+    .new-mrp {
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .competitor-tag {
+      background: #fef3c7;
+      color: #92400e;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      display: inline-block;
+    }
+    .footer {
+      margin-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      color: #64748b;
+      font-size: 9.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="pharmacy-title">TANAMAY MEDICAL</div>
+      <div class="sub-title">Asthma, Blood Pressure, Diabetes & Cholesterol Catalog & Pricing Sheet</div>
+    </div>
+    <div style="text-align: right;">
+      <span class="badge">Master B2B Catalog</span>
+      <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">Date: 02 Sept 2026</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 17%;">Product Name</th>
+        <th style="width: 16%;">Company / Manufacturer</th>
+        <th style="width: 18%;">API Salt / Generic Composition</th>
+        <th style="width: 8%;">Strength</th>
+        <th style="width: 8%;">Pack Size</th>
+        <th style="width: 8%;">Rate (₹)</th>
+        <th style="width: 10%;">MRP (Old / New)</th>
+        <th style="width: 15%;">Competitors & Substitutes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="category-row"><td colspan="8">📌 Asthma & Respiratory Care</td></tr><tr><td><span class="product-name">Solbihale T Inhaler (Tiotropium 9mcg)</span></td><td><span class="company-name">Dr. Reddy's Laboratories (DRL Aspira)</span></td><td><span class="salt-name">Tiotropium Bromide</span></td><td>9 mcg (120 MDI)</td><td>1 Inhaler (120 Actuations)</td><td><span class="rate">₹217.41</span></td><td><span class="old-mrp">₹295.00</span> <span class="new-mrp">₹282.37</span></td><td><span class="competitor-tag">Tiova Inhaler (Cipla), Tioair (Lupin)</span></td></tr><tr><td><span class="product-name">Solbihale B 200 Inhaler</span></td><td><span class="company-name">Dr. Reddy's Laboratories (DRL Aspira)</span></td><td><span class="salt-name">Budesonide</span></td><td>200 mcg</td><td>1 Inhaler (120 MD)</td><td><span class="rate">₹145.20</span></td><td><span class="old-mrp">₹210.00</span> <span class="new-mrp">₹198.50</span></td><td><span class="competitor-tag">Budecort 200 (Cipla), Pulmicort (AstraZeneca)</span></td></tr><tr><td><span class="product-name">Solbihale B 400 Inhaler</span></td><td><span class="company-name">Dr. Reddy's Laboratories (DRL)</span></td><td><span class="salt-name">Budesonide</span></td><td>400 mcg</td><td>1 Inhaler (120 MD)</td><td><span class="rate">₹220.00</span></td><td><span class="old-mrp">₹315.00</span> <span class="new-mrp">₹299.00</span></td><td><span class="competitor-tag">Budecort 400 (Cipla), Budetrol 400 (Mankind)</span></td></tr><tr><td><span class="product-name">Lupihaler Inhaler Device</span></td><td><span class="company-name">Larenon / Lupin Pharma</span></td><td><span class="salt-name">MDI Inhalation Device</span></td><td>Standard DP Inhaler</td><td>1 Device Kit</td><td><span class="rate">₹107.43</span></td><td><span class="old-mrp">₹155.00</span> <span class="new-mrp">₹141.00</span></td><td><span class="competitor-tag">Cipla Revolizer, Rotahaler (Cipla)</span></td></tr><tr><td><span class="product-name">Sol-4 (Salbutamol) Tab</span></td><td><span class="company-name">Abil Healthcare</span></td><td><span class="salt-name">Salbutamol Sulphate</span></td><td>4 mg</td><td>10 Tablets</td><td><span class="rate">₹2.00</span></td><td><span class="old-mrp">₹6.50</span> <span class="new-mrp">₹5.00</span></td><td><span class="competitor-tag">Asthalin 4mg (Cipla), Ventorlin 4mg (GSK)</span></td></tr><tr><td><span class="product-name">Solvin Cold / Cough Syrup</span></td><td><span class="company-name">IPCA Laboratories (Pharma Next)</span></td><td><span class="salt-name">Chlorpheniramine + Phenylephrine + Dextromethorphan</span></td><td>2mg + 10mg / 5ml</td><td>100 ml Bottle</td><td><span class="rate">₹107.28</span></td><td><span class="old-mrp">₹150.00</span> <span class="new-mrp">₹141.00</span></td><td><span class="competitor-tag">Ascoril D Plus (Glenmark), Cheston Cold (Cipla)</span></td></tr><tr class="category-row"><td colspan="8">📌 Blood Pressure & Cardiac Care</td></tr><tr><td><span class="product-name">Tazloc 20 / 40 Tab</span></td><td><span class="company-name">USV Private Limited</span></td><td><span class="salt-name">Telmisartan</span></td><td>20mg / 40mg</td><td>10 Tablets</td><td><span class="rate">₹68.50</span></td><td><span class="old-mrp">₹98.00</span> <span class="new-mrp">₹92.40</span></td><td><span class="competitor-tag">Telma 40 (Glenmark), Telmikind 40 (Mankind)</span></td></tr><tr><td><span class="product-name">Tazloc Beta 50 Tab</span></td><td><span class="company-name">USV Private Limited</span></td><td><span class="salt-name">Telmisartan + Metoprolol Succinate</span></td><td>40mg + 50mg</td><td>10 Tablets</td><td><span class="rate">₹122.30</span></td><td><span class="old-mrp">₹175.00</span> <span class="new-mrp">₹164.50</span></td><td><span class="competitor-tag">Telma Beta 50 (Glenmark), Metosartan 50 (Sun)</span></td></tr><tr><td><span class="product-name">Tazloc AM 40 Tab</span></td><td><span class="company-name">USV Private Limited</span></td><td><span class="salt-name">Telmisartan + Amlodipine</span></td><td>40mg + 5mg</td><td>10 Tablets</td><td><span class="rate">₹89.20</span></td><td><span class="old-mrp">₹128.00</span> <span class="new-mrp">₹119.80</span></td><td><span class="competitor-tag">Telma AM (Glenmark), Amlokind-T (Mankind)</span></td></tr><tr><td><span class="product-name">Targit 20 / 40 Tab</span></td><td><span class="company-name">Pfizer India</span></td><td><span class="salt-name">Telmisartan</span></td><td>20mg / 40mg</td><td>15 Tablets</td><td><span class="rate">₹94.10</span></td><td><span class="old-mrp">₹135.00</span> <span class="new-mrp">₹127.50</span></td><td><span class="competitor-tag">Micardis (Boehringer Ingelheim), Sartel 40 (Intas)</span></td></tr><tr><td><span class="product-name">Talmir Trio Tab</span></td><td><span class="company-name">Ernst Pharmacia</span></td><td><span class="salt-name">Telmisartan + Amlodipine + Hydrochlorothiazide</span></td><td>40mg + 5mg + 12.5mg</td><td>10 Tablets</td><td><span class="rate">₹95.00</span></td><td><span class="old-mrp">₹140.00</span> <span class="new-mrp">₹132.00</span></td><td><span class="competitor-tag">Telma 3D (Glenmark), Arbitel Trio (Micro Labs)</span></td></tr><tr class="category-row"><td colspan="8">📌 Diabetes Care (Glycemic Management)</td></tr><tr><td><span class="product-name">Forxiga 10mg Tab</span></td><td><span class="company-name">AstraZeneca Pharma India</span></td><td><span class="salt-name">Dapagliflozin</span></td><td>10 mg</td><td>14 Tablets</td><td><span class="rate">₹680.00</span></td><td><span class="old-mrp">₹950.00</span> <span class="new-mrp">₹890.00</span></td><td><span class="competitor-tag">Dapavel 10 (Alkem), Oxra 10 (Sun Pharma)</span></td></tr><tr><td><span class="product-name">Glycomet-GP 1 / 2 Tab</span></td><td><span class="company-name">USV Private Limited</span></td><td><span class="salt-name">Metformin + Glimepiride</span></td><td>500mg + 1mg / 2mg</td><td>15 Tablets</td><td><span class="rate">₹82.40</span></td><td><span class="old-mrp">₹120.00</span> <span class="new-mrp">₹112.50</span></td><td><span class="competitor-tag">Glimestar-M (Mankind), Amaryl-M (Sanofi)</span></td></tr><tr><td><span class="product-name">Jardiance 10 / 25 Tab</span></td><td><span class="company-name">Boehringer Ingelheim / Lupin</span></td><td><span class="salt-name">Empagliflozin</span></td><td>10mg / 25mg</td><td>10 Tablets</td><td><span class="rate">₹420.00</span></td><td><span class="old-mrp">₹590.00</span> <span class="new-mrp">₹555.00</span></td><td><span class="competitor-tag">Gibtulio (Lupin), Empakind (Mankind)</span></td></tr><tr class="category-row"><td colspan="8">📌 Cholesterol & Lipid Management</td></tr><tr><td><span class="product-name">Storvas 10 / 20 Tab</span></td><td><span class="company-name">Sun Pharma</span></td><td><span class="salt-name">Atorvastatin Calcium</span></td><td>10mg / 20mg</td><td>15 Tablets</td><td><span class="rate">₹145.00</span></td><td><span class="old-mrp">₹215.00</span> <span class="new-mrp">₹198.00</span></td><td><span class="competitor-tag">Atorva (Zydus), Lipitor (Pfizer), Atorlip (Cipla)</span></td></tr><tr><td><span class="product-name">Rozavel 10 / 20 Tab</span></td><td><span class="company-name">Sun Pharma</span></td><td><span class="salt-name">Rosuvastatin Calcium</span></td><td>10mg / 20mg</td><td>10 Tablets</td><td><span class="rate">₹165.00</span></td><td><span class="old-mrp">₹245.00</span> <span class="new-mrp">₹228.00</span></td><td><span class="competitor-tag">Rosuvas (Ranbaxy/Sun), Crestor (AstraZeneca)</span></td></tr><tr><td><span class="product-name">Rozavel F 10 Tab</span></td><td><span class="company-name">Sun Pharma</span></td><td><span class="salt-name">Rosuvastatin + Fenofibrate</span></td><td>10mg + 160mg</td><td>10 Tablets</td><td><span class="rate">₹210.00</span></td><td><span class="old-mrp">₹310.00</span> <span class="new-mrp">₹289.00</span></td><td><span class="competitor-tag">Rosuvas F (Sun), Fibator (Sun), Turbovas F (Micro)</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <div>AI Pharmacy OS • B2B Master Catalog Engine</div>
+    <div>Official Product, API & Competitive Benchmark Sheet</div>
+  </div>
+</body>
+</html>
