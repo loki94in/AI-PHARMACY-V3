@@ -97,6 +97,7 @@ Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedo
 
 ; Launcher helper + license
 Source: "packaging\RUN-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "packaging\RUN-PharmacyOS-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 

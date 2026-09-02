@@ -18,6 +18,7 @@ import { activityTracker } from './utils/activityTracker.js';
 import { runHeavyJob } from './utils/backgroundJobLane.js';
 import { getBackendFetchMode } from './services/dataFetchControl.js';
 import { config, getAppDataDir, isPackagedApp } from './config/index.js';
+import { launchAppBrowser } from './utils/chromeBrowser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -453,24 +454,11 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   const serverUrl = `http://localhost:${PORT}`;
   console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
 
-  // Auto-open browser when launched from the packaged Windows executable (.exe)
+  // Auto-open clean app window when launched from packaged executable or when configured
   if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true') {
     setTimeout(() => {
-      console.log(`[Boot] Launching default browser at ${serverUrl}...`);
-      const openerArgs: [string, string[]] = process.platform === 'win32'
-        ? ['cmd', ['/c', 'start', serverUrl]]
-        : process.platform === 'darwin'
-        ? ['open', [serverUrl]]
-        : ['xdg-open', [serverUrl]];
-      // A failed browser launch (missing opener binary, locked-down PATH, etc.)
-      // must never take down the API server — without this handler, the
-      // ChildProcess's unhandled 'error' event becomes an uncaught exception
-      // and processGuardian exits the whole process.
-      spawn(openerArgs[0], openerArgs[1], { detached: true, stdio: 'ignore' })
-        .on('error', (err) => {
-          console.warn(`[Boot] Failed to auto-launch browser (non-fatal): ${err.message}`);
-        })
-        .unref();
+      console.log(`[Boot] Launching dedicated app window at ${serverUrl}...`);
+      launchAppBrowser(serverUrl);
     }, 1000);
   }
 });
@@ -478,15 +466,10 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
 server.on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.warn(`\n⚠️  Port ${PORT} is already bound by another instance of AI Pharmacy OS.`);
-    console.warn(`AI Pharmacy OS server is already running in the background. Opening browser window...\n`);
+    console.warn(`AI Pharmacy OS server is already running in the background. Opening app window...\n`);
     const serverUrl = `http://localhost:${PORT}`;
-    const openerArgs: [string, string[]] = process.platform === 'win32'
-      ? ['cmd', ['/c', 'start', serverUrl]]
-      : process.platform === 'darwin'
-      ? ['open', [serverUrl]]
-      : ['xdg-open', [serverUrl]];
     try {
-      spawn(openerArgs[0], openerArgs[1], { detached: true, stdio: 'ignore' }).unref();
+      launchAppBrowser(serverUrl);
     } catch (_) {}
     setTimeout(() => process.exit(0), 500);
   } else {

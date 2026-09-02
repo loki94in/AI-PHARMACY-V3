@@ -516,7 +516,7 @@ router.post('/login-window', async (req, res) => {
           headless: false,
           defaultViewport: null,
           userDataDir: mainProfilePath,
-          args: ['--start-maximized']
+          args: ['--start-maximized', '--disable-extensions']
         });
       } catch (launchErr: any) {
         console.warn('Failed to launch Chrome with main profile, attempting temp profile fallback...', launchErr.message);
@@ -529,7 +529,7 @@ router.post('/login-window', async (req, res) => {
           headless: false,
           defaultViewport: null,
           userDataDir: tempProfilePath,
-          args: ['--start-maximized']
+          args: ['--start-maximized', '--disable-extensions']
         });
         tempProfilePathToDelete = tempProfilePath;
       }

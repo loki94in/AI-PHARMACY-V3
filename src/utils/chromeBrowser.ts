@@ -1,11 +1,14 @@
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
+import { getAppDataDir } from '../config/index.js';
 
 /**
  * Shared Chromium browser/profile helpers.
  *
- * Single source for locating a Chrome/Edge executable and copying a Chrome
- * profile directory (session-critical for Pharmarack login persistence).
+ * Single source for locating a Chrome/Edge executable, copying a Chrome
+ * profile directory (session-critical for Pharmarack login persistence),
+ * and launching a lightweight extension-free desktop app window.
  * Previously duplicated in routes/pharmarack.ts and services/tokenRefreshScheduler.ts.
  */
 
@@ -89,3 +92,68 @@ export async function copyProfileFolder(src: string, dest: string, logPrefix = '
     }
   }
 }
+
+/**
+ * Launch the frontend UI in a dedicated, lightweight standalone app window.
+ * 
+ * Benefits:
+ * - --app=url: Opens in clean standalone desktop window without address bar, tabs, or bookmarks.
+ * - --disable-extensions: Disables all third-party extensions (Free Download Manager, IDM, adblockers, malware plugins).
+ * - --user-data-dir: Dedicated isolated profile so personal browser data, cookies, and memory bloat are eliminated.
+ * - --disable-background-networking / --disable-sync: Disables background telemetry, syncing, and auto-updates.
+ * - Direct process spawn: Eliminates lingering cmd.exe / terminal processes.
+ */
+export function launchAppBrowser(url: string, customProfileDir?: string): boolean {
+  try {
+    const browserPath = findChromePath({ includeEdge: true });
+    if (browserPath) {
+      const profileDir = customProfileDir || path.join(getAppDataDir(), 'data', 'app_browser_profile');
+      if (!fs.existsSync(profileDir)) {
+        fs.mkdirSync(profileDir, { recursive: true });
+      }
+
+      const args = [
+        `--app=${url}`,
+        `--user-data-dir=${profileDir}`,
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-default-apps',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-session-crashed-bubble'
+      ];
+
+      const child = spawn(browserPath, args, {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.on('error', (err) => {
+        console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
+      });
+      child.unref();
+      return true;
+    }
+  } catch (err: any) {
+    console.warn(`[ChromeBrowser] Direct app-mode launch failed: ${err.message}`);
+  }
+
+  // Fallback to standard OS opener if Chrome/Edge not found
+  try {
+    const openerArgs: [string, string[]] = process.platform === 'win32'
+      ? ['cmd', ['/c', 'start', url]]
+      : process.platform === 'darwin'
+      ? ['open', [url]]
+      : ['xdg-open', [url]];
+    spawn(openerArgs[0], openerArgs[1], { detached: true, stdio: 'ignore' })
+      .on('error', (err) => {
+        console.warn(`[ChromeBrowser] Fallback browser opener error (non-fatal): ${err.message}`);
+      })
+      .unref();
+    return true;
+  } catch (err: any) {
+    console.warn(`[ChromeBrowser] Fallback opener failed: ${err.message}`);
+    return false;
+  }
+}
+
