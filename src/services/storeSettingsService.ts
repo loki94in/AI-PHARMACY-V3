@@ -44,11 +44,18 @@ export async function getConfiguredPharmacyName(dbInstance?: any): Promise<strin
 
 /**
  * Resolves the configured pharmacy store / medical name from app_settings dynamically.
- * Prioritizes user-configured shop_name / store_name / pharmacy_name over legacy 'XYZ MEDICAL' placeholder.
+ * Prioritizes store-specific name if storeId is supplied, then user-configured shop_name / store_name / pharmacy_name.
  */
-export async function getStoreMedicalName(dbInstance?: any): Promise<string> {
+export async function getStoreMedicalName(dbInstance?: any, storeId?: number): Promise<string> {
   try {
     const db = dbInstance || (await dbManager.getConnection());
+
+    if (storeId && storeId > 0) {
+      const storeRow = await db.get('SELECT name FROM stores WHERE id = ?', [storeId]).catch(() => null);
+      if (storeRow && storeRow.name && storeRow.name.trim()) {
+        return storeRow.name.trim();
+      }
+    }
 
     // Primary lookup: shop_name, store_name, pharmacy_name, medical_name (excluding legacy placeholders)
     const row = await db.get(
@@ -94,9 +101,17 @@ export async function getStoreMedicalName(dbInstance?: any): Promise<string> {
 /**
  * Resolves the configured store phone / contact number from app_settings dynamically.
  */
-export async function getStorePhone(dbInstance?: any): Promise<string> {
+export async function getStorePhone(dbInstance?: any, storeId?: number): Promise<string> {
   try {
     const db = dbInstance || (await dbManager.getConnection());
+
+    if (storeId && storeId > 0) {
+      const storeRow = await db.get('SELECT phone FROM stores WHERE id = ?', [storeId]).catch(() => null);
+      if (storeRow && storeRow.phone && storeRow.phone.trim()) {
+        return storeRow.phone.trim();
+      }
+    }
+
     const row = await db.get(
       `SELECT value FROM app_settings 
        WHERE key IN ('shop_phone', 'store_phone', 'pharmacy_phone', 'phone', 'contact_number', 'phone_number', 'owner_whatsapp_number', 'whatsapp_connected_number') 
@@ -210,9 +225,9 @@ export async function getInvoiceWhatsAppRecipients(dbInstance?: any): Promise<st
 /**
  * Returns formatted store name with phone if available (e.g. "TANMANY MEDICAL (Ph: 9876543210)" or "TANMANY MEDICAL").
  */
-export async function getStoreMedicalNameAndPhone(dbInstance?: any): Promise<string> {
-  const name = await getStoreMedicalName(dbInstance);
-  const phone = await getStorePhone(dbInstance);
+export async function getStoreMedicalNameAndPhone(dbInstance?: any, storeId?: number): Promise<string> {
+  const name = await getStoreMedicalName(dbInstance, storeId);
+  const phone = await getStorePhone(dbInstance, storeId);
   if (phone) {
     return `${name} (Ph: ${phone})`;
   }

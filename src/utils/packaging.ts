@@ -18,8 +18,8 @@ export function parsePackSizeFromPackaging(packaging: string | null | undefined)
     return (parseInt(parts[0], 10) || 1) * (parseInt(parts[1], 10) || 1);
   }
 
-  // Handle "STRIP OF 10 TAB", "PACK OF 15 CAP", "BLISTER OF 10"
-  const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER)\s+OF\s+(\d+)/i);
+  // Handle "STRIP OF 10 TAB", "PACK OF 15 CAP", "BLISTER OF 10", "BOTTLE OF 100ML"
+  const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER|BOTTLE)\s+OF\s+(\d+)/i);
   if (stripOfMatch) {
     const size = parseInt(stripOfMatch[1], 10);
     if (size > 0) return size;

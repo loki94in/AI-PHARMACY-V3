@@ -26,6 +26,13 @@ import {
   Zap,
   ShoppingCart,
   AlertCircle,
+  Globe,
+  FileImage,
+  Eye,
+  ExternalLink,
+  Store as StoreIcon,
+  RotateCcw,
+  ShieldCheck,
 } from 'lucide-react';
 import { api, apiClient, type DistributorDispatchReminder } from '../../services/api';
 import { whatsappQueueEvent, toastEvent, messageSendEvent } from '../../services/events';
@@ -43,7 +50,7 @@ import { sanitizePhoneInput } from '../../utils/phone';
 import { toDateInputValue } from '../../utils/date';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 
-interface DispatchOrder {
+export interface DispatchOrder {
   id: number;
   patient_name: string;
   patient_phone: string;
@@ -56,6 +63,26 @@ interface DispatchOrder {
   status: 'Pending' | 'In Transit' | 'Delivered';
   created_at: string;
   delivered_at?: string;
+}
+
+export interface UnifiedDispatchItem {
+  id: number;
+  sourceType: 'pharmacy' | 'website';
+  patient_name: string;
+  patient_phone: string;
+  address: string;
+  items: string;
+  notes: string;
+  delivery_boy_id: number | null;
+  delivery_boy_name?: string;
+  invoice_no: string;
+  status: 'Pending' | 'In Transit' | 'Delivered' | 'Cancelled';
+  created_at: string;
+  delivered_at?: string;
+  prescription_url?: string;
+  return_window_until?: string;
+  return_status?: string;
+  return_override_by?: string;
 }
 
 interface DeliveryBoy {
@@ -107,6 +134,9 @@ const Dispatch = () => {
 
   const [activeTab, setActiveTab] = useState<TabType>('reminders');
   const [orders, setOrders] = useState<DispatchOrder[]>(cachedOrders || []);
+  const [websiteOrders, setWebsiteOrders] = useState<any[]>([]);
+  const [orderChannelFilter, setOrderChannelFilter] = useState<'ALL' | 'PHARMACY' | 'WEBSITE'>('ALL');
+  const [selectedPrescription, setSelectedPrescription] = useState<string | null>(null);
   const [deliveryBoys, setDeliveryBoys] = useState<DeliveryBoy[]>(cachedDeliveryBoys || []);
   const [allBoys, setAllBoys] = useState<DeliveryBoy[]>([]);
   const [loading, setLoading] = useState(!cachedOrders);
@@ -166,6 +196,7 @@ const Dispatch = () => {
   useModalEscape(showBoysModal, () => setShowBoysModal(false));
   useModalEscape(showTemplateModal, () => setShowTemplateModal(false));
   useModalEscape(showManualOrderModal, () => setShowManualOrderModal(false));
+  useModalEscape(!!selectedPrescription, () => setSelectedPrescription(null));
 
   const handleCreateManualOrder = async () => {
     if (!manualDistributorName.trim()) {
@@ -247,16 +278,22 @@ const Dispatch = () => {
       setLoading(true);
     }
     try {
-      const [ordersData, boysData] = await Promise.all([
+      const [ordersData, boysData, specialOrdersData] = await Promise.all([
         api.getDispatchOrders(),
         api.getDeliveryBoys(),
+        apiClient.get('/orders').then(res => res.data).catch(() => [])
       ]);
       const ordersArr = Array.isArray(ordersData) ? ordersData : [];
       const rawBoys = Array.isArray(boysData) ? boysData : [];
       const activeBoysArr = rawBoys.filter((b: DeliveryBoy) => b.is_active);
+      const webOrders = (Array.isArray(specialOrdersData) ? specialOrdersData : []).filter(
+        (o: any) => o.customer_order_source === 'website' || o.source === 'website' || o.prescription_url
+      );
+
       setDispatchOrdersCache(ordersArr);
       setDispatchDeliveryBoysCache(activeBoysArr as CachedDeliveryBoy[]);
       setOrders(ordersArr);
+      setWebsiteOrders(webOrders);
       setAllBoys(rawBoys);
       setDeliveryBoys(activeBoysArr);
     } catch (err) {
@@ -620,27 +657,132 @@ const Dispatch = () => {
     finally { setSaving(false); }
   };
 
-  const handleStatusChange = async (id: number, status: string) => {
+  // Unified dispatch items mapping
+  const unifiedOrders: UnifiedDispatchItem[] = React.useMemo(() => {
+    const list: UnifiedDispatchItem[] = [];
+
+    // In-store pharmacy orders
+    orders.forEach(o => {
+      list.push({
+        id: o.id,
+        sourceType: 'pharmacy',
+        patient_name: o.patient_name,
+        patient_phone: o.patient_phone || '',
+        address: o.address || '',
+        items: o.items || '',
+        notes: o.notes || '',
+        delivery_boy_id: o.delivery_boy_id,
+        delivery_boy_name: o.delivery_boy_name || allBoys.find(b => b.id === o.delivery_boy_id)?.name,
+        invoice_no: o.invoice_no || `DISP-${o.id}`,
+        status: o.status || 'Pending',
+        created_at: o.created_at,
+        delivered_at: o.delivered_at
+      });
+    });
+
+    // Website orders
+    websiteOrders.forEach(w => {
+      list.push({
+        id: w.id,
+        sourceType: 'website',
+        patient_name: w.requester || 'Website Customer',
+        patient_phone: w.phone || '',
+        address: w.notes && w.notes.includes('Address:') ? w.notes.replace(/Address:/i, '').trim() : (w.notes || 'Home Delivery'),
+        items: w.medicine_name || w.product || (w.prescription_url ? 'Prescription Order' : 'Website Order'),
+        notes: w.notes || '',
+        delivery_boy_id: w.delivery_boy_id || null,
+        delivery_boy_name: allBoys.find(b => b.id === w.delivery_boy_id)?.name,
+        invoice_no: `WEB-${w.id}`,
+        status: w.delivery_status === 'delivered' ? 'Delivered' : (w.delivery_status === 'dispatched' || w.status === 'Ready') ? 'In Transit' : 'Pending',
+        created_at: w.date || w.created_at,
+        delivered_at: w.delivered_at,
+        prescription_url: w.prescription_url,
+        return_window_until: w.return_window_until,
+        return_status: w.return_status,
+        return_override_by: w.return_override_by
+      });
+    });
+
+    return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [orders, websiteOrders, allBoys]);
+
+  const handleAssignDeliveryBoy = async (order: UnifiedDispatchItem, boyId: number | null) => {
     try {
-      await api.updateDispatchOrder(id, { status });
-      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: status as DispatchOrder['status'] } : o));
-      showNotif(`Status updated to "${status}"`);
-    } catch { showNotif('Failed to update status', 'error'); }
+      if (order.sourceType === 'pharmacy') {
+        await api.updateDispatchOrder(order.id, { delivery_boy_id: boyId });
+      } else {
+        await apiClient.put(`/orders/${order.id}`, { delivery_boy_id: boyId });
+      }
+      const boyName = boyId ? allBoys.find(b => b.id === boyId)?.name : 'Unassigned';
+      showNotif(`Assigned to ${boyName}`);
+      fetchAll();
+    } catch {
+      showNotif('Failed to assign delivery staff', 'error');
+    }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this dispatch order?')) return;
+  const handleUnifiedStatusChange = async (order: UnifiedDispatchItem, newStatus: string) => {
     try {
-      await api.deleteDispatchOrder(id);
-      setOrders(prev => prev.filter(o => o.id !== id));
-      showNotif('Dispatch order deleted');
-    } catch { showNotif('Failed to delete', 'error'); }
+      if (order.sourceType === 'pharmacy') {
+        await api.updateDispatchOrder(order.id, { status: newStatus });
+      } else {
+        if (newStatus === 'Delivered') {
+          await api.markOrderDelivered(order.id);
+        } else {
+          await apiClient.put(`/orders/${order.id}/status`, {
+            status: newStatus === 'In Transit' ? 'Ready' : 'Pending'
+          });
+        }
+      }
+      showNotif(`Status updated to "${newStatus}"`);
+      fetchAll();
+    } catch {
+      showNotif('Failed to update status', 'error');
+    }
+  };
+
+  const handleDispatchToDeliveryBoyWhatsApp = (order: UnifiedDispatchItem) => {
+    if (!order.delivery_boy_id) {
+      showNotif('Please assign a delivery staff member first', 'error');
+      return;
+    }
+    const boy = allBoys.find(b => b.id === order.delivery_boy_id);
+    if (!boy || !boy.whatsapp_number) {
+      showNotif(`Delivery staff "${boy?.name || ''}" has no WhatsApp number saved`, 'error');
+      return;
+    }
+    const cleanPhone = boy.whatsapp_number.replace(/\D/g, '').slice(-10);
+    const text = encodeURIComponent(
+      `🛵 *HOME DELIVERY DISPATCH TASK*\n` +
+      `📦 *Order:* #${order.id} (${order.sourceType === 'website' ? 'Website Order' : 'Pharmacy Order'})\n` +
+      `👤 *Customer:* ${order.patient_name}\n` +
+      `📞 *Phone:* ${order.patient_phone}\n` +
+      `📍 *Delivery Address:* ${order.address || 'Standard Delivery'}\n` +
+      `💊 *Items:* ${order.items || '-'}\n` +
+      (order.invoice_no ? `🧾 *Invoice:* ${order.invoice_no}\n` : '') +
+      `\nPlease deliver and update delivery status.`
+    );
+    window.open(`https://wa.me/91${cleanPhone}?text=${text}`, '_blank');
+  };
+
+  const handleUnifiedDelete = async (order: UnifiedDispatchItem) => {
+    try {
+      if (order.sourceType === 'pharmacy') {
+        await api.deleteDispatchOrder(order.id);
+      } else {
+        await apiClient.delete(`/orders/${order.id}`);
+      }
+      showNotif(`Dispatch order #${order.id} deleted`);
+      fetchAll();
+    } catch {
+      showNotif('Failed to delete dispatch order', 'error');
+    }
   };
 
   // Metrics
-  const pendingCount = orders.filter(o => o.status === 'Pending').length;
-  const inTransitCount = orders.filter(o => o.status === 'In Transit').length;
-  const deliveredTodayCount = orders.filter(o => {
+  const pendingCount = unifiedOrders.filter(o => o.status === 'Pending').length;
+  const inTransitCount = unifiedOrders.filter(o => o.status === 'In Transit').length;
+  const deliveredTodayCount = unifiedOrders.filter(o => {
     if (o.status !== 'Delivered' || !o.delivered_at) return false;
     return new Date(o.delivered_at).toDateString() === new Date().toDateString();
   }).length;
@@ -648,11 +790,16 @@ const Dispatch = () => {
   const uncollectedDistributorsCount = distributorReminders.filter(r => r.has_order_today === 1 && r.status !== 'Collected').length;
 
   // Filtered Queue Orders
-  const filteredOrders = orders.filter(order => {
+  const filteredOrders = unifiedOrders.filter(order => {
+    if (orderChannelFilter === 'PHARMACY' && order.sourceType !== 'pharmacy') return false;
+    if (orderChannelFilter === 'WEBSITE' && order.sourceType !== 'website') return false;
+
     const matchesSearch =
       order.patient_name.toLowerCase().includes(queueSearch.toLowerCase()) ||
       (order.patient_phone && order.patient_phone.includes(queueSearch)) ||
       (order.invoice_no && order.invoice_no.toLowerCase().includes(queueSearch.toLowerCase())) ||
+      (order.items && order.items.toLowerCase().includes(queueSearch.toLowerCase())) ||
+      (order.address && order.address.toLowerCase().includes(queueSearch.toLowerCase())) ||
       (order.delivery_boy_name && order.delivery_boy_name.toLowerCase().includes(queueSearch.toLowerCase()));
     
     const matchesStatus = statusFilter === 'ALL' || order.status === statusFilter;
@@ -728,10 +875,10 @@ const Dispatch = () => {
         >
           <span className={`flex items-center gap-1.5 text-xs font-semibold ${activeTab === 'queue' ? 'text-primary' : 'text-text'}`}>
             <Package size={15} /> Dispatch Queue
-            <span className="ml-auto text-xs font-mono font-bold text-muted">{orders.length}</span>
+            <span className="ml-auto text-xs font-mono font-bold text-muted">{unifiedOrders.length}</span>
           </span>
           <span className="mt-1.5 block text-xs text-muted truncate">
-            {pendingCount} pending &middot; {inTransitCount} in transit &middot; {deliveredTodayCount} delivered today
+            {orders.length} In-Store &middot; {websiteOrders.length} Website &middot; {pendingCount} pending
           </span>
         </button>
 
@@ -815,21 +962,58 @@ const Dispatch = () => {
               </div>
             </div>
 
-            {/* Queue Search & Status Filter */}
+            {/* Queue Search & Filters */}
             <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Channel Filter Switcher */}
+              <div className="flex items-center gap-1 bg-bg p-1 rounded-xl border border-glass-border text-xs shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setOrderChannelFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    orderChannelFilter === 'ALL'
+                      ? 'bg-bg2 text-text shadow-sm border border-glass-border font-black'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  🌟 All ({unifiedOrders.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderChannelFilter('PHARMACY')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    orderChannelFilter === 'PHARMACY'
+                      ? 'bg-amber-500/20 text-amber-400 shadow-sm border border-amber-500/40 font-black'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  <StoreIcon size={11} /> Pharmacy ({orders.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderChannelFilter('WEBSITE')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    orderChannelFilter === 'WEBSITE'
+                      ? 'bg-primary/20 text-primary shadow-sm border border-primary/40 font-black'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  <Globe size={11} /> Website ({websiteOrders.length})
+                </button>
+              </div>
+
               <button
                 onClick={() => setShowModal(true)}
-                className="bg-primary hover:bg-primary/90 text-black text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+                className="bg-primary hover:bg-primary/90 text-white text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
               >
                 <Plus size={14} />
-                <span>New Order</span>
+                <span>New In-Store Delivery</span>
               </button>
 
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                 <input
                   type="text"
-                  placeholder="Search patient, phone, invoice..."
+                  placeholder="Search patient, phone, items, address..."
                   value={queueSearch}
                   onChange={e => setQueueSearch(e.target.value)}
                   className="pl-9 pr-7 py-1.5 rounded-xl bg-bg text-text border border-glass-border text-xs focus:outline-none focus:border-primary/50 font-medium shadow-inner transition-all w-56"
@@ -870,14 +1054,14 @@ const Dispatch = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead className="bg-bg2/90 sticky top-0 backdrop-blur z-10 border-b border-glass-border">
                 <tr>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Patient Name</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Phone Number</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Order Items</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Delivery Address</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Assigned Staff</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Invoice #</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Status</th>
-                  <th className="px-4 py-3.5 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap text-right">Actions</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Channel</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Patient / Customer</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Order Items &amp; Rx</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Delivery Address</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Assigned Staff</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Invoice #</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap">Delivery Status</th>
+                  <th className="px-3.5 py-3 text-[11px] font-bold text-muted uppercase tracking-wider border-b border-glass-border whitespace-nowrap text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-glass-border/30">
@@ -894,67 +1078,192 @@ const Dispatch = () => {
                       <Truck size={36} className="mx-auto mb-3 opacity-20 text-primary" />
                       <p className="font-bold text-text mb-1">No dispatch orders found</p>
                       <p className="text-xs text-muted max-w-sm mx-auto">
-                        {queueSearch || statusFilter !== 'ALL'
-                          ? 'Try clearing your search or status filters.'
-                          : 'Click "+ New Dispatch Order" above to assign a home delivery.'}
+                        {queueSearch || statusFilter !== 'ALL' || orderChannelFilter !== 'ALL'
+                          ? 'Try clearing your search or channel filters.'
+                          : 'Click "+ New In-Store Delivery" above or place orders on the website to assign home deliveries.'}
                       </p>
                     </td>
                   </tr>
                 ) : (
                   filteredOrders.map(order => (
-                    <tr key={order.id} className="hover:bg-bg3/40 transition-colors">
+                    <tr key={`${order.sourceType}-${order.id}`} className="hover:bg-bg3/40 transition-colors">
+                      {/* Channel Badge */}
+                      <td className="p-3 whitespace-nowrap">
+                        {order.sourceType === 'website' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-primary/15 text-primary border border-primary/30 flex items-center gap-1 w-max">
+                            <Globe size={11} /> Website
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1 w-max">
+                            <StoreIcon size={11} /> Pharmacy
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Customer / Patient */}
                       <td className="p-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0 border border-primary/20">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 border ${
+                            order.sourceType === 'website'
+                              ? 'bg-primary/10 text-primary border-primary/20'
+                              : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          }`}>
                             {order.patient_name.charAt(0).toUpperCase()}
                           </div>
-                          <span className="font-bold text-text">{order.patient_name}</span>
+                          <div>
+                            <span className="font-bold text-text block">{order.patient_name}</span>
+                            {order.patient_phone && (
+                              <a
+                                href={`https://wa.me/91${order.patient_phone.replace(/\D/g, '').slice(-10)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] font-mono text-emerald-400 hover:underline flex items-center gap-1 mt-0.5"
+                                title="Chat with customer on WhatsApp"
+                              >
+                                <MessageSquare size={10} /> {order.patient_phone}
+                              </a>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td className="p-3 font-mono text-muted text-xs">{order.patient_phone || '-'}</td>
-                      <td className="p-3 text-muted max-w-[160px] truncate">{order.items || '-'}</td>
-                      <td className="p-3 text-muted max-w-[150px] truncate">
+
+                      {/* Order Items & Prescriptions */}
+                      <td className="p-3 text-muted max-w-[200px]">
+                        <div className="truncate font-medium text-text text-xs">{order.items || '-'}</div>
+                        {order.prescription_url && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPrescription(order.prescription_url || null)}
+                            className="mt-1 px-2 py-0.5 rounded-md bg-bg3 text-primary hover:bg-bg3/80 text-[10px] font-bold flex items-center gap-1 border border-glass-border cursor-pointer"
+                          >
+                            <FileImage size={11} /> View Prescription
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Delivery Address */}
+                      <td className="p-3 text-muted max-w-[180px]">
                         {order.address ? (
-                          <div className="flex items-center gap-1">
-                            <MapPin size={11} className="text-muted shrink-0" />
-                            <span className="truncate">{order.address}</span>
+                          <div className="flex items-start gap-1">
+                            <MapPin size={12} className="text-muted shrink-0 mt-0.5" />
+                            <span className="truncate text-xs">{order.address}</span>
                           </div>
                         ) : '-'}
                       </td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-1.5">
-                          <User size={12} className="text-muted" />
-                          <span className={order.delivery_boy_name ? 'text-sky font-bold' : 'text-muted italic text-[11px]'}>
-                            {order.delivery_boy_name || 'Unassigned'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-3 font-mono text-muted text-xs">{order.invoice_no || '-'}</td>
+
+                      {/* Assigned Staff Dropdown */}
                       <td className="p-3">
                         <select
+                          value={order.delivery_boy_id || ''}
+                          onChange={e => handleAssignDeliveryBoy(order, e.target.value ? Number(e.target.value) : null)}
+                          className="text-xs bg-bg text-text border border-glass-border rounded-lg px-2 py-1 font-medium focus:outline-none focus:border-primary cursor-pointer w-36"
+                        >
+                          <option value="">Unassigned</option>
+                          {allBoys.filter(b => b.is_active).map(boy => (
+                            <option key={boy.id} value={boy.id}>{boy.name}</option>
+                          ))}
+                        </select>
+                      </td>
+
+                      {/* Invoice # */}
+                      <td className="p-3 font-mono text-muted text-xs whitespace-nowrap">{order.invoice_no || '-'}</td>
+
+                      {/* Status & 14-Day Return Window */}
+                      <td className="p-3 whitespace-nowrap">
+                        <select
                           value={order.status}
-                          onChange={e => handleStatusChange(order.id, e.target.value)}
-                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer bg-bg focus:outline-none transition-all ${statusStyles[order.status]}`}
+                          onChange={e => handleUnifiedStatusChange(order, e.target.value)}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer bg-bg focus:outline-none transition-all ${statusStyles[order.status] || ''}`}
                         >
                           <option value="Pending">⏳ Pending</option>
                           <option value="In Transit">🚚 In Transit</option>
                           <option value="Delivered">✅ Delivered</option>
                         </select>
+
+                        {/* 14-Day Return Countdown Badge for delivered website orders */}
+                        {order.sourceType === 'website' && order.status === 'Delivered' && order.return_window_until && (
+                          <div className="mt-1 text-[9px] font-bold text-emerald-400 flex items-center gap-0.5">
+                            <RotateCcw size={10} />
+                            <span>14-day return eligible</span>
+                          </div>
+                        )}
                       </td>
-                      <td className="p-3 text-right">
-                        <button
-                          onClick={() => handleDelete(order.id)}
-                          className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition-colors"
-                          title="Delete Dispatch Order"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+
+                      {/* Actions */}
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* 1-Click WhatsApp Dispatch to Boy */}
+                          {order.delivery_boy_id && (
+                            <button
+                              type="button"
+                              onClick={() => handleDispatchToDeliveryBoyWhatsApp(order)}
+                              className="p-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer"
+                              title="Send order dispatch details to assigned staff via WhatsApp"
+                            >
+                              <Send size={13} />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleUnifiedDelete(order)}
+                            className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition-colors cursor-pointer"
+                            title="Delete Dispatch Order"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Prescription Zoom Lightbox Modal */}
+      {selectedPrescription && (
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
+          <div className="bg-bg border border-border w-full max-w-2xl rounded-3xl p-5 space-y-4 shadow-2xl relative">
+            <div className="flex justify-between items-center border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <FileImage size={18} className="text-primary" />
+                <h3 className="font-bold text-sm text-text">Customer Prescription Verification</h3>
+              </div>
+              <button
+                onClick={() => setSelectedPrescription(null)}
+                className="p-1 rounded-lg hover:bg-bg3 text-muted hover:text-text cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-bg/40 rounded-2xl p-2">
+              <img
+                src={selectedPrescription}
+                alt="Doctor's Prescription"
+                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-md"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-border pt-3">
+              <a
+                href={selectedPrescription}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2 bg-bg3 text-text hover:bg-bg3/80 text-xs font-bold rounded-xl flex items-center gap-1.5"
+              >
+                <ExternalLink size={13} /> Open Full Size
+              </a>
+              <button
+                onClick={() => setSelectedPrescription(null)}
+                className="px-5 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-md hover:bg-primary/90 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

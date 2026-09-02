@@ -10,6 +10,8 @@ import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
+import { resolveStoreId } from '../services/storeContextService.js';
+import { returnWindowService } from '../services/returnWindowService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,15 +42,26 @@ async function initOrdersTable(db: any) {
 }
 
 // List special requests / orders
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     await initOrdersTable(db);
+    const storeId = resolveStoreId(req);
+    const allStores = req.query.all_stores === 'true';
+
     let orders;
     try {
-      orders = await db.all('SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000');
+      if (allStores) {
+        orders = await db.all('SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000');
+      } else {
+        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY date DESC LIMIT 1000', [storeId]);
+      }
     } catch (_) {
-      orders = await db.all('SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000');
+      if (allStores) {
+        orders = await db.all('SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000');
+      } else {
+        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000', [storeId]);
+      }
     }
     res.json(orders);
   } catch (err) {
@@ -66,8 +79,11 @@ router.post('/batch', async (req, res) => {
     priority = 'Normal', 
     status = 'Pending',
     advance_payment = 0,
-    sendWhatsApp = false
+    sendWhatsApp = false,
+    store_id
   } = req.body;
+
+  const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'At least one medicine item is required' });
@@ -97,10 +113,11 @@ router.post('/batch', async (req, res) => {
         const initialStatus = item.status || status || 'Pending';
         const result = await db.run(
           `INSERT INTO special_orders (
-            product, requester, phone, qty, priority, status, date, notified,
+            store_id, product, requester, phone, qty, priority, status, date, notified,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           [
+            targetStoreId,
             medName,
             cleanReqName,
             cleanPhone,
@@ -194,8 +211,15 @@ router.post('/', async (req, res) => {
     pharmarack_mrp,
     pharmarack_mapped = 0,
     pharmarack_scheme,
-    advance_payment
+    advance_payment,
+    store_id,
+    customer_order_source = 'in_store',
+    prescription_url,
+    product_image_url,
+    notes
   } = req.body;
+
+  const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
 
   const reqProduct = product || medicine_name;
   if (!requester || !reqProduct) {
@@ -227,10 +251,12 @@ router.post('/', async (req, res) => {
     const initialStatus = status || 'Pending';
     const result = await db.run(
       `INSERT INTO special_orders (
-        product, requester, phone, qty, priority, status, date, notified,
-        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        store_id, product, requester, phone, qty, priority, status, date, notified,
+        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
+        customer_order_source, prescription_url, product_image_url, notes, notification_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
+        targetStoreId,
         medName,
         requester.trim(),
         cleanPhone,
@@ -244,7 +270,11 @@ router.post('/', async (req, res) => {
         pharmarack_mrp !== undefined ? pharmarack_mrp : null,
         pharmarack_mapped ? 1 : 0,
         pharmarack_scheme || null,
-        advance_payment !== undefined && advance_payment !== null ? Number(advance_payment) : 0.0
+        advance_payment !== undefined && advance_payment !== null ? Number(advance_payment) : 0.0,
+        customer_order_source,
+        prescription_url || null,
+        product_image_url || null,
+        notes || null
       ]
     );
     
@@ -758,6 +788,55 @@ router.post('/:id/fulfill', async (req, res) => {
   } catch (err: any) {
     console.error('Fulfill order error:', err);
     res.status(500).json({ error: 'Failed to fulfill order: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// POST /api/orders/:id/mark-delivered — Mark special order as delivered and start 14-day return window
+router.post('/:id/mark-delivered', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const returnStatus = await returnWindowService.markDelivered(orderId);
+    broadcastOrdersChanged();
+    res.json({ success: true, message: 'Order marked as delivered', return_status: returnStatus });
+  } catch (err: any) {
+    console.error('Mark order delivered error:', err);
+    res.status(500).json({ error: 'Failed to mark order delivered: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// POST /api/orders/:id/return-override — Human override to approve return after 14-day expiration
+router.post('/:id/return-override', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    const { override_by = 'Pharmacist', reason = 'Customer accommodation' } = req.body;
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const returnStatus = await returnWindowService.applyReturnOverride(orderId, { overrideBy: override_by, reason });
+    broadcastOrdersChanged();
+    res.json({ success: true, message: 'Return override applied successfully', return_status: returnStatus });
+  } catch (err: any) {
+    console.error('Return override error:', err);
+    res.status(500).json({ error: 'Failed to apply return override: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// GET /api/orders/:id/return-status — Get 14-day return status for order
+router.get('/:id/return-status', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const statusInfo = returnWindowService.evaluateOrderReturnStatus(order);
+    res.json(statusInfo);
+  } catch (err: any) {
+    console.error('Get return status error:', err);
+    res.status(500).json({ error: 'Failed to evaluate return status' });
   }
 });
 

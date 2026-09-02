@@ -14,6 +14,7 @@ import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { PortalAccountsManager } from '../../components/PortalAccountsManager';
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
 let cachedRefillsData: RefillPatient[] = [];
@@ -187,6 +188,7 @@ const TABS = [
   { key: 'refills', label: 'Refills', icon: <Repeat2 size={15} /> },
   { key: 'special_orders', label: 'Special Requests', icon: <ClipboardList size={15} /> },
   { key: 'credit', label: 'Customer Credit', icon: <Users size={15} /> },
+  { key: 'portal_logins', label: 'Web Logins & PINs', icon: <Globe size={15} /> },
   { key: 'messages', label: 'Distributor Messages', icon: <Bell size={15} /> },
   { key: 'whatsapp', label: 'WhatsApp Business', icon: <MessageCircle size={15} /> },
 ];
@@ -6027,6 +6029,7 @@ const CRM: React.FC = () => {
         {activeTab === 'refills' && <RefillsSection />}
         {activeTab === 'special_orders' && <SpecialOrdersSection />}
         {activeTab === 'credit' && <CustomerCreditSection />}
+        {activeTab === 'portal_logins' && <PortalAccountsManager />}
         {activeTab === 'messages' && <DistributorMessagesSection />}
         {activeTab === 'whatsapp' && <WhatsAppSection />}
       </div>

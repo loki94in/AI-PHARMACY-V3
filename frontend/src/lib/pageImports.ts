@@ -21,4 +21,7 @@ export const pageImports: Record<string, () => Promise<{ default: ComponentType 
   '/dispatch': () => import('../pages/Dispatch'),
   '/learning': () => import('../pages/Learning'),
   '/audit': () => import('../pages/AuditCenter'),
+  '/website-orders': () => import('../pages/WebsiteOrders'),
+  '/portal': () => import('../pages/CustomerPortal'),
+  '/refill-portal': () => import('../pages/CustomerPortal'),
 };

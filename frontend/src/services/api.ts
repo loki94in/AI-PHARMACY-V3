@@ -48,6 +48,17 @@ declare module 'axios' {
   }
 }
 
+// Request interceptor: attach active store ID header to all requests
+apiClient.interceptors.request.use((config) => {
+  try {
+    const activeStoreId = localStorage.getItem('active_store_id') || '1';
+    if (config.headers) {
+      config.headers['x-store-id'] = activeStoreId;
+    }
+  } catch (_) {}
+  return config;
+});
+
 // Interceptor to handle errors centrally and OPTIONAL data standardization
 apiClient.interceptors.response.use(
   (response) => {
@@ -1646,5 +1657,47 @@ export const api = {
   // Pharmarack Reorder Recent API
   getPharmarackReorderRecent: (months?: number) =>
     apiClient.get<{ success: boolean; items: { medicineName: string; lastOrderedDate: string; lastQty: number; lastDistributorName: string }[] }>('/pharmarack/reorder-recent', { params: months ? { months } : {} }).then(res => res.data),
+
+  // Multi-Store & Central/Local Sync APIs
+  getStores: (includeInactive = false) => apiClient.get<Array<{ id: number; name: string; code?: string; address?: string; phone?: string; email?: string; is_central: number; is_active: number }>>('/stores', { params: { include_inactive: includeInactive } }).then(res => res.data),
+  createStore: (data: { name: string; code?: string; address?: string; phone?: string; email?: string; is_central?: boolean | number }) => apiClient.post('/stores', data).then(res => res.data),
+  updateStore: (id: number, data: any) => apiClient.put(`/stores/${id}`, data).then(res => res.data),
+  getStoreSettings: (storeId: number) => apiClient.get<Record<string, string>>(`/stores/${storeId}/settings`).then(res => res.data),
+  updateStoreSettings: (storeId: number, settings: Record<string, string>) => apiClient.put(`/stores/${storeId}/settings`, { settings }).then(res => res.data),
+
+  // 14-Day Return Window & Special Order Delivery
+  markOrderDelivered: (orderId: number) => apiClient.post(`/orders/${orderId}/mark-delivered`).then(res => res.data),
+  applyReturnOverride: (orderId: number, data: { override_by: string; reason: string }) => apiClient.post(`/orders/${orderId}/return-override`, data).then(res => res.data),
+  getOrderReturnStatus: (orderId: number) => apiClient.get(`/orders/${orderId}/return-status`).then(res => res.data),
+
+  // Central + Local Sync
+  getSyncStatus: () => apiClient.get<{ store_id: number; pending_count: number; synced_count: number; conflict_count: number; last_synced_at: string | null }>('/sync/status').then(res => res.data),
+  pushSync: (limit = 100) => apiClient.post('/sync/push', { limit }).then(res => res.data),
+  pullSync: (items: any[]) => apiClient.post('/sync/pull', { items }).then(res => res.data),
+  resolveSyncConflict: (conflictId: number, resolution: 'keep_local' | 'keep_remote') => apiClient.post('/sync/resolve-conflict', { conflict_id: conflictId, resolution }).then(res => res.data),
+
+  // Customer Portal & Refill Management APIs
+  getPortalAccounts: (params?: { search?: string; store_id?: number }) =>
+    apiClient.get<{ success: boolean; count: number; accounts: Array<{ id: number; customer_id: number; login_id: string; pin_display?: string; preferred_store_id: number; preferred_store_name?: string; status: string; last_login_at?: string; customer_name: string; customer_address?: string; active_refills_count: number; total_bills_count: number; created_at: string }> }>('/customer-portal/accounts', { params }).then(res => res.data),
+  generatePortalAccount: (data: { customer_id?: number; phone: string; name?: string; preferred_store_id?: number; custom_pin?: string; send_whatsapp?: boolean }) =>
+    apiClient.post<{ success: boolean; account_id: number; customer_id: number; login_id: string; pin: string; preferred_store_id: number; whatsapp_queued: boolean }>('/customer-portal/accounts/generate', data).then(res => res.data),
+  resendPortalCredentials: (accountId: number) =>
+    apiClient.post<{ success: boolean; message: string; login_id: string; pin: string }>(`/customer-portal/accounts/${accountId}/send-credentials`).then(res => res.data),
+  updatePortalAccount: (accountId: number, data: { status?: string; preferred_store_id?: number }) =>
+    apiClient.put<{ success: boolean; message: string }>(`/customer-portal/accounts/${accountId}`, data).then(res => res.data),
+  customerLogin: (data: { login_id: string; pin: string }) =>
+    apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
+  customerRequestOtp: (data: { login_id: string }) =>
+    apiClient.post<{ success: boolean; message: string; login_id: string }>('/customer-portal/auth/request-otp', data).then(res => res.data),
+  customerVerifyOtp: (data: { login_id: string; otp_code: string }) =>
+    apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/verify-otp', data).then(res => res.data),
+  getCustomerBills: (params: { customer_id?: number; phone?: string }) =>
+    apiClient.get<{ success: boolean; count: number; bills: any[] }>('/customer-portal/customer/bills', { params }).then(res => res.data),
+  getCustomerRefills: (params: { customer_id?: number; phone?: string }) =>
+    apiClient.get<{ success: boolean; count: number; refills: any[] }>('/customer-portal/customer/refills', { params }).then(res => res.data),
+  placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; notes?: string }) =>
+    apiClient.post<{ success: boolean; message: string; store_id: number; store_name: string; orders: any[]; customer: { name: string; phone: string } }>('/customer-portal/customer/refill-order', data).then(res => res.data),
+  changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
+    apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
 };
 

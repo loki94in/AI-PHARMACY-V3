@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { notificationService } from '../services/notificationService.js';
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
 import { eventService } from '../services/eventService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,17 +34,24 @@ router.use((req, res, next) => {
 // ─── DISPATCH ORDERS ────────────────────────────────────────────────────────
 
 // GET all dispatch orders (with delivery boy name joined)
-router.get('/orders', async (_req, res) => {
+router.get('/orders', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
+    const storeId = resolveStoreId(req);
+    const allStores = req.query.all_stores === 'true';
+
+    const whereClause = allStores ? '' : 'WHERE d.store_id = ?';
+    const params = allStores ? [] : [storeId];
+
     const orders = await db.all(`
       SELECT d.*, db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone
       FROM dispatch_orders d
       LEFT JOIN delivery_boys db ON d.delivery_boy_id = db.id
+      ${whereClause}
       ORDER BY d.created_at DESC
       LIMIT 1000
-    `);
-        res.json(orders);
+    `, params);
+    res.json(orders);
   } catch (err) {
     console.error('Dispatch orders fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch dispatch orders' });
@@ -52,14 +60,16 @@ router.get('/orders', async (_req, res) => {
 
 // POST create dispatch order
 router.post('/orders', async (req, res) => {
-  const { patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no } = req.body;
+  const { patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no, store_id } = req.body;
+  const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
+
   if (!patient_name) return res.status(400).json({ error: 'patient_name is required' });
   try {
     const db = await dbManager.getConnection();
     const result = await db.run(
-      `INSERT INTO dispatch_orders (patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [patient_name, patient_phone || '', address || '', items || '', notes || '', delivery_boy_id || null, invoice_no || '']
+      `INSERT INTO dispatch_orders (store_id, patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [targetStoreId, patient_name, patient_phone || '', address || '', items || '', notes || '', delivery_boy_id || null, invoice_no || '']
     );
     const newOrder = await db.get(`
       SELECT d.*, db.name as delivery_boy_name FROM dispatch_orders d

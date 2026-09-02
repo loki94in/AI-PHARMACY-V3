@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 46;
+const CURRENT_SCHEMA_VERSION = 47;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -228,6 +228,14 @@ export async function ensureSchema(dbPath: string) {
       // Schedule Drugs hub: filter-by-schedule + name-ordered pages over the
       // 291k master catalog (composite covers equality lookups on schedule_type)
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name)');
+      try {
+        await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status)');
+      } catch (_) {}
 
       // Ensure multi-device & velocity metrics tables exist on fast-boot
       try {
@@ -337,6 +345,7 @@ export async function ensureSchema(dbPath: string) {
         DROP TABLE IF EXISTS special_orders_new;
         CREATE TABLE special_orders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
+          store_id INTEGER DEFAULT 1,
           customer_id INTEGER DEFAULT NULL,
           product TEXT,
           requester TEXT,
@@ -363,7 +372,20 @@ export async function ensureSchema(dbPath: string) {
           cart_add_error TEXT DEFAULT NULL,
           notification_count INTEGER DEFAULT 0,
           lifecycle_status TEXT DEFAULT 'CREATED',
-          last_checked_at DATETIME
+          last_checked_at DATETIME,
+          customer_order_source TEXT DEFAULT 'in_store',
+          prescription_url TEXT DEFAULT NULL,
+          product_image_url TEXT DEFAULT NULL,
+          delivery_status TEXT DEFAULT 'pending',
+          delivered_at DATETIME DEFAULT NULL,
+          return_window_until DATETIME DEFAULT NULL,
+          return_status TEXT DEFAULT 'none',
+          return_override_reason TEXT DEFAULT NULL,
+          return_override_by TEXT DEFAULT NULL,
+          return_override_at DATETIME DEFAULT NULL,
+          sync_id TEXT DEFAULT NULL,
+          sync_status TEXT DEFAULT 'synced',
+          last_synced_at DATETIME DEFAULT NULL
         );
       `);
       if (colNames) {
@@ -381,6 +403,40 @@ export async function ensureSchema(dbPath: string) {
   }
 
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS stores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      code TEXT UNIQUE,
+      address TEXT,
+      phone TEXT,
+      email TEXT,
+      is_central INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS store_settings (
+      store_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (store_id, key),
+      FOREIGN KEY(store_id) REFERENCES stores(id)
+    );
+    CREATE TABLE IF NOT EXISTS store_sync_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      sync_status TEXT DEFAULT 'pending',
+      retry_count INTEGER DEFAULT 0,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      synced_at DATETIME,
+      FOREIGN KEY(store_id) REFERENCES stores(id)
+    );
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -426,6 +482,7 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       distributor_id INTEGER,
       invoice_no TEXT,
       app_invoice_no TEXT,
@@ -484,6 +541,7 @@ export async function ensureSchema(dbPath: string) {
     -- Agent A: Core Business & Inventory Schemas
     CREATE TABLE IF NOT EXISTS inventory_master (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       medicine_id INTEGER,
       quantity INTEGER DEFAULT 0,
       loose_quantity INTEGER DEFAULT 0,
@@ -500,6 +558,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_inventory_master_med_qty_exp ON inventory_master (medicine_id, quantity, expiry_date);
     CREATE TABLE IF NOT EXISTS sales_invoices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       invoice_no TEXT UNIQUE,
       customer_id INTEGER,
       doctor_id INTEGER,
@@ -534,6 +593,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_sale_items_inventory_id ON sale_items (inventory_id);
     CREATE TABLE IF NOT EXISTS returns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       return_no TEXT UNIQUE,
       original_invoice_id INTEGER,
       distributor_id INTEGER,
@@ -577,6 +637,29 @@ export async function ensureSchema(dbPath: string) {
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS customer_portal_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL UNIQUE,
+      login_id TEXT NOT NULL UNIQUE,
+      pin_hash TEXT NOT NULL,
+      pin_display TEXT,
+      preferred_store_id INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'active',
+      last_login_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(customer_id) REFERENCES customers(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id);
+    CREATE TABLE IF NOT EXISTS customer_portal_otps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login_id TEXT NOT NULL,
+      otp_code TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      is_used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id);
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -606,6 +689,7 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE TABLE IF NOT EXISTS delivery_boys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       name TEXT NOT NULL,
       whatsapp_number TEXT,
       telegram_chat_id TEXT,
@@ -632,6 +716,7 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE TABLE IF NOT EXISTS patient_refills (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       customer_id INTEGER,
       patient_name TEXT NOT NULL,
       patient_phone TEXT NOT NULL,
@@ -658,6 +743,7 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE TABLE IF NOT EXISTS held_bills (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       customer_id INTEGER,
       temp_label TEXT,
       patient_name TEXT,
@@ -775,6 +861,7 @@ export async function ensureSchema(dbPath: string) {
 
     CREATE TABLE IF NOT EXISTS special_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       requester TEXT,
       phone TEXT,
       notes TEXT,
@@ -798,7 +885,20 @@ export async function ensureSchema(dbPath: string) {
       converted_to_refill_id INTEGER DEFAULT NULL,
       customer_id INTEGER DEFAULT NULL,
       cart_add_error TEXT DEFAULT NULL,
-      notification_count INTEGER DEFAULT 0
+      notification_count INTEGER DEFAULT 0,
+      customer_order_source TEXT DEFAULT 'in_store',
+      prescription_url TEXT DEFAULT NULL,
+      product_image_url TEXT DEFAULT NULL,
+      delivery_status TEXT DEFAULT 'pending',
+      delivered_at DATETIME DEFAULT NULL,
+      return_window_until DATETIME DEFAULT NULL,
+      return_status TEXT DEFAULT 'none',
+      return_override_reason TEXT DEFAULT NULL,
+      return_override_by TEXT DEFAULT NULL,
+      return_override_at DATETIME DEFAULT NULL,
+      sync_id TEXT DEFAULT NULL,
+      sync_status TEXT DEFAULT 'synced',
+      last_synced_at DATETIME DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -1242,6 +1342,34 @@ export async function ensureSchema(dbPath: string) {
     ['catalog_jobs', 'duplicate_count', 'ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0'],
     ['catalog_jobs', 'matched_previous_job_id', 'ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL'],
     ['catalog_jobs', 'newly_detected_columns', 'ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT'],
+    // Multi-Store & Website Order Foundation (Schema v47)
+    ['special_orders', 'store_id', 'ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['special_orders', 'customer_order_source', "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
+    ['special_orders', 'prescription_url', 'ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL'],
+    ['special_orders', 'product_image_url', 'ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL'],
+    ['special_orders', 'delivery_status', "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
+    ['special_orders', 'delivered_at', 'ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL'],
+    ['special_orders', 'return_window_until', 'ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL'],
+    ['special_orders', 'return_status', "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
+    ['special_orders', 'return_override_reason', 'ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL'],
+    ['special_orders', 'return_override_by', 'ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL'],
+    ['special_orders', 'return_override_at', 'ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL'],
+    ['special_orders', 'sync_id', 'ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL'],
+    ['special_orders', 'sync_status', "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
+    ['special_orders', 'last_synced_at', 'ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL'],
+    ['inventory_master', 'store_id', 'ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['purchases', 'store_id', 'ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['sales_invoices', 'store_id', 'ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['returns', 'store_id', 'ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['patient_refills', 'store_id', 'ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['dispatch_orders', 'store_id', 'ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['held_bills', 'store_id', 'ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['staged_sales', 'store_id', 'ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['staged_purchases', 'store_id', 'ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['whatsapp_send_queue', 'store_id', 'ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['distributor_dispatch_reminders', 'store_id', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['pharmarack_distributor_mappings', 'store_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['delivery_boys', 'store_id', 'ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
@@ -1249,7 +1377,7 @@ export async function ensureSchema(dbPath: string) {
     try {
       const columns = await db.all(`PRAGMA table_info(${table})`);
       const exists = columns.some((c: any) => c.name.toLowerCase() === col.toLowerCase());
-      if (!exists) {
+      if (columns.length > 0 && !exists) {
         await db.run(stmt);
       }
     } catch (_e) {}
@@ -1876,6 +2004,7 @@ export async function ensureSchema(dbPath: string) {
     -- Dispatch delivery orders (home delivery management)
     CREATE TABLE IF NOT EXISTS dispatch_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       patient_name TEXT NOT NULL,
       patient_phone TEXT,
       address TEXT,
@@ -2278,10 +2407,28 @@ export async function ensureSchema(dbPath: string) {
       batch_sent_at         INTEGER             -- unix ms when batch sent it
     );
     CREATE INDEX IF NOT EXISTS idx_pharmarack_placed_orders_date ON pharmarack_placed_orders (order_date, batch_sent);
+    CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id);
+    CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
+    CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
   `);
 
   // FTS5 trigram index for fast fuzzy medicine name search, rebuilt if unusable
   await ensureMedicinesFts(db);
+
+  // Seed default store if no stores exist
+  try {
+    const storeCount = await db.get("SELECT COUNT(*) as count FROM stores");
+    if (!storeCount || storeCount.count === 0) {
+      await db.run(
+        "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
+      );
+    }
+  } catch (err) {
+    console.warn('[Database Schema] Default store seed warning:', err);
+  }
 
   // Insert default settings if they don't exist
   await db.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");

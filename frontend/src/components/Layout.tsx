@@ -43,6 +43,7 @@ import {
   MessageCircle,
   MessageSquareText,
   Zap,
+  Globe,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {
@@ -67,6 +68,7 @@ import AutomationHubPopover, { prefetchAutomationHub } from './AutomationHubPopo
 import { StagedReviewModal } from './StagedReviewModal';
 import { MobileConnectionModal } from './MobileConnectionModal';
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
+import { StoreSelector } from './StoreSelector';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -151,6 +153,8 @@ const Sidebar = memo(({
     { path: '/ai-engineering', label: 'Pharma Intelligence', icon: <BrainCircuit size={18} /> },
     { path: '/learning', label: 'AI Learning', icon: <Brain size={18} /> },
     { path: '/dispatch', label: 'Dispatch', icon: <Truck size={18} /> },
+    { path: '/website-orders', label: 'Website Orders', icon: <Globe size={18} /> },
+    { path: '/portal', label: 'Customer Portal', icon: <Globe size={18} /> },
     { path: '/crm', label: 'CRM & Messages', icon: <Users size={18} /> },
     { path: '/returns', label: 'Supplier Returns', icon: <RotateCcw size={18} /> },
     { path: '/database', label: 'Master Database', icon: <Database size={18} /> },
@@ -1996,6 +2000,9 @@ const Topbar = memo(({
             <ClipboardPlus size={18} />
           </button>
 
+          {/* Store Switcher */}
+          <StoreSelector />
+
           {/* Live Cart Shortcut Button */}
           <button
             onClick={() => liveCartAddEvent.triggerOpen()}
@@ -3202,7 +3209,7 @@ export const Layout = ({
 }) => {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration'].includes(location.pathname);
+  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration', '/portal', '/refill-portal'].includes(location.pathname);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
