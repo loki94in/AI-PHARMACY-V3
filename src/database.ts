@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 48;
+const CURRENT_SCHEMA_VERSION = 50;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -358,6 +358,73 @@ export async function ensureSchema(dbPath: string) {
         )
       `);
       await db.run('CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id)');
+
+      // Online order items and stock reservation tables (Schema v49)
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS online_order_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER NOT NULL,
+          medicine_id INTEGER,
+          product_name TEXT NOT NULL,
+          actual_medicine_id INTEGER,
+          actual_batch_id INTEGER,
+          requested_qty INTEGER NOT NULL DEFAULT 1,
+          confirmed_qty INTEGER,
+          mrp REAL,
+          sell_price REAL,
+          discount REAL DEFAULT 0,
+          final_price REAL,
+          item_status TEXT DEFAULT 'PENDING',
+          replacement_reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(order_id) REFERENCES special_orders(id),
+          FOREIGN KEY(medicine_id) REFERENCES medicines(id),
+          FOREIGN KEY(actual_medicine_id) REFERENCES medicines(id),
+          FOREIGN KEY(actual_batch_id) REFERENCES inventory_master(id)
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_order_id ON online_order_items(order_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_medicine_id ON online_order_items(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_status ON online_order_items(item_status)');
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS inventory_reservations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          inventory_id INTEGER NOT NULL,
+          order_id INTEGER NOT NULL,
+          order_item_id INTEGER,
+          reserved_qty INTEGER NOT NULL,
+          status TEXT DEFAULT 'ACTIVE',
+          reserved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          released_at DATETIME,
+          FOREIGN KEY(inventory_id) REFERENCES inventory_master(id),
+          FOREIGN KEY(order_id) REFERENCES special_orders(id),
+          FOREIGN KEY(order_item_id) REFERENCES online_order_items(id)
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_inventory ON inventory_reservations(inventory_id, status)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_order ON inventory_reservations(order_id)');
+      // Payment and live-cart indexes
+      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_payment ON special_orders(payment_status, pharmacy_verification_status)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_online_order ON sales_invoices(online_order_id)');
+
+      // Catalog correction audit log (Schema v50)
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS catalog_correction_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER,
+          order_item_id INTEGER,
+          changed_by TEXT NOT NULL,
+          old_medicine_id INTEGER,
+          new_medicine_id INTEGER,
+          old_batch_id INTEGER,
+          new_batch_id INTEGER,
+          change_type TEXT NOT NULL,
+          reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
 
       await ensureMedicinesFts(db);
       return;
@@ -1446,6 +1513,16 @@ export async function ensureSchema(dbPath: string) {
     ['distributor_dispatch_reminders', 'store_id', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1'],
     ['pharmarack_distributor_mappings', 'store_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1'],
     ['delivery_boys', 'store_id', 'ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1'],
+    // Online Order Payment Lifecycle (Schema v49)
+    ['special_orders', 'payment_status', "ALTER TABLE special_orders ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'"],
+    ['special_orders', 'payment_reference', 'ALTER TABLE special_orders ADD COLUMN payment_reference TEXT'],
+    ['special_orders', 'payment_confirmed_at', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_at DATETIME'],
+    ['special_orders', 'payment_confirmed_by', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_by TEXT'],
+    ['special_orders', 'pharmacy_verification_status', "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
+    ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
+    ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
+    ['special_orders', 'online_order_ref', 'ALTER TABLE special_orders ADD COLUMN online_order_ref TEXT'],
+    ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
@@ -2870,6 +2947,25 @@ export async function ensureSchema(dbPath: string) {
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+
+  // Catalog correction audit log (Schema v50)
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS catalog_correction_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      order_item_id INTEGER,
+      changed_by TEXT NOT NULL,
+      old_medicine_id INTEGER,
+      new_medicine_id INTEGER,
+      old_batch_id INTEGER,
+      new_batch_id INTEGER,
+      change_type TEXT NOT NULL,
+      reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

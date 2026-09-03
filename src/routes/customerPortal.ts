@@ -800,6 +800,8 @@ interface CachedCatalogItem {
   schedule: string;
   composition: string;
   manufacturer: string;
+  mrp?: number;
+  sell_price?: number;
 }
 
 let catalogCache: CachedCatalogItem[] | null = null;
@@ -841,7 +843,9 @@ function loadCatalogAndImages() {
           pack: parts[2]?.replace(/^"|"$/g, ''),
           schedule: parts[3]?.replace(/^"|"$/g, ''),
           composition: parts[4]?.replace(/^"|"$/g, ''),
-          manufacturer: parts[5]?.replace(/^"|"$/g, '')
+          manufacturer: parts[5]?.replace(/^"|"$/g, ''),
+          mrp: parseFloat(parts[6]) || 0,
+          sell_price: parseFloat(parts[7]) || parseFloat(parts[6]) || 0
         });
       }
       catalogCache = items;
@@ -922,7 +926,9 @@ router.get('/public-catalog', async (req, res) => {
               pack: dbm.packaging || '',
               schedule: '',
               composition: dbm.generic_name || '',
-              manufacturer: dbm.manufacturer || ''
+              manufacturer: dbm.manufacturer || '',
+              mrp: Number(dbm.mrp || 0),
+              sell_price: Number(dbm.sell_price || dbm.mrp || 0)
             });
             existingNames.add(key);
           }
@@ -975,6 +981,8 @@ router.get('/public-catalog', async (req, res) => {
       }
 
       const stockQty = Number(dbMed?.stock_qty || 0);
+      const resolvedMrp = Number(dbMed?.mrp || item.mrp || 0);
+      const resolvedSellPrice = Number(dbMed?.sell_price || item.sell_price || resolvedMrp || 0);
 
       enriched.push({
         name: item.name,
@@ -982,8 +990,8 @@ router.get('/public-catalog', async (req, res) => {
         pack: item.pack || dbMed?.pack_size || '',
         composition: item.composition || dbMed?.generic_name || '',
         manufacturer: item.manufacturer,
-        mrp: Number(dbMed?.mrp || 0),
-        sell_price: Number(dbMed?.sell_price || dbMed?.mrp || 0),
+        mrp: resolvedMrp,
+        sell_price: resolvedSellPrice,
         stock_qty: stockQty,
         in_stock: stockQty > 0,
         image_url: imageUrl,
@@ -1048,4 +1056,241 @@ router.get('/standalone-catalog', (req, res) => {
   res.status(404).send('Live catalog website file not found');
 });
 
+// ─── Customer Purchase History (spec §12, §13) ───────────────────────────────
+// GET /api/customer-portal/history
+// Returns completed POS sales for the authenticated customer.
+// NEVER leaks distributor price, purchase cost, or internal inventory margins.
+router.get('/history', async (req, res) => {
+  try {
+    const customerId = parseInt((req.query.customer_id as string) || '0', 10);
+    const loginId = (req.query.login_id as string) || '';
+    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 200);
+    const offset = parseInt((req.query.offset as string) || '0', 10) || 0;
+
+    if (!customerId && !loginId) {
+      return res.status(400).json({ error: 'customer_id or login_id is required' });
+    }
+
+    const db = await dbManager.getConnection();
+
+    // Resolve customer_id from login_id if needed
+    let resolvedCustomerId = customerId;
+    if (!resolvedCustomerId && loginId) {
+      const account = await db.get(
+        'SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?',
+        [loginId, 'active']
+      );
+      if (!account) return res.status(404).json({ error: 'Customer account not found' });
+      resolvedCustomerId = account.customer_id;
+    }
+
+    // Fetch POS sales for this customer — only safe customer-facing columns (spec §13)
+    const sales = await db.all(
+      `SELECT
+         si.id as invoice_id,
+         si.date,
+         si.business_date,
+         si.grand_total,
+         si.online_order_id,
+         si.payment_medium,
+         si.status,
+         COALESCE(st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+         AND si.status != 'cancelled'
+       ORDER BY si.date DESC
+       LIMIT ? OFFSET ?`,
+      [resolvedCustomerId, limit, offset]
+    ).catch(() => []);
+
+    // Attach sale items (product name, qty, mrp, sell_price — no cost_price/purchase_price)
+    const enriched = await Promise.all(sales.map(async (sale: any) => {
+      const items = await db.all(
+        `SELECT
+           sit.id,
+           m.name as medicine_name,
+           m.generic_name,
+           m.strength,
+           m.packaging,
+           sit.quantity,
+           sit.mrp,
+           sit.sell_price,
+           sit.discount,
+           sit.medicine_id
+         FROM sale_items sit
+         LEFT JOIN medicines m ON m.id = sit.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+        [sale.invoice_id]
+      ).catch(() => []);
+
+      return { ...sale, items };
+    }));
+
+    // Count for pagination
+    const countRow = await db.get(
+      'SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND status != ?',
+      [resolvedCustomerId, 'cancelled']
+    ).catch(() => ({ total: 0 }));
+
+    res.json({
+      customer_id: resolvedCustomerId,
+      total: countRow?.total || 0,
+      limit,
+      offset,
+      purchases: enriched
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] History error:', err);
+    res.status(500).json({ error: 'Failed to load purchase history' });
+  }
+});
+
+// ─── Refill from Invoice (spec §14) ──────────────────────────────────────────
+// POST /api/customer-portal/history/:invoiceId/refill
+// Creates a new website order from a previous invoice using CURRENT pricing and availability.
+router.post('/history/:invoiceId/refill', async (req, res) => {
+  try {
+    const invoiceId = parseInt(req.params.invoiceId, 10);
+    if (isNaN(invoiceId)) return res.status(400).json({ error: 'Invalid invoice ID' });
+
+    const { customer_id, login_id, store_id = 1 } = req.body;
+    if (!customer_id && !login_id) {
+      return res.status(400).json({ error: 'customer_id or login_id is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const targetStoreId = parseInt(String(store_id), 10) || 1;
+
+    // Resolve customer
+    let resolvedCustomerId = customer_id ? parseInt(String(customer_id), 10) : 0;
+    if (!resolvedCustomerId && login_id) {
+      const account = await db.get(
+        'SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?',
+        [login_id, 'active']
+      );
+      if (!account) return res.status(404).json({ error: 'Customer account not found' });
+      resolvedCustomerId = account.customer_id;
+    }
+
+    // Verify invoice belongs to this customer
+    const invoice = await db.get(
+      'SELECT * FROM sales_invoices WHERE id = ? AND customer_id = ?',
+      [invoiceId, resolvedCustomerId]
+    );
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found for this customer' });
+
+    // Get original items
+    const origItems = await db.all(
+      `SELECT sit.medicine_id, sit.quantity, m.name as medicine_name
+       FROM sale_items sit
+       LEFT JOIN medicines m ON m.id = sit.medicine_id
+       WHERE sit.invoice_id = ?`,
+      [invoiceId]
+    );
+
+    if (!origItems || origItems.length === 0) {
+      return res.status(400).json({ error: 'No items found in original invoice' });
+    }
+
+    const customer = await db.get('SELECT * FROM customers WHERE id = ?', [resolvedCustomerId]);
+    if (!customer) return res.status(404).json({ error: 'Customer record not found' });
+
+    // For each item, fetch CURRENT pricing and availability (spec §14 — must use current state)
+    const refillItems = [];
+    const unavailableItems = [];
+
+    for (const orig of origItems) {
+      if (!orig.medicine_id) continue;
+
+      const currentBatch = await db.get(
+        `SELECT MAX(mrp) as current_mrp, MAX(sell_price) as current_sell, SUM(quantity) as total_qty
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+        [orig.medicine_id, targetStoreId]
+      ).catch(() => null);
+
+      if (!currentBatch || (currentBatch.total_qty || 0) <= 0) {
+        unavailableItems.push({ medicine_id: orig.medicine_id, name: orig.medicine_name });
+        continue;
+      }
+
+      refillItems.push({
+        medicine_id: orig.medicine_id,
+        product_name: orig.medicine_name,
+        qty: orig.quantity,
+        mrp: currentBatch.current_mrp || 0,
+        price: currentBatch.current_sell || currentBatch.current_mrp || 0
+      });
+    }
+
+    if (refillItems.length === 0) {
+      return res.status(409).json({
+        error: 'None of the original items are currently available',
+        unavailable_items: unavailableItems
+      });
+    }
+
+    // Create new special_order + online_order_items for each refill item
+    const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, '') : '';
+    const cleanName = formatCustomerName(customer.name);
+    const createdOrders: Array<{ id: number; product: string; qty: number }> = [];
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const item of refillItems) {
+        const result = await db.run(
+          `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date,
+            notified, advance_payment, notes, customer_order_source,
+            payment_status, pharmacy_verification_status, delivery_status, return_status,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', CURRENT_TIMESTAMP, 0, 0,
+            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            targetStoreId, resolvedCustomerId, item.product_name, cleanName, cleanPhone,
+            item.qty,
+            `[Refill from Invoice #${invoiceId}]`
+          ]
+        );
+        const orderId = Number(result.lastID);
+        createdOrders.push({ id: orderId, product: item.product_name, qty: item.qty });
+
+        await db.run(
+          `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
+           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+          [orderId, item.medicine_id, item.product_name, item.qty, item.mrp]
+        );
+
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+          [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: ₹${item.mrp}`]
+        );
+      }
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+
+    eventService.broadcast('order_updated', { at: Date.now(), source: 'refill' });
+
+    res.status(201).json({
+      success: true,
+      message: `Refill order created for ${createdOrders.length} item(s)`,
+      source_invoice_id: invoiceId,
+      orders: createdOrders,
+      unavailable_items: unavailableItems
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Refill error:', err);
+    res.status(500).json({ error: 'Failed to create refill order' });
+  }
+});
+
 export default router;
+

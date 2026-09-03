@@ -1,6 +1,5 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
-import { medicineAvailabilityEngine } from '../services/medicineAvailabilityEngine.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
@@ -15,9 +14,9 @@ const broadcastOrdersChanged = () => {
   } catch (_) {}
 };
 
-// GET /api/website/medicines/search — Customer-facing safe medicine search
-// Shows only customer-safe product info & Available / Sold Out status.
-// NEVER leaks distributor names, rates, or internal mappings.
+// ─── Medicine Search (spec §11: highest valid MRP from live batches) ──────────
+// GET /api/website/medicines/search
+// Customer-facing safe medicine search — never leaks distributor names, cost prices, or internal mappings.
 router.get('/medicines/search', async (req, res) => {
   try {
     const query = ((req.query.query as string) || '').trim();
@@ -30,52 +29,43 @@ router.get('/medicines/search', async (req, res) => {
 
     const db = await dbManager.getConnection();
 
-    // 1. Search local master catalog
+    // Prefix search first (index scan), fall back to middle-word if too few results
     let medicines = await db.all(
-      `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
-       FROM medicines
-       WHERE name LIKE ?
-       ORDER BY name ASC
+      `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category
+       FROM medicines m
+       WHERE m.name LIKE ?
+       ORDER BY m.name ASC
        LIMIT ?`,
       [`${query}%`, limit]
     ).catch(() => []);
 
-    if (medicines.length === 0 && query.length >= 2) {
+    if (medicines.length < 5 && query.length >= 2) {
       medicines = await db.all(
-        `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
-         FROM medicines
-         WHERE name LIKE ?
-         ORDER BY name ASC
+        `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category
+         FROM medicines m
+         WHERE m.name LIKE ?
+         ORDER BY m.name ASC
          LIMIT ?`,
         [`%${query}%`, limit]
       ).catch(() => []);
     }
 
-    // 2. Compute store-specific availability for each medicine
     const safeResults = [];
 
     for (const med of medicines) {
-      // Check store local stock
-      const stockRow = await db.get(
-        `SELECT SUM(quantity) as total_qty 
-         FROM inventory_master 
-         WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+      // Highest valid MRP from non-expired, in-stock batches for this store (spec §11)
+      const batchRow = await db.get(
+        `SELECT MAX(mrp) as max_mrp, MAX(sell_price) as max_sell_price, SUM(quantity) as total_qty
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
         [med.id, storeId]
-      ).catch(() => ({ total_qty: 0 }));
-
-      const localStock = stockRow?.total_qty || 0;
-
-      // Check mapped distributor catalog availability for this store (offline cache)
-      const distRow = await db.get(
-        `SELECT availability 
-         FROM distributor_catalog 
-         WHERE product_name LIKE ? AND is_mapped = 1
-         LIMIT 1`,
-        [`%${med.name}%`]
       ).catch(() => null);
 
-      const hasDistributorStock = distRow && String(distRow.availability || '').toLowerCase().includes('avail');
-      const isAvailable = localStock > 0 || Boolean(hasDistributorStock);
+      const highestMrp = batchRow?.max_mrp || 0;
+      const highestSellPrice = batchRow?.max_sell_price || highestMrp;
+      const totalStock = batchRow?.total_qty || 0;
 
       safeResults.push({
         id: med.id,
@@ -85,10 +75,10 @@ router.get('/medicines/search', async (req, res) => {
         packaging: med.packaging || '',
         manufacturer: med.manufacturer || '',
         category: med.category || '',
-        mrp: med.mrp || 0,
-        price: med.sell_price || med.mrp || 0,
-        is_available: isAvailable,
-        availability_status: isAvailable ? 'Available' : 'Sold Out'
+        mrp: highestMrp,
+        price: highestSellPrice,
+        is_available: totalStock > 0,
+        availability_status: totalStock > 0 ? 'Available' : 'Sold Out'
       });
     }
 
@@ -104,7 +94,9 @@ router.get('/medicines/search', async (req, res) => {
   }
 });
 
-// POST /api/website/orders — Customer creates online order
+// ─── Create Online Order (spec §15, §18) ─────────────────────────────────────
+// POST /api/website/orders
+// Creates the order, inserts online_order_items rows, and tranasactionally reserves stock.
 router.post('/orders', async (req, res) => {
   const {
     customer_name,
@@ -129,8 +121,8 @@ router.post('/orders', async (req, res) => {
     const targetStoreId = parseInt(String(store_id), 10) || 1;
     const todayStr = new Date().toISOString();
 
-    // Ensure customer exists in customers table
-    let customerId = null;
+    // Ensure customer exists
+    let customerId: number | null = null;
     if (cleanPhone && cleanPhone.length >= 10) {
       try {
         const existingCust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
@@ -141,7 +133,7 @@ router.post('/orders', async (req, res) => {
             'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
             [cleanName, cleanPhone, customer_address || '']
           );
-          customerId = custRes.lastID;
+          customerId = custRes.lastID as number;
         }
       } catch (_) {}
     }
@@ -154,14 +146,53 @@ router.post('/orders', async (req, res) => {
         const prodName = (item.product || item.product_name || item.name || '').trim();
         if (!prodName) continue;
         const qty = Number(item.qty) || 1;
-        const price = Number(item.price || item.mrp || 0);
+        const medicineId: number | null = item.medicine_id ? Number(item.medicine_id) : null;
+
+        // Get current highest MRP for this medicine if we have an id
+        let mrp = Number(item.price || item.mrp || 0);
+        if (medicineId && !mrp) {
+          const batchRow = await db.get(
+            `SELECT MAX(mrp) as max_mrp FROM inventory_master
+             WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND quantity > 0
+               AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+            [medicineId, targetStoreId]
+          ).catch(() => null);
+          mrp = batchRow?.max_mrp || 0;
+        }
+
+        // Check stock availability and reservation race condition (spec §18)
+        if (medicineId) {
+          const availRow = await db.get(
+            `SELECT SUM(im.quantity) - COALESCE(
+               (SELECT SUM(r.reserved_qty) FROM inventory_reservations r
+                JOIN inventory_master i ON i.id = r.inventory_id
+                WHERE i.medicine_id = ? AND i.store_id = ? AND r.status = 'ACTIVE'), 0
+             ) as available_qty
+             FROM inventory_master im
+             WHERE im.medicine_id = ? AND im.store_id = ? AND im.is_active = 1
+               AND im.quantity > 0
+               AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now'))`,
+            [medicineId, targetStoreId, medicineId, targetStoreId]
+          ).catch(() => null);
+
+          const availQty = availRow?.available_qty || 0;
+          if (availQty < qty) {
+            await db.run('ROLLBACK');
+            return res.status(409).json({
+              error: `Insufficient stock for "${prodName}". Available: ${Math.max(0, availQty)}, Requested: ${qty}`,
+              product: prodName,
+              available_qty: Math.max(0, availQty)
+            });
+          }
+        }
 
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, prescription_url, product_image_url,
-            delivery_status, return_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            delivery_status, return_status, payment_status, pharmacy_verification_status,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', 'UNPAID', 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             customerId,
@@ -179,7 +210,35 @@ router.post('/orders', async (req, res) => {
         const orderId = Number(result.lastID);
         createdOrders.push({ id: orderId, product: prodName, qty });
 
-        // Record order tracking creation event
+        // Insert online_order_items row (spec §5 traceability)
+        const itemRes = await db.run(
+          `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
+           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+          [orderId, medicineId, prodName, qty, mrp]
+        );
+        const orderItemId = Number(itemRes.lastID);
+
+        // Transactional stock reservation (spec §18) — reserve from the best batch
+        if (medicineId) {
+          const bestBatch = await db.get(
+            `SELECT id, quantity FROM inventory_master
+             WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND quantity > 0
+               AND (expiry_date IS NULL OR date(expiry_date) > date('now'))
+             ORDER BY mrp DESC, expiry_date ASC
+             LIMIT 1`,
+            [medicineId, targetStoreId]
+          ).catch(() => null);
+
+          if (bestBatch) {
+            await db.run(
+              `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+               VALUES (?, ?, ?, ?, 'ACTIVE')`,
+              [bestBatch.id, orderId, orderItemId, qty]
+            );
+          }
+        }
+
+        // Record order tracking event
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
@@ -193,20 +252,16 @@ router.post('/orders', async (req, res) => {
       throw txErr;
     }
 
-    // Send WhatsApp Order Confirmation if phone is valid
+    // Send WhatsApp order confirmation
     if (cleanPhone && cleanPhone.length >= 10) {
       const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
       const medicalName = await getStoreMedicalNameAndPhone(db);
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
-
       const confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!\n\nOrder Items:\n${itemsSummary}\n\nWe are preparing your order and will notify you upon dispatch.`;
-
       try {
         await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, 'website_order_confirmation', cleanName);
-      } catch (waErr) {
-        console.warn('[WebsiteOrdersRoute] WhatsApp confirmation warning:', waErr);
-      }
+      } catch (_) {}
     }
 
     broadcastOrdersChanged();
@@ -224,20 +279,476 @@ router.post('/orders', async (req, res) => {
   }
 });
 
-// GET /api/website/orders/:orderId/track — Customer track order and 14-day return window status
-router.get('/orders/:orderId/track', async (req, res) => {
+// ─── Confirm Payment (spec §2, §6) ───────────────────────────────────────────
+// PATCH /api/website/orders/:orderId/payment
+// Pharmacy marks payment as CONFIRMED — moves order into the Live Cart queue.
+router.patch('/orders/:orderId/payment', async (req, res) => {
   try {
     const orderId = parseInt(req.params.orderId, 10);
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const { payment_reference = '', confirmed_by = 'Pharmacist', payment_method = 'MANUAL' } = req.body;
 
     const db = await dbManager.getConnection();
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
+    if (order.payment_status === 'CONFIRMED') {
+      return res.status(409).json({ error: 'Payment already confirmed for this order' });
     }
+
+    await db.run(
+      `UPDATE special_orders
+       SET payment_status = 'CONFIRMED',
+           payment_reference = ?,
+           payment_confirmed_at = CURRENT_TIMESTAMP,
+           payment_confirmed_by = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
+    );
+
+    await db.run(
+      `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'payment_confirmed', ?, ?, CURRENT_TIMESTAMP)`,
+      [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || 'N/A'}`, confirmed_by]
+    );
+
+    broadcastOrdersChanged();
+
+    res.json({ success: true, message: 'Payment confirmed. Order is now in the Live Cart queue.', order_id: orderId });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Payment confirm error:', err);
+    res.status(500).json({ error: 'Failed to confirm payment' });
+  }
+});
+
+// ─── Live Cart Queue (spec §3) ────────────────────────────────────────────────
+// GET /api/website/live-cart
+// Returns all paid, unverified orders with their items — the pharmacy's fulfilment workspace.
+router.get('/live-cart', async (req, res) => {
+  try {
+    const storeId = parseInt((req.query.store_id as string) || '1', 10) || 1;
+    const db = await dbManager.getConnection();
+
+    const orders = await db.all(
+      `SELECT so.*
+       FROM special_orders so
+       WHERE so.store_id = ?
+         AND so.payment_status = 'CONFIRMED'
+         AND so.pharmacy_verification_status != 'DONE'
+       ORDER BY so.payment_confirmed_at ASC, so.date DESC`,
+      [storeId]
+    );
+
+    // Attach items and batch options for each order
+    const enriched = await Promise.all(orders.map(async (order: any) => {
+      const items = await db.all(
+        `SELECT oi.*,
+                m.name as medicine_name, m.generic_name, m.strength, m.packaging, m.manufacturer,
+                am.name as actual_medicine_name,
+                im.batch_no as actual_batch_no, im.mrp as actual_mrp, im.expiry_date as actual_expiry
+         FROM online_order_items oi
+         LEFT JOIN medicines m ON m.id = oi.medicine_id
+         LEFT JOIN medicines am ON am.id = oi.actual_medicine_id
+         LEFT JOIN inventory_master im ON im.id = oi.actual_batch_id
+         WHERE oi.order_id = ?
+         ORDER BY oi.id ASC`,
+        [order.id]
+      ).catch(() => []);
+
+      // Attach available batch options for each item (so pharmacy can pick)
+      const itemsWithBatches = await Promise.all(items.map(async (item: any) => {
+        const batches = await db.all(
+          `SELECT id, batch_no, expiry_date, mrp, sell_price,
+                  (quantity - COALESCE(
+                    (SELECT SUM(r.reserved_qty) FROM inventory_reservations r
+                     WHERE r.inventory_id = inventory_master.id AND r.status = 'ACTIVE'), 0
+                  )) as available_qty
+           FROM inventory_master
+           WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+             AND quantity > 0
+             AND (expiry_date IS NULL OR date(expiry_date) > date('now'))
+           ORDER BY mrp DESC, expiry_date ASC`,
+          [item.medicine_id || item.actual_medicine_id, storeId]
+        ).catch(() => []);
+        return { ...item, available_batches: batches };
+      }));
+
+      return { ...order, items: itemsWithBatches };
+    }));
+
+    res.json({ store_id: storeId, count: enriched.length, orders: enriched });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Live cart fetch error:', err);
+    res.status(500).json({ error: 'Failed to load live cart' });
+  }
+});
+
+// ─── Verify / Update Item (spec §4, §7) ──────────────────────────────────────
+// PATCH /api/website/live-cart/items/:itemId
+// Pharmacy selects actual batch, replaces product, adjusts qty, or marks unavailable.
+router.patch('/live-cart/items/:itemId', async (req, res) => {
+  try {
+    const itemId = parseInt(req.params.itemId, 10);
+    if (isNaN(itemId)) return res.status(400).json({ error: 'Invalid item ID' });
+
+    const {
+      actual_medicine_id,
+      actual_batch_id,
+      confirmed_qty,
+      item_status,            // 'CONFIRMED' | 'REPLACED' | 'UNAVAILABLE' | 'QTY_ADJUSTED'
+      replacement_reason = '',
+      changed_by = 'Pharmacist'
+    } = req.body;
+
+    if (!item_status) return res.status(400).json({ error: 'item_status is required' });
+
+    const db = await dbManager.getConnection();
+    const item = await db.get('SELECT * FROM online_order_items WHERE id = ?', [itemId]);
+    if (!item) return res.status(404).json({ error: 'Order item not found' });
+
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [item.order_id]);
+    if (!order) return res.status(404).json({ error: 'Associated order not found' });
+
+    if (order.pharmacy_verification_status === 'DONE') {
+      return res.status(409).json({ error: 'Order is already finalized' });
+    }
+
+    // Validate batch has enough stock when confirming
+    if (actual_batch_id && item_status !== 'UNAVAILABLE') {
+      const batch = await db.get('SELECT * FROM inventory_master WHERE id = ?', [actual_batch_id]);
+      if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+      const reservedElsewhere = await db.get(
+        `SELECT COALESCE(SUM(r.reserved_qty), 0) as reserved
+         FROM inventory_reservations r
+         WHERE r.inventory_id = ? AND r.status = 'ACTIVE' AND r.order_item_id != ?`,
+        [actual_batch_id, itemId]
+      ).catch(() => ({ reserved: 0 }));
+
+      const effectiveQty = confirmed_qty ?? item.requested_qty;
+      const available = batch.quantity - (reservedElsewhere?.reserved || 0);
+      if (available < effectiveQty) {
+        return res.status(409).json({
+          error: `Insufficient stock. Available: ${available}, Needed: ${effectiveQty}`,
+          available_qty: available
+        });
+      }
+    }
+
+    // Write audit log if product is being changed (spec §7, §20)
+    const isReplacement = actual_medicine_id && Number(actual_medicine_id) !== Number(item.medicine_id);
+    const isBatchChange = actual_batch_id && Number(actual_batch_id) !== Number(item.actual_batch_id);
+    if (isReplacement || isBatchChange || item_status === 'UNAVAILABLE') {
+      await db.run(
+        `INSERT INTO catalog_correction_log
+           (order_id, order_item_id, changed_by, old_medicine_id, new_medicine_id,
+            old_batch_id, new_batch_id, change_type, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          item.order_id, itemId, changed_by,
+          item.medicine_id, actual_medicine_id ?? item.medicine_id,
+          item.actual_batch_id, actual_batch_id ?? item.actual_batch_id,
+          item_status === 'UNAVAILABLE' ? 'UNAVAILABLE' : isReplacement ? 'REPLACEMENT' : 'BATCH_CHANGE',
+          replacement_reason || null
+        ]
+      );
+    }
+
+    // Get MRP/sell_price from selected batch
+    let mrp = item.mrp;
+    let sellPrice = item.sell_price;
+    if (actual_batch_id) {
+      const batchInfo = await db.get('SELECT mrp, sell_price FROM inventory_master WHERE id = ?', [actual_batch_id]).catch(() => null);
+      if (batchInfo) { mrp = batchInfo.mrp; sellPrice = batchInfo.sell_price; }
+    }
+    const finalQty = confirmed_qty ?? item.requested_qty;
+    const finalSell = sellPrice || mrp || 0;
+    const discount = mrp > 0 ? Math.max(0, mrp - finalSell) : 0;
+    const finalPrice = finalQty * finalSell;
+
+    await db.run(
+      `UPDATE online_order_items
+       SET actual_medicine_id = COALESCE(?, actual_medicine_id),
+           actual_batch_id = COALESCE(?, actual_batch_id),
+           confirmed_qty = ?,
+           mrp = ?,
+           sell_price = ?,
+           discount = ?,
+           final_price = ?,
+           item_status = ?,
+           replacement_reason = COALESCE(?, replacement_reason)
+       WHERE id = ?`,
+      [
+        actual_medicine_id || null,
+        actual_batch_id || null,
+        finalQty,
+        mrp, finalSell, discount, finalPrice,
+        item_status,
+        replacement_reason || null,
+        itemId
+      ]
+    );
+
+    // Update inventory_reservations to point to confirmed batch
+    if (actual_batch_id && item_status !== 'UNAVAILABLE') {
+      // Release old reservation
+      await db.run(
+        `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_item_id = ? AND status = 'ACTIVE'`,
+        [itemId]
+      );
+      // Create new reservation on confirmed batch
+      await db.run(
+        `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+         VALUES (?, ?, ?, ?, 'ACTIVE')`,
+        [actual_batch_id, item.order_id, itemId, finalQty]
+      );
+    }
+
+    if (item_status === 'UNAVAILABLE') {
+      // Release reservation — no stock will be consumed
+      await db.run(
+        `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_item_id = ? AND status = 'ACTIVE'`,
+        [itemId]
+      );
+    }
+
+    broadcastOrdersChanged();
+
+    res.json({ success: true, message: 'Item updated', item_id: itemId, item_status });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Item verify error:', err);
+    res.status(500).json({ error: 'Failed to update order item' });
+  }
+});
+
+// ─── Finalize Order → Push to POS Held Bill (spec §6, §19) ───────────────────
+// POST /api/website/live-cart/orders/:orderId/finalize
+// Pharmacy finalizes: deducts stock, marks order CONFIRMED, pushes a held bill to POS.
+router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const { finalized_by = 'Pharmacist' } = req.body;
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    if (order.payment_status !== 'CONFIRMED') {
+      return res.status(400).json({ error: 'Order payment is not confirmed yet' });
+    }
+    if (order.pharmacy_verification_status === 'DONE') {
+      return res.status(409).json({ error: 'Order already finalized' });
+    }
+
+    const items = await db.all(
+      `SELECT oi.*, im.mrp as batch_mrp, im.sell_price as batch_sell, im.batch_no,
+              COALESCE(am.name, m.name) as resolved_name, m.id as orig_med_id
+       FROM online_order_items oi
+       LEFT JOIN medicines m ON m.id = oi.medicine_id
+       LEFT JOIN medicines am ON am.id = oi.actual_medicine_id
+       LEFT JOIN inventory_master im ON im.id = oi.actual_batch_id
+       WHERE oi.order_id = ?`,
+      [orderId]
+    );
+
+    const confirmedItems = items.filter((i: any) => i.item_status !== 'UNAVAILABLE');
+    if (confirmedItems.length === 0) {
+      return res.status(400).json({ error: 'No confirmed items in order — cannot finalize. Mark order as cancelled instead.' });
+    }
+
+    // Check all items have been reviewed
+    const pendingItems = items.filter((i: any) => i.item_status === 'PENDING');
+    if (pendingItems.length > 0) {
+      return res.status(400).json({
+        error: `${pendingItems.length} item(s) still pending pharmacy review`,
+        pending_count: pendingItems.length
+      });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // Deduct inventory for confirmed items (spec §19)
+      for (const item of confirmedItems) {
+        if (item.actual_batch_id) {
+          await db.run(
+            'UPDATE inventory_master SET quantity = quantity - ? WHERE id = ? AND quantity >= ?',
+            [item.confirmed_qty, item.actual_batch_id, item.confirmed_qty]
+          );
+          // Mark reservation as SOLD
+          await db.run(
+            `UPDATE inventory_reservations SET status = 'SOLD', released_at = CURRENT_TIMESTAMP
+             WHERE order_item_id = ? AND status = 'ACTIVE'`,
+            [item.id]
+          );
+        }
+      }
+
+      // Mark order as pharmacy verified + status Ready
+      await db.run(
+        `UPDATE special_orders
+         SET pharmacy_verification_status = 'DONE',
+             pharmacy_verified_by = ?,
+             pharmacy_verified_at = CURRENT_TIMESTAMP,
+             status = 'Ready',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [finalized_by, orderId]
+      );
+
+      // Build held-bill JSON for POS (spec §19 — POS sale links to online order)
+      const heldBillItems = confirmedItems.map((item: any) => ({
+        medicine_id: item.actual_medicine_id || item.medicine_id,
+        medicine_name: item.resolved_name,
+        batch_id: item.actual_batch_id,
+        batch_no: item.batch_no || '',
+        qty: item.confirmed_qty ?? item.requested_qty,
+        mrp: item.batch_mrp || item.mrp || 0,
+        sell_price: item.batch_sell || item.sell_price || item.mrp || 0,
+        discount: item.discount || 0,
+        final_price: item.final_price || 0
+      }));
+
+      const heldBillMeta = {
+        source: 'online_order',
+        online_order_id: orderId,
+        customer_name: order.requester,
+        customer_phone: order.phone,
+        customer_id: order.customer_id,
+        items: heldBillItems,
+        notes: `Online Order #${orderId} — Payment Confirmed`
+      };
+
+      await db.run(
+        `INSERT INTO staged_sales (store_id, customer_id, customer_name, cart_json, created_at, status)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'held')`,
+        [order.store_id, order.customer_id, order.requester, JSON.stringify(heldBillMeta)]
+      );
+
+      // Audit log
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_finalized', ?, ?, CURRENT_TIMESTAMP)`,
+        [orderId, `Order finalized by pharmacy. ${confirmedItems.length} items confirmed, ${items.length - confirmedItems.length} unavailable. Held bill pushed to POS.`, finalized_by]
+      );
+
+      await db.run(
+        `INSERT INTO action_logs (action_type, description, metadata, created_at)
+         VALUES ('online_order_finalized', ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          `Online Order #${orderId} finalized — ${confirmedItems.length} item(s) confirmed`,
+          JSON.stringify({ orderId, finalized_by, confirmed_items: confirmedItems.length })
+        ]
+      );
+
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+
+    // WhatsApp: notify customer order is ready
+    if (order.phone && String(order.phone).replace(/\D/g, '').length >= 10) {
+      try {
+        const cleanPhone = String(order.phone).replace(/\D/g, '');
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const medicalName = await getStoreMedicalNameAndPhone(db);
+        const readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!\n\nThank you for your payment.`;
+        await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, 'order_ready_notification', order.requester);
+      } catch (_) {}
+    }
+
+    broadcastOrdersChanged();
+
+    res.json({
+      success: true,
+      message: 'Order finalized. Held bill pushed to POS.',
+      order_id: orderId,
+      confirmed_items: confirmedItems.length,
+      unavailable_items: items.length - confirmedItems.length
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Finalize error:', err);
+    res.status(500).json({ error: 'Failed to finalize order' });
+  }
+});
+
+// ─── Cancel / Refund Trigger (spec §24) ──────────────────────────────────────
+// POST /api/website/live-cart/orders/:orderId/cancel
+router.post('/live-cart/orders/:orderId/cancel', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const { reason = 'Cancelled by pharmacy', cancelled_by = 'Pharmacist' } = req.body;
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    if (order.pharmacy_verification_status === 'DONE') {
+      return res.status(409).json({ error: 'Finalized orders cannot be cancelled — raise a return instead' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // Release all active reservations
+      await db.run(
+        `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_id = ? AND status = 'ACTIVE'`,
+        [orderId]
+      );
+
+      await db.run(
+        `UPDATE special_orders
+         SET status = 'Cancelled',
+             pharmacy_verification_status = 'CANCELLED',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [orderId]
+      );
+
+      await db.run(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_cancelled', ?, ?, CURRENT_TIMESTAMP)`,
+        [orderId, `Order cancelled. Reason: ${reason}. ${order.payment_status === 'CONFIRMED' ? 'REFUND REQUIRED.' : ''}`, cancelled_by]
+      );
+
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+
+    broadcastOrdersChanged();
+
+    res.json({
+      success: true,
+      message: 'Order cancelled. Stock reservations released.',
+      refund_required: order.payment_status === 'CONFIRMED',
+      order_id: orderId
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Cancel error:', err);
+    res.status(500).json({ error: 'Failed to cancel order' });
+  }
+});
+
+// ─── Track Order (customer-facing) ───────────────────────────────────────────
+// GET /api/website/orders/:orderId/track
+router.get('/orders/:orderId/track', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const events = await db.all(
       'SELECT * FROM order_tracking_events WHERE order_id = ? ORDER BY performed_at ASC',
@@ -253,6 +764,8 @@ router.get('/orders/:orderId/track', async (req, res) => {
       quantity: order.qty,
       requester: order.requester,
       status: order.status,
+      payment_status: order.payment_status,
+      pharmacy_verification_status: order.pharmacy_verification_status,
       delivery_status: order.delivery_status || 'pending',
       created_at: order.created_at,
       delivered_at: order.delivered_at,
@@ -265,28 +778,22 @@ router.get('/orders/:orderId/track', async (req, res) => {
   }
 });
 
-// POST /api/website/orders/:orderId/return-request — Customer request return within 14-day window
+// ─── Return Request (customer-facing) ────────────────────────────────────────
+// POST /api/website/orders/:orderId/return-request
 router.post('/orders/:orderId/return-request', async (req, res) => {
   try {
     const orderId = parseInt(req.params.orderId, 10);
     const { reason = 'Customer return request' } = req.body;
-
-    if (isNaN(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID' });
-    }
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
 
     const db = await dbManager.getConnection();
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
-
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
+    if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const returnInfo = returnWindowService.evaluateOrderReturnStatus(order);
-
     if (!returnInfo.isEligible) {
       return res.status(400).json({
-        error: '14-day return window has expired for this order. Returns are no longer accepted.',
+        error: '14-day return window has expired for this order.',
         return_info: returnInfo
       });
     }

@@ -154,6 +154,7 @@ const Sidebar = memo(({
     { path: '/learning', label: 'AI Learning', icon: <Brain size={18} /> },
     { path: '/dispatch', label: 'Dispatch', icon: <Truck size={18} /> },
     { path: '/website-orders', label: 'Website Orders', icon: <Globe size={18} /> },
+    { path: '/live-cart', label: 'Pharmacy Live Cart', icon: <ShoppingCart size={18} /> },
     { path: '/portal', label: 'Customer Portal', icon: <Globe size={18} /> },
     { path: '/crm', label: 'CRM & Messages', icon: <Users size={18} /> },
     { path: '/returns', label: 'Supplier Returns', icon: <RotateCcw size={18} /> },
@@ -3490,7 +3491,8 @@ export const Layout = ({
 }) => {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration', '/portal', '/refill-portal'].includes(location.pathname);
+  const isPortalPage = ['/portal', '/refill-portal'].includes(location.pathname);
+  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration'].includes(location.pathname);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
@@ -3972,7 +3974,7 @@ export const Layout = ({
           compactCacheLoaded={compactCacheLoaded}
         />
         <div className="flex-1 flex flex-row overflow-hidden relative min-h-0">
-          <main className={`flex-1 flex flex-col min-h-0 ${isFitPage ? 'overflow-hidden p-3 pt-1.5 pb-3' : 'overflow-y-auto p-4 pt-3 pb-4'} relative transition-all duration-200`}>
+          <main className={`flex-1 flex flex-col min-h-0 ${isPortalPage ? 'overflow-y-auto p-0' : isFitPage ? 'overflow-hidden p-3 pt-1.5 pb-3' : 'overflow-y-auto p-4 pt-3 pb-4'} relative transition-all duration-200`}>
             {children}
           </main>
 

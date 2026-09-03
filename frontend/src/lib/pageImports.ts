@@ -22,6 +22,7 @@ export const pageImports: Record<string, () => Promise<{ default: ComponentType 
   '/learning': () => import('../pages/Learning'),
   '/audit': () => import('../pages/AuditCenter'),
   '/website-orders': () => import('../pages/WebsiteOrders'),
+  '/live-cart': () => import('../pages/LiveCart'),
   '/portal': () => import('../pages/CustomerPortal'),
   '/refill-portal': () => import('../pages/CustomerPortal'),
 };

@@ -360,6 +360,31 @@ export default function CustomerPortal() {
     }
   };
 
+  const [refillingInvoiceId, setRefillingInvoiceId] = useState<number | null>(null);
+
+  const handleRefillEntireBill = async (invoiceId: number) => {
+    if (!session) return;
+    setRefillingInvoiceId(invoiceId);
+    try {
+      const res = await api.refillFromInvoice(invoiceId, {
+        customer_id: session.id,
+        login_id: session.phone,
+        store_id: selectedStoreId || session.preferred_store_id || 1
+      });
+      if (res.success) {
+        setOrderSuccess({
+          store_name: activeStore?.name || 'Pharmacy',
+          orders: res.orders,
+          message: res.message
+        });
+      }
+    } catch (err: any) {
+      setOrderError(err.response?.data?.error || 'Failed to create refill order');
+    } finally {
+      setRefillingInvoiceId(null);
+    }
+  };
+
   const selectedList = Object.values(selectedItems);
   const totalAmount = selectedList.reduce((sum, item) => sum + (item.price * item.qty), 0);
   const activeStore = stores.find(s => s.id === selectedStoreId) || stores[0];
@@ -437,7 +462,7 @@ export default function CustomerPortal() {
   // ─── 2. MASTER PORTAL & CATALOG LAYOUT ─────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-bg text-text pb-16">
+    <div className="min-h-full w-full bg-bg text-text pb-16">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 bg-bg2/90 backdrop-blur-md border-b border-border px-4 py-3 sm:px-8">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -842,9 +867,21 @@ export default function CustomerPortal() {
                 <div className="space-y-3">
                   {bills.map(bill => (
                     <div key={bill.id} className="bg-bg border border-border rounded-xl p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs pb-2 border-b border-border/60 text-muted">
-                        <span className="font-semibold text-text">Bill #{bill.invoice_number || bill.id}</span>
-                        <span>{bill.store_name || 'Main Branch'} • {new Date(bill.created_at).toLocaleDateString()}</span>
+                      <div className="flex items-center justify-between text-xs pb-2 border-b border-border/60 text-muted gap-2 flex-wrap">
+                        <div>
+                          <span className="font-semibold text-text">Bill #{bill.invoice_number || bill.id}</span>
+                          <span className="ml-2">{bill.store_name || 'Main Branch'} • {new Date(bill.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={refillingInvoiceId === bill.id}
+                          onClick={() => handleRefillEntireBill(bill.id)}
+                          className="px-2.5 py-1 text-[11px] font-bold bg-primary text-white rounded-lg hover:bg-primary/90 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          title="Reorder all items in this bill using current prices"
+                        >
+                          <RefreshCw size={11} className={refillingInvoiceId === bill.id ? 'animate-spin' : ''} />
+                          <span>{refillingInvoiceId === bill.id ? 'Refilling…' : 'Refill Entire Bill'}</span>
+                        </button>
                       </div>
 
                       <div className="space-y-1.5">

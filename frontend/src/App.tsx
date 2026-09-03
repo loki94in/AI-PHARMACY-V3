@@ -45,6 +45,8 @@ const PhoneSales = lazy(pageImports['/phone-sales']);
 const DispatchPage = lazy(pageImports['/dispatch']);
 const Learning = lazy(pageImports['/learning']);
 const AuditCenter = lazy(pageImports['/audit']);
+const WebsiteOrders = lazy(pageImports['/website-orders']);
+const LiveCart = lazy(pageImports['/live-cart']);
 const CustomerPortal = lazy(pageImports['/portal']);
 
 // Legacy routes → Pharma Intelligence hub tabs. Query params (e.g. POS's
@@ -79,6 +81,8 @@ const pageRoutes: KeepAliveRoute[] = [
   { path: '/database', element: <DatabasePage /> },
   { path: '/learning', element: <Learning /> },
   { path: '/audit', element: <AuditCenter /> },
+  { path: '/website-orders', element: <WebsiteOrders /> },
+  { path: '/live-cart', element: <LiveCart /> },
   { path: '/portal', element: <CustomerPortal /> },
   { path: '/refill-portal', element: <CustomerPortal /> },
 ];

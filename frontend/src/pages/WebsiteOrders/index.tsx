@@ -25,7 +25,9 @@ import {
   Phone,
   MapPin,
   FileImage,
-  Sparkles
+  Sparkles,
+  CreditCard,
+  ShoppingCart
 } from 'lucide-react';
 import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
@@ -87,6 +89,22 @@ export default function WebsiteOrders() {
       fetchOrders(true);
     } catch (err: any) {
       toastEvent.trigger(err.response?.data?.error || 'Failed to update status', 'error');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleConfirmPayment = async (orderId: number) => {
+    try {
+      setActionInProgress(orderId);
+      await apiClient.patch(`/website/orders/${orderId}/payment`, {
+        confirmed_by: 'Pharmacist',
+        payment_method: 'MANUAL'
+      });
+      toastEvent.trigger(`Payment confirmed for Order #${orderId} — moved to Live Cart`, 'success');
+      fetchOrders(true);
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to confirm payment', 'error');
     } finally {
       setActionInProgress(null);
     }
@@ -484,8 +502,33 @@ export default function WebsiteOrders() {
                   )}
 
                   {/* Actions Row */}
-                  <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-1.5">
-                    {order.status === 'Pending' && (
+                  <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-1.5 flex-wrap">
+                    {/* Confirm Payment — for unpaid website orders */}
+                    {order.customer_order_source === 'website' && order.payment_status !== 'CONFIRMED' && order.status !== 'Cancelled' && (
+                      <button
+                        type="button"
+                        disabled={actionInProgress === order.id}
+                        onClick={() => handleConfirmPayment(order.id)}
+                        className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <CreditCard size={13} />
+                        <span>{actionInProgress === order.id ? 'Confirming…' : 'Confirm Payment'}</span>
+                      </button>
+                    )}
+
+                    {/* Move to Live Cart — for payment-confirmed orders */}
+                    {order.payment_status === 'CONFIRMED' && order.pharmacy_verification_status !== 'DONE' && (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/live-cart?order=${order.id}`)}
+                        className="flex-1 py-1.5 px-2 bg-primary hover:bg-primary/90 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <ShoppingCart size={13} />
+                        <span>Open in Live Cart →</span>
+                      </button>
+                    )}
+
+                    {order.status === 'Pending' && order.payment_status !== 'CONFIRMED' && (
                       <button
                         type="button"
                         disabled={actionInProgress === order.id}

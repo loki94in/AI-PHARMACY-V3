@@ -330,21 +330,25 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                 <div className="p-4 pt-0 border-t border-border/60 mt-2 space-y-3">
                   <div className="flex items-baseline justify-between pt-2">
                     <div>
-                      {med.sell_price > 0 ? (
-                        <div className="flex items-baseline gap-1.5">
-                          <span className="text-base font-extrabold text-primary">
-                            ₹{med.sell_price.toFixed(2)}
-                          </span>
-                          {hasDiscount && (
-                            <span className="text-xs text-muted line-through">
-                              ₹{med.mrp.toFixed(2)}
+                      {med.mrp > 0 || med.sell_price > 0 ? (
+                        <div className="space-y-0.5">
+                          {med.sell_price > 0 && hasDiscount ? (
+                            <>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-base font-extrabold text-primary">
+                                  ₹{med.sell_price.toFixed(2)}
+                                </span>
+                              </div>
+                              <span className="text-xs text-muted">
+                                MRP <span className="line-through">₹{med.mrp.toFixed(2)}</span>
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-base font-extrabold text-primary">
+                              MRP ₹{(med.mrp > 0 ? med.mrp : med.sell_price).toFixed(2)}
                             </span>
                           )}
                         </div>
-                      ) : med.mrp > 0 ? (
-                        <span className="text-base font-extrabold text-text">
-                          MRP ₹{med.mrp.toFixed(2)}
-                        </span>
                       ) : (
                         <span className="text-xs font-semibold text-muted">
                           Price on Request
