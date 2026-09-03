@@ -348,9 +348,15 @@ async function getConfiguredPharmacyName(dbInstance) {
   }
   return null;
 }
-async function getStoreMedicalName(dbInstance) {
+async function getStoreMedicalName(dbInstance, storeId) {
   try {
     const db2 = dbInstance || await dbManager.getConnection();
+    if (storeId && storeId > 0) {
+      const storeRow = await db2.get("SELECT name FROM stores WHERE id = ?", [storeId]).catch(() => null);
+      if (storeRow && storeRow.name && storeRow.name.trim()) {
+        return storeRow.name.trim();
+      }
+    }
     const row = await db2.get(
       `SELECT value FROM app_settings 
        WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
@@ -386,9 +392,15 @@ async function getStoreMedicalName(dbInstance) {
   }
   return "AI PHARMACY";
 }
-async function getStorePhone(dbInstance) {
+async function getStorePhone(dbInstance, storeId) {
   try {
     const db2 = dbInstance || await dbManager.getConnection();
+    if (storeId && storeId > 0) {
+      const storeRow = await db2.get("SELECT phone FROM stores WHERE id = ?", [storeId]).catch(() => null);
+      if (storeRow && storeRow.phone && storeRow.phone.trim()) {
+        return storeRow.phone.trim();
+      }
+    }
     const row = await db2.get(
       `SELECT value FROM app_settings 
        WHERE key IN ('shop_phone', 'store_phone', 'pharmacy_phone', 'phone', 'contact_number', 'phone_number', 'owner_whatsapp_number', 'whatsapp_connected_number') 
@@ -473,9 +485,9 @@ async function getInvoiceWhatsAppRecipients(dbInstance) {
     return [];
   }
 }
-async function getStoreMedicalNameAndPhone(dbInstance) {
-  const name = await getStoreMedicalName(dbInstance);
-  const phone = await getStorePhone(dbInstance);
+async function getStoreMedicalNameAndPhone(dbInstance, storeId) {
+  const name = await getStoreMedicalName(dbInstance, storeId);
+  const phone = await getStorePhone(dbInstance, storeId);
   if (phone) {
     return `${name} (Ph: ${phone})`;
   }
@@ -1056,12 +1068,57 @@ async function copyProfileFolder(src, dest, logPrefix = "[ChromeProfile]") {
     }
   }
 }
-var import_fs4, import_path4, PROFILE_SKIP_NAMES;
+function launchAppBrowser(url, customProfileDir) {
+  try {
+    const browserPath = findChromePath({ includeEdge: true });
+    if (browserPath) {
+      const profileDir = customProfileDir || import_path4.default.join(getAppDataDir(), "data", "app_browser_profile");
+      if (!import_fs4.default.existsSync(profileDir)) {
+        import_fs4.default.mkdirSync(profileDir, { recursive: true });
+      }
+      const args = [
+        `--app=${url}`,
+        `--user-data-dir=${profileDir}`,
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-default-apps",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-session-crashed-bubble"
+      ];
+      const child = (0, import_child_process.spawn)(browserPath, args, {
+        detached: true,
+        stdio: "ignore"
+      });
+      child.on("error", (err) => {
+        console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
+      });
+      child.unref();
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[ChromeBrowser] Direct app-mode launch failed: ${err.message}`);
+  }
+  try {
+    const openerArgs = process.platform === "win32" ? ["cmd", ["/c", "start", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+    (0, import_child_process.spawn)(openerArgs[0], openerArgs[1], { detached: true, stdio: "ignore" }).on("error", (err) => {
+      console.warn(`[ChromeBrowser] Fallback browser opener error (non-fatal): ${err.message}`);
+    }).unref();
+    return true;
+  } catch (err) {
+    console.warn(`[ChromeBrowser] Fallback opener failed: ${err.message}`);
+    return false;
+  }
+}
+var import_fs4, import_path4, import_child_process, PROFILE_SKIP_NAMES;
 var init_chromeBrowser = __esm({
   "src/utils/chromeBrowser.ts"() {
     "use strict";
     import_fs4 = __toESM(require("fs"), 1);
     import_path4 = __toESM(require("path"), 1);
+    import_child_process = require("child_process");
+    init_config();
     PROFILE_SKIP_NAMES = /* @__PURE__ */ new Set([
       "cache",
       "code cache",
@@ -2172,20 +2229,20 @@ function cleanProfileLockFiles(profilePath) {
     }
   }
 }
-var import_fs6, import_path6, import_url4, import_child_process, import_util, execAsync, __filename4, __dirname4, TokenRefreshScheduler, tokenRefreshScheduler;
+var import_fs6, import_path6, import_url4, import_child_process2, import_util, execAsync, __filename4, __dirname4, TokenRefreshScheduler, tokenRefreshScheduler;
 var init_tokenRefreshScheduler = __esm({
   "src/services/tokenRefreshScheduler.ts"() {
     "use strict";
     import_fs6 = __toESM(require("fs"), 1);
     import_path6 = __toESM(require("path"), 1);
     import_url4 = require("url");
-    import_child_process = require("child_process");
+    import_child_process2 = require("child_process");
     import_util = require("util");
     init_lazyPuppeteer();
     init_connection();
     init_config();
     init_chromeBrowser();
-    execAsync = (0, import_util.promisify)(import_child_process.exec);
+    execAsync = (0, import_util.promisify)(import_child_process2.exec);
     __filename4 = (0, import_url4.fileURLToPath)(import_meta_url);
     __dirname4 = import_path6.default.dirname(__filename4);
     TokenRefreshScheduler = class _TokenRefreshScheduler {
@@ -5024,7 +5081,7 @@ function startScispacySidecar(force = false) {
     pythonCmd = venvPythonPosix;
   }
   console.log(`[scispaCy] Starting Python sidecar: ${pythonCmd} ${pythonScript}...`);
-  sidecarProcess = (0, import_child_process2.spawn)(pythonCmd, [pythonScript], {
+  sidecarProcess = (0, import_child_process3.spawn)(pythonCmd, [pythonScript], {
     stdio: "inherit",
     env: { ...process.env }
   });
@@ -5075,11 +5132,11 @@ async function queryScispacy(text) {
     return null;
   }
 }
-var import_child_process2, import_path10, import_url8, import_fs9, sidecarProcess;
+var import_child_process3, import_path10, import_url8, import_fs9, sidecarProcess;
 var init_scispacyClient = __esm({
   "src/services/scispacyClient.ts"() {
     "use strict";
-    import_child_process2 = require("child_process");
+    import_child_process3 = require("child_process");
     import_path10 = __toESM(require("path"), 1);
     import_url8 = require("url");
     import_fs9 = __toESM(require("fs"), 1);
@@ -8484,6 +8541,15 @@ async function ensureSchema(dbPath) {
       await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_report_day ON purchases(COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))))");
       await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name)");
       try {
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status)");
+      } catch (_) {
+      }
+      try {
         const pushCols = await db2.all("PRAGMA table_info(push_tokens)");
         const pushNames = new Set(pushCols.map((c) => c.name));
         if (pushCols.length > 0 && !pushNames.has("device_uuid")) {
@@ -8584,6 +8650,7 @@ async function ensureSchema(dbPath) {
         DROP TABLE IF EXISTS special_orders_new;
         CREATE TABLE special_orders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
+          store_id INTEGER DEFAULT 1,
           customer_id INTEGER DEFAULT NULL,
           product TEXT,
           requester TEXT,
@@ -8610,7 +8677,20 @@ async function ensureSchema(dbPath) {
           cart_add_error TEXT DEFAULT NULL,
           notification_count INTEGER DEFAULT 0,
           lifecycle_status TEXT DEFAULT 'CREATED',
-          last_checked_at DATETIME
+          last_checked_at DATETIME,
+          customer_order_source TEXT DEFAULT 'in_store',
+          prescription_url TEXT DEFAULT NULL,
+          product_image_url TEXT DEFAULT NULL,
+          delivery_status TEXT DEFAULT 'pending',
+          delivered_at DATETIME DEFAULT NULL,
+          return_window_until DATETIME DEFAULT NULL,
+          return_status TEXT DEFAULT 'none',
+          return_override_reason TEXT DEFAULT NULL,
+          return_override_by TEXT DEFAULT NULL,
+          return_override_at DATETIME DEFAULT NULL,
+          sync_id TEXT DEFAULT NULL,
+          sync_status TEXT DEFAULT 'synced',
+          last_synced_at DATETIME DEFAULT NULL
         );
       `);
       if (colNames) {
@@ -8627,6 +8707,40 @@ async function ensureSchema(dbPath) {
     console.warn("Failed removing CHECK constraint from special_orders:", err);
   }
   await db2.exec(`
+    CREATE TABLE IF NOT EXISTS stores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      code TEXT UNIQUE,
+      address TEXT,
+      phone TEXT,
+      email TEXT,
+      is_central INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS store_settings (
+      store_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (store_id, key),
+      FOREIGN KEY(store_id) REFERENCES stores(id)
+    );
+    CREATE TABLE IF NOT EXISTS store_sync_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      sync_status TEXT DEFAULT 'pending',
+      retry_count INTEGER DEFAULT 0,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      synced_at DATETIME,
+      FOREIGN KEY(store_id) REFERENCES stores(id)
+    );
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -8672,6 +8786,7 @@ async function ensureSchema(dbPath) {
     );
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       distributor_id INTEGER,
       invoice_no TEXT,
       app_invoice_no TEXT,
@@ -8730,6 +8845,7 @@ async function ensureSchema(dbPath) {
     -- Agent A: Core Business & Inventory Schemas
     CREATE TABLE IF NOT EXISTS inventory_master (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       medicine_id INTEGER,
       quantity INTEGER DEFAULT 0,
       loose_quantity INTEGER DEFAULT 0,
@@ -8746,6 +8862,7 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_inventory_master_med_qty_exp ON inventory_master (medicine_id, quantity, expiry_date);
     CREATE TABLE IF NOT EXISTS sales_invoices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       invoice_no TEXT UNIQUE,
       customer_id INTEGER,
       doctor_id INTEGER,
@@ -8780,6 +8897,7 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_sale_items_inventory_id ON sale_items (inventory_id);
     CREATE TABLE IF NOT EXISTS returns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       return_no TEXT UNIQUE,
       original_invoice_id INTEGER,
       distributor_id INTEGER,
@@ -8823,6 +8941,29 @@ async function ensureSchema(dbPath) {
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS customer_portal_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL UNIQUE,
+      login_id TEXT NOT NULL UNIQUE,
+      pin_hash TEXT NOT NULL,
+      pin_display TEXT,
+      preferred_store_id INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'active',
+      last_login_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(customer_id) REFERENCES customers(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id);
+    CREATE TABLE IF NOT EXISTS customer_portal_otps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login_id TEXT NOT NULL,
+      otp_code TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      is_used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id);
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -8852,6 +8993,7 @@ async function ensureSchema(dbPath) {
     );
     CREATE TABLE IF NOT EXISTS delivery_boys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       name TEXT NOT NULL,
       whatsapp_number TEXT,
       telegram_chat_id TEXT,
@@ -8878,6 +9020,7 @@ async function ensureSchema(dbPath) {
     );
     CREATE TABLE IF NOT EXISTS patient_refills (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       customer_id INTEGER,
       patient_name TEXT NOT NULL,
       patient_phone TEXT NOT NULL,
@@ -8904,6 +9047,7 @@ async function ensureSchema(dbPath) {
     );
     CREATE TABLE IF NOT EXISTS held_bills (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       customer_id INTEGER,
       temp_label TEXT,
       patient_name TEXT,
@@ -9021,6 +9165,7 @@ async function ensureSchema(dbPath) {
 
     CREATE TABLE IF NOT EXISTS special_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       requester TEXT,
       phone TEXT,
       notes TEXT,
@@ -9044,7 +9189,20 @@ async function ensureSchema(dbPath) {
       converted_to_refill_id INTEGER DEFAULT NULL,
       customer_id INTEGER DEFAULT NULL,
       cart_add_error TEXT DEFAULT NULL,
-      notification_count INTEGER DEFAULT 0
+      notification_count INTEGER DEFAULT 0,
+      customer_order_source TEXT DEFAULT 'in_store',
+      prescription_url TEXT DEFAULT NULL,
+      product_image_url TEXT DEFAULT NULL,
+      delivery_status TEXT DEFAULT 'pending',
+      delivered_at DATETIME DEFAULT NULL,
+      return_window_until DATETIME DEFAULT NULL,
+      return_status TEXT DEFAULT 'none',
+      return_override_reason TEXT DEFAULT NULL,
+      return_override_by TEXT DEFAULT NULL,
+      return_override_at DATETIME DEFAULT NULL,
+      sync_id TEXT DEFAULT NULL,
+      sync_status TEXT DEFAULT 'synced',
+      last_synced_at DATETIME DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -9489,13 +9647,41 @@ async function ensureSchema(dbPath) {
     ["catalog_jobs", "existing_count", "ALTER TABLE catalog_jobs ADD COLUMN existing_count INTEGER DEFAULT 0"],
     ["catalog_jobs", "duplicate_count", "ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0"],
     ["catalog_jobs", "matched_previous_job_id", "ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL"],
-    ["catalog_jobs", "newly_detected_columns", "ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT"]
+    ["catalog_jobs", "newly_detected_columns", "ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT"],
+    // Multi-Store & Website Order Foundation (Schema v47)
+    ["special_orders", "store_id", "ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["special_orders", "customer_order_source", "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
+    ["special_orders", "prescription_url", "ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL"],
+    ["special_orders", "product_image_url", "ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL"],
+    ["special_orders", "delivery_status", "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
+    ["special_orders", "delivered_at", "ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL"],
+    ["special_orders", "return_window_until", "ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL"],
+    ["special_orders", "return_status", "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
+    ["special_orders", "return_override_reason", "ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL"],
+    ["special_orders", "return_override_by", "ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL"],
+    ["special_orders", "return_override_at", "ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL"],
+    ["special_orders", "sync_id", "ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL"],
+    ["special_orders", "sync_status", "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
+    ["special_orders", "last_synced_at", "ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL"],
+    ["inventory_master", "store_id", "ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["purchases", "store_id", "ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["sales_invoices", "store_id", "ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["returns", "store_id", "ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["patient_refills", "store_id", "ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["dispatch_orders", "store_id", "ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["held_bills", "store_id", "ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["staged_sales", "store_id", "ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["staged_purchases", "store_id", "ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["whatsapp_send_queue", "store_id", "ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["distributor_dispatch_reminders", "store_id", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["pharmarack_distributor_mappings", "store_id", "ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1"],
+    ["delivery_boys", "store_id", "ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1"]
   ];
   for (const [table, col, stmt] of alterStatements) {
     try {
       const columns = await db2.all(`PRAGMA table_info(${table})`);
       const exists = columns.some((c) => c.name.toLowerCase() === col.toLowerCase());
-      if (!exists) {
+      if (columns.length > 0 && !exists) {
         await db2.run(stmt);
       }
     } catch (_e) {
@@ -10094,6 +10280,7 @@ async function ensureSchema(dbPath) {
     -- Dispatch delivery orders (home delivery management)
     CREATE TABLE IF NOT EXISTS dispatch_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
       patient_name TEXT NOT NULL,
       patient_phone TEXT,
       address TEXT,
@@ -10496,8 +10683,24 @@ async function ensureSchema(dbPath) {
       batch_sent_at         INTEGER             -- unix ms when batch sent it
     );
     CREATE INDEX IF NOT EXISTS idx_pharmarack_placed_orders_date ON pharmarack_placed_orders (order_date, batch_sent);
+    CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id);
+    CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
+    CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
   `);
   await ensureMedicinesFts(db2);
+  try {
+    const storeCount = await db2.get("SELECT COUNT(*) as count FROM stores");
+    if (!storeCount || storeCount.count === 0) {
+      await db2.run(
+        "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
+      );
+    }
+  } catch (err) {
+    console.warn("[Database Schema] Default store seed warning:", err);
+  }
   await db2.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
   await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
   await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
@@ -10783,7 +10986,7 @@ var init_database = __esm({
   "src/database.ts"() {
     "use strict";
     init_connection();
-    CURRENT_SCHEMA_VERSION = 46;
+    CURRENT_SCHEMA_VERSION = 47;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -19357,7 +19560,7 @@ async function downloadMessageMediaById(serializedId) {
   if (!fresh) return void 0;
   return await fresh.downloadMedia();
 }
-var import_whatsapp_web, import_fs16, import_path18, import_url15, import_child_process3, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
+var import_whatsapp_web, import_fs16, import_path18, import_url15, import_child_process4, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -19365,7 +19568,7 @@ var init_whatsappClient = __esm({
     import_fs16 = __toESM(require("fs"), 1);
     import_path18 = __toESM(require("path"), 1);
     import_url15 = require("url");
-    import_child_process3 = require("child_process");
+    import_child_process4 = require("child_process");
     import_util2 = require("util");
     init_eventService();
     init_connection();
@@ -19373,7 +19576,7 @@ var init_whatsappClient = __esm({
     init_whatsappBusinessService();
     init_tokenRefreshScheduler();
     ({ Client, LocalAuth, MessageMedia } = import_whatsapp_web.default);
-    execAsync2 = (0, import_util2.promisify)(import_child_process3.exec);
+    execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
     __filename14 = (0, import_url15.fileURLToPath)(import_meta_url);
     __dirname14 = import_path18.default.dirname(__filename14);
     UPLOADS_DIR = import_path18.default.resolve(getAppDataDir(), "uploads");
@@ -22007,7 +22210,7 @@ function parsePackSizeFromPackaging(packaging) {
     const parts = trimmed.split(/x/i);
     return (parseInt(parts[0], 10) || 1) * (parseInt(parts[1], 10) || 1);
   }
-  const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER)\s+OF\s+(\d+)/i);
+  const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER|BOTTLE)\s+OF\s+(\d+)/i);
   if (stripOfMatch) {
     const size2 = parseInt(stripOfMatch[1], 10);
     if (size2 > 0) return size2;
@@ -29649,11 +29852,11 @@ __export(workerSupervisor_exports, {
   WorkerSupervisor: () => WorkerSupervisor,
   workerSupervisor: () => workerSupervisor
 });
-var import_child_process4, WorkerSupervisor, workerSupervisor;
+var import_child_process5, WorkerSupervisor, workerSupervisor;
 var init_workerSupervisor = __esm({
   "src/worker/workerSupervisor.ts"() {
     "use strict";
-    import_child_process4 = require("child_process");
+    import_child_process5 = require("child_process");
     init_config();
     WorkerSupervisor = class _WorkerSupervisor {
       static instance;
@@ -29729,7 +29932,7 @@ var init_workerSupervisor = __esm({
           return;
         }
         try {
-          const child = (0, import_child_process4.fork)(forkTarget, [], {
+          const child = (0, import_child_process5.fork)(forkTarget, [], {
             execArgv: [...process.execArgv],
             env: { ...process.env, IS_WORKER: "true", WORKER_ROLE: config2.role }
           });
@@ -42513,7 +42716,7 @@ async function verifyOrderPlacedInPharmarack(storeId) {
   }
   return false;
 }
-var import_express13, import_path39, import_url33, import_fs36, import_child_process5, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, pharmarackDeleteQueue, isProcessingPharmarackDeleteQueue, handleManualReauth, pharmarack_default;
+var import_express13, import_path39, import_url33, import_fs36, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, pharmarackDeleteQueue, isProcessingPharmarackDeleteQueue, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
@@ -42527,7 +42730,7 @@ var init_pharmarack = __esm({
     init_notificationService();
     init_searchCache();
     init_tokenRefreshScheduler();
-    import_child_process5 = require("child_process");
+    import_child_process6 = require("child_process");
     import_util3 = require("util");
     init_config();
     init_distributorSyncHelper();
@@ -42536,7 +42739,7 @@ var init_pharmarack = __esm({
     init_startupSyncCoordinator();
     init_chromeBrowser();
     init_activityTracker();
-    execAsync3 = (0, import_util3.promisify)(import_child_process5.exec);
+    execAsync3 = (0, import_util3.promisify)(import_child_process6.exec);
     __filename31 = (0, import_url33.fileURLToPath)(import_meta_url);
     __dirname31 = import_path39.default.dirname(__filename31);
     DB_PATH17 = process.env.DB_PATH || import_path39.default.resolve(__dirname31, "..", "..", "data", "app.db");
@@ -42702,7 +42905,7 @@ var init_pharmarack = __esm({
               headless: false,
               defaultViewport: null,
               userDataDir: mainProfilePath,
-              args: ["--start-maximized"]
+              args: ["--start-maximized", "--disable-extensions"]
             });
           } catch (launchErr) {
             console.warn("Failed to launch Chrome with main profile, attempting temp profile fallback...", launchErr.message);
@@ -42715,7 +42918,7 @@ var init_pharmarack = __esm({
               headless: false,
               defaultViewport: null,
               userDataDir: tempProfilePath,
-              args: ["--start-maximized"]
+              args: ["--start-maximized", "--disable-extensions"]
             });
             tempProfilePathToDelete = tempProfilePath;
           }
@@ -44088,6 +44291,145 @@ var init_pharmarack = __esm({
   }
 });
 
+// src/services/storeContextService.ts
+function resolveStoreId(req) {
+  const headerVal = req.headers["x-store-id"];
+  if (headerVal && typeof headerVal === "string") {
+    const parsed = parseInt(headerVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const queryVal = req.query?.store_id;
+  if (queryVal && typeof queryVal === "string") {
+    const parsed = parseInt(queryVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 1;
+}
+var StoreContextService, storeContextService;
+var init_storeContextService = __esm({
+  "src/services/storeContextService.ts"() {
+    "use strict";
+    init_connection();
+    StoreContextService = class {
+      /**
+       * Retrieves list of all stores
+       */
+      async listStores(dbInstance, includeInactive = false) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const sql = includeInactive ? "SELECT * FROM stores ORDER BY id ASC" : "SELECT * FROM stores WHERE is_active = 1 ORDER BY id ASC";
+        const rows = await db2.all(sql).catch(() => []);
+        if (rows.length === 0) {
+          return [{ id: 1, name: "Main Store", code: "STORE-A", is_central: 1, is_active: 1 }];
+        }
+        return rows;
+      }
+      /**
+       * Get store by ID
+       */
+      async getStoreById(storeId, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const row = await db2.get("SELECT * FROM stores WHERE id = ?", [storeId]);
+        return row || null;
+      }
+      /**
+       * Create a new store
+       */
+      async createStore(input, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const name = (input.name || "").trim();
+        if (!name) {
+          throw new Error("Store name is required");
+        }
+        const code = (input.code || `STORE-${Date.now().toString(36).toUpperCase()}`).trim();
+        const address = (input.address || "").trim();
+        const phone = (input.phone || "").trim();
+        const email = (input.email || "").trim();
+        const isCentral = input.is_central ? 1 : 0;
+        const result = await db2.run(
+          `INSERT INTO stores (name, code, address, phone, email, is_central, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [name, code, address, phone, email, isCentral]
+        );
+        const newId = result.lastID;
+        const store = await this.getStoreById(newId, db2);
+        if (!store) throw new Error("Failed to retrieve created store");
+        return store;
+      }
+      /**
+       * Update an existing store
+       */
+      async updateStore(storeId, input, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const existing = await this.getStoreById(storeId, db2);
+        if (!existing) {
+          throw new Error(`Store #${storeId} not found`);
+        }
+        const name = input.name !== void 0 ? input.name.trim() : existing.name;
+        const code = input.code !== void 0 ? input.code.trim() : existing.code;
+        const address = input.address !== void 0 ? input.address.trim() : existing.address;
+        const phone = input.phone !== void 0 ? input.phone.trim() : existing.phone;
+        const email = input.email !== void 0 ? input.email.trim() : existing.email;
+        const isCentral = input.is_central !== void 0 ? input.is_central ? 1 : 0 : existing.is_central;
+        const isActive = input.is_active !== void 0 ? input.is_active ? 1 : 0 : existing.is_active;
+        await db2.run(
+          `UPDATE stores 
+       SET name = ?, code = ?, address = ?, phone = ?, email = ?, is_central = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [name, code, address, phone, email, isCentral, isActive, storeId]
+        );
+        const updated = await this.getStoreById(storeId, db2);
+        if (!updated) throw new Error(`Failed to reload store #${storeId}`);
+        return updated;
+      }
+      /**
+       * Get store setting by key
+       */
+      async getStoreSetting(storeId, key, defaultValue = "", dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        try {
+          const row = await db2.get(
+            "SELECT value FROM store_settings WHERE store_id = ? AND key = ?",
+            [storeId, key]
+          );
+          if (row && row.value !== null && row.value !== void 0) {
+            return String(row.value);
+          }
+        } catch (_) {
+        }
+        return defaultValue;
+      }
+      /**
+       * Set store setting by key
+       */
+      async setStoreSetting(storeId, key, value, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO store_settings (store_id, key, value, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(store_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+          [storeId, key, value]
+        );
+      }
+      /**
+       * Get all settings for a store
+       */
+      async getAllStoreSettings(storeId, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const rows = await db2.all(
+          "SELECT key, value FROM store_settings WHERE store_id = ?",
+          [storeId]
+        ).catch(() => []);
+        const settings = {};
+        for (const r of rows) {
+          settings[r.key] = r.value;
+        }
+        return settings;
+      }
+    };
+    storeContextService = new StoreContextService();
+  }
+});
+
 // src/routes/dispatch.ts
 var dispatch_exports = {};
 __export(dispatch_exports, {
@@ -44104,6 +44446,7 @@ var init_dispatch = __esm({
     init_notificationService();
     init_distributorDispatchReminderWorker();
     init_eventService();
+    init_storeContextService();
     __filename32 = (0, import_url34.fileURLToPath)(import_meta_url);
     __dirname32 = import_path40.default.dirname(__filename32);
     DB_PATH18 = process.env.DB_PATH || import_path40.default.resolve(__dirname32, "..", "..", "data", "app.db");
@@ -44123,16 +44466,21 @@ var init_dispatch = __esm({
       }
       next();
     });
-    router14.get("/orders", async (_req, res) => {
+    router14.get("/orders", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
+        const storeId = resolveStoreId(req);
+        const allStores = req.query.all_stores === "true";
+        const whereClause = allStores ? "" : "WHERE d.store_id = ?";
+        const params = allStores ? [] : [storeId];
         const orders = await db2.all(`
       SELECT d.*, db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone
       FROM dispatch_orders d
       LEFT JOIN delivery_boys db ON d.delivery_boy_id = db.id
+      ${whereClause}
       ORDER BY d.created_at DESC
       LIMIT 1000
-    `);
+    `, params);
         res.json(orders);
       } catch (err) {
         console.error("Dispatch orders fetch error:", err);
@@ -44140,14 +44488,15 @@ var init_dispatch = __esm({
       }
     });
     router14.post("/orders", async (req, res) => {
-      const { patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no } = req.body;
+      const { patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no, store_id } = req.body;
+      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
       if (!patient_name) return res.status(400).json({ error: "patient_name is required" });
       try {
         const db2 = await dbManager.getConnection();
         const result = await db2.run(
-          `INSERT INTO dispatch_orders (patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [patient_name, patient_phone || "", address || "", items || "", notes || "", delivery_boy_id || null, invoice_no || ""]
+          `INSERT INTO dispatch_orders (store_id, patient_name, patient_phone, address, items, notes, delivery_boy_id, invoice_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [targetStoreId, patient_name, patient_phone || "", address || "", items || "", notes || "", delivery_boy_id || null, invoice_no || ""]
         );
         const newOrder = await db2.get(`
       SELECT d.*, db.name as delivery_boy_name FROM dispatch_orders d
@@ -45258,6 +45607,7 @@ var init_messaging = __esm({
               "--start-maximized",
               "--no-sandbox",
               "--disable-setuid-sandbox",
+              "--disable-extensions",
               "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             ],
             userDataDir: authPath
@@ -48403,6 +48753,1588 @@ var init_serviceStatus = __esm({
   }
 });
 
+// src/routes/stores.ts
+var stores_exports = {};
+__export(stores_exports, {
+  default: () => stores_default
+});
+var import_express23, router23, broadcastStoresChanged, stores_default;
+var init_stores = __esm({
+  "src/routes/stores.ts"() {
+    "use strict";
+    import_express23 = __toESM(require("express"), 1);
+    init_storeContextService();
+    init_eventService();
+    router23 = import_express23.default.Router();
+    broadcastStoresChanged = () => {
+      try {
+        eventService.broadcast("stores_updated", { at: Date.now() });
+      } catch (_) {
+      }
+    };
+    router23.get("/", async (req, res) => {
+      try {
+        const includeInactive = req.query.include_inactive === "true";
+        const stores = await storeContextService.listStores(void 0, includeInactive);
+        res.json(stores);
+      } catch (err) {
+        console.error("[StoresRoute] Fetch stores error:", err);
+        res.status(500).json({ error: "Failed to fetch stores" });
+      }
+    });
+    router23.get("/:id", async (req, res) => {
+      try {
+        const storeId = parseInt(req.params.id, 10);
+        if (isNaN(storeId)) {
+          return res.status(400).json({ error: "Invalid store ID" });
+        }
+        const store = await storeContextService.getStoreById(storeId);
+        if (!store) {
+          return res.status(404).json({ error: "Store not found" });
+        }
+        res.json(store);
+      } catch (err) {
+        console.error("[StoresRoute] Get store error:", err);
+        res.status(500).json({ error: "Failed to get store details" });
+      }
+    });
+    router23.post("/", async (req, res) => {
+      try {
+        const { name, code, address, phone, email, is_central } = req.body;
+        if (!name || typeof name !== "string" || !name.trim()) {
+          return res.status(400).json({ error: "Store name is required" });
+        }
+        const newStore = await storeContextService.createStore({
+          name: name.trim(),
+          code: code ? String(code).trim() : void 0,
+          address: address ? String(address).trim() : void 0,
+          phone: phone ? String(phone).trim() : void 0,
+          email: email ? String(email).trim() : void 0,
+          is_central: Boolean(is_central)
+        });
+        broadcastStoresChanged();
+        res.status(201).json(newStore);
+      } catch (err) {
+        console.error("[StoresRoute] Create store error:", err);
+        res.status(500).json({ error: err.message || "Failed to create store" });
+      }
+    });
+    router23.put("/:id", async (req, res) => {
+      try {
+        const storeId = parseInt(req.params.id, 10);
+        if (isNaN(storeId)) {
+          return res.status(400).json({ error: "Invalid store ID" });
+        }
+        const updated = await storeContextService.updateStore(storeId, req.body);
+        broadcastStoresChanged();
+        res.json(updated);
+      } catch (err) {
+        console.error("[StoresRoute] Update store error:", err);
+        res.status(500).json({ error: err.message || "Failed to update store" });
+      }
+    });
+    router23.get("/:id/settings", async (req, res) => {
+      try {
+        const storeId = parseInt(req.params.id, 10);
+        if (isNaN(storeId)) {
+          return res.status(400).json({ error: "Invalid store ID" });
+        }
+        const settings = await storeContextService.getAllStoreSettings(storeId);
+        res.json(settings);
+      } catch (err) {
+        console.error("[StoresRoute] Get store settings error:", err);
+        res.status(500).json({ error: "Failed to fetch store settings" });
+      }
+    });
+    router23.put("/:id/settings", async (req, res) => {
+      try {
+        const storeId = parseInt(req.params.id, 10);
+        if (isNaN(storeId)) {
+          return res.status(400).json({ error: "Invalid store ID" });
+        }
+        const { settings } = req.body;
+        if (!settings || typeof settings !== "object") {
+          return res.status(400).json({ error: "Settings object is required" });
+        }
+        for (const [key, val] of Object.entries(settings)) {
+          if (typeof key === "string" && val !== void 0) {
+            await storeContextService.setStoreSetting(storeId, key, String(val));
+          }
+        }
+        const updatedSettings = await storeContextService.getAllStoreSettings(storeId);
+        res.json({ success: true, settings: updatedSettings });
+      } catch (err) {
+        console.error("[StoresRoute] Update store settings error:", err);
+        res.status(500).json({ error: "Failed to update store settings" });
+      }
+    });
+    stores_default = router23;
+  }
+});
+
+// src/services/returnWindowService.ts
+var RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
+var init_returnWindowService = __esm({
+  "src/services/returnWindowService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    RETURN_WINDOW_DAYS = 14;
+    RETURN_WINDOW_MS = RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1e3;
+    ReturnWindowService = class {
+      /**
+       * Calculates the return window deadline given a delivered timestamp
+       */
+      calculateReturnWindowUntil(deliveredAt) {
+        const deliveredDate = new Date(deliveredAt);
+        const deadlineMs = deliveredDate.getTime() + RETURN_WINDOW_MS;
+        return new Date(deadlineMs).toISOString();
+      }
+      /**
+       * Evaluates the return window status for an order
+       */
+      evaluateOrderReturnStatus(order) {
+        const orderId = order.id;
+        const deliveryStatus = order.delivery_status || (order.status === "Delivered" ? "delivered" : "pending");
+        const deliveredAt = order.delivered_at || null;
+        const overrideBy = order.return_override_by || null;
+        const overrideReason = order.return_override_reason || null;
+        const overrideAt = order.return_override_at || null;
+        if (overrideBy) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "override_approved",
+            daysRemaining: 0,
+            isEligible: true,
+            overrideReason,
+            overrideBy,
+            overrideAt
+          };
+        }
+        if (order.return_status === "returned") {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "returned",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        if (deliveryStatus !== "delivered" || !deliveredAt) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt: null,
+            returnWindowUntil: null,
+            returnStatus: "none",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        const windowUntil = order.return_window_until || this.calculateReturnWindowUntil(deliveredAt);
+        const deadline = new Date(windowUntil).getTime();
+        const now = Date.now();
+        const msRemaining = deadline - now;
+        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1e3 * 60 * 60 * 24)));
+        const isEligible = msRemaining > 0;
+        const returnStatus = isEligible ? "eligible" : "expired";
+        return {
+          orderId,
+          deliveryStatus: "delivered",
+          deliveredAt,
+          returnWindowUntil: windowUntil,
+          returnStatus,
+          daysRemaining,
+          isEligible
+        };
+      }
+      /**
+       * Marks an order as delivered, stamping delivered_at and calculating the 14-day return window
+       */
+      async markDelivered(orderId, deliveredAtDate, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
+        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt);
+        await db2.run(
+          `UPDATE special_orders
+       SET delivery_status = 'delivered',
+           status = 'Delivered',
+           delivered_at = ?,
+           return_window_until = ?,
+           return_status = 'eligible',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [deliveredAt, returnWindowUntil, orderId]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
+          [orderId, `Order delivered. 14-day return window open until ${returnWindowUntil}`]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
+        } catch (_) {
+        }
+        const updatedOrder = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updatedOrder);
+      }
+      /**
+       * Background scan: automatically closes expired 14-day return windows without deleting records
+       */
+      async checkAndCloseExpiredReturnWindows(dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const expiredOrders = await db2.all(
+          `SELECT id, delivered_at, return_window_until 
+       FROM special_orders
+       WHERE delivery_status = 'delivered'
+         AND return_status = 'eligible'
+         AND return_window_until IS NOT NULL
+         AND return_window_until <= ?
+         AND return_override_by IS NULL`,
+          [nowIso]
+        ).catch(() => []);
+        if (expiredOrders.length === 0) return 0;
+        for (const order of expiredOrders) {
+          await db2.run(
+            `UPDATE special_orders
+         SET return_status = 'expired',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [order.id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'return_window_expired', '14-day return period ended. Return window closed automatically.', 'system', CURRENT_TIMESTAMP)`,
+            [order.id]
+          );
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), expiredCount: expiredOrders.length });
+        } catch (_) {
+        }
+        return expiredOrders.length;
+      }
+      /**
+       * Human exception override: Pharmacist/Manager approves return after expiration
+       */
+      async applyReturnOverride(orderId, opts, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          throw new Error(`Order #${orderId} not found`);
+        }
+        const overrideBy = (opts.overrideBy || "Admin").trim();
+        const reason = (opts.reason || "Management approval").trim();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        await db2.run(
+          `UPDATE special_orders
+       SET return_status = 'override_approved',
+           return_override_by = ?,
+           return_override_reason = ?,
+           return_override_at = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [overrideBy, reason, nowIso, orderId]
+        );
+        await db2.run(
+          `INSERT INTO action_logs (action_type, description, metadata, created_at)
+       VALUES ('return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            `Return window manually overridden for Order #${orderId} by ${overrideBy}`,
+            JSON.stringify({ orderId, overrideBy, reason, previousStatus: order.return_status })
+          ]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [orderId, `Return window override granted by ${overrideBy}. Reason: ${reason}`, overrideBy]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "return_override" });
+        } catch (_) {
+        }
+        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updated);
+      }
+    };
+    returnWindowService = new ReturnWindowService();
+  }
+});
+
+// src/routes/websiteOrders.ts
+var websiteOrders_exports = {};
+__export(websiteOrders_exports, {
+  default: () => websiteOrders_default
+});
+var import_express24, router24, broadcastOrdersChanged, websiteOrders_default;
+var init_websiteOrders = __esm({
+  "src/routes/websiteOrders.ts"() {
+    "use strict";
+    import_express24 = __toESM(require("express"), 1);
+    init_connection();
+    init_returnWindowService();
+    init_eventService();
+    init_nameFormatter();
+    init_whatsappQueueWorker();
+    init_storeSettingsService();
+    router24 = import_express24.default.Router();
+    broadcastOrdersChanged = () => {
+      try {
+        eventService.broadcast("order_updated", { at: Date.now(), source: "website" });
+      } catch (_) {
+      }
+    };
+    router24.get("/medicines/search", async (req, res) => {
+      try {
+        const query = (req.query.query || "").trim();
+        const storeId = parseInt(req.query.store_id || "1", 10) || 1;
+        const limit = Math.min(parseInt(req.query.limit || "20", 10) || 20, 50);
+        if (!query) {
+          return res.status(400).json({ error: "Search query is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        let medicines = await db2.all(
+          `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
+       FROM medicines
+       WHERE name LIKE ?
+       ORDER BY name ASC
+       LIMIT ?`,
+          [`${query}%`, limit]
+        ).catch(() => []);
+        if (medicines.length === 0 && query.length >= 2) {
+          medicines = await db2.all(
+            `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
+         FROM medicines
+         WHERE name LIKE ?
+         ORDER BY name ASC
+         LIMIT ?`,
+            [`%${query}%`, limit]
+          ).catch(() => []);
+        }
+        const safeResults = [];
+        for (const med of medicines) {
+          const stockRow = await db2.get(
+            `SELECT SUM(quantity) as total_qty 
+         FROM inventory_master 
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+            [med.id, storeId]
+          ).catch(() => ({ total_qty: 0 }));
+          const localStock = stockRow?.total_qty || 0;
+          const distRow = await db2.get(
+            `SELECT availability 
+         FROM distributor_catalog 
+         WHERE product_name LIKE ? AND is_mapped = 1
+         LIMIT 1`,
+            [`%${med.name}%`]
+          ).catch(() => null);
+          const hasDistributorStock = distRow && String(distRow.availability || "").toLowerCase().includes("avail");
+          const isAvailable = localStock > 0 || Boolean(hasDistributorStock);
+          safeResults.push({
+            id: med.id,
+            name: med.name,
+            generic_name: med.generic_name || "",
+            strength: med.strength || "",
+            packaging: med.packaging || "",
+            manufacturer: med.manufacturer || "",
+            category: med.category || "",
+            mrp: med.mrp || 0,
+            price: med.sell_price || med.mrp || 0,
+            is_available: isAvailable,
+            availability_status: isAvailable ? "Available" : "Sold Out"
+          });
+        }
+        res.json({
+          query,
+          store_id: storeId,
+          count: safeResults.length,
+          medicines: safeResults
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Medicine search error:", err);
+        res.status(500).json({ error: "Failed to search medicines" });
+      }
+    });
+    router24.post("/orders", async (req, res) => {
+      const {
+        customer_name,
+        customer_phone,
+        customer_address,
+        items,
+        store_id = 1,
+        prescription_url,
+        product_image_url,
+        notes,
+        payment_method = "COD"
+      } = req.body;
+      if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Customer name and at least one item are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const cleanPhone = customer_phone ? String(customer_phone).replace(/\D/g, "") : "";
+        const cleanName = formatCustomerName(customer_name);
+        const targetStoreId = parseInt(String(store_id), 10) || 1;
+        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+        let customerId = null;
+        if (cleanPhone && cleanPhone.length >= 10) {
+          try {
+            const existingCust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+            if (existingCust) {
+              customerId = existingCust.id;
+            } else {
+              const custRes = await db2.run(
+                "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                [cleanName, cleanPhone, customer_address || ""]
+              );
+              customerId = custRes.lastID;
+            }
+          } catch (_) {
+          }
+        }
+        const createdOrders = [];
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of items) {
+            const prodName = (item.product || item.product_name || item.name || "").trim();
+            if (!prodName) continue;
+            const qty = Number(item.qty) || 1;
+            const price = Number(item.price || item.mrp || 0);
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+            advance_payment, notes, customer_order_source, prescription_url, product_image_url,
+            delivery_status, return_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                targetStoreId,
+                customerId,
+                prodName,
+                cleanName,
+                cleanPhone,
+                qty,
+                todayStr2,
+                notes ? `[Website Order] ${notes}` : "[Website Order]",
+                prescription_url || null,
+                product_image_url || null
+              ]
+            );
+            const orderId = Number(result.lastID);
+            createdOrders.push({ id: orderId, product: prodName, qty });
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Order placed online via website for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty})`]
+            );
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        if (cleanPhone && cleanPhone.length >= 10) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
+          const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
+          const confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!
+
+Order Items:
+${itemsSummary}
+
+We are preparing your order and will notify you upon dispatch.`;
+          try {
+            await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
+          } catch (waErr) {
+            console.warn("[WebsiteOrdersRoute] WhatsApp confirmation warning:", waErr);
+          }
+        }
+        broadcastOrdersChanged();
+        res.status(201).json({
+          success: true,
+          message: "Website order placed successfully",
+          store_id: targetStoreId,
+          orders: createdOrders,
+          customer: { name: cleanName, phone: cleanPhone }
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Order placement error:", err);
+        res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
+      }
+    });
+    router24.get("/orders/:orderId/track", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) {
+          return res.status(400).json({ error: "Invalid order ID" });
+        }
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        const events = await db2.all(
+          "SELECT * FROM order_tracking_events WHERE order_id = ? ORDER BY performed_at ASC",
+          [orderId]
+        ).catch(() => []);
+        const returnInfo = returnWindowService.evaluateOrderReturnStatus(order);
+        res.json({
+          order_id: order.id,
+          store_id: order.store_id,
+          product: order.product || order.medicine_name,
+          quantity: order.qty,
+          requester: order.requester,
+          status: order.status,
+          delivery_status: order.delivery_status || "pending",
+          created_at: order.created_at,
+          delivered_at: order.delivered_at,
+          return_window: returnInfo,
+          tracking_timeline: events
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Order tracking error:", err);
+        res.status(500).json({ error: "Failed to track order" });
+      }
+    });
+    router24.post("/orders/:orderId/return-request", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        const { reason = "Customer return request" } = req.body;
+        if (isNaN(orderId)) {
+          return res.status(400).json({ error: "Invalid order ID" });
+        }
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        const returnInfo = returnWindowService.evaluateOrderReturnStatus(order);
+        if (!returnInfo.isEligible) {
+          return res.status(400).json({
+            error: "14-day return window has expired for this order. Returns are no longer accepted.",
+            return_info: returnInfo
+          });
+        }
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'return_requested', ?, 'customer', CURRENT_TIMESTAMP)`,
+          [orderId, `Customer requested return within 14-day window. Reason: ${reason}`]
+        );
+        await db2.run(
+          `INSERT INTO action_logs (action_type, description, metadata, created_at)
+       VALUES ('website_return_request', ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            `Return requested for Order #${orderId} (${order.product})`,
+            JSON.stringify({ orderId, reason, customer: order.requester, phone: order.phone })
+          ]
+        );
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          message: "Return request submitted. Our pharmacy team will process your return.",
+          return_info: returnInfo
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Return request error:", err);
+        res.status(500).json({ error: "Failed to submit return request" });
+      }
+    });
+    websiteOrders_default = router24;
+  }
+});
+
+// src/routes/customerPortal.ts
+var customerPortal_exports = {};
+__export(customerPortal_exports, {
+  default: () => customerPortal_default,
+  generateRandomOtp: () => generateRandomOtp,
+  generateRandomPin: () => generateRandomPin,
+  hashPin: () => hashPin,
+  normalizePhone: () => normalizePhone
+});
+function normalizePhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+function hashPin(pin) {
+  const salt = "pharmacy_portal_salt_2026";
+  return import_crypto3.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+}
+function generateRandomPin() {
+  return Math.floor(1e3 + Math.random() * 9e3).toString();
+}
+function generateRandomOtp() {
+  return Math.floor(1e5 + Math.random() * 9e5).toString();
+}
+var import_express25, import_crypto3, router25, customerPortal_default;
+var init_customerPortal = __esm({
+  "src/routes/customerPortal.ts"() {
+    "use strict";
+    import_express25 = __toESM(require("express"), 1);
+    import_crypto3 = __toESM(require("crypto"), 1);
+    init_connection();
+    init_whatsappQueueWorker();
+    init_eventService();
+    init_nameFormatter();
+    init_storeSettingsService();
+    init_storeContextService();
+    router25 = import_express25.default.Router();
+    router25.get("/accounts", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const query = (req.query.search || "").trim();
+        const storeFilter = req.query.store_id ? parseInt(req.query.store_id, 10) : null;
+        let sql = `
+      SELECT 
+        pa.id,
+        pa.customer_id,
+        pa.login_id,
+        pa.pin_display,
+        pa.preferred_store_id,
+        pa.status,
+        pa.last_login_at,
+        pa.created_at,
+        c.name as customer_name,
+        c.address as customer_address,
+        s.name as preferred_store_name,
+        (SELECT COUNT(*) FROM patient_refills pr WHERE pr.customer_id = pa.customer_id AND pr.is_active = 1) as active_refills_count,
+        (SELECT COUNT(*) FROM sales sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
+      FROM customer_portal_accounts pa
+      JOIN customers c ON c.id = pa.customer_id
+      LEFT JOIN stores s ON s.id = pa.preferred_store_id
+      WHERE 1=1
+    `;
+        const params = [];
+        if (query) {
+          sql += ` AND (c.name LIKE ? OR pa.login_id LIKE ?)`;
+          params.push(`%${query}%`, `%${query}%`);
+        }
+        if (storeFilter && !isNaN(storeFilter)) {
+          sql += ` AND pa.preferred_store_id = ?`;
+          params.push(storeFilter);
+        }
+        sql += ` ORDER BY pa.created_at DESC LIMIT 100`;
+        const accounts = await db2.all(sql, params);
+        res.json({ success: true, count: accounts.length, accounts });
+      } catch (err) {
+        console.error("[CustomerPortal] List accounts error:", err);
+        res.status(500).json({ error: "Failed to fetch portal accounts" });
+      }
+    });
+    router25.post("/accounts/generate", async (req, res) => {
+      const {
+        customer_id,
+        phone,
+        name,
+        preferred_store_id = 1,
+        custom_pin,
+        send_whatsapp = true
+      } = req.body;
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let targetCustomerId = customer_id ? parseInt(String(customer_id), 10) : null;
+        const cleanName = formatCustomerName(name || "Customer");
+        if (!targetCustomerId) {
+          const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (existingCust) {
+            targetCustomerId = existingCust.id;
+          } else {
+            const custRes = await db2.run(
+              "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+              [cleanName, cleanPhone]
+            );
+            targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
+          }
+        }
+        const pin = custom_pin && String(custom_pin).length === 4 ? String(custom_pin) : generateRandomPin();
+        const pinHashed = hashPin(pin);
+        const storeId = parseInt(String(preferred_store_id), 10) || 1;
+        const existingAccount = await db2.get("SELECT id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?", [
+          targetCustomerId,
+          cleanPhone
+        ]);
+        let accountId;
+        if (existingAccount) {
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [pinHashed, pin, storeId, existingAccount.id]
+          );
+          accountId = existingAccount.id;
+        } else {
+          const accRes = await db2.run(
+            `INSERT INTO customer_portal_accounts 
+         (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
+          );
+          accountId = Number(accRes.lastID);
+        }
+        let whatsappQueued = false;
+        if (send_whatsapp) {
+          try {
+            const storeInfo = await storeContextService.getStoreById(storeId);
+            const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
+            const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+            const msg = `*Welcome to ${storeName} Online Portal!*
+
+Hello ${cleanName}, your direct refill account is ready:
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *4-Digit PIN:* ${pin}
+\u{1F4CD} *Collection Branch:* ${storeName}
+
+*Website:* /portal
+
+Login to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
+            await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials", cleanName);
+            whatsappQueued = true;
+          } catch (waErr) {
+            console.warn("[CustomerPortal] WhatsApp send warning:", waErr);
+          }
+        }
+        res.status(201).json({
+          success: true,
+          account_id: accountId,
+          customer_id: targetCustomerId,
+          login_id: cleanPhone,
+          pin,
+          preferred_store_id: storeId,
+          whatsapp_queued: whatsappQueued
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Generate account error:", err);
+        res.status(500).json({ error: "Failed to generate portal credentials: " + (err.message || "Unknown error") });
+      }
+    });
+    router25.post("/accounts/:id/send-credentials", async (req, res) => {
+      const accountId = parseInt(req.params.id, 10);
+      if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
+      try {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.id = ?`,
+          [accountId]
+        );
+        if (!account) return res.status(404).json({ error: "Portal account not found" });
+        let pin = account.pin_display;
+        if (!pin) {
+          pin = generateRandomPin();
+          const pinHashed = hashPin(pin);
+          await db2.run(
+            "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [pinHashed, pin, accountId]
+          );
+        }
+        const cleanPhone = account.login_id;
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
+        const customerName = formatCustomerName(account.customer_name);
+        const msg = `*Your ${storeName} Login Credentials*
+
+Hello ${customerName},
+Here are your online refill portal details:
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *PIN:* ${pin}
+\u{1F4CD} *Branch:* ${storeName}
+
+*Website:* /portal
+
+Tap the link to login, select medicines from your previous bills, and place your pickup order.`;
+        const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials_resend", customerName);
+        res.json({
+          success: true,
+          message: "Credentials sent to WhatsApp",
+          queue_id: queueId,
+          login_id: cleanPhone,
+          pin
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Resend credentials error:", err);
+        res.status(500).json({ error: "Failed to send credentials" });
+      }
+    });
+    router25.put("/accounts/:id", async (req, res) => {
+      const accountId = parseInt(req.params.id, 10);
+      const { status, preferred_store_id, custom_pin, override_pin, send_whatsapp = true } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const updates = [];
+        const params = [];
+        if (status && ["active", "disabled", "suspended"].includes(status)) {
+          updates.push("status = ?");
+          params.push(status);
+        }
+        if (preferred_store_id) {
+          updates.push("preferred_store_id = ?");
+          params.push(parseInt(String(preferred_store_id), 10) || 1);
+        }
+        let updatedPin = null;
+        const pinToSet = String(custom_pin || override_pin || "").trim();
+        if (pinToSet && pinToSet.length >= 4) {
+          const hashed = hashPin(pinToSet);
+          updates.push("pin_hash = ?", "pin_display = ?");
+          params.push(hashed, pinToSet);
+          updatedPin = pinToSet;
+        }
+        if (updates.length === 0) return res.status(400).json({ error: "No valid fields to update" });
+        updates.push("updated_at = CURRENT_TIMESTAMP");
+        params.push(accountId);
+        await db2.run(`UPDATE customer_portal_accounts SET ${updates.join(", ")} WHERE id = ?`, params);
+        if (updatedPin && send_whatsapp) {
+          try {
+            const account = await db2.get(
+              `SELECT pa.*, c.name as customer_name, s.name as store_name
+           FROM customer_portal_accounts pa
+           JOIN customers c ON c.id = pa.customer_id
+           LEFT JOIN stores s ON s.id = pa.preferred_store_id
+           WHERE pa.id = ?`,
+              [accountId]
+            );
+            if (account) {
+              const cleanPhone = account.login_id;
+              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
+              const customerName = formatCustomerName(account.customer_name);
+              const msg = `*Your ${storeName} PIN Has Been Reset*
+
+Hello ${customerName},
+Your online refill portal PIN has been reset by the pharmacy.
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *New PIN:* ${updatedPin}
+\u{1F4CD} *Branch:* ${storeName}
+
+*Website:* /portal`;
+              await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_pin_override", customerName);
+            }
+          } catch (_) {
+          }
+        }
+        res.json({ success: true, message: "Portal account updated successfully", pin: updatedPin });
+      } catch (err) {
+        console.error("[CustomerPortal] Update account error:", err);
+        res.status(500).json({ error: "Failed to update account" });
+      }
+    });
+    router25.post("/auth/change-pin", async (req, res) => {
+      const { customer_id, phone, current_pin, new_pin } = req.body;
+      const cleanPhone = normalizePhone(phone);
+      const cleanCurrentPin = String(current_pin || "").trim();
+      const cleanNewPin = String(new_pin || "").trim();
+      if (!cleanNewPin || cleanNewPin.length < 4) {
+        return res.status(400).json({ error: "New PIN must be at least 4 digits" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let account = null;
+        if (customer_id) {
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE customer_id = ?", [customer_id]);
+        } else if (cleanPhone) {
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE login_id = ?", [cleanPhone]);
+        }
+        if (!account) return res.status(404).json({ error: "Account not found" });
+        if (cleanCurrentPin) {
+          const currentHashed = hashPin(cleanCurrentPin);
+          if (account.pin_hash !== currentHashed) {
+            return res.status(401).json({ error: "Current PIN is incorrect" });
+          }
+        }
+        const newHashed = hashPin(cleanNewPin);
+        await db2.run(
+          "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          [newHashed, cleanNewPin, account.id]
+        );
+        try {
+          const cust = await db2.get("SELECT name FROM customers WHERE id = ?", [account.customer_id]);
+          const custName = formatCustomerName(cust?.name || "Customer");
+          const formattedPhone = account.login_id.length === 10 ? `91${account.login_id}` : account.login_id;
+          const storeName = await getStoreMedicalNameAndPhone(db2);
+          const msg = `*Security Update \u2014 ${storeName}*
+
+Hello ${custName},
+Your online refill portal PIN has been successfully changed.
+
+\u{1F511} *New PIN:* ${cleanNewPin}
+
+If you did not make this change, please contact your pharmacy immediately.`;
+          await whatsappQueueWorker.enqueue(formattedPhone, msg, "pin_changed_alert", custName);
+        } catch (_) {
+        }
+        res.json({ success: true, message: "PIN updated successfully", pin: cleanNewPin });
+      } catch (err) {
+        console.error("[CustomerPortal] Change PIN error:", err);
+        res.status(500).json({ error: "Failed to update PIN" });
+      }
+    });
+    router25.post("/auth/login", async (req, res) => {
+      const { login_id, pin } = req.body;
+      const cleanPhone = normalizePhone(login_id);
+      const cleanPin = String(pin || "").trim();
+      if (!cleanPhone || cleanPhone.length < 10 || !cleanPin) {
+        return res.status(400).json({ error: "Phone number and 4-digit PIN are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const hashed = hashPin(cleanPin);
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       WHERE pa.login_id = ? AND pa.pin_hash = ? AND pa.status = 'active'`,
+          [cleanPhone, hashed]
+        );
+        if (!account) {
+          return res.status(401).json({ error: "Invalid phone number or PIN. Please try again or request OTP." });
+        }
+        await db2.run(
+          "UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?",
+          [account.id]
+        );
+        const stores = await storeContextService.listStores(void 0, false);
+        res.json({
+          success: true,
+          customer: {
+            id: account.cust_id,
+            name: account.customer_name,
+            phone: account.login_id,
+            address: account.customer_address || "",
+            preferred_store_id: account.preferred_store_id || 1
+          },
+          stores: stores.map((s) => ({
+            id: s.id,
+            name: s.name,
+            address: s.address || "",
+            phone: s.phone || ""
+          }))
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Login error:", err);
+        res.status(500).json({ error: "Login failed" });
+      }
+    });
+    router25.post("/auth/request-otp", async (req, res) => {
+      const { login_id } = req.body;
+      const cleanPhone = normalizePhone(login_id);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name 
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       WHERE pa.login_id = ? AND pa.status = 'active'`,
+          [cleanPhone]
+        );
+        if (!account) {
+          return res.status(404).json({
+            error: "Refill account not found or disabled. Please contact your pharmacy branch to set up portal access."
+          });
+        }
+        const otpCode = generateRandomOtp();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString().replace("T", " ").slice(0, 19);
+        await db2.run(
+          "INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used) VALUES (?, ?, ?, 0)",
+          [cleanPhone, otpCode, expiresAt]
+        );
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const custName = formatCustomerName(account.customer_name || "Customer");
+        const medicalName = await getStoreMedicalNameAndPhone(db2);
+        const otpMsg = `\u{1F510} *Your ${medicalName} Login OTP is: ${otpCode}*
+
+Valid for 10 minutes. Please do not share this code with anyone.`;
+        await whatsappQueueWorker.enqueue(formattedPhone, otpMsg, "portal_otp", custName);
+        res.json({
+          success: true,
+          message: "OTP sent to your registered WhatsApp number",
+          login_id: cleanPhone
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Request OTP error:", err);
+        res.status(500).json({ error: "Failed to send OTP" });
+      }
+    });
+    router25.post("/auth/verify-otp", async (req, res) => {
+      const { login_id, otp_code } = req.body;
+      const cleanPhone = normalizePhone(login_id);
+      const cleanOtp = String(otp_code || "").trim();
+      if (!cleanPhone || !cleanOtp) {
+        return res.status(400).json({ error: "Phone number and OTP are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const otpRow = await db2.get(
+          `SELECT * FROM customer_portal_otps 
+       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > datetime('now')
+       ORDER BY id DESC LIMIT 1`,
+          [cleanPhone, cleanOtp]
+        );
+        if (!otpRow) {
+          return res.status(401).json({ error: "Invalid or expired OTP" });
+        }
+        await db2.run("UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?", [otpRow.id]);
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       WHERE pa.login_id = ? AND pa.status = 'active'`,
+          [cleanPhone]
+        );
+        if (!account) {
+          return res.status(404).json({
+            error: "Refill account not found or disabled. Please contact your pharmacy branch."
+          });
+        }
+        await db2.run("UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", [account.id]);
+        const stores = await storeContextService.listStores(void 0, false);
+        res.json({
+          success: true,
+          customer: {
+            id: account.cust_id,
+            name: account.customer_name,
+            phone: cleanPhone,
+            address: account.customer_address || "",
+            preferred_store_id: account.preferred_store_id || 1
+          },
+          stores: stores.map((s) => ({
+            id: s.id,
+            name: s.name,
+            address: s.address || "",
+            phone: s.phone || ""
+          }))
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Verify OTP error:", err);
+        res.status(500).json({ error: "OTP verification failed" });
+      }
+    });
+    router25.get("/customer/bills", async (req, res) => {
+      const customerId = parseInt(req.query.customer_id, 10);
+      const phone = normalizePhone(req.query.phone);
+      if (!customerId && !phone) {
+        return res.status(400).json({ error: "customer_id or phone required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let custId = customerId;
+        if (!custId && phone) {
+          const cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phone]);
+          if (cust) custId = cust.id;
+        }
+        if (!custId) {
+          return res.json({ bills: [] });
+        }
+        const sales = await db2.all(
+          `SELECT s.id, s.invoice_number, s.store_id, s.total_amount, s.net_amount, s.created_at, st.name as store_name
+       FROM sales s
+       LEFT JOIN stores st ON st.id = s.store_id
+       WHERE s.customer_id = ?
+       ORDER BY s.created_at DESC LIMIT 20`,
+          [custId]
+        ).catch(() => []);
+        const enrichedBills = [];
+        for (const sale of sales) {
+          const items = await db2.all(
+            `SELECT si.id, si.medicine_id, m.name as medicine_name, m.generic_name, si.quantity, si.unit_price, si.total_price
+         FROM sale_items si
+         JOIN medicines m ON m.id = si.medicine_id
+         WHERE si.sale_id = ?`,
+            [sale.id]
+          ).catch(() => []);
+          enrichedBills.push({
+            ...sale,
+            items
+          });
+        }
+        res.json({ success: true, count: enrichedBills.length, bills: enrichedBills });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch customer bills error:", err);
+        res.status(500).json({ error: "Failed to fetch customer bills" });
+      }
+    });
+    router25.get("/customer/refills", async (req, res) => {
+      const customerId = parseInt(req.query.customer_id, 10);
+      const phone = normalizePhone(req.query.phone);
+      if (!customerId && !phone) {
+        return res.status(400).json({ error: "customer_id or phone required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let sql = `
+      SELECT 
+        pr.id,
+        pr.medicine_id,
+        m.name as medicine_name,
+        m.generic_name,
+        m.strength,
+        m.mrp,
+        m.sell_price,
+        pr.refill_interval_days,
+        pr.quantity_needed,
+        pr.last_refill_date,
+        pr.next_refill_date,
+        pr.store_id,
+        s.name as store_name
+      FROM patient_refills pr
+      JOIN medicines m ON m.id = pr.medicine_id
+      LEFT JOIN stores s ON s.id = pr.store_id
+      WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
+      ORDER BY pr.next_refill_date ASC
+    `;
+        const refills = await db2.all(sql, [customerId || -1, `%${phone}%`]).catch(() => []);
+        res.json({ success: true, count: refills.length, refills });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch customer refills error:", err);
+        res.status(500).json({ error: "Failed to fetch refills" });
+      }
+    });
+    router25.post("/customer/refill-order", async (req, res) => {
+      const {
+        customer_id,
+        customer_name,
+        customer_phone,
+        store_id = 1,
+        items,
+        payment_method = "COUNTER_PICKUP",
+        notes
+      } = req.body;
+      if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Customer name and at least one medicine required" });
+      }
+      const cleanPhone = normalizePhone(customer_phone);
+      const cleanName = formatCustomerName(customer_name);
+      const targetStoreId = parseInt(String(store_id), 10) || 1;
+      const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+      try {
+        const db2 = await dbManager.getConnection();
+        let custId = customer_id ? parseInt(String(customer_id), 10) : null;
+        let registeredCustomer = null;
+        if (custId) {
+          registeredCustomer = await db2.get("SELECT id, name FROM customers WHERE id = ?", [custId]);
+        } else if (cleanPhone) {
+          registeredCustomer = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (registeredCustomer) custId = registeredCustomer.id;
+        }
+        if (!registeredCustomer || !custId) {
+          return res.status(403).json({
+            error: "Customer profile not found. Online refill ordering is only available for registered pharmacy customers."
+          });
+        }
+        const officialCustomerName = registeredCustomer.name || cleanName;
+        const createdOrders = [];
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of items) {
+            const prodName = (item.product || item.medicine_name || item.name || "").trim();
+            if (!prodName) continue;
+            const qty = Number(item.qty || item.quantity_needed) || 1;
+            const price = Number(item.price || item.sell_price || item.mrp || 0);
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+            advance_payment, notes, customer_order_source, delivery_status, return_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website_refill', 'counter_pickup', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                targetStoreId,
+                custId,
+                prodName,
+                cleanName,
+                cleanPhone,
+                qty,
+                todayStr2,
+                notes ? `[Refill Collection - ${payment_method}] ${notes}` : `[Refill Collection - ${payment_method}]`
+              ]
+            );
+            const orderId = Number(result.lastID);
+            createdOrders.push({ id: orderId, product: prodName, qty, price });
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Refill order placed for In-Store Pickup at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
+            );
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        if (custId) {
+          await db2.run(
+            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
+            [targetStoreId, custId]
+          ).catch(() => {
+          });
+        }
+        const storeInfo = await storeContextService.getStoreById(targetStoreId);
+        const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
+        const storeAddress = storeInfo?.address ? `
+\u{1F4CD} *Address:* ${storeInfo.address}` : "";
+        const storePhone = storeInfo?.phone ? `
+\u{1F4DE} *Contact:* ${storeInfo.phone}` : "";
+        if (cleanPhone && cleanPhone.length >= 10) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
+          const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
+          const totalAmount = createdOrders.reduce((sum, o) => sum + o.price * o.qty, 0);
+          const pickupMsg = `*Refill Order Received (${orderIdsStr})*
+
+Hello ${cleanName},
+Thank you for placing your refill order at *${storeName}*.
+
+*Selected Medicines:*
+${itemsSummary}
+
+\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
+\u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${storePhone}
+
+*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+          try {
+            await whatsappQueueWorker.enqueue(formattedPhone, pickupMsg, "refill_collection_confirmation", cleanName);
+          } catch (waErr) {
+            console.warn("[CustomerPortal] WhatsApp confirmation warning:", waErr);
+          }
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), source: "customer_portal", store_id: targetStoreId });
+          eventService.broadcast("refill_updated", { at: Date.now(), source: "customer_portal", store_id: targetStoreId });
+        } catch (_) {
+        }
+        res.status(201).json({
+          success: true,
+          message: "Refill collection order placed successfully",
+          store_id: targetStoreId,
+          store_name: storeName,
+          orders: createdOrders,
+          customer: { name: cleanName, phone: cleanPhone }
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Refill order error:", err);
+        res.status(500).json({ error: "Failed to place refill order: " + (err.message || "Unknown error") });
+      }
+    });
+    customerPortal_default = router25;
+  }
+});
+
+// src/services/storeSyncService.ts
+var StoreSyncService, storeSyncService;
+var init_storeSyncService = __esm({
+  "src/services/storeSyncService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    StoreSyncService = class {
+      /**
+       * Queue a local record change into the store_sync_ledger for offline resilience
+       */
+      async queueSyncItem(storeId, entityType, entityId, action, payload, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const payloadStr = typeof payload === "string" ? payload : JSON.stringify(payload);
+        const idStr = String(entityId);
+        const result = await db2.run(
+          `INSERT INTO store_sync_ledger (store_id, entity_type, entity_id, action, payload, sync_status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`,
+          [storeId, entityType, idStr, action, payloadStr]
+        );
+        return result.lastID;
+      }
+      /**
+       * Get list of pending sync items for a given store
+       */
+      async getPendingSyncItems(storeId, limit = 100, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT * FROM store_sync_ledger 
+       WHERE store_id = ? AND sync_status = 'pending'
+       ORDER BY id ASC
+       LIMIT ?`,
+          [storeId, limit]
+        ).catch(() => []);
+        return rows;
+      }
+      /**
+       * Mark sync items as successfully synced
+       */
+      async markItemsSynced(itemIds, dbInstance) {
+        if (!itemIds || itemIds.length === 0) return;
+        const db2 = dbInstance || await dbManager.getConnection();
+        const placeholders = itemIds.map(() => "?").join(",");
+        await db2.run(
+          `UPDATE store_sync_ledger
+       SET sync_status = 'synced', synced_at = CURRENT_TIMESTAMP
+       WHERE id IN (${placeholders})`,
+          itemIds
+        );
+      }
+      /**
+       * Push pending offline records to central endpoint / mock central handler
+       */
+      async pushPendingItems(storeId, limit = 100, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const items = await this.getPendingSyncItems(storeId, limit, db2);
+        if (items.length === 0) {
+          return { pushedCount: 0, syncedIds: [], failedCount: 0 };
+        }
+        const syncedIds = [];
+        let failedCount = 0;
+        for (const item of items) {
+          try {
+            syncedIds.push(item.id);
+          } catch (err) {
+            failedCount++;
+            await db2.run(
+              `UPDATE store_sync_ledger 
+           SET sync_status = 'failed', retry_count = retry_count + 1, error_message = ?
+           WHERE id = ?`,
+              [err.message || "Sync push failed", item.id]
+            );
+          }
+        }
+        if (syncedIds.length > 0) {
+          await this.markItemsSynced(syncedIds, db2);
+        }
+        return {
+          pushedCount: syncedIds.length,
+          syncedIds,
+          failedCount
+        };
+      }
+      /**
+       * Process incoming remote batch with conflict detection (no blind overwrites)
+       */
+      async processIncomingSyncBatch(storeId, incomingItems, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        let appliedCount = 0;
+        let conflictsCount = 0;
+        const conflictDetails = [];
+        for (const item of incomingItems) {
+          const { entity_type, entity_id, action, payload, remote_updated_at } = item;
+          if (entity_type === "special_orders" || entity_type === "order") {
+            const localOrder = await db2.get("SELECT * FROM special_orders WHERE id = ? AND store_id = ?", [entity_id, storeId]);
+            if (localOrder && localOrder.updated_at && remote_updated_at) {
+              const localTime = new Date(localOrder.updated_at).getTime();
+              const remoteTime = new Date(remote_updated_at).getTime();
+              if (localTime > remoteTime && localOrder.status !== payload.status) {
+                conflictsCount++;
+                conflictDetails.push({
+                  entity_id,
+                  reason: "Local record has newer changes than remote sync payload",
+                  local_state: localOrder,
+                  remote_state: payload
+                });
+                await db2.run(
+                  `INSERT INTO store_sync_ledger (store_id, entity_type, entity_id, action, payload, sync_status, error_message, created_at)
+               VALUES (?, ?, ?, 'update', ?, 'conflict', 'Local timestamp newer than remote timestamp', CURRENT_TIMESTAMP)`,
+                  [storeId, entity_type, String(entity_id), JSON.stringify(payload)]
+                );
+                continue;
+              }
+            }
+            if (action === "insert" && !localOrder) {
+              await db2.run(
+                `INSERT INTO special_orders (
+              id, store_id, product, requester, phone, qty, status, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  entity_id,
+                  storeId,
+                  payload.product || payload.medicine_name,
+                  payload.requester || "",
+                  payload.phone || "",
+                  payload.qty || 1,
+                  payload.status || "Pending",
+                  payload.notes || "",
+                  payload.created_at || (/* @__PURE__ */ new Date()).toISOString(),
+                  payload.updated_at || (/* @__PURE__ */ new Date()).toISOString()
+                ]
+              ).catch(async () => {
+                await db2.run(
+                  `UPDATE special_orders 
+               SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND store_id = ?`,
+                  [payload.status || "Pending", payload.notes || "", entity_id, storeId]
+                );
+              });
+              appliedCount++;
+            } else if (action === "update" && localOrder) {
+              await db2.run(
+                `UPDATE special_orders 
+             SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND store_id = ?`,
+                [payload.status || localOrder.status, payload.notes || localOrder.notes, entity_id, storeId]
+              );
+              appliedCount++;
+            }
+          }
+        }
+        try {
+          eventService.broadcast("sync_completed", { at: Date.now(), storeId, appliedCount, conflictsCount });
+        } catch (_) {
+        }
+        return {
+          appliedCount,
+          conflictsCount,
+          conflictDetails
+        };
+      }
+      /**
+       * Get sync status overview
+       */
+      async getSyncStatus(storeId, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const counts = await db2.all(
+          `SELECT sync_status, COUNT(*) as c 
+       FROM store_sync_ledger 
+       WHERE store_id = ?
+       GROUP BY sync_status`,
+          [storeId]
+        ).catch(() => []);
+        let pending_count = 0;
+        let synced_count = 0;
+        let conflict_count = 0;
+        for (const row of counts) {
+          if (row.sync_status === "pending") pending_count = row.c;
+          else if (row.sync_status === "synced") synced_count = row.c;
+          else if (row.sync_status === "conflict") conflict_count = row.c;
+        }
+        const lastSyncedRow = await db2.get(
+          `SELECT synced_at FROM store_sync_ledger 
+       WHERE store_id = ? AND sync_status = 'synced' AND synced_at IS NOT NULL
+       ORDER BY synced_at DESC LIMIT 1`,
+          [storeId]
+        ).catch(() => null);
+        return {
+          store_id: storeId,
+          pending_count,
+          synced_count,
+          conflict_count,
+          last_synced_at: lastSyncedRow?.synced_at || null
+        };
+      }
+    };
+    storeSyncService = new StoreSyncService();
+  }
+});
+
+// src/routes/sync.ts
+var sync_exports = {};
+__export(sync_exports, {
+  default: () => sync_default
+});
+var import_express26, router26, sync_default;
+var init_sync = __esm({
+  "src/routes/sync.ts"() {
+    "use strict";
+    import_express26 = __toESM(require("express"), 1);
+    init_connection();
+    init_storeSyncService();
+    init_storeContextService();
+    init_eventService();
+    router26 = import_express26.default.Router();
+    router26.get("/status", async (req, res) => {
+      try {
+        const storeId = resolveStoreId(req);
+        const status = await storeSyncService.getSyncStatus(storeId);
+        res.json(status);
+      } catch (err) {
+        console.error("[SyncRoute] Get status error:", err);
+        res.status(500).json({ error: "Failed to get sync status" });
+      }
+    });
+    router26.post("/push", async (req, res) => {
+      try {
+        const storeId = resolveStoreId(req);
+        const limit = parseInt(req.body.limit || "100", 10) || 100;
+        const result = await storeSyncService.pushPendingItems(storeId, limit);
+        res.json({ success: true, store_id: storeId, ...result });
+      } catch (err) {
+        console.error("[SyncRoute] Push sync error:", err);
+        res.status(500).json({ error: "Failed to push sync items" });
+      }
+    });
+    router26.post("/pull", async (req, res) => {
+      try {
+        const storeId = resolveStoreId(req);
+        const { items = [] } = req.body;
+        if (!Array.isArray(items)) {
+          return res.status(400).json({ error: "Items array is required" });
+        }
+        const result = await storeSyncService.processIncomingSyncBatch(storeId, items);
+        res.json({ success: true, store_id: storeId, ...result });
+      } catch (err) {
+        console.error("[SyncRoute] Pull sync error:", err);
+        res.status(500).json({ error: "Failed to apply pull sync" });
+      }
+    });
+    router26.post("/resolve-conflict", async (req, res) => {
+      try {
+        const storeId = resolveStoreId(req);
+        const { conflict_id, resolution = "keep_local" } = req.body;
+        if (!conflict_id) {
+          return res.status(400).json({ error: "conflict_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const ledgerItem = await db2.get(
+          "SELECT * FROM store_sync_ledger WHERE id = ? AND store_id = ?",
+          [conflict_id, storeId]
+        );
+        if (!ledgerItem) {
+          return res.status(404).json({ error: "Conflict item not found" });
+        }
+        if (resolution === "keep_remote") {
+          const payload = JSON.parse(ledgerItem.payload);
+          if (ledgerItem.entity_type === "special_orders" || ledgerItem.entity_type === "order") {
+            await db2.run(
+              `UPDATE special_orders 
+           SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND store_id = ?`,
+              [payload.status, payload.notes || "", ledgerItem.entity_id, storeId]
+            );
+          }
+        }
+        await db2.run(
+          `UPDATE store_sync_ledger 
+       SET sync_status = 'synced', synced_at = CURRENT_TIMESTAMP, error_message = ?
+       WHERE id = ?`,
+          [`Resolved manually: ${resolution}`, conflict_id]
+        );
+        try {
+          eventService.broadcast("sync_completed", { at: Date.now(), storeId, resolvedConflict: conflict_id });
+        } catch (_) {
+        }
+        res.json({ success: true, message: `Conflict #${conflict_id} resolved with ${resolution}` });
+      } catch (err) {
+        console.error("[SyncRoute] Resolve conflict error:", err);
+        res.status(500).json({ error: "Failed to resolve conflict" });
+      }
+    });
+    sync_default = router26;
+  }
+});
+
 // src/services/activityLogger.ts
 var import_events2, ActivityLogger, activityLogger;
 var init_activityLogger = __esm({
@@ -48578,11 +50510,11 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express23, import_path47, import_fs42, import_pdfkit5, router23, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express27, import_path47, import_fs42, import_pdfkit5, router27, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
-    import_express23 = __toESM(require("express"), 1);
+    import_express27 = __toESM(require("express"), 1);
     init_inventoryActive();
     init_connection();
     init_productNameFilterService();
@@ -48599,7 +50531,7 @@ var init_sales = __esm({
     init_medicineSalesMetricsService();
     init_refillService();
     init_orderNameMatcher();
-    router23 = import_express23.default.Router();
+    router27 = import_express27.default.Router();
     normalizeNumericSearch = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -48697,7 +50629,7 @@ var init_sales = __esm({
         itemTaxBreakdowns
       };
     };
-    router23.get("/next-invoice", async (req, res) => {
+    router27.get("/next-invoice", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -48714,7 +50646,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.post("/", async (req, res) => {
+    router27.post("/", async (req, res) => {
       let db2;
       try {
         const verification = await verificationService.verifyPOSBill(req.body);
@@ -49292,7 +51224,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router23.post("/hold", async (req, res) => {
+    router27.post("/hold", async (req, res) => {
       let db2;
       try {
         if (!req.body) {
@@ -49417,7 +51349,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to hold bill" });
       }
     });
-    router23.get("/recommend-quantity", async (req, res) => {
+    router27.get("/recommend-quantity", async (req, res) => {
       const medicineName = req.query.medicineName;
       if (!medicineName) {
         return res.status(400).json({ error: "medicineName query parameter required" });
@@ -49470,7 +51402,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router23.get("/recommend-quantity/batch", async (req, res) => {
+    router27.get("/recommend-quantity/batch", async (req, res) => {
       const namesParam = req.query.medicineNames;
       if (!namesParam) {
         return res.status(400).json({ error: "medicineNames query parameter required" });
@@ -49580,7 +51512,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router23.get("/list", async (req, res) => {
+    router27.get("/list", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -49706,7 +51638,7 @@ var init_sales = __esm({
         return res.status(500).json({ error: "Internal server error", details: err.message });
       }
     });
-    router23.get("/search-medicine", async (req, res) => {
+    router27.get("/search-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -50104,7 +52036,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.get("/suggest-medicine", async (req, res) => {
+    router27.get("/suggest-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -50135,7 +52067,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.post("/queue-from-pos", async (req, res) => {
+    router27.post("/queue-from-pos", async (req, res) => {
       const { medicine_id } = req.body;
       if (!medicine_id) {
         return res.status(400).json({ error: "medicine_id is required" });
@@ -50159,7 +52091,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.get("/universal-search", async (req, res) => {
+    router27.get("/universal-search", async (req, res) => {
       const query = req.query.q;
       if (!query) {
         return res.json([]);
@@ -50181,7 +52113,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.get("/hold", async (req, res) => {
+    router27.get("/hold", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -50192,7 +52124,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to retrieve held bills" });
       }
     });
-    router23.post("/staged", async (req, res) => {
+    router27.post("/staged", async (req, res) => {
       try {
         const { patient_name, patient_phone, discount = 0, items } = req.body;
         if (!patient_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -50237,7 +52169,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to create staged sale" });
       }
     });
-    router23.get("/staged", async (req, res) => {
+    router27.get("/staged", async (req, res) => {
       const { all } = req.query;
       let db2;
       try {
@@ -50318,9 +52250,9 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to generate sale invoice barcode: " + error.message });
       }
     };
-    router23.get("/invoice-barcode", handleInvoiceBarcode);
-    router23.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
-    router23.get("/:id", async (req, res, next) => {
+    router27.get("/invoice-barcode", handleInvoiceBarcode);
+    router27.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
+    router27.get("/:id", async (req, res, next) => {
       const rawId = req.params.id;
       if (!/^\d+$/.test(rawId)) {
         return next();
@@ -50367,7 +52299,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error", details: error.message });
       }
     });
-    router23.put("/:id", async (req, res) => {
+    router27.put("/:id", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -50556,7 +52488,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router23.delete("/:id", async (req, res) => {
+    router27.delete("/:id", async (req, res) => {
       try {
         const { id } = req.params;
         let notFound = false;
@@ -50630,7 +52562,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router23.delete("/hold/:id", async (req, res) => {
+    router27.delete("/hold/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -50685,7 +52617,7 @@ var init_sales = __esm({
     });
     stagedDeviceColumnsReady = false;
     syncDedupeTableReady = false;
-    router23.post("/sync", async (req, res) => {
+    router27.post("/sync", async (req, res) => {
       let db2;
       try {
         const { sales = [], deviceName = "", device_uuid = "" } = req.body;
@@ -50734,7 +52666,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline sales" });
       }
     });
-    router23.post("/staged/:id/approve", async (req, res) => {
+    router27.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, patient_name, patient_phone, discount = 0 } = req.body;
       let db2;
@@ -50829,7 +52761,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged sale" });
       }
     });
-    router23.post("/staged/:id/reject", async (req, res) => {
+    router27.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -50843,7 +52775,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged sale" });
       }
     });
-    router23.post("/staged/:id/consume", async (req, res) => {
+    router27.post("/staged/:id/consume", async (req, res) => {
       const { id } = req.params;
       const invoiceNo = typeof req.body?.invoice_no === "string" ? req.body.invoice_no.slice(0, 64) : null;
       let db2;
@@ -50862,7 +52794,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to consume staged sale" });
       }
     });
-    router23.get("/credit-dues", async (req, res) => {
+    router27.get("/credit-dues", async (req, res) => {
       const customerId = Number(req.query.customer_id) || 0;
       const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
       const refillId = Number(req.query.refill_id) || 0;
@@ -50904,7 +52836,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to load credit dues" });
       }
     });
-    router23.get("/reorder-suggestions", async (_req, res) => {
+    router27.get("/reorder-suggestions", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { ensureMedicineSalesMetricsSchema: ensureMedicineSalesMetricsSchema2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
@@ -50989,7 +52921,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch reorder suggestions" });
       }
     });
-    router23.post("/reorder-suggestions/snooze", async (req, res) => {
+    router27.post("/reorder-suggestions/snooze", async (req, res) => {
       try {
         const { medicineId, snoozeDays = 7, snoozeType = "7_days", reason = "" } = req.body;
         if (!medicineId) {
@@ -51012,7 +52944,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to snooze reorder suggestion" });
       }
     });
-    router23.post("/reorder-suggestions/unsnooze", async (req, res) => {
+    router27.post("/reorder-suggestions/unsnooze", async (req, res) => {
       try {
         const { medicineId } = req.body;
         if (!medicineId) {
@@ -51026,7 +52958,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to unsnooze reorder suggestion" });
       }
     });
-    router23.get("/reorder-suggestions/snoozed", async (_req, res) => {
+    router27.get("/reorder-suggestions/snoozed", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -51081,7 +53013,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch snoozed reorders" });
       }
     });
-    router23.get("/medicine-refill-info/:medicineId", async (req, res) => {
+    router27.get("/medicine-refill-info/:medicineId", async (req, res) => {
       const { medicineId } = req.params;
       const medId = parseInt(medicineId, 10);
       if (isNaN(medId) || medId <= 0) {
@@ -51171,7 +53103,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get medicine refill info" });
       }
     });
-    router23.get("/patient-refill-medicines", async (req, res) => {
+    router27.get("/patient-refill-medicines", async (req, res) => {
       const { customerId, phone, name } = req.query;
       if (!customerId && !phone && !name) {
         return res.status(400).json({ error: "customerId, phone, or name is required" });
@@ -51343,7 +53275,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get patient refill medicines" });
       }
     });
-    router23.post("/prescription/upload", async (req, res) => {
+    router27.post("/prescription/upload", async (req, res) => {
       try {
         const { image, fileName } = req.body;
         if (!image) {
@@ -51365,7 +53297,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to upload prescription" });
       }
     });
-    router23.post("/:id/prescription", async (req, res) => {
+    router27.post("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       const { prescription_image } = req.body;
       if (!prescription_image) {
@@ -51383,7 +53315,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to attach prescription" });
       }
     });
-    router23.get("/:id/prescription", async (req, res) => {
+    router27.get("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -51406,7 +53338,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch prescription" });
       }
     });
-    sales_default = router23;
+    sales_default = router27;
   }
 });
 
@@ -51415,19 +53347,19 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express24, import_path48, import_url40, __filename38, __dirname38, DB_PATH24, router24, dashboard_default;
+var import_express28, import_path48, import_url40, __filename38, __dirname38, DB_PATH24, router28, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
-    import_express24 = __toESM(require("express"), 1);
+    import_express28 = __toESM(require("express"), 1);
     init_connection();
     import_path48 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
     __dirname38 = import_path48.default.dirname(__filename38);
     DB_PATH24 = process.env.DB_PATH || import_path48.default.resolve(__dirname38, "..", "..", "data", "app.db");
-    router24 = import_express24.default.Router();
-    router24.get("/", async (_req, res) => {
+    router28 = import_express28.default.Router();
+    router28.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const [salesTodayRow, lowStockCount, pendingTasksCount, alerts, storageLocationsCount, pendingSpecialOrdersCount, activeDeliveryBoysCount, purchasesTodayRow, recentSales, recentCommunications] = await Promise.all([
@@ -51478,7 +53410,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router24.delete("/alerts/:id", async (req, res) => {
+    router28.delete("/alerts/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -51489,7 +53421,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    dashboard_default = router24;
+    dashboard_default = router28;
   }
 });
 
@@ -52500,11 +54432,11 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express25, import_path51, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs45, __filename39, __dirname39, DB_PATH25, router25, upload2, purchases_default;
+var import_express29, import_path51, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs45, __filename39, __dirname39, DB_PATH25, router29, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
-    import_express25 = __toESM(require("express"), 1);
+    import_express29 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
     import_path51 = __toESM(require("path"), 1);
@@ -52531,9 +54463,9 @@ var init_purchases = __esm({
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
     __dirname39 = import_path51.default.dirname(__filename39);
     DB_PATH25 = process.env.DB_PATH || import_path51.default.resolve(__dirname39, "..", "..", "data", "app.db");
-    router25 = import_express25.default.Router();
+    router29 = import_express29.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
-    router25.get("/summary", async (_req, res) => {
+    router29.get("/summary", async (_req, res) => {
       try {
         const cached = await getSummaryCache("purchase_summary");
         if (cached) {
@@ -52546,7 +54478,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/upload", upload2.single("file"), async (req, res) => {
+    router29.post("/upload", upload2.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -52587,7 +54519,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to process invoice file: " + err.message });
       }
     });
-    router25.get("/", async (req, res) => {
+    router29.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const months = parseInt(req.query.months) || 0;
@@ -52681,7 +54613,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/earliest-date", async (req, res) => {
+    router29.get("/earliest-date", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(`
@@ -52697,7 +54629,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/manual", async (req, res) => {
+    router29.post("/manual", async (req, res) => {
       const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
       let db2;
       try {
@@ -53079,7 +55011,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message, stack: error.stack });
       }
     });
-    router25.get("/items/all", async (req, res) => {
+    router29.get("/items/all", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limit = parseInt(req.query.limit) || 1e3;
@@ -53112,10 +55044,10 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.put("/:id/full", async (req, res) => {
+    router29.put("/:id/full", async (req, res) => {
       return handleUpdatePurchaseFull(req, res);
     });
-    router25.put("/:id", async (req, res) => {
+    router29.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { distributor, invoice_no, total_amount, date } = req.body;
       try {
@@ -53139,7 +55071,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.delete("/:id", async (req, res) => {
+    router29.delete("/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -53179,7 +55111,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/bulk-action", async (req, res) => {
+    router29.post("/bulk-action", async (req, res) => {
       const { action, ids = [] } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -53193,7 +55125,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/last-purchase", async (req, res) => {
+    router29.get("/last-purchase", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -53272,7 +55204,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/medicine-batches", async (req, res) => {
+    router29.get("/medicine-batches", async (req, res) => {
       let db2;
       try {
         const medicineIdParam = req.query.medicine_id;
@@ -53420,7 +55352,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/price-history", async (req, res) => {
+    router29.get("/price-history", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -53503,7 +55435,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/batch-last-purchase", async (req, res) => {
+    router29.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
         const { medicines, distributor_id } = req.body;
@@ -53571,7 +55503,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/history-prefill", async (req, res) => {
+    router29.get("/history-prefill", async (req, res) => {
       let db2;
       try {
         const name = String(req.query.name || "").trim();
@@ -53654,7 +55586,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/:id/pdf", async (req, res) => {
+    router29.get("/:id/pdf", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -53773,7 +55705,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/reconciliation", async (req, res) => {
+    router29.get("/reconciliation", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const aliasRows = await db2.all(
@@ -54047,7 +55979,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/ignored-words", async (req, res) => {
+    router29.get("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT id, word, source, created_at FROM permanently_ignored_words ORDER BY created_at DESC");
@@ -54057,7 +55989,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/ignored-words", async (req, res) => {
+    router29.post("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { word, source = "recon" } = req.body;
@@ -54076,7 +56008,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.delete("/ignored-words/:id", async (req, res) => {
+    router29.delete("/ignored-words/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = Number(req.params.id);
@@ -54090,7 +56022,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/reconciliation/learn-mapping", async (req, res) => {
+    router29.post("/reconciliation/learn-mapping", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { distributor_id, distributor_name, mapping_config } = req.body;
@@ -54109,7 +56041,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to save distributor mapping template" });
       }
     });
-    router25.post("/reconciliation/resolve", async (req, res) => {
+    router29.post("/reconciliation/resolve", async (req, res) => {
       const { email_uid } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -54131,7 +56063,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.get("/reconciliation/preview/:email_uid", async (req, res) => {
+    router29.get("/reconciliation/preview/:email_uid", async (req, res) => {
       try {
         const { email_uid } = req.params;
         const db2 = await dbManager.getConnection();
@@ -54214,7 +56146,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router25.post("/reconciliation/reissue", async (req, res) => {
+    router29.post("/reconciliation/reissue", async (req, res) => {
       const { email_uid, invoice_date: bodyInvoiceDate } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -54481,7 +56413,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router25.post("/match-items", async (req, res) => {
+    router29.post("/match-items", async (req, res) => {
       try {
         const { names, distributor_id } = req.body || {};
         if (!Array.isArray(names) || names.length === 0) {
@@ -54518,7 +56450,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "match-items failed" });
       }
     });
-    router25.get("/staged", async (req, res) => {
+    router29.get("/staged", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -54534,7 +56466,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to retrieve staged purchases" });
       }
     });
-    router25.get("/reconciliation/bounced", async (req, res) => {
+    router29.get("/reconciliation/bounced", async (req, res) => {
       try {
         const { bouncedAlertService: bouncedAlertService2 } = await Promise.resolve().then(() => (init_bouncedAlertService(), bouncedAlertService_exports));
         const sent = await bouncedAlertService2.checkAndSendBouncedProductsAlert();
@@ -54544,7 +56476,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router25.get("/bill-barcode/:purchaseId", async (req, res) => {
+    router29.get("/bill-barcode/:purchaseId", async (req, res) => {
       const purchaseId = Number(req.params.purchaseId);
       if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
         return res.status(400).json({ error: "Valid purchase id is required" });
@@ -54618,7 +56550,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to generate purchase bill barcode: " + message });
       }
     });
-    router25.get("/:id", async (req, res) => {
+    router29.get("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -54645,7 +56577,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router25.post("/sync", async (req, res) => {
+    router29.post("/sync", async (req, res) => {
       let db2;
       try {
         const { purchases = [] } = req.body;
@@ -54686,7 +56618,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline purchases" });
       }
     });
-    router25.post("/staged/:id/approve", async (req, res) => {
+    router29.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, distributor_name, invoice_no, date, total_amount } = req.body;
       let db2;
@@ -54840,7 +56772,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged purchase" });
       }
     });
-    router25.post("/staged/:id/reject", async (req, res) => {
+    router29.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -54854,7 +56786,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged purchase" });
       }
     });
-    router25.post("/scan-bill", upload2.single("file"), async (req, res) => {
+    router29.post("/scan-bill", upload2.single("file"), async (req, res) => {
       try {
         const { invoiceVisionService: invoiceVisionService2 } = await Promise.resolve().then(() => (init_invoiceVisionService(), invoiceVisionService_exports));
         let buffer = null;
@@ -54880,7 +56812,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to process purchase bill image" });
       }
     });
-    purchases_default = router25;
+    purchases_default = router29;
   }
 });
 
@@ -54889,15 +56821,15 @@ var sellPrice_exports = {};
 __export(sellPrice_exports, {
   default: () => sellPrice_default
 });
-var import_express26, router26, sellPrice_default;
+var import_express30, router30, sellPrice_default;
 var init_sellPrice = __esm({
   "src/routes/sellPrice.ts"() {
     "use strict";
-    import_express26 = __toESM(require("express"), 1);
+    import_express30 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
-    router26 = import_express26.default.Router();
-    router26.post("/bulk-update", async (req, res) => {
+    router30 = import_express30.default.Router();
+    router30.post("/bulk-update", async (req, res) => {
       let db2;
       try {
         const items = Array.isArray(req.body) ? req.body : req.body?.items || [];
@@ -54946,7 +56878,7 @@ var init_sellPrice = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    sellPrice_default = router26;
+    sellPrice_default = router30;
   }
 });
 
@@ -54977,11 +56909,11 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express27, import_path52, import_fs46, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router27, returns_default;
+var import_express31, import_path52, import_fs46, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router31, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
-    import_express27 = __toESM(require("express"), 1);
+    import_express31 = __toESM(require("express"), 1);
     init_connection();
     import_path52 = __toESM(require("path"), 1);
     import_fs46 = __toESM(require("fs"), 1);
@@ -54995,8 +56927,8 @@ var init_returns = __esm({
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
     __dirname40 = import_path52.default.dirname(__filename40);
     DB_PATH26 = process.env.DB_PATH || import_path52.default.resolve(__dirname40, "..", "..", "data", "app.db");
-    router27 = import_express27.default.Router();
-    router27.use((req, res, next) => {
+    router31 = import_express31.default.Router();
+    router31.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -55014,7 +56946,7 @@ var init_returns = __esm({
       }
       next();
     });
-    router27.get("/", async (req, res) => {
+    router31.get("/", async (req, res) => {
       let db2;
       try {
         const { search, date_from, date_to, min_amount, max_amount } = req.query;
@@ -55062,7 +56994,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/", async (req, res) => {
+    router31.post("/", async (req, res) => {
       let db2;
       try {
         const { return_no, original_invoice_id, type, total_amount, distributor_id, is_expiry, loss_percentage, return_invoice_id, return_sub_type, return_date_time } = req.body;
@@ -55096,7 +57028,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/near-expiry", async (req, res) => {
+    router31.get("/near-expiry", async (req, res) => {
       let db2;
       try {
         const monthsStr = req.query.months || "6";
@@ -55155,7 +57087,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/financial-note", async (req, res) => {
+    router31.post("/financial-note", async (req, res) => {
       let pdfDoc;
       let stream;
       try {
@@ -55199,7 +57131,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/ai-camera/process", async (req, res) => {
+    router31.post("/ai-camera/process", async (req, res) => {
       try {
         if (!req.body || !req.body.image) {
           return res.status(400).json({ error: "Image data is required" });
@@ -55223,7 +57155,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error during OCR processing" });
       }
     });
-    router27.get("/lookup-purchases", async (req, res) => {
+    router31.get("/lookup-purchases", async (req, res) => {
       let db2;
       try {
         const { name, batch } = req.query;
@@ -55278,7 +57210,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/process-returns", async (req, res) => {
+    router31.post("/process-returns", async (req, res) => {
       let db2;
       try {
         const { items, loss_percentage } = req.body;
@@ -55389,7 +57321,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/export-pdf-report", async (req, res) => {
+    router31.post("/export-pdf-report", async (req, res) => {
       try {
         const { items } = req.body;
         if (!items || !Array.isArray(items) || items.length === 0) {
@@ -55461,7 +57393,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/:id/items", async (req, res) => {
+    router31.get("/:id/items", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55493,7 +57425,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/:id/resolve-missing", async (req, res) => {
+    router31.get("/:id/resolve-missing", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55579,7 +57511,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.put("/:id", async (req, res) => {
+    router31.put("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55606,7 +57538,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.delete("/:id", async (req, res) => {
+    router31.delete("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55622,7 +57554,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/expiry-reviews", async (req, res) => {
+    router31.get("/expiry-reviews", async (req, res) => {
       let db2;
       try {
         const { status, search, date_from, date_to } = req.query;
@@ -55685,7 +57617,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/expiry-reviews/scan", async (req, res) => {
+    router31.post("/expiry-reviews/scan", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { scanAndCreateExpiryReviews: scanAndCreateExpiryReviews2 } = await Promise.resolve().then(() => (init_returnsService(), returnsService_exports));
@@ -55700,7 +57632,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to run expiry scan" });
       }
     });
-    router27.post("/expiry-reviews/:id/approve", async (req, res) => {
+    router31.post("/expiry-reviews/:id/approve", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55840,7 +57772,7 @@ var init_returns = __esm({
         res.status(500).json({ error: err.message || "Failed to approve return review" });
       }
     });
-    router27.post("/expiry-reviews/:id/reject", async (req, res) => {
+    router31.post("/expiry-reviews/:id/reject", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55879,7 +57811,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to reject expiry review" });
       }
     });
-    router27.post("/expiry-reviews/bulk-approve", async (req, res) => {
+    router31.post("/expiry-reviews/bulk-approve", async (req, res) => {
       let db2;
       try {
         const { ids, loss_percentage } = req.body;
@@ -56012,7 +57944,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to bulk approve expiry reviews" });
       }
     });
-    router27.get("/expiry-reviews/audit-history", async (req, res) => {
+    router31.get("/expiry-reviews/audit-history", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const logs = await db2.all(`
@@ -56027,7 +57959,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to fetch audit history" });
       }
     });
-    returns_default = router27;
+    returns_default = router31;
   }
 });
 
@@ -56048,17 +57980,17 @@ var customerReturns_exports = {};
 __export(customerReturns_exports, {
   default: () => customerReturns_default
 });
-var import_express28, router28, broadcastCustomerReturn, customerReturns_default;
+var import_express32, router32, broadcastCustomerReturn, customerReturns_default;
 var init_customerReturns = __esm({
   "src/routes/customerReturns.ts"() {
     "use strict";
-    import_express28 = __toESM(require("express"), 1);
+    import_express32 = __toESM(require("express"), 1);
     init_connection();
     init_asyncHandler();
     init_inventoryCache();
     init_stockRebuild();
     init_eventService();
-    router28 = import_express28.default.Router();
+    router32 = import_express32.default.Router();
     broadcastCustomerReturn = () => {
       try {
         eventService.broadcast("return_created", { at: Date.now(), type: "customer_return" });
@@ -56066,7 +57998,7 @@ var init_customerReturns = __esm({
       } catch (_) {
       }
     };
-    router28.get("/search-invoice", asyncHandler(async (req, res) => {
+    router32.get("/search-invoice", asyncHandler(async (req, res) => {
       const { invoice_no } = req.query;
       if (!invoice_no) {
         return res.status(400).json({ error: "invoice_no required" });
@@ -56100,7 +58032,7 @@ var init_customerReturns = __esm({
       await dbManager.close();
       res.json({ invoice, items, previousReturns });
     }));
-    router28.post("/", asyncHandler(async (req, res) => {
+    router32.post("/", asyncHandler(async (req, res) => {
       const { original_invoice_id, return_items, reason } = req.body;
       if (!original_invoice_id || !Array.isArray(return_items) || return_items.length === 0) {
         return res.status(400).json({ error: "Invalid return data" });
@@ -56226,7 +58158,7 @@ var init_customerReturns = __esm({
       broadcastCustomerReturn();
       res.json({ success: true, return_no: result.returnNo, total_refund: result.totalRefund });
     }));
-    router28.get("/history", asyncHandler(async (req, res) => {
+    router32.get("/history", asyncHandler(async (req, res) => {
       const db2 = await dbManager.getConnection();
       const start = req.query.start;
       const end = req.query.end;
@@ -56306,7 +58238,7 @@ var init_customerReturns = __esm({
         res.json(rows);
       }
     }));
-    customerReturns_default = router28;
+    customerReturns_default = router32;
   }
 });
 
@@ -56370,11 +58302,11 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   });
   return true;
 }
-var import_express29, import_path53, import_fs47, import_url43, __filename41, __dirname41, DB_PATH27, router29, broadcastOrdersChanged, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express33, import_path53, import_fs47, import_url43, __filename41, __dirname41, DB_PATH27, router33, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
-    import_express29 = __toESM(require("express"), 1);
+    import_express33 = __toESM(require("express"), 1);
     init_connection();
     import_path53 = __toESM(require("path"), 1);
     import_fs47 = __toESM(require("fs"), 1);
@@ -56385,26 +58317,38 @@ var init_orders = __esm({
     init_eventService();
     init_config();
     init_nameFormatter();
+    init_storeContextService();
+    init_returnWindowService();
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
     __dirname41 = import_path53.default.dirname(__filename41);
     DB_PATH27 = process.env.DB_PATH || import_path53.default.resolve(__dirname41, "..", "..", "data", "app.db");
-    router29 = import_express29.default.Router();
-    broadcastOrdersChanged = () => {
+    router33 = import_express33.default.Router();
+    broadcastOrdersChanged2 = () => {
       try {
         eventService.broadcast("order_updated", { at: Date.now() });
       } catch (_) {
       }
     };
     ordersTableInitialized = false;
-    router29.get("/", async (_req, res) => {
+    router33.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
+        const storeId = resolveStoreId(req);
+        const allStores = req.query.all_stores === "true";
         let orders;
         try {
-          orders = await db2.all("SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000");
+          if (allStores) {
+            orders = await db2.all("SELECT * FROM special_orders ORDER BY date DESC LIMIT 1000");
+          } else {
+            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY date DESC LIMIT 1000", [storeId]);
+          }
         } catch (_) {
-          orders = await db2.all("SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000");
+          if (allStores) {
+            orders = await db2.all("SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000");
+          } else {
+            orders = await db2.all("SELECT * FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000", [storeId]);
+          }
         }
         res.json(orders);
       } catch (err) {
@@ -56412,7 +58356,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/batch", async (req, res) => {
+    router33.post("/batch", async (req, res) => {
       const {
         items,
         requester,
@@ -56420,8 +58364,10 @@ var init_orders = __esm({
         priority = "Normal",
         status = "Pending",
         advance_payment = 0,
-        sendWhatsApp = false
+        sendWhatsApp = false,
+        store_id
       } = req.body;
+      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "At least one medicine item is required" });
       }
@@ -56444,10 +58390,11 @@ var init_orders = __esm({
             const initialStatus = item.status || status || "Pending";
             const result = await db2.run(
               `INSERT INTO special_orders (
-            product, requester, phone, qty, priority, status, date, notified,
+            store_id, product, requester, phone, qty, priority, status, date, notified,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
               [
+                targetStoreId,
                 medName,
                 cleanReqName,
                 cleanPhone,
@@ -56509,14 +58456,14 @@ var init_orders = __esm({
             console.error("Failed to queue special order confirmation WhatsApp:", waErr);
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: `Successfully logged ${insertedOrders.length} special request(s)`, orders: insertedOrders });
       } catch (err) {
         console.error("Batch create special orders error:", err);
         res.status(500).json({ error: "Failed to create special orders: " + (err.message || "Unknown error") });
       }
     });
-    router29.post("/", async (req, res) => {
+    router33.post("/", async (req, res) => {
       const {
         requester,
         phone,
@@ -56530,8 +58477,14 @@ var init_orders = __esm({
         pharmarack_mrp,
         pharmarack_mapped = 0,
         pharmarack_scheme,
-        advance_payment
+        advance_payment,
+        store_id,
+        customer_order_source = "in_store",
+        prescription_url,
+        product_image_url,
+        notes
       } = req.body;
+      const targetStoreId = store_id !== void 0 ? parseInt(String(store_id), 10) || 1 : resolveStoreId(req);
       const reqProduct = product || medicine_name;
       if (!requester || !reqProduct) {
         return res.status(400).json({ error: "Requester name and product name are required" });
@@ -56555,10 +58508,12 @@ var init_orders = __esm({
         const initialStatus = status || "Pending";
         const result = await db2.run(
           `INSERT INTO special_orders (
-        product, requester, phone, qty, priority, status, date, notified,
-        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        store_id, product, requester, phone, qty, priority, status, date, notified,
+        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
+        customer_order_source, prescription_url, product_image_url, notes, notification_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           [
+            targetStoreId,
             medName,
             requester.trim(),
             cleanPhone,
@@ -56572,7 +58527,11 @@ var init_orders = __esm({
             pharmarack_mrp !== void 0 ? pharmarack_mrp : null,
             pharmarack_mapped ? 1 : 0,
             pharmarack_scheme || null,
-            advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : 0
+            advance_payment !== void 0 && advance_payment !== null ? Number(advance_payment) : 0,
+            customer_order_source,
+            prescription_url || null,
+            product_image_url || null,
+            notes || null
           ]
         );
         if (Boolean(req.body.sendWhatsApp) && phone) {
@@ -56630,14 +58589,14 @@ var init_orders = __esm({
           } catch (_) {
           }
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: "Request logged successfully" });
       } catch (err) {
         console.error("Create order request error:", err);
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/:id/notify-arrival", async (req, res) => {
+    router33.post("/:id/notify-arrival", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -56656,7 +58615,7 @@ var init_orders = __esm({
           newCount += 1;
           await db2.run("UPDATE special_orders SET status = ?, notified = 1, notification_count = ? WHERE id = ?", ["Ready", newCount, id]);
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({
           success: true,
           whatsapp_queued: queued,
@@ -56668,7 +58627,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router29.post("/:id/resend-booking", async (req, res) => {
+    router33.post("/:id/resend-booking", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -56707,7 +58666,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router29.get("/uncollected-alerts", async (_req, res) => {
+    router33.get("/uncollected-alerts", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
@@ -56722,7 +58681,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.put("/:id", async (req, res) => {
+    router33.put("/:id", async (req, res) => {
       const { id } = req.params;
       const {
         status,
@@ -56797,7 +58756,7 @@ var init_orders = __esm({
           ).catch(() => {
           });
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount });
       } catch (err) {
         console.error("Update order error:", err);
@@ -56846,16 +58805,16 @@ var init_orders = __esm({
           ).catch(() => {
           });
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount });
       } catch (err) {
         console.error("Update order status error:", err);
         res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
       }
     };
-    router29.post("/:id/status", handleStatusUpdate);
-    router29.put("/:id/status", handleStatusUpdate);
-    router29.delete("/:id", async (req, res) => {
+    router33.post("/:id/status", handleStatusUpdate);
+    router33.put("/:id/status", handleStatusUpdate);
+    router33.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -56906,14 +58865,14 @@ var init_orders = __esm({
           [String(id), String(id)]
         ).catch(() => {
         });
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: "Order deleted successfully" });
       } catch (err) {
         console.error("Delete order error:", err);
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/convert-to-refill", async (req, res) => {
+    router33.post("/convert-to-refill", async (req, res) => {
       const { orderId, refillIntervalDays } = req.body;
       if (!orderId || !refillIntervalDays) {
         return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
@@ -56925,7 +58884,7 @@ var init_orders = __esm({
           Number(refillIntervalDays)
         );
         if (result.success) {
-          broadcastOrdersChanged();
+          broadcastOrdersChanged2();
           try {
             eventService.broadcast("refill_updated", { at: Date.now(), source: "convert-to-refill" });
           } catch (_) {
@@ -56939,7 +58898,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router29.post("/:id/fulfill", async (req, res) => {
+    router33.post("/:id/fulfill", async (req, res) => {
       const { id } = req.params;
       const { invoiceNo, grandTotal, sendWhatsApp } = req.body;
       try {
@@ -56967,14 +58926,53 @@ var init_orders = __esm({
           const msg = `Hi ${order.requester || "Customer"}, your special order for ${order.product} (Qty: ${order.qty}) has been successfully dispensed and delivered at ${medicalName}.${invText}${totalText} Thank you for visiting us!`;
           await whatsappQueueWorker.enqueue(formattedPhone, msg, "special_order_fulfilled", order.requester || "Customer");
         }
-        broadcastOrdersChanged();
+        broadcastOrdersChanged2();
         res.json({ success: true, message: "Special order marked as Fulfilled" });
       } catch (err) {
         console.error("Fulfill order error:", err);
         res.status(500).json({ error: "Failed to fulfill order: " + (err.message || "Unknown error") });
       }
     });
-    orders_default = router29;
+    router33.post("/:id/mark-delivered", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const returnStatus = await returnWindowService.markDelivered(orderId);
+        broadcastOrdersChanged2();
+        res.json({ success: true, message: "Order marked as delivered", return_status: returnStatus });
+      } catch (err) {
+        console.error("Mark order delivered error:", err);
+        res.status(500).json({ error: "Failed to mark order delivered: " + (err.message || "Unknown error") });
+      }
+    });
+    router33.post("/:id/return-override", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        const { override_by = "Pharmacist", reason = "Customer accommodation" } = req.body;
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const returnStatus = await returnWindowService.applyReturnOverride(orderId, { overrideBy: override_by, reason });
+        broadcastOrdersChanged2();
+        res.json({ success: true, message: "Return override applied successfully", return_status: returnStatus });
+      } catch (err) {
+        console.error("Return override error:", err);
+        res.status(500).json({ error: "Failed to apply return override: " + (err.message || "Unknown error") });
+      }
+    });
+    router33.get("/:id/return-status", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        const statusInfo = returnWindowService.evaluateOrderReturnStatus(order);
+        res.json(statusInfo);
+      } catch (err) {
+        console.error("Get return status error:", err);
+        res.status(500).json({ error: "Failed to evaluate return status" });
+      }
+    });
+    orders_default = router33;
   }
 });
 
@@ -56983,49 +58981,85 @@ var quickAssistant_exports = {};
 __export(quickAssistant_exports, {
   default: () => quickAssistant_default
 });
-var import_express30, router30, quickAssistant_default;
+var import_express34, router34, quickAssistant_default;
 var init_quickAssistant = __esm({
   "src/routes/quickAssistant.ts"() {
     "use strict";
-    import_express30 = __toESM(require("express"), 1);
+    import_express34 = __toESM(require("express"), 1);
     init_connection();
-    router30 = import_express30.default.Router();
-    router30.get("/", async (_req, res) => {
+    init_storeContextService();
+    router34 = import_express34.default.Router();
+    router34.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
-        const [todayOrders, overlapsPending, readyToNotify, overdue] = await Promise.all([
+        const storeId = resolveStoreId(req);
+        const allStores = req.query.all_stores === "true";
+        const storeClause = allStores ? "1=1" : "s.store_id = ?";
+        const storeParams = allStores ? [] : [storeId];
+        const [todayOrders, overlapsPending, readyToNotify, overdue, websiteOrders, returnRequests] = await Promise.all([
           db2.all(
-            `SELECT * FROM special_orders 
-         WHERE date(date) = date('now') OR date(created_at) = date('now')
-         ORDER BY id DESC`
+            `SELECT s.* FROM special_orders s
+         WHERE (date(s.date) = date('now') OR date(s.created_at) = date('now'))
+           AND ${storeClause}
+         ORDER BY s.id DESC`,
+            storeParams
           ).catch(() => []),
           db2.all(
-            `SELECT o.*, s.product, s.requester, s.phone 
+            `SELECT o.*, s.product, s.requester, s.phone, s.store_id
          FROM order_overlaps o
          JOIN special_orders s ON o.special_order_id = s.id
          WHERE o.overlap_status = 'detected'
-         ORDER BY o.id DESC`
+           AND ${storeClause}
+         ORDER BY o.id DESC`,
+            storeParams
           ).catch(() => []),
           db2.all(
-            `SELECT * FROM special_orders 
-         WHERE status IN ('ARRIVED', 'Ready', 'POTENTIAL_ARRIVAL') AND notified = 0
-         ORDER BY id DESC`
+            `SELECT s.* FROM special_orders s
+         WHERE s.status IN ('ARRIVED', 'Ready', 'POTENTIAL_ARRIVAL') AND s.notified = 0
+           AND ${storeClause}
+         ORDER BY s.id DESC`,
+            storeParams
           ).catch(() => []),
           db2.all(
-            `SELECT * FROM special_orders 
-         WHERE status IN ('CREATED', 'PENDING', 'Pending', 'IN_TRANSIT')
-           AND datetime(COALESCE(date, created_at)) <= datetime('now', '-2 days')
-         ORDER BY id DESC`
+            `SELECT s.* FROM special_orders s
+         WHERE s.status IN ('CREATED', 'PENDING', 'Pending', 'IN_TRANSIT')
+           AND datetime(COALESCE(s.date, s.created_at)) <= datetime('now', '-2 days')
+           AND ${storeClause}
+         ORDER BY s.id DESC`,
+            storeParams
+          ).catch(() => []),
+          db2.all(
+            `SELECT s.* FROM special_orders s
+         WHERE s.customer_order_source = 'website'
+           AND s.status NOT IN ('Fulfilled', 'FULFILLED', 'Cancelled')
+           AND ${storeClause}
+         ORDER BY s.id DESC`,
+            storeParams
+          ).catch(() => []),
+          db2.all(
+            `SELECT s.* FROM special_orders s
+         WHERE (s.return_status IN ('eligible', 'override_approved') OR s.delivery_status = 'delivered')
+           AND ${storeClause}
+         ORDER BY s.id DESC`,
+            storeParams
           ).catch(() => [])
         ]);
         const activeOrders = await db2.get(
-          `SELECT COUNT(*) as count FROM special_orders WHERE status NOT IN ('Fulfilled', 'FULFILLED', 'Cancelled')`
+          `SELECT COUNT(*) as count FROM special_orders s 
+       WHERE s.status NOT IN ('Fulfilled', 'FULFILLED', 'Cancelled')
+         AND ${storeClause}`,
+          storeParams
         ).catch(() => ({ count: 0 }));
         res.json({
+          store_id: allStores ? "all" : storeId,
           today_orders: todayOrders,
           overlaps_pending: overlapsPending,
           ready_to_notify: readyToNotify,
           overdue,
+          website_orders: websiteOrders,
+          website_orders_count: websiteOrders.length,
+          returns_pending: returnRequests,
+          returns_pending_count: returnRequests.length,
           total_active: activeOrders?.count || 0,
           overlaps_count: overlapsPending.length
         });
@@ -57034,7 +59068,7 @@ var init_quickAssistant = __esm({
         res.status(500).json({ error: "Failed to fetch quick assistant summary" });
       }
     });
-    quickAssistant_default = router30;
+    quickAssistant_default = router34;
   }
 });
 
@@ -57103,11 +59137,11 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express31, import_path54, import_url44, import_fs48, __filename42, __dirname42, DB_PATH28, router31, expiry_default;
+var import_express35, import_path54, import_url44, import_fs48, __filename42, __dirname42, DB_PATH28, router35, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
-    import_express31 = __toESM(require("express"), 1);
+    import_express35 = __toESM(require("express"), 1);
     init_connection();
     import_path54 = __toESM(require("path"), 1);
     import_url44 = require("url");
@@ -57117,8 +59151,8 @@ var init_expiry = __esm({
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
     __dirname42 = import_path54.default.dirname(__filename42);
     DB_PATH28 = process.env.DB_PATH || import_path54.default.resolve(__dirname42, "..", "..", "data", "app.db");
-    router31 = import_express31.default.Router();
-    router31.get("/", async (req, res) => {
+    router35 = import_express35.default.Router();
+    router35.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
@@ -57176,7 +59210,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/export", async (req, res) => {
+    router35.get("/export", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
@@ -57260,7 +59294,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to generate report" });
       }
     });
-    router31.post("/create-return", async (req, res) => {
+    router35.post("/create-return", async (req, res) => {
       const { inventory_id, quantity, loss_percentage } = req.body;
       if (!inventory_id || !quantity) {
         return res.status(400).json({ error: "inventory_id and quantity are required" });
@@ -57347,7 +59381,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/send-alerts", async (req, res) => {
+    router35.post("/send-alerts", async (req, res) => {
       const { phone, days } = req.body;
       const targetDays = days ? parseInt(days, 10) : 90;
       try {
@@ -57406,7 +59440,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to queue summary report alerts via WhatsApp" });
       }
     });
-    expiry_default = router31;
+    expiry_default = router35;
   }
 });
 
@@ -57415,19 +59449,19 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express32, import_path55, import_url45, __filename43, __dirname43, DB_PATH29, router32, compliance_default;
+var import_express36, import_path55, import_url45, __filename43, __dirname43, DB_PATH29, router36, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
-    import_express32 = __toESM(require("express"), 1);
+    import_express36 = __toESM(require("express"), 1);
     init_connection();
     import_path55 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
     __dirname43 = import_path55.default.dirname(__filename43);
     DB_PATH29 = process.env.DB_PATH || import_path55.default.resolve(__dirname43, "..", "..", "data", "app.db");
-    router32 = import_express32.default.Router();
-    router32.get("/", async (_req, res) => {
+    router36 = import_express36.default.Router();
+    router36.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const expiredCount = await db2.get(`
@@ -57451,7 +59485,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.post("/add", async (req, res) => {
+    router36.post("/add", async (req, res) => {
       const { date, product, patient_id, doctor_id, license_no, qty, bill_no } = req.body;
       if (!date || !product) return res.status(400).json({ error: "Missing required fields" });
       try {
@@ -57466,7 +59500,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.post("/add-schedule-h1", async (req, res) => {
+    router36.post("/add-schedule-h1", async (req, res) => {
       const { drug_name, patient_name, doctor_name, date, license_no, qty, bill_no } = req.body;
       if (!drug_name || !patient_name || !doctor_name) {
         return res.status(400).json({ error: "Missing required fields: drug_name, patient_name, doctor_name" });
@@ -57484,7 +59518,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.get("/dashboard", async (_req, res) => {
+    router36.get("/dashboard", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
@@ -57523,7 +59557,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Failed to load compliance dashboard metrics" });
       }
     });
-    router32.get("/h1-register", async (req, res) => {
+    router36.get("/h1-register", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { startDate, endDate, search, doctor, scheduleType } = req.query;
@@ -57558,7 +59592,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.put("/:id/doctor", async (req, res) => {
+    router36.put("/:id/doctor", async (req, res) => {
       const { id } = req.params;
       const { doctor_name, license_no } = req.body;
       if (!doctor_name) {
@@ -57588,7 +59622,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.get("/export", async (req, res) => {
+    router36.get("/export", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT date, drug_name, patient_name, doctor_name, license_no, qty, bill_no, schedule_type FROM compliance_logs ORDER BY id DESC");
@@ -57615,7 +59649,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Export failed" });
       }
     });
-    compliance_default = router32;
+    compliance_default = router36;
   }
 });
 
@@ -57788,14 +59822,14 @@ function mergeMetadata(existingJson, patch) {
   }
   return JSON.stringify({ ...existing, ...patch });
 }
-var import_express33, router33, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
+var import_express37, router37, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
 var init_scheduleDrugs = __esm({
   "src/routes/scheduleDrugs.ts"() {
     "use strict";
-    import_express33 = __toESM(require("express"), 1);
+    import_express37 = __toESM(require("express"), 1);
     init_connection();
     init_scheduleResearchService();
-    router33 = import_express33.default.Router();
+    router37 = import_express37.default.Router();
     VALID_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
     MAX_LIMIT2 = 100;
     STOCK_JOIN = `
@@ -57805,7 +59839,7 @@ var init_scheduleDrugs = __esm({
     WHERE is_active = 1
     GROUP BY medicine_id
   ) inv ON inv.medicine_id = m.id`;
-    router33.get("/summary", async (_req, res) => {
+    router37.get("/summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -57826,7 +59860,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule summary" });
       }
     });
-    router33.get("/", async (req, res) => {
+    router37.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const type = normalizeType(String(req.query.type || ""));
@@ -57879,7 +59913,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule medicines" });
       }
     });
-    router33.get("/unclassified", async (req, res) => {
+    router37.get("/unclassified", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const q = String(req.query.q || "").trim();
@@ -57917,7 +59951,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load unclassified medicines" });
       }
     });
-    router33.get("/research", async (req, res) => {
+    router37.get("/research", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.query.id || ""), 10);
@@ -57947,7 +59981,7 @@ var init_scheduleDrugs = __esm({
       }
     });
     VALID_SAVE_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
-    router33.post("/classify", async (req, res) => {
+    router37.post("/classify", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.body?.id || ""), 10);
@@ -57977,7 +60011,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to save classification" });
       }
     });
-    scheduleDrugs_default = router33;
+    scheduleDrugs_default = router37;
   }
 });
 
@@ -57986,14 +60020,14 @@ var emailOrderReviews_exports = {};
 __export(emailOrderReviews_exports, {
   default: () => emailOrderReviews_default
 });
-var import_express34, router34, emailOrderReviews_default;
+var import_express38, router38, emailOrderReviews_default;
 var init_emailOrderReviews = __esm({
   "src/routes/emailOrderReviews.ts"() {
     "use strict";
-    import_express34 = __toESM(require("express"), 1);
+    import_express38 = __toESM(require("express"), 1);
     init_connection();
-    router34 = import_express34.default.Router();
-    router34.get("/", async (req, res) => {
+    router38 = import_express38.default.Router();
+    router38.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { status } = req.query;
@@ -58012,7 +60046,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router34.post("/:id/dismiss", async (req, res) => {
+    router38.post("/:id/dismiss", async (req, res) => {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) {
         return res.status(400).json({ error: "Invalid review id" });
@@ -58032,7 +60066,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    emailOrderReviews_default = router34;
+    emailOrderReviews_default = router38;
   }
 });
 
@@ -58042,12 +60076,12 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express35, import_crypto3, import_path56, import_fs49, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router35, upload_default;
+var import_express39, import_crypto4, import_path56, import_fs49, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router39, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
-    import_express35 = __toESM(require("express"), 1);
-    import_crypto3 = __toESM(require("crypto"), 1);
+    import_express39 = __toESM(require("express"), 1);
+    import_crypto4 = __toESM(require("crypto"), 1);
     import_path56 = __toESM(require("path"), 1);
     import_fs49 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
@@ -58076,7 +60110,7 @@ var init_upload = __esm({
       },
       filename: (_req, file, cb) => {
         const sanitized = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-        cb(null, Date.now() + "-" + import_crypto3.default.randomBytes(4).toString("hex") + "-" + sanitized);
+        cb(null, Date.now() + "-" + import_crypto4.default.randomBytes(4).toString("hex") + "-" + sanitized);
       }
     });
     upload3 = (0, import_multer3.default)({
@@ -58090,8 +60124,8 @@ var init_upload = __esm({
         }
       }
     });
-    router35 = import_express35.default.Router();
-    router35.post("/upload", upload3.single("file"), async (req, res) => {
+    router39 = import_express39.default.Router();
+    router39.post("/upload", upload3.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -58133,7 +60167,7 @@ var init_upload = __esm({
         res.status(500).json({ error: error.message || "Internal server error during upload" });
       }
     });
-    upload_default = router35;
+    upload_default = router39;
   }
 });
 
@@ -58142,16 +60176,16 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express36, import_fs50, router36, catalog_default;
+var import_express40, import_fs50, router40, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
-    import_express36 = __toESM(require("express"), 1);
+    import_express40 = __toESM(require("express"), 1);
     import_fs50 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
-    router36 = import_express36.default.Router();
-    router36.get("/catalog/job/:id", async (req, res) => {
+    router40 = import_express40.default.Router();
+    router40.get("/catalog/job/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const job = await db2.get(`SELECT * FROM catalog_jobs WHERE id = ?`, req.params.id);
@@ -58195,7 +60229,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error fetching job" });
       }
     });
-    router36.post("/catalog/job/:id/pause", async (req, res) => {
+    router40.post("/catalog/job/:id/pause", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -58226,7 +60260,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error pausing job" });
       }
     });
-    router36.post("/catalog/job/:id/resume", async (req, res) => {
+    router40.post("/catalog/job/:id/resume", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -58262,7 +60296,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error resuming job" });
       }
     });
-    router36.post("/catalog/import-job/:id", async (req, res) => {
+    router40.post("/catalog/import-job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const { mappings, filters } = req.body;
@@ -58299,7 +60333,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/catalog/import", async (req, res) => {
+    router40.post("/catalog/import", async (req, res) => {
       const { medicines } = req.body;
       if (!Array.isArray(medicines)) {
         return res.status(400).json({ error: "Invalid payload, expected array of medicines" });
@@ -58329,7 +60363,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error during import" });
       }
     });
-    router36.get("/jobs", async (req, res) => {
+    router40.get("/jobs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const jobs = await db2.all("SELECT * FROM catalog_jobs ORDER BY created_at DESC LIMIT 1000");
@@ -58341,7 +60375,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.delete("/catalog/job/:id", async (req, res) => {
+    router40.delete("/catalog/job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -58365,7 +60399,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error deleting job" });
       }
     });
-    router36.get("/catalog/reviews/pending", async (req, res) => {
+    router40.get("/catalog/reviews/pending", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const source = req.query.source || "whatsapp";
@@ -58397,7 +60431,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.get("/catalog/job/:id/reviews", async (req, res) => {
+    router40.get("/catalog/job/:id/reviews", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const reviews = await db2.all(
@@ -58428,7 +60462,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.post("/catalog/review/:id/approve", async (req, res) => {
+    router40.post("/catalog/review/:id/approve", async (req, res) => {
       const { approvedData } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -58528,7 +60562,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.post("/catalog/review/:id/reject", async (req, res) => {
+    router40.post("/catalog/review/:id/reject", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
@@ -58549,7 +60583,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.post("/catalog/review/:id/enrich", async (req, res) => {
+    router40.post("/catalog/review/:id/enrich", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const review = await db2.get("SELECT * FROM staged_medicine_reviews WHERE id = ?", req.params.id);
@@ -58599,7 +60633,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router36.get("/catalog/search-status", async (req, res) => {
+    router40.get("/catalog/search-status", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limitRow = await db2.get("SELECT value FROM app_settings WHERE key = 'google_search_daily_limit'");
@@ -58615,7 +60649,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    catalog_default = router36;
+    catalog_default = router40;
   }
 });
 
@@ -58624,16 +60658,16 @@ var medicines_exports = {};
 __export(medicines_exports, {
   default: () => medicines_default
 });
-var import_express37, router37, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
+var import_express41, router41, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
 var init_medicines = __esm({
   "src/routes/medicines.ts"() {
     "use strict";
-    import_express37 = __toESM(require("express"), 1);
+    import_express41 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
     init_packaging();
     init_nameNormalizer();
-    router37 = import_express37.default.Router();
+    router41 = import_express41.default.Router();
     normalizeNumericSearch2 = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -58645,7 +60679,7 @@ var init_medicines = __esm({
       }
       return cleaned;
     };
-    router37.get("/medicines", async (req, res) => {
+    router41.get("/medicines", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 100;
@@ -58826,7 +60860,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.post("/medicines", async (req, res) => {
+    router41.post("/medicines", async (req, res) => {
       const {
         name,
         generic_name,
@@ -58922,7 +60956,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.post("/medicines/bulk-delete", async (req, res) => {
+    router41.post("/medicines/bulk-delete", async (req, res) => {
       const { ids, all, search, productName, mrpFilter, apiFilter, packagingFilter, distributorFilter, category } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -59009,7 +61043,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.delete("/medicines/:id", async (req, res) => {
+    router41.delete("/medicines/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -59063,8 +61097,8 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during online search" });
       }
     };
-    router37.get("/online-search", handleOnlineSearch);
-    router37.get("/medicines/online-search", handleOnlineSearch);
+    router41.get("/online-search", handleOnlineSearch);
+    router41.get("/medicines/online-search", handleOnlineSearch);
     handleAutoEnrich = async (req, res) => {
       const { name, api_reference, manufacturer } = req.body;
       if (!name || !name.trim()) {
@@ -59103,9 +61137,9 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error saving enrichment" });
       }
     };
-    router37.post("/auto-enrich", handleAutoEnrich);
-    router37.post("/medicines/auto-enrich", handleAutoEnrich);
-    router37.get("/manufacturers", async (req, res) => {
+    router41.post("/auto-enrich", handleAutoEnrich);
+    router41.post("/medicines/auto-enrich", handleAutoEnrich);
+    router41.get("/manufacturers", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -59138,7 +61172,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.get("/marketed-by", async (req, res) => {
+    router41.get("/marketed-by", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -59171,7 +61205,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.get("/medicines/compact", async (req, res) => {
+    router41.get("/medicines/compact", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const items = await inventoryCache.get(db2);
@@ -59183,7 +61217,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.get("/medicines/:id/quick-details", async (req, res) => {
+    router41.get("/medicines/:id/quick-details", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -59220,7 +61254,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.post("/medicines/seed-master", async (req, res) => {
+    router41.post("/medicines/seed-master", async (req, res) => {
       try {
         const { seedMasterMedicines: seedMasterMedicines2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await seedMasterMedicines2(true);
@@ -59230,7 +61264,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to seed master medicines: " + error.message });
       }
     });
-    router37.post("/medicines/sync-from-inventory", async (req, res) => {
+    router41.post("/medicines/sync-from-inventory", async (req, res) => {
       try {
         const { syncInventoryToMaster: syncInventoryToMaster2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await syncInventoryToMaster2();
@@ -59240,7 +61274,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to sync inventory to master: " + error.message });
       }
     });
-    router37.put("/medicines/:id/quick-edit", async (req, res) => {
+    router41.put("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       const {
@@ -59460,7 +61494,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during update" });
       }
     });
-    router37.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
+    router41.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
       try {
         const { id } = req.params;
         const { allow_loose_sale } = req.body;
@@ -59477,7 +61511,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
       }
     });
-    router37.post("/medicines/merge", async (req, res) => {
+    router41.post("/medicines/merge", async (req, res) => {
       const { primaryMedicineId, secondaryMedicineId, secondaryMedicineIds: rawSecondaryIds, distributorId, billName } = req.body;
       const secondaryIds = Array.isArray(rawSecondaryIds) ? rawSecondaryIds.map(Number).filter((n) => !isNaN(n) && n > 0) : secondaryMedicineId && !isNaN(Number(secondaryMedicineId)) && Number(secondaryMedicineId) > 0 ? [Number(secondaryMedicineId)] : [];
       if (!primaryMedicineId || isNaN(Number(primaryMedicineId)) || secondaryIds.length === 0) {
@@ -59600,7 +61634,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to merge medicines: " + error.message });
       }
     });
-    medicines_default = router37;
+    medicines_default = router41;
   }
 });
 
@@ -59609,11 +61643,11 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express38, import_fs51, import_path57, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router38, upload4, enrichment_default;
+var import_express42, import_fs51, import_path57, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router42, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
-    import_express38 = __toESM(require("express"), 1);
+    import_express42 = __toESM(require("express"), 1);
     import_fs51 = __toESM(require("fs"), 1);
     import_path57 = __toESM(require("path"), 1);
     import_url47 = require("url");
@@ -59626,9 +61660,9 @@ var init_enrichment = __esm({
     __dirname45 = import_path57.default.dirname(__filename45);
     DATA_DIR2 = import_path57.default.resolve(getAppDataDir(), "data");
     REFERENCE_CSV2 = import_path57.default.join(DATA_DIR2, "reference_medicines.csv");
-    router38 = import_express38.default.Router();
+    router42 = import_express42.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-    router38.get("/enrichment/status", async (_req, res) => {
+    router42.get("/enrichment/status", async (_req, res) => {
       try {
         const status = await getEnrichmentStatus();
         res.json(status);
@@ -59637,7 +61671,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/enrichment/start", async (_req, res) => {
+    router42.post("/enrichment/start", async (_req, res) => {
       try {
         if (getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is already running" });
@@ -59652,7 +61686,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/enrichment/stop", async (_req, res) => {
+    router42.post("/enrichment/stop", async (_req, res) => {
       try {
         if (!getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is not currently running" });
@@ -59664,7 +61698,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/enrichment/backfill-suggestions", async (_req, res) => {
+    router42.post("/enrichment/backfill-suggestions", async (_req, res) => {
       try {
         const result = await backfillSuggestedCompositions();
         res.json({ success: true, updated: result.updated });
@@ -59673,7 +61707,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
+    router42.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
       try {
         const result = await reclassifyNonPharmaProducts();
         res.json({ success: true, updated: result.updated });
@@ -59682,7 +61716,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/reference/reload-from-disk", async (_req, res) => {
+    router42.post("/reference/reload-from-disk", async (_req, res) => {
       try {
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
@@ -59697,7 +61731,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/reference/import", upload4.single("file"), async (req, res) => {
+    router42.post("/reference/import", upload4.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -59721,7 +61755,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/enrichment/reference/export", async (_req, res) => {
+    router42.get("/enrichment/reference/export", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT name, composition1, composition2, manufacturer FROM medicine_reference ORDER BY name");
@@ -59742,7 +61776,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/enrichment/export", async (req, res) => {
+    router42.get("/enrichment/export", async (req, res) => {
       try {
         const status = req.query.status || "manual";
         const allowed = ["manual", "matched", "needs_review"];
@@ -59771,7 +61805,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/enrichment/queue", async (req, res) => {
+    router42.get("/enrichment/queue", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -59801,7 +61835,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.put("/enrichment/queue/:id", async (req, res) => {
+    router42.put("/enrichment/queue/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         const { composition } = req.body;
@@ -59822,7 +61856,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.get("/enrichment/preview-tokens", (_req, res) => {
+    router42.get("/enrichment/preview-tokens", (_req, res) => {
       const rawName = (_req.query.name || "").trim();
       if (!rawName) {
         return res.status(400).json({ error: "name query param is required" });
@@ -59839,7 +61873,7 @@ var init_enrichment = __esm({
       const preview = tokens.filter((t) => t.included).map((t) => t.text.toUpperCase()).join(" ");
       res.json({ tokens, preview });
     });
-    router38.post("/enrichment/set-search-term", async (req, res) => {
+    router42.post("/enrichment/set-search-term", async (req, res) => {
       try {
         const id = parseInt(req.body.id);
         const searchTerm = (req.body.searchTerm || "").trim();
@@ -59860,7 +61894,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/enrichment/trigger-online/:id", async (req, res) => {
+    router42.post("/enrichment/trigger-online/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         if (!id) {
@@ -59886,7 +61920,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    enrichment_default = router38;
+    enrichment_default = router42;
   }
 });
 
@@ -59899,16 +61933,16 @@ async function ensureContactsTable(_db) {
   if (contactsTableInitialized) return;
   contactsTableInitialized = true;
 }
-var import_express39, router39, contactsTableInitialized, contacts_default;
+var import_express43, router43, contactsTableInitialized, contacts_default;
 var init_contacts = __esm({
   "src/routes/contacts.ts"() {
     "use strict";
-    import_express39 = __toESM(require("express"), 1);
+    import_express43 = __toESM(require("express"), 1);
     init_connection();
     init_distributorSyncHelper();
-    router39 = import_express39.default.Router();
+    router43 = import_express43.default.Router();
     contactsTableInitialized = false;
-    router39.get("/", async (req, res) => {
+    router43.get("/", async (req, res) => {
       const { type, search } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -59932,7 +61966,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to fetch contacts" });
       }
     });
-    router39.post("/", async (req, res) => {
+    router43.post("/", async (req, res) => {
       const { name, type = "general", phone, email, address, gstin, notes } = req.body;
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Name is required" });
@@ -60004,7 +62038,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to save contact" });
       }
     });
-    router39.put("/:id", async (req, res) => {
+    router43.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { name, type, phone, email, address, gstin, notes } = req.body;
       const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
@@ -60060,7 +62094,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to update contact" });
       }
     });
-    router39.delete("/:id", async (req, res) => {
+    router43.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -60071,7 +62105,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to delete contact" });
       }
     });
-    contacts_default = router39;
+    contacts_default = router43;
   }
 });
 
@@ -60080,11 +62114,11 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express40, import_fs52, router40, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express44, import_fs52, router44, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
-    import_express40 = __toESM(require("express"), 1);
+    import_express44 = __toESM(require("express"), 1);
     import_fs52 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
@@ -60092,7 +62126,7 @@ var init_distributors = __esm({
     init_eventService();
     init_distributorDispatchReminderWorker();
     init_nameNormalizer();
-    router40 = import_express40.default.Router();
+    router44 = import_express44.default.Router();
     getDistributorsHandler = async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
@@ -60102,9 +62136,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router40.get("/distributors", getDistributorsHandler);
-    router40.get("/", getDistributorsHandler);
-    router40.get("/pharmarack-list", async (_req, res) => {
+    router44.get("/distributors", getDistributorsHandler);
+    router44.get("/", getDistributorsHandler);
+    router44.get("/pharmarack-list", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM pharmarack_distributors ORDER BY store_name ASC LIMIT 1000");
@@ -60143,8 +62177,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router40.post("/distributors", postDistributorsHandler);
-    router40.post("/", postDistributorsHandler);
+    router44.post("/distributors", postDistributorsHandler);
+    router44.post("/", postDistributorsHandler);
     putDistributorHandler = async (req, res) => {
       const { id } = req.params;
       const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code } = req.body;
@@ -60175,8 +62209,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router40.put("/distributors/:id", putDistributorHandler);
-    router40.put("/:id", putDistributorHandler);
+    router44.put("/distributors/:id", putDistributorHandler);
+    router44.put("/:id", putDistributorHandler);
     deleteDistributorHandler = async (req, res) => {
       const { id } = req.params;
       try {
@@ -60211,9 +62245,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router40.delete("/distributors/:id", deleteDistributorHandler);
-    router40.delete("/:id", deleteDistributorHandler);
-    router40.post("/purchases", async (req, res) => {
+    router44.delete("/distributors/:id", deleteDistributorHandler);
+    router44.delete("/:id", deleteDistributorHandler);
+    router44.post("/purchases", async (req, res) => {
       const { distributor, invoice_no, total_amount } = req.body;
       try {
         const cleanDist = (distributor || "").trim();
@@ -60236,7 +62270,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.post("/returns/reconcile-credit", async (req, res) => {
+    router44.post("/returns/reconcile-credit", async (req, res) => {
       const { distributor_id, actual_credit_amount, purchase_id } = req.body;
       if (!distributor_id || actual_credit_amount === void 0) {
         return res.status(400).json({ error: "distributor_id and actual_credit_amount are required" });
@@ -60250,7 +62284,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
+    router44.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -60268,7 +62302,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    distributors_default = router40;
+    distributors_default = router44;
   }
 });
 
@@ -60402,18 +62436,18 @@ async function checkDeviceConnections() {
     console.error("Error during periodic device monitoring:", err);
   }
 }
-var import_express41, import_qrcode5, import_os, router41, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
+var import_express45, import_qrcode5, import_os, router45, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
 var init_notifications2 = __esm({
   "src/routes/notifications.ts"() {
     "use strict";
-    import_express41 = __toESM(require("express"), 1);
+    import_express45 = __toESM(require("express"), 1);
     init_eventService();
     init_connection();
     import_qrcode5 = __toESM(require("qrcode"), 1);
     import_os = __toESM(require("os"), 1);
     init_config();
-    router41 = import_express41.default.Router();
-    router41.get("/notifications/connection-info", async (req, res) => {
+    router45 = import_express45.default.Router();
+    router45.get("/notifications/connection-info", async (req, res) => {
       try {
         const interfaces = import_os.default.networkInterfaces();
         const ips = [];
@@ -60446,7 +62480,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to generate connection info: " + err.message });
       }
     });
-    router41.get("/notifications/download-apk", (req, res) => {
+    router45.get("/notifications/download-apk", (req, res) => {
       const fs54 = require("fs");
       const path59 = require("path");
       const candidatePaths = [
@@ -60465,7 +62499,7 @@ var init_notifications2 = __esm({
         message: "Place pharmacy-mobile.apk inside the data/ folder to enable direct mobile APK downloads."
       });
     });
-    router41.get("/notifications/stream", (req, res) => {
+    router45.get("/notifications/stream", (req, res) => {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
@@ -60494,7 +62528,7 @@ var init_notifications2 = __esm({
     deviceOnlineStateCache = /* @__PURE__ */ new Map();
     blockedNoticeAt = /* @__PURE__ */ new Map();
     deviceUuidColumnReady = false;
-    router41.post("/notifications/register-token", async (req, res) => {
+    router45.post("/notifications/register-token", async (req, res) => {
       const { token, deviceName, os: os2, device_uuid } = req.body;
       if (!token) {
         return res.status(400).json({ error: "Token is required" });
@@ -60577,7 +62611,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to register token: " + err.message });
       }
     });
-    router41.get("/notifications/devices", async (req, res) => {
+    router45.get("/notifications/devices", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await ensureDeviceUuidColumn(db2);
@@ -60613,7 +62647,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get devices: " + err.message });
       }
     });
-    router41.put("/notifications/devices/:token/block", async (req, res) => {
+    router45.put("/notifications/devices/:token/block", async (req, res) => {
       const { token } = req.params;
       const { blocked } = req.body;
       if (typeof blocked !== "boolean") {
@@ -60647,7 +62681,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to update block state: " + err.message });
       }
     });
-    router41.patch("/notifications/devices/:token/rename", async (req, res) => {
+    router45.patch("/notifications/devices/:token/rename", async (req, res) => {
       const { token } = req.params;
       const { name } = req.body;
       if (!name || !name.trim()) {
@@ -60662,7 +62696,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to rename device: " + err.message });
       }
     });
-    router41.get("/notifications/devices/logs", async (req, res) => {
+    router45.get("/notifications/devices/logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM device_connection_logs ORDER BY timestamp DESC LIMIT 150");
@@ -60672,7 +62706,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router41.post("/notifications/devices/logs/clear", async (req, res) => {
+    router45.post("/notifications/devices/logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM device_connection_logs");
@@ -60682,7 +62716,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router41.get("/notifications/action-logs", async (req, res) => {
+    router45.get("/notifications/action-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { category, status, search, limit = "250", offset = "0" } = req.query;
@@ -60728,7 +62762,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router41.post("/notifications/action-logs/clear", async (req, res) => {
+    router45.post("/notifications/action-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM action_logs");
@@ -60738,7 +62772,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router41.delete("/notifications/action-logs/:id", async (req, res) => {
+    router45.delete("/notifications/action-logs/:id", async (req, res) => {
       const { id } = req.params;
       const numId = parseInt(id, 10);
       if (isNaN(numId)) {
@@ -60753,7 +62787,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to delete action log: " + err.message });
       }
     });
-    router41.post("/notifications/chat-logs", async (req, res) => {
+    router45.post("/notifications/chat-logs", async (req, res) => {
       const { sessionId, deviceName, sender, messageText, metadata } = req.body;
       if (!sessionId || !sender || !messageText) {
         return res.status(400).json({ error: "sessionId, sender and messageText are required" });
@@ -60802,7 +62836,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to save assistant chat log: " + err.message });
       }
     });
-    router41.get("/notifications/chat-logs", async (req, res) => {
+    router45.get("/notifications/chat-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM assistant_chat_logs ORDER BY created_at ASC LIMIT 1000");
@@ -60812,7 +62846,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get assistant chat logs: " + err.message });
       }
     });
-    router41.post("/notifications/chat-logs/clear", async (req, res) => {
+    router45.post("/notifications/chat-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM assistant_chat_logs");
@@ -60843,7 +62877,7 @@ var init_notifications2 = __esm({
       checkDeviceConnections();
       tick();
     })();
-    notifications_default = router41;
+    notifications_default = router45;
   }
 });
 
@@ -60852,17 +62886,17 @@ var whatsappQueue_exports2 = {};
 __export(whatsappQueue_exports2, {
   default: () => whatsappQueue_default2
 });
-var import_express42, router42, whatsappQueue_default2;
+var import_express46, router46, whatsappQueue_default2;
 var init_whatsappQueue2 = __esm({
   "src/routes/whatsappQueue.ts"() {
     "use strict";
-    import_express42 = __toESM(require("express"), 1);
+    import_express46 = __toESM(require("express"), 1);
     init_whatsappQueueWorker();
     init_connection();
     init_whatsappClient();
     init_eventService();
-    router42 = import_express42.default.Router();
-    router42.get("/status", async (_req, res) => {
+    router46 = import_express46.default.Router();
+    router46.get("/status", async (_req, res) => {
       try {
         const state = await whatsappQueueWorker.getWorkerState();
         res.json(state);
@@ -60871,7 +62905,7 @@ var init_whatsappQueue2 = __esm({
         res.status(500).json({ error: err?.message || "Failed to fetch queue status" });
       }
     });
-    router42.post("/enqueue-distributor-collection", async (req, res) => {
+    router46.post("/enqueue-distributor-collection", async (req, res) => {
       const { orderIds, deliveryBoyPhone, deliveryBoyName } = req.body;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ error: "orderIds array is required" });
@@ -60922,7 +62956,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue collection messages" });
       }
     });
-    router42.post("/enqueue-pharmarack-batch", async (req, res) => {
+    router46.post("/enqueue-pharmarack-batch", async (req, res) => {
       const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
       if (!orders || !Array.isArray(orders) || orders.length === 0) {
         return res.status(400).json({ error: "orders array is required" });
@@ -61050,7 +63084,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue Pharmarack batch orders" });
       }
     });
-    router42.post("/enqueue-single-distributor-order", async (req, res) => {
+    router46.post("/enqueue-single-distributor-order", async (req, res) => {
       const { storeId, storeName, phone, message, items } = req.body || {};
       if (!storeName || !phone || !message) {
         return res.status(400).json({ error: "storeName, phone, and message are required" });
@@ -61098,7 +63132,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue single distributor order" });
       }
     });
-    router42.post("/enqueue-single", async (req, res) => {
+    router46.post("/enqueue-single", async (req, res) => {
       const { number, message, type = "crm_notification", targetName, explicitScheduledAt } = req.body || {};
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
@@ -61126,7 +63160,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue WhatsApp message" });
       }
     });
-    router42.post("/flush", async (_req, res) => {
+    router46.post("/flush", async (_req, res) => {
       try {
         whatsappQueueWorker.triggerProcessing();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -61135,7 +63169,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to trigger queue processing" });
       }
     });
-    router42.post("/toggle-pause", async (_req, res) => {
+    router46.post("/toggle-pause", async (_req, res) => {
       try {
         const isPaused = whatsappQueueWorker.togglePaused();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -61144,7 +63178,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to toggle queue pause" });
       }
     });
-    router42.post("/pause", async (_req, res) => {
+    router46.post("/pause", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(true);
         const state = await whatsappQueueWorker.getWorkerState();
@@ -61153,7 +63187,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pause queue" });
       }
     });
-    router42.post("/resume", async (_req, res) => {
+    router46.post("/resume", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(false);
         whatsappQueueWorker.triggerProcessing();
@@ -61163,7 +63197,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resume queue" });
       }
     });
-    router42.post("/retry-failed", async (_req, res) => {
+    router46.post("/retry-failed", async (_req, res) => {
       try {
         const retriedCount = await whatsappQueueWorker.retryAllFailed();
         res.json({ success: true, retriedCount, message: `Reset ${retriedCount} failed queue item(s) to pending` });
@@ -61171,7 +63205,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to retry failed items" });
       }
     });
-    router42.post("/items/:id/resend", async (req, res) => {
+    router46.post("/items/:id/resend", async (req, res) => {
       const id = Number(req.params.id);
       if (!id || isNaN(id)) {
         return res.status(400).json({ error: "Valid item id is required" });
@@ -61248,7 +63282,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resend message" });
       }
     });
-    router42.post("/flush-next", async (_req, res) => {
+    router46.post("/flush-next", async (_req, res) => {
       try {
         const forced = await whatsappQueueWorker.forceNext();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -61257,7 +63291,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to dispatch next item" });
       }
     });
-    router42.all("/pacing", async (req, res) => {
+    router46.all("/pacing", async (req, res) => {
       const { minSec, maxSec, preset } = req.body || {};
       try {
         if (preset === "turbo" || preset === "fast") {
@@ -61278,7 +63312,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update pacing" });
       }
     });
-    router42.put("/update-item", async (req, res) => {
+    router46.put("/update-item", async (req, res) => {
       const { id, number, message } = req.body;
       if (!id || !number) {
         return res.status(400).json({ error: "id and number are required" });
@@ -61293,7 +63327,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update queue item" });
       }
     });
-    router42.all("/delete-item", async (req, res) => {
+    router46.all("/delete-item", async (req, res) => {
       const id = req.body?.id || req.query?.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -61305,7 +63339,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router42.delete("/item/:id", async (req, res) => {
+    router46.delete("/item/:id", async (req, res) => {
       const id = req.params.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -61317,7 +63351,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router42.post("/clear-failed", async (_req, res) => {
+    router46.post("/clear-failed", async (_req, res) => {
       try {
         const cleared = await whatsappQueueWorker.clearAllFailed();
         res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} failed item(s)` });
@@ -61325,7 +63359,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to clear failed items" });
       }
     });
-    router42.post("/prewarm", async (_req, res) => {
+    router46.post("/prewarm", async (_req, res) => {
       try {
         const started = await whatsappQueueWorker.prewarm();
         res.json({ success: true, prewarmed: started });
@@ -61333,7 +63367,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pre-warm WhatsApp" });
       }
     });
-    whatsappQueue_default2 = router42;
+    whatsappQueue_default2 = router46;
   }
 });
 
@@ -61907,7 +63941,7 @@ function readAppVersion() {
 }
 function readBuildId() {
   try {
-    return (0, import_child_process6.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
+    return (0, import_child_process7.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
   } catch (_e) {
     return "unknown";
   }
@@ -61949,14 +63983,14 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs53, import_path58, import_url48, import_child_process6, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs53, import_path58, import_url48, import_child_process7, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
     import_fs53 = __toESM(require("fs"), 1);
     import_path58 = __toESM(require("path"), 1);
     import_url48 = require("url");
-    import_child_process6 = require("child_process");
+    import_child_process7 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
     __dirname46 = import_path58.default.dirname(__filename46);
@@ -61977,15 +64011,15 @@ async function logAudit(db2, report) {
   );
   return result.lastID;
 }
-var import_express43, router43, audit_default;
+var import_express47, router47, audit_default;
 var init_audit = __esm({
   "src/routes/audit.ts"() {
     "use strict";
-    import_express43 = __toESM(require("express"), 1);
+    import_express47 = __toESM(require("express"), 1);
     init_connection();
     init_auditEngine();
-    router43 = import_express43.default.Router();
-    router43.post("/run", async (_req, res) => {
+    router47 = import_express47.default.Router();
+    router47.post("/run", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const report = await runAudit(db2);
@@ -61996,7 +64030,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router43.get("/latest", async (_req, res) => {
+    router47.get("/latest", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -62009,7 +64043,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router43.get("/history", async (_req, res) => {
+    router47.get("/history", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -62032,7 +64066,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router43.get("/:id", async (req, res) => {
+    router47.get("/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -62046,7 +64080,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    audit_default = router43;
+    audit_default = router47;
   }
 });
 
@@ -62055,16 +64089,16 @@ var medicineAvailability_exports = {};
 __export(medicineAvailability_exports, {
   default: () => medicineAvailability_default
 });
-var import_express44, router44, medicineAvailability_default;
+var import_express48, router48, medicineAvailability_default;
 var init_medicineAvailability = __esm({
   "src/routes/medicineAvailability.ts"() {
     "use strict";
-    import_express44 = __toESM(require("express"), 1);
+    import_express48 = __toESM(require("express"), 1);
     init_medicineAvailabilityEngine();
     init_stockCalculatorWorker();
     init_substituteCacheWorker();
-    router44 = import_express44.default.Router();
-    router44.get("/medicines/availability", async (req, res) => {
+    router48 = import_express48.default.Router();
+    router48.get("/medicines/availability", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -62084,7 +64118,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.get("/medicines/search-full", async (req, res) => {
+    router48.get("/medicines/search-full", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -62106,7 +64140,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.get("/medicines/substitutes/:medicineId", async (req, res) => {
+    router48.get("/medicines/substitutes/:medicineId", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId);
         if (isNaN(medicineId)) {
@@ -62124,7 +64158,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.get("/medicines/emergency-stock", async (req, res) => {
+    router48.get("/medicines/emergency-stock", async (req, res) => {
       try {
         const categories = req.query.categories?.split(",") || [
           "Injured soldiers medicaments",
@@ -62138,7 +64172,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.post("/medicines/learn-correction", async (req, res) => {
+    router48.post("/medicines/learn-correction", async (req, res) => {
       try {
         const { originalQuery, correctedMedicineId, context } = req.body;
         if (!originalQuery || !correctedMedicineId) {
@@ -62155,7 +64189,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.post("/medicines/recalculate-stock", async (req, res) => {
+    router48.post("/medicines/recalculate-stock", async (req, res) => {
       try {
         await recalculateStockLimits();
         medicineAvailabilityEngine.refreshStockCache();
@@ -62165,7 +64199,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router44.post("/medicines/rebuild-substitutes", async (req, res) => {
+    router48.post("/medicines/rebuild-substitutes", async (req, res) => {
       try {
         await precomputeSubstitutes();
         res.json({ success: true, message: "Substitutes rebuilt" });
@@ -62174,7 +64208,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    medicineAvailability_default = router44;
+    medicineAvailability_default = router48;
   }
 });
 
@@ -62400,14 +64434,14 @@ __export(server_exports, {
   extractMedicinesWithPython: () => extractMedicinesWithPython
 });
 function lazyRoute(loader, tier = "medium") {
-  let router45 = null;
+  let router49 = null;
   let loadPromise = null;
   const preload = () => {
-    if (router45) return Promise.resolve(router45);
+    if (router49) return Promise.resolve(router49);
     if (!loadPromise) {
       loadPromise = loader().then((m) => {
-        router45 = m.default;
-        return router45;
+        router49 = m.default;
+        return router49;
       });
     }
     return loadPromise;
@@ -62418,7 +64452,7 @@ function lazyRoute(loader, tier = "medium") {
       loader().then((m) => m.default(req, res, next)).catch(next);
       return;
     }
-    if (router45) return router45(req, res, next);
+    if (router49) return router49(req, res, next);
     preload().then((r) => r(req, res, next)).catch(next);
   };
 }
@@ -62453,7 +64487,7 @@ function extractMedicinesWithPython(messageText) {
     if (!import_fs54.default.existsSync(pythonExecutable) || !import_fs54.default.existsSync(scriptPath)) {
       return resolve([]);
     }
-    const pythonProcess = (0, import_child_process7.spawn)(pythonExecutable, [scriptPath, messageText]);
+    const pythonProcess = (0, import_child_process8.spawn)(pythonExecutable, [scriptPath, messageText]);
     let resultData = "";
     let errorData = "";
     let isSettled = false;
@@ -62593,18 +64627,18 @@ async function gracefulShutdown(signal) {
   await dbManager.close(true);
   process.exit(0);
 }
-var import_express45, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path59, import_child_process7, import_url49, import_fs54, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
+var import_express49, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path59, import_child_process8, import_url49, import_fs54, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
     init_sqlitePatch();
-    import_express45 = __toESM(require("express"), 1);
+    import_express49 = __toESM(require("express"), 1);
     import_compression = __toESM(require("compression"), 1);
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
     import_path59 = __toESM(require("path"), 1);
-    import_child_process7 = require("child_process");
+    import_child_process8 = require("child_process");
     import_url49 = require("url");
     import_fs54 = __toESM(require("fs"), 1);
     import_axios3 = __toESM(require("axios"), 1);
@@ -62616,6 +64650,7 @@ var init_server = __esm({
     init_activityTracker();
     init_backgroundJobLane();
     init_config();
+    init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
     __dirname47 = import_path59.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
@@ -62628,7 +64663,7 @@ var init_server = __esm({
     registerProcessGuardian();
     process.env.DISABLE_BACKGROUND_WORKERS = process.env.DISABLE_BACKGROUND_WORKERS || "false";
     process.env.DISABLE_SELF_HEALING_WORKERS = process.env.DISABLE_SELF_HEALING_WORKERS || "false";
-    app = (0, import_express45.default)();
+    app = (0, import_express49.default)();
     app.use((0, import_compression.default)());
     inFlightRequests = 0;
     app.use((req, res, next) => {
@@ -62703,9 +64738,9 @@ var init_server = __esm({
       },
       message: { error: "Too many requests, please try again later" }
     }));
-    app.use(import_express45.default.json({ limit: "15mb" }));
-    app.use("/uploads", import_express45.default.static(UPLOAD_DIR2));
-    app.use("/data/search_screenshots", import_express45.default.static(import_path59.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use(import_express49.default.json({ limit: "15mb" }));
+    app.use("/uploads", import_express49.default.static(UPLOAD_DIR2));
+    app.use("/data/search_screenshots", import_express49.default.static(import_path59.default.join(getAppDataDir(), "data", "search_screenshots")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -62737,6 +64772,10 @@ var init_server = __esm({
     app.use("/api/automation", lazyRoute(() => Promise.resolve().then(() => (init_automation(), automation_exports))));
     app.use("/api/triggers", lazyRoute(() => Promise.resolve().then(() => (init_triggers(), triggers_exports))));
     app.use("/api/system", lazyRoute(() => Promise.resolve().then(() => (init_serviceStatus(), serviceStatus_exports))));
+    app.use("/api/stores", lazyRoute(() => Promise.resolve().then(() => (init_stores(), stores_exports)), "hot"));
+    app.use("/api/website", lazyRoute(() => Promise.resolve().then(() => (init_websiteOrders(), websiteOrders_exports)), "hot"));
+    app.use("/api/customer-portal", lazyRoute(() => Promise.resolve().then(() => (init_customerPortal(), customerPortal_exports)), "hot"));
+    app.use("/api/sync", lazyRoute(() => Promise.resolve().then(() => (init_sync(), sync_exports))));
     app.use("/api/sales", lazyRoute(() => Promise.resolve().then(() => (init_sales(), sales_exports)), "hot"));
     app.use("/api/inventory", lazyRoute(() => Promise.resolve().then(() => (init_inventory(), inventory_exports)), "hot"));
     app.use("/api/dashboard", lazyRoute(() => Promise.resolve().then(() => (init_dashboard(), dashboard_exports)), "hot"));
@@ -62772,7 +64811,7 @@ var init_server = __esm({
       import_path59.default.resolve(appDataDir2, "dist")
     ];
     frontendDist = frontendCandidates.find((dir) => import_fs54.default.existsSync(import_path59.default.join(dir, "index.html"))) || frontendCandidates[0];
-    app.use(import_express45.default.static(frontendDist, {
+    app.use(import_express49.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
         if (filePath.includes("assets") || /\.(js|css|woff2?)$/i.test(filePath)) {
@@ -62825,11 +64864,8 @@ var init_server = __esm({
       console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
       if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === "true") {
         setTimeout(() => {
-          console.log(`[Boot] Launching default browser at ${serverUrl}...`);
-          const openerArgs = process.platform === "win32" ? ["cmd", ["/c", "start", serverUrl]] : process.platform === "darwin" ? ["open", [serverUrl]] : ["xdg-open", [serverUrl]];
-          (0, import_child_process7.spawn)(openerArgs[0], openerArgs[1], { detached: true, stdio: "ignore" }).on("error", (err) => {
-            console.warn(`[Boot] Failed to auto-launch browser (non-fatal): ${err.message}`);
-          }).unref();
+          console.log(`[Boot] Launching dedicated app window at ${serverUrl}...`);
+          launchAppBrowser(serverUrl);
         }, 1e3);
       }
     });
@@ -62837,12 +64873,11 @@ var init_server = __esm({
       if (err.code === "EADDRINUSE") {
         console.warn(`
 \u26A0\uFE0F  Port ${PORT} is already bound by another instance of AI Pharmacy OS.`);
-        console.warn(`AI Pharmacy OS server is already running in the background. Opening browser window...
+        console.warn(`AI Pharmacy OS server is already running in the background. Opening app window...
 `);
         const serverUrl = `http://localhost:${PORT}`;
-        const openerArgs = process.platform === "win32" ? ["cmd", ["/c", "start", serverUrl]] : process.platform === "darwin" ? ["open", [serverUrl]] : ["xdg-open", [serverUrl]];
         try {
-          (0, import_child_process7.spawn)(openerArgs[0], openerArgs[1], { detached: true, stdio: "ignore" }).unref();
+          launchAppBrowser(serverUrl);
         } catch (_) {
         }
         setTimeout(() => process.exit(0), 500);
