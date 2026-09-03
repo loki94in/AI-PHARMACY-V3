@@ -37,6 +37,34 @@ export function generateRandomOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+const SESSION_SECRET = process.env.CUSTOMER_PORTAL_SECRET || 'pharmacy_portal_session_secret_2026';
+
+export function createCustomerToken(customerId: number, phone: string): string {
+  const payload = `${customerId}:${phone}:${Date.now()}`;
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}:${signature}`).toString('base64');
+}
+
+export function verifyCustomerToken(tokenStr: string): { customerId: number; phone: string } | null {
+  try {
+    if (!tokenStr) return null;
+    const decoded = Buffer.from(tokenStr, 'base64').toString('utf8');
+    const parts = decoded.split(':');
+    if (parts.length !== 4) return null;
+    const [customerIdStr, phone, timestampStr, signature] = parts;
+    const customerId = parseInt(customerIdStr, 10);
+    const timestamp = parseInt(timestampStr, 10);
+    if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
+    const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
+    const expectedSignature = crypto.createHmac('sha256', SESSION_SECRET).update(expectedPayload).digest('hex');
+    if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+      return { customerId, phone };
+    }
+  } catch (_) {}
+  return null;
+}
+
+
 // ─── Pharmacist / Admin CRM Management Routes ────────────────────────────────
 
 // GET /api/crm/portal-accounts — List all customer portal accounts
@@ -60,7 +88,7 @@ router.get('/accounts', async (req, res) => {
         c.address as customer_address,
         s.name as preferred_store_name,
         (SELECT COUNT(*) FROM patient_refills pr WHERE pr.customer_id = pa.customer_id AND pr.is_active = 1) as active_refills_count,
-        (SELECT COUNT(*) FROM sales sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
+        (SELECT COUNT(*) FROM sales_invoices sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
       FROM customer_portal_accounts pa
       JOIN customers c ON c.id = pa.customer_id
       LEFT JOIN stores s ON s.id = pa.preferred_store_id
@@ -114,12 +142,20 @@ router.post('/accounts/generate', async (req, res) => {
       const existingCust = await db.get('SELECT id, name FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
       if (existingCust) {
         targetCustomerId = existingCust.id;
+        if (cleanName && cleanName !== 'Customer' && existingCust.name !== cleanName) {
+          await db.run('UPDATE customers SET name = ? WHERE id = ?', [cleanName, targetCustomerId]);
+        }
       } else {
         const custRes = await db.run(
           'INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
           [cleanName, cleanPhone]
         );
         targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
+      }
+    } else {
+      const existingCust = await db.get('SELECT id, name FROM customers WHERE id = ?', [targetCustomerId]);
+      if (existingCust && cleanName && cleanName !== 'Customer' && existingCust.name !== cleanName) {
+        await db.run('UPDATE customers SET name = ? WHERE id = ?', [cleanName, targetCustomerId]);
       }
     }
 
@@ -137,9 +173,9 @@ router.post('/accounts/generate', async (req, res) => {
     if (existingAccount) {
       await db.run(
         `UPDATE customer_portal_accounts 
-         SET pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
+         SET customer_id = ?, login_id = ?, pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
          WHERE id = ?`,
-        [pinHashed, pin, storeId, existingAccount.id]
+        [targetCustomerId, cleanPhone, pinHashed, pin, storeId, existingAccount.id]
       );
       accountId = existingAccount.id;
     } else {
@@ -160,7 +196,7 @@ router.post('/accounts/generate', async (req, res) => {
         const storeName = storeInfo?.name || (await getStoreMedicalNameAndPhone(db));
         const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
 
-        const msg = `*Welcome to ${storeName} Online Portal!*\n\nHello ${cleanName}, your direct refill account is ready:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *4-Digit PIN:* ${pin}\n📍 *Collection Branch:* ${storeName}\n\n*Website:* /portal\n\nLogin to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
+        const msg = `*Welcome to ${storeName} Online Portal!*\n\nHello ${cleanName}, your direct refill account is ready:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *4-Digit PIN:* ${pin}\n📍 *Collection Branch:* ${storeName}\n\n*Direct Login Link:* /customer-login?phone=${cleanPhone}\n\nLogin to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
 
         await whatsappQueueWorker.enqueue(formattedPhone, msg, 'portal_credentials', cleanName);
         whatsappQueued = true;
@@ -218,7 +254,7 @@ router.post('/accounts/:id/send-credentials', async (req, res) => {
     const storeName = account.store_name || (await getStoreMedicalNameAndPhone(db));
     const customerName = formatCustomerName(account.customer_name);
 
-    const msg = `*Your ${storeName} Login Credentials*\n\nHello ${customerName},\nHere are your online refill portal details:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *PIN:* ${pin}\n📍 *Branch:* ${storeName}\n\n*Website:* /portal\n\nTap the link to login, select medicines from your previous bills, and place your pickup order.`;
+    const msg = `*Your ${storeName} Login Credentials*\n\nHello ${customerName},\nHere are your online refill portal details:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *PIN:* ${pin}\n📍 *Branch:* ${storeName}\n\n*Direct Login Link:* /customer-login?phone=${cleanPhone}\n\nTap the link to login, select medicines from your previous bills, and place your pickup order.`;
 
     const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, 'portal_credentials_resend', customerName);
 
@@ -416,7 +452,7 @@ router.post('/auth/login', async (req, res) => {
 
 // POST /api/website/auth/request-otp — Customer requests 6-digit WhatsApp OTP
 router.post('/auth/request-otp', async (req, res) => {
-  const { login_id } = req.body;
+  const { login_id, name } = req.body;
   const cleanPhone = normalizePhone(login_id);
 
   if (!cleanPhone || cleanPhone.length < 10) {
@@ -425,19 +461,38 @@ router.post('/auth/request-otp', async (req, res) => {
 
   try {
     const db = await dbManager.getConnection();
-    // Portal access is strictly managed by pharmacy — verify account exists
-    const account = await db.get(
-      `SELECT pa.*, c.name as customer_name 
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       WHERE pa.login_id = ? AND pa.status = 'active'`,
-      [cleanPhone]
+    
+    // Step 1: Find existing customer by phone
+    let customer = await db.get('SELECT * FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+    
+    // Step 2: If customer does not exist, create one (Rule 1, Rule 2, Test 1)
+    if (!customer) {
+      const defaultName = formatCustomerName(name || 'Customer');
+      const insResult = await db.run(
+        'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        [defaultName, cleanPhone, '']
+      );
+      const newCustId = insResult.lastID as number;
+      customer = await db.get('SELECT * FROM customers WHERE id = ?', [newCustId]);
+    }
+
+    // Step 3: Ensure customer_portal_accounts row exists (Rule 2: permanent user_id / customer_id)
+    let account = await db.get(
+      'SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?',
+      [customer.id, cleanPhone]
     );
 
     if (!account) {
-      return res.status(404).json({
-        error: 'Refill account not found or disabled. Please contact your pharmacy branch to set up portal access.'
-      });
+      const initialPin = generateRandomPin();
+      const pHash = hashPin(initialPin);
+      const accRes = await db.run(
+        `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+        [customer.id, cleanPhone, pHash, initialPin]
+      );
+      account = await db.get('SELECT * FROM customer_portal_accounts WHERE id = ?', [accRes.lastID]);
+    } else if (account.status !== 'active') {
+      return res.status(403).json({ error: 'Portal account disabled. Please contact your pharmacy branch.' });
     }
 
     const otpCode = generateRandomOtp();
@@ -450,7 +505,7 @@ router.post('/auth/request-otp', async (req, res) => {
     );
 
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-    const custName = formatCustomerName(account.customer_name || 'Customer');
+    const custName = formatCustomerName(customer.name || 'Customer');
     const medicalName = await getStoreMedicalNameAndPhone(db);
 
     const otpMsg = `🔐 *Your ${medicalName} Login OTP is: ${otpCode}*\n\nValid for 10 minutes. Please do not share this code with anyone.`;
@@ -494,29 +549,52 @@ router.post('/auth/verify-otp', async (req, res) => {
     // Mark OTP as used
     await db.run('UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?', [otpRow.id]);
 
-    // Verify customer & portal account exists (strictly pharmacy managed)
-    const account = await db.get(
+    // Retrieve customer & portal account
+    let account = await db.get(
       `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
        FROM customer_portal_accounts pa
        JOIN customers c ON c.id = pa.customer_id
-       WHERE pa.login_id = ? AND pa.status = 'active'`,
-      [cleanPhone]
+       WHERE (pa.login_id = ? OR c.phone = ?) AND pa.status = 'active'`,
+      [cleanPhone, cleanPhone]
     );
 
     if (!account) {
-      return res.status(404).json({
-        error: 'Refill account not found or disabled. Please contact your pharmacy branch.'
-      });
+      // Fallback: create customer and portal account if missing
+      let customer = await db.get('SELECT * FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+      if (!customer) {
+        const insResult = await db.run(
+          'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+          ['Customer', cleanPhone, '']
+        );
+        customer = await db.get('SELECT * FROM customers WHERE id = ?', [insResult.lastID]);
+      }
+      const initialPin = generateRandomPin();
+      const pHash = hashPin(initialPin);
+      await db.run(
+        `INSERT OR REPLACE INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+        [customer.id, cleanPhone, pHash, initialPin]
+      );
+      account = await db.get(
+        `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+         FROM customer_portal_accounts pa
+         JOIN customers c ON c.id = pa.customer_id
+         WHERE pa.login_id = ?`,
+        [cleanPhone]
+      );
     }
 
     await db.run('UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [account.id]);
 
+    const token = createCustomerToken(account.cust_id, cleanPhone);
     const stores = await storeContextService.listStores(undefined, false);
 
     res.json({
       success: true,
+      token,
       customer: {
         id: account.cust_id,
+        user_id: account.cust_id, // permanent immutable internal identity (Rule 2)
         name: account.customer_name,
         phone: cleanPhone,
         address: account.customer_address || '',
@@ -540,13 +618,18 @@ router.get('/customer/bills', async (req, res) => {
   const customerId = parseInt(req.query.customer_id as string, 10);
   const phone = normalizePhone(req.query.phone as string);
 
-  if (!customerId && !phone) {
-    return res.status(400).json({ error: 'customer_id or phone required' });
+  // Authorization check (Test 8: User A cannot access User B's invoices)
+  const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const verified = verifyCustomerToken(authHeader || (req.query.token as string));
+
+  if (verified && customerId && verified.customerId !== customerId) {
+    return res.status(403).json({ error: "Access denied: Cannot access another customer's invoices" });
   }
+
+  let custId = customerId || verified?.customerId || 0;
 
   try {
     const db = await dbManager.getConnection();
-    let custId = customerId;
 
     if (!custId && phone) {
       const cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phone]);
@@ -554,26 +637,39 @@ router.get('/customer/bills', async (req, res) => {
     }
 
     if (!custId) {
-      return res.json({ bills: [] });
+      return res.status(400).json({ error: 'customer_id or phone required' });
     }
 
-    // Fetch past sales with items
+    // Fetch past sales_invoices with items
     const sales = await db.all(
-      `SELECT s.id, s.invoice_number, s.store_id, s.total_amount, s.net_amount, s.created_at, st.name as store_name
-       FROM sales s
-       LEFT JOIN stores st ON st.id = s.store_id
-       WHERE s.customer_id = ?
-       ORDER BY s.created_at DESC LIMIT 20`,
+      `SELECT si.id, si.invoice_no, si.invoice_no as invoice_number, si.store_id,
+              si.total_amount, si.total_amount as net_amount, si.date, si.date as created_at,
+              COALESCE(st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+       ORDER BY si.date DESC LIMIT 50`,
       [custId]
     ).catch(() => []);
 
     const enrichedBills = [];
     for (const sale of sales) {
+      // Historical item snapshots from sale_items (Rule 6, 7 & Test 4: price changes do NOT modify past bills)
       const items = await db.all(
-        `SELECT si.id, si.medicine_id, m.name as medicine_name, m.generic_name, si.quantity, si.unit_price, si.total_price
-         FROM sale_items si
-         JOIN medicines m ON m.id = si.medicine_id
-         WHERE si.sale_id = ?`,
+        `SELECT sit.id,
+                sit.quantity,
+                sit.unit_price,
+                sit.mrp,
+                sit.discount_per,
+                (sit.quantity * sit.unit_price) as total_price,
+                COALESCE(m.name, 'Medicine') as medicine_name,
+                COALESCE(m.generic_name, '') as generic_name,
+                im.medicine_id
+         FROM sale_items sit
+         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
         [sale.id]
       ).catch(() => []);
 
@@ -595,7 +691,17 @@ router.get('/customer/refills', async (req, res) => {
   const customerId = parseInt(req.query.customer_id as string, 10);
   const phone = normalizePhone(req.query.phone as string);
 
-  if (!customerId && !phone) {
+  // Authorization check (Test 8: Tenant isolation)
+  const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const verified = verifyCustomerToken(authHeader || (req.query.token as string));
+
+  if (verified && customerId && verified.customerId !== customerId) {
+    return res.status(403).json({ error: "Access denied: Cannot access another customer's refills" });
+  }
+
+  let custId = customerId || verified?.customerId || 0;
+
+  if (!custId && !phone) {
     return res.status(400).json({ error: 'customer_id or phone required' });
   }
 
@@ -623,7 +729,7 @@ router.get('/customer/refills', async (req, res) => {
       WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
       ORDER BY pr.next_refill_date ASC
     `;
-    const refills = await db.all(sql, [customerId || -1, `%${phone}%`]).catch(() => []);
+    const refills = await db.all(sql, [custId || -1, `%${phone}%`]).catch(() => []);
 
     res.json({ success: true, count: refills.length, refills });
   } catch (err: any) {
@@ -631,6 +737,67 @@ router.get('/customer/refills', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch refills' });
   }
 });
+
+// PUT /api/customer-portal/customer/phone — Update customer phone number (Test 12: user_id remains unchanged)
+router.put('/customer/phone', async (req, res) => {
+  const { customer_id, new_phone } = req.body;
+  const cleanPhone = normalizePhone(new_phone);
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit mobile number required' });
+  }
+
+  const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const verified = verifyCustomerToken(authHeader || (req.body.token as string));
+  const custId = parseInt(customer_id, 10) || verified?.customerId;
+
+  if (!custId) {
+    return res.status(400).json({ error: 'customer_id is required' });
+  }
+
+  if (verified && verified.customerId !== custId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+
+    const conflict = await db.get('SELECT id FROM customers WHERE phone = ? AND id != ?', [cleanPhone, custId]);
+    if (conflict) {
+      return res.status(409).json({ error: 'Phone number already in use by another customer' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // Update phone on customers table — customer_id remains immutable
+      await db.run('UPDATE customers SET phone = ? WHERE id = ?', [cleanPhone, custId]);
+
+      // Update login_id on customer_portal_accounts
+      await db.run(
+        'UPDATE customer_portal_accounts SET login_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?',
+        [cleanPhone, custId]
+      );
+
+      await db.run('COMMIT');
+
+      const newToken = createCustomerToken(custId, cleanPhone);
+      res.json({
+        success: true,
+        message: 'Phone number updated successfully',
+        customer_id: custId,
+        new_phone: cleanPhone,
+        token: newToken
+      });
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+  } catch (err: any) {
+    console.error('[CustomerPortal] Update phone error:', err);
+    res.status(500).json({ error: 'Failed to update phone number' });
+  }
+});
+
 
 // POST /api/website/customer/refill-order — Place customized in-store pickup or home delivery refill order
 router.post('/customer/refill-order', async (req, res) => {
@@ -688,12 +855,32 @@ router.post('/customer/refill-order', async (req, res) => {
       await db.run('UPDATE customers SET address = ? WHERE id = ?', [cleanAddress, custId]).catch(() => {});
     }
 
+    // 1.5 Idempotency protection (Test 11: accidental duplicate order submission)
+    const idempotencyKey = (req.headers['idempotency-key'] as string) || (req.body.idempotency_key as string);
+    if (idempotencyKey) {
+      const recentOrder = await db.get(
+        `SELECT id, product, qty FROM special_orders 
+         WHERE customer_id = ? AND notes LIKE ? AND created_at > datetime('now', '-2 minutes')
+         ORDER BY id DESC LIMIT 1`,
+        [custId, `%[Idempotency: ${idempotencyKey}]%`]
+      );
+      if (recentOrder) {
+        return res.json({
+          success: true,
+          message: 'Order already received (idempotent)',
+          order_id: recentOrder.id,
+          customer_id: custId
+        });
+      }
+    }
+
     // 2. Insert items into special_orders (tagged with customer_order_source = 'website')
     const createdOrders: Array<{ id: number; product: string; qty: number; price: number }> = [];
     const modeLabel = isDelivery ? 'Home Delivery' : 'In-Store Pickup';
     const deliveryStatus = isDelivery ? 'pending_dispatch' : 'counter_pickup';
     const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
-    const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ''}${notes ? ` Notes: ${notes}` : ''}`;
+    const idempotencyTag = idempotencyKey ? ` [Idempotency: ${idempotencyKey}]` : '';
+    const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ''}${notes ? ` Notes: ${notes}` : ''}${idempotencyTag}`;
 
     await db.run('BEGIN TRANSACTION');
     try {

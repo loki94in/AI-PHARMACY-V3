@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-14 — Customer past bills failed to load and WhatsApp OTP login was blocked for unprovisioned users
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. Customer logged in via WhatsApp OTP but past bills were always empty.<br>2. Users attempting WhatsApp OTP login without prior manual account generation in CRM received 404 "Refill account not found or disabled".<br>3. Disconnected customer identity risking separate data pools between web and mobile clients. |
+| **Root cause** | 1. `GET /customer/bills` in `src/routes/customerPortal.ts` queried `FROM sales s` and `WHERE si.sale_id = ?`, which failed on SQLite runtime (the actual tables are `sales_invoices si` with `si.invoice_no` and `sale_items sit` with `sit.invoice_id`). Errors were caught silently by `.catch(() => [])`.<br>2. `POST /auth/request-otp` rejected any phone number not pre-provisioned in `customer_portal_accounts`.<br>3. Lack of permanent session token verification allowed arbitrary `customer_id` parameter sniffing. |
+| **How it was fixed** | 1. Rewrote `GET /customer/bills` to query `sales_invoices` and `sale_items` joining `inventory_master` and `medicines`, returning historical snapshots (`unit_price`, `quantity`, `total_price`).<br>2. Updated `POST /auth/request-otp` and `/auth/verify-otp` to auto-provision `customers` and `customer_portal_accounts` bound to permanent `customer_id`.<br>3. Implemented HMAC-SHA256 session token generation and tenant isolation checks (`verifyCustomerToken`) preventing cross-customer access (403 Forbidden).<br>4. Added `PUT /customer/phone` preserving immutable `customer_id` across phone updates and idempotency protection in `POST /customer/refill-order`. |
+| **Priority** | P1 |
+| **What not to touch** | POS billing transactions; immutable `sales_invoices.id`; patient refill schedule calculations. |
+| **Verified by** | `tests/whatsappOtpIdentity.test.ts` (11/11 PASS); `tests/customerPortalLifecycle.test.ts` (8/8 PASS); `npm run guardrails` PASS. |
+
 ### [Fixed] P1-13 — WhatsApp send stalled on sleeping/installed client; missing email inbox deletion; unwanted message send persistence
 
 | Field | Content |

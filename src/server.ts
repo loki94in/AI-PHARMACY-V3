@@ -281,6 +281,8 @@ app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
 app.use('/api/stores', lazyRoute(() => import('./routes/stores.js'), 'hot'));
 app.use('/api/website', lazyRoute(() => import('./routes/websiteOrders.js'), 'hot'));
 app.use('/api/customer-portal', lazyRoute(() => import('./routes/customerPortal.js'), 'hot'));
+app.use('/api/customer', lazyRoute(() => import('./routes/api/customerRoutes.js'), 'hot'));
+app.use('/api/admin', lazyRoute(() => import('./routes/api/adminRoutes.js'), 'hot'));
 app.use('/api/sync', lazyRoute(() => import('./routes/sync.js')));
 // Core API routes
 app.use('/api/sales', lazyRoute(() => import('./routes/sales.js'), 'hot'));

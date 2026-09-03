@@ -1,65 +1,46 @@
-import fs from 'fs';
-import path from 'path';
-import { getAppDataDir } from '../config/index.js';
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
-class AsyncLogger {
-  private logBuffer: string[] = [];
-  private flushTimer: NodeJS.Timeout | null = null;
-  private logFilePath: string;
+export interface LogContext {
+  module?: string;
+  operation?: string;
+  requestId?: string;
+  durationMs?: number;
+  [key: string]: any;
+}
 
-  constructor() {
-    const logsDir = path.join(getAppDataDir(), 'logs');
-    try {
-      if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
-      }
-    } catch (_) {}
-    this.logFilePath = path.join(logsDir, 'app.log');
+class AppLogger {
+  private formatMessage(level: LogLevel, message: string, context?: LogContext): string {
+    const timestamp = new Date().toISOString();
+    const mod = context?.module ? `[${context.module}]` : '';
+    const op = context?.operation ? `[${context.operation}]` : '';
+    const req = context?.requestId ? `[req:${context.requestId}]` : '';
+    const dur = context?.durationMs !== undefined ? ` (${context.durationMs}ms)` : '';
+
+    return `${timestamp} ${level.padEnd(5)} ${mod}${op}${req} ${message}${dur}`;
   }
 
-  private scheduleFlush() {
-    if (this.flushTimer) return;
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null;
-      this.flush();
-    }, 200);
+  debug(message: string, context?: LogContext): void {
+    if (process.env.DEBUG || process.env.NODE_ENV !== 'production') {
+      console.debug(this.formatMessage('DEBUG', message, context));
+    }
   }
 
-  private flush() {
-    if (this.logBuffer.length === 0) return;
-    const lines = this.logBuffer.join('\n') + '\n';
-    this.logBuffer = [];
-    fs.appendFile(this.logFilePath, lines, (err) => {
-      if (err) {
-        process.stderr.write(`[Logger Error] ${err.message}\n`);
-      }
-    });
+  info(message: string, context?: LogContext): void {
+    console.log(this.formatMessage('INFO', message, context));
   }
 
-  public info(msg: string, ...meta: any[]) {
-    const time = new Date().toISOString();
-    const formatted = `[INFO] [${time}] ${msg} ${meta.length ? JSON.stringify(meta) : ''}`.trim();
-    process.stdout.write(formatted + '\n');
-    this.logBuffer.push(formatted);
-    this.scheduleFlush();
+  warn(message: string, context?: LogContext): void {
+    console.warn(this.formatMessage('WARN', message, context));
   }
 
-  public warn(msg: string, ...meta: any[]) {
-    const time = new Date().toISOString();
-    const formatted = `[WARN] [${time}] ${msg} ${meta.length ? JSON.stringify(meta) : ''}`.trim();
-    process.stderr.write(formatted + '\n');
-    this.logBuffer.push(formatted);
-    this.scheduleFlush();
-  }
-
-  public error(msg: string, ...meta: any[]) {
-    const time = new Date().toISOString();
-    const formatted = `[ERROR] [${time}] ${msg} ${meta.length ? JSON.stringify(meta) : ''}`.trim();
-    process.stderr.write(formatted + '\n');
-    this.logBuffer.push(formatted);
-    this.scheduleFlush();
+  error(message: string, error?: any, context?: LogContext): void {
+    const formatted = this.formatMessage('ERROR', message, context);
+    if (error) {
+      console.error(formatted, error);
+    } else {
+      console.error(formatted);
+    }
   }
 }
 
-export const logger = new AsyncLogger();
-export default logger;
+export const logger = new AppLogger();

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Store as StoreIcon, Phone, Key, ShieldCheck, CheckCircle2, Clock,
   ArrowRight, RefreshCw, ShoppingCart, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
-  Activity, Pill, Heart, Wind, Search, ChevronRight
+  Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { PublicCatalogView } from './PublicCatalogView';
@@ -64,11 +65,40 @@ interface SelectedMedicine {
 }
 
 export default function CustomerPortal() {
+  const location = useLocation();
+
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'catalog' | 'portal'>('catalog');
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+
+  // Auto-detect direct customer login routes and prefilled phone query parameters
+  useEffect(() => {
+    try {
+      const search = location.search || window.location.search || '';
+      const params = new URLSearchParams(search);
+      const phoneParam = params.get('phone') || '';
+      if (phoneParam) {
+        setPhoneInput(phoneParam.replace(/\D/g, ''));
+        setActiveTab('portal');
+      }
+      const isLoginPath =
+        location.pathname.includes('/customer-login') ||
+        location.pathname.includes('/customer/login') ||
+        location.pathname.includes('/my-bills') ||
+        location.pathname.includes('/customer-bills') ||
+        params.get('tab') === 'login' ||
+        params.get('tab') === 'portal';
+
+      if (isLoginPath) {
+        setActiveTab('portal');
+      }
+      if (params.get('otp') === '1') {
+        setIsOtpMode(true);
+      }
+    } catch (_) {}
+  }, [location]);
 
   // ─── Authentication States ──────────────────────────────────────────────────
   const [session, setSession] = useState<CustomerSession | null>(() => {
@@ -142,9 +172,10 @@ export default function CustomerPortal() {
   const loadCustomerData = async (custId: number, phone: string) => {
     setLoadingData(true);
     try {
+      const token = localStorage.getItem('customer_portal_token') || undefined;
       const [refillRes, billRes] = await Promise.all([
-        api.getCustomerRefills({ customer_id: custId, phone }),
-        api.getCustomerBills({ customer_id: custId, phone })
+        api.getCustomerRefills({ customer_id: custId, phone, token }),
+        api.getCustomerBills({ customer_id: custId, phone, token })
       ]);
 
       const loadedRefills = refillRes?.refills || [];
@@ -225,6 +256,9 @@ export default function CustomerPortal() {
         setSession(res.customer);
         if (res.stores) setStores(res.stores);
         localStorage.setItem('customer_portal_session', JSON.stringify(res.customer));
+        if (res.token) {
+          localStorage.setItem('customer_portal_token', res.token);
+        }
       }
     } catch (err: any) {
       setAuthError(err.response?.data?.error || 'Invalid or expired OTP');
@@ -236,6 +270,7 @@ export default function CustomerPortal() {
   const handleLogout = () => {
     setSession(null);
     localStorage.removeItem('customer_portal_session');
+    localStorage.removeItem('customer_portal_token');
     setSelectedItems({});
     setOrderSuccess(null);
   };
@@ -586,9 +621,9 @@ export default function CustomerPortal() {
                 <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-2">
                   <StoreIcon className="w-7 h-7" />
                 </div>
-                <h1 className="text-2xl font-bold text-text">Patient Refill Portal</h1>
+                <h1 className="text-2xl font-bold text-text">Customer Web Login</h1>
                 <p className="text-sm text-muted">
-                  Login to view your previous bills & reorder regular medicines for counter collection
+                  Directly connected to your in-store sales history & bills. Login to view past invoices and reorder medicines.
                 </p>
               </div>
 
@@ -856,14 +891,43 @@ export default function CustomerPortal() {
               )}
             </div>
 
-            {/* Section 2: Reorder from Previous In-Store Bills */}
-            {bills.length > 0 && (
-              <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            {/* Section 2: Reorder from Previous In-Store Bills & Sell History */}
+            <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-bold text-text">Previous In-Store Bills</h3>
-                  <p className="text-xs text-muted">Quickly pick and reorder items you previously purchased</p>
+                  <h3 className="text-base font-bold text-text flex items-center gap-2">
+                    <Receipt className="w-4 h-4 text-primary" />
+                    <span>Past Store Purchases & Invoices</span>
+                    {bills.length > 0 && (
+                      <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold">
+                        {bills.length} {bills.length === 1 ? 'bill' : 'bills'}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-muted">
+                    In-store POS counter purchases directly connected to your account ({session.phone})
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => loadCustomerData(session.id, session.phone)}
+                  className="p-1.5 hover:bg-bg rounded-lg text-muted hover:text-text transition-colors flex items-center gap-1 text-xs"
+                  title="Refresh bills"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingData ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+              </div>
 
+              {bills.length === 0 ? (
+                <div className="py-8 text-center border border-dashed border-border rounded-xl text-xs text-muted space-y-1.5 p-4">
+                  <Receipt className="w-8 h-8 text-muted/50 mx-auto mb-2" />
+                  <p className="font-semibold text-text text-sm">No in-store bills found for this phone number yet</p>
+                  <p className="max-w-sm mx-auto">
+                    When you purchase medicines at our pharmacy counter, your invoices and medicine history will appear here automatically.
+                  </p>
+                </div>
+              ) : (
                 <div className="space-y-3">
                   {bills.map(bill => (
                     <div key={bill.id} className="bg-bg border border-border rounded-xl p-3.5 space-y-2.5">
@@ -871,6 +935,7 @@ export default function CustomerPortal() {
                         <div>
                           <span className="font-semibold text-text">Bill #{bill.invoice_number || bill.id}</span>
                           <span className="ml-2">{bill.store_name || 'Main Branch'} • {new Date(bill.created_at).toLocaleDateString()}</span>
+                          <span className="ml-2 font-bold text-text">₹{Number(bill.total_amount || 0).toFixed(2)}</span>
                         </div>
                         <button
                           type="button"
@@ -902,8 +967,11 @@ export default function CustomerPortal() {
                                   {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                                 </button>
                                 <span className="font-medium text-text">{it.medicine_name}</span>
+                                {it.quantity && it.quantity > 1 && (
+                                  <span className="text-[10px] text-muted bg-bg2 px-1.5 py-0.5 rounded">×{it.quantity}</span>
+                                )}
                               </div>
-                              <span className="text-muted">₹{price.toFixed(2)}</span>
+                              <span className="text-muted font-medium">₹{price.toFixed(2)}</span>
                             </div>
                           );
                         })}
@@ -911,8 +979,8 @@ export default function CustomerPortal() {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Right: Checkout & Collection Summary */}

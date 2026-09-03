@@ -1690,20 +1690,22 @@ export const api = {
     apiClient.put<{ success: boolean; message: string }>(`/customer-portal/accounts/${accountId}`, data).then(res => res.data),
   customerLogin: (data: { login_id: string; pin: string }) =>
     apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
-  customerRequestOtp: (data: { login_id: string }) =>
+  customerRequestOtp: (data: { login_id: string; name?: string }) =>
     apiClient.post<{ success: boolean; message: string; login_id: string }>('/customer-portal/auth/request-otp', data).then(res => res.data),
   customerVerifyOtp: (data: { login_id: string; otp_code: string }) =>
-    apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/verify-otp', data).then(res => res.data),
-  getCustomerBills: (params: { customer_id?: number; phone?: string }) =>
-    apiClient.get<{ success: boolean; count: number; bills: any[] }>('/customer-portal/customer/bills', { params }).then(res => res.data),
+    apiClient.post<{ success: boolean; token?: string; customer: { id: number; user_id?: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/verify-otp', data).then(res => res.data),
+  getCustomerBills: (params: { customer_id?: number; phone?: string; token?: string }) =>
+    apiClient.get<{ success: boolean; count: number; bills: any[] }>('/customer-portal/customer/bills', { params, headers: params.token ? { Authorization: `Bearer ${params.token}` } : undefined }).then(res => res.data),
   getCustomerPurchaseHistory: (params: { customer_id?: number; login_id?: string; limit?: number; offset?: number }) =>
     apiClient.get<{ customer_id: number; total: number; limit: number; offset: number; purchases: any[] }>('/customer-portal/history', { params }).then(res => res.data),
   refillFromInvoice: (invoiceId: number, data: { customer_id?: number; login_id?: string; store_id?: number }) =>
     apiClient.post<{ success: boolean; message: string; source_invoice_id: number; orders: any[]; unavailable_items: any[] }>(`/customer-portal/history/${invoiceId}/refill`, data).then(res => res.data),
-  getCustomerRefills: (params: { customer_id?: number; phone?: string }) =>
-    apiClient.get<{ success: boolean; count: number; refills: any[] }>('/customer-portal/customer/refills', { params }).then(res => res.data),
-  placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; delivery_mode?: 'pickup' | 'delivery'; delivery_address?: string; notes?: string }) =>
-    apiClient.post<{ success: boolean; message: string; store_id: number; store_name: string; orders: any[]; customer: { name: string; phone: string } }>('/customer-portal/customer/refill-order', data).then(res => res.data),
+  getCustomerRefills: (params: { customer_id?: number; phone?: string; token?: string }) =>
+    apiClient.get<{ success: boolean; count: number; refills: any[] }>('/customer-portal/customer/refills', { params, headers: params.token ? { Authorization: `Bearer ${params.token}` } : undefined }).then(res => res.data),
+  updateCustomerPhone: (data: { customer_id?: number; new_phone: string; token?: string }) =>
+    apiClient.put<{ success: boolean; message: string; customer_id: number; new_phone: string; token: string }>('/customer-portal/customer/phone', data, { headers: data.token ? { Authorization: `Bearer ${data.token}` } : undefined }).then(res => res.data),
+  placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; delivery_mode?: 'pickup' | 'delivery'; delivery_address?: string; notes?: string; idempotency_key?: string }) =>
+    apiClient.post<{ success: boolean; message: string; store_id: number; store_name: string; orders: any[]; customer: { name: string; phone: string } }>('/customer-portal/customer/refill-order', data, { headers: data.idempotency_key ? { 'idempotency-key': data.idempotency_key } : undefined }).then(res => res.data),
   changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
   getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number }) =>
@@ -1799,5 +1801,12 @@ export interface CatalogImageCounts {
   rejected: number;
   removed: number;
 }
+
+// Modular Domain APIs (AI Pharmacy V3 Architecture)
+export { catalogApi } from '../api/catalogApi';
+export { pricingApi } from '../api/pricingApi';
+export { customerApi } from '../api/customerApi';
+export { authApi } from '../api/authApi';
+
 
 

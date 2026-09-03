@@ -215,6 +215,17 @@ export function PortalAccountsManager() {
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
 
+          <a
+            href="/customer-login"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3.5 py-2.5 bg-bg border border-border rounded-xl text-text hover:bg-bg3 transition-colors text-xs font-semibold flex items-center gap-1.5"
+            title="Open Customer Web Login in new tab"
+          >
+            <Globe className="w-4 h-4 text-primary" />
+            <span className="hidden sm:inline">Open Web Login</span>
+          </a>
+
           <button
             onClick={() => setIsModalOpen(true)}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-primary text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2"
@@ -345,6 +356,30 @@ export function PortalAccountsManager() {
 
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => {
+                            const url = `${window.location.origin}/customer-login?phone=${acc.login_id}`;
+                            navigator.clipboard.writeText(url);
+                            setCopiedId(acc.id);
+                            toastEvent.trigger(`Login link copied for ${acc.customer_name}!`, 'success');
+                            setTimeout(() => setCopiedId(null), 2000);
+                          }}
+                          className="p-1.5 rounded-lg bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 transition-colors"
+                          title="Copy Customer Web Login Link"
+                        >
+                          {copiedId === acc.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        </button>
+
+                        <a
+                          href={`/customer-login?phone=${acc.login_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                          title="Open Customer Web Login for this account"
+                        >
+                          <Globe className="w-4 h-4" />
+                        </a>
+
                         <button
                           onClick={() => {
                             setOverrideModalAcc(acc);

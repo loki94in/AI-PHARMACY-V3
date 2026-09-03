@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 50;
+const CURRENT_SCHEMA_VERSION = 51;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -425,6 +425,56 @@ export async function ensureSchema(dbPath: string) {
       `);
       await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
+
+      // Pricing rules & multi-channel visibility (Schema v51)
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS pricing_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
+          target_id INTEGER,       -- medicine_id or store_id if applicable
+          category_name TEXT,     -- category if rule_type = 'CATEGORY'
+          margin_percent REAL DEFAULT 0,
+          discount_percent REAL DEFAULT 0,
+          custom_selling_price REAL,
+          min_margin_percent REAL,
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
+
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS product_channel_visibility (
+          medicine_id INTEGER PRIMARY KEY,
+          is_pos_visible INTEGER DEFAULT 1,
+          is_website_visible INTEGER DEFAULT 1,
+          is_whatsapp_visible INTEGER DEFAULT 1,
+          is_portal_visible INTEGER DEFAULT 1,
+          featured_rank INTEGER DEFAULT 0,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
+
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS customer_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL,
+          phone TEXT NOT NULL,
+          session_token TEXT NOT NULL UNIQUE,
+          channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
+          device_info TEXT,
+          ip_address TEXT,
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
 
       await ensureMedicinesFts(db);
       return;
@@ -2966,6 +3016,56 @@ export async function ensureSchema(dbPath: string) {
   `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
+
+  // Pricing rules & multi-channel visibility (Schema v51)
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pricing_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
+      target_id INTEGER,       -- medicine_id or store_id if applicable
+      category_name TEXT,     -- category if rule_type = 'CATEGORY'
+      margin_percent REAL DEFAULT 0,
+      discount_percent REAL DEFAULT 0,
+      custom_selling_price REAL,
+      min_margin_percent REAL,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
+
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS product_channel_visibility (
+      medicine_id INTEGER PRIMARY KEY,
+      is_pos_visible INTEGER DEFAULT 1,
+      is_website_visible INTEGER DEFAULT 1,
+      is_whatsapp_visible INTEGER DEFAULT 1,
+      is_portal_visible INTEGER DEFAULT 1,
+      featured_rank INTEGER DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
+
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS customer_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      session_token TEXT NOT NULL UNIQUE,
+      channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
+      device_info TEXT,
+      ip_address TEXT,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

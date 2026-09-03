@@ -25,4 +25,8 @@ export const pageImports: Record<string, () => Promise<{ default: ComponentType 
   '/live-cart': () => import('../pages/LiveCart'),
   '/portal': () => import('../pages/CustomerPortal'),
   '/refill-portal': () => import('../pages/CustomerPortal'),
+  '/customer-login': () => import('../pages/CustomerPortal'),
+  '/customer/login': () => import('../pages/CustomerPortal'),
+  '/my-bills': () => import('../pages/CustomerPortal'),
+  '/customer-bills': () => import('../pages/CustomerPortal'),
 };

@@ -85,6 +85,10 @@ const pageRoutes: KeepAliveRoute[] = [
   { path: '/live-cart', element: <LiveCart /> },
   { path: '/portal', element: <CustomerPortal /> },
   { path: '/refill-portal', element: <CustomerPortal /> },
+  { path: '/customer-login', element: <CustomerPortal /> },
+  { path: '/customer/login', element: <CustomerPortal /> },
+  { path: '/my-bills', element: <CustomerPortal /> },
+  { path: '/customer-bills', element: <CustomerPortal /> },
 ];
 
 // ──────────────────────────────────────────────
