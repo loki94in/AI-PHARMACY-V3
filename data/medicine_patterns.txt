@@ -1,0 +1,15 @@
+\d+\.?\d*\s*mg
+\d+\.?\d*\s*ml
+\d+\.?\d*\s*gm
+\d+\.?\d*\s*mcg
+\d+\s*tablets?
+\d+\s*capsules?
+\d+\s*tabs?
+\d+\s*caps?
+\d+\s*ml\s*drops?
+\d+\s*ml\s*syrup
+[a-z0-9\-]+\s*forte
+[a-z0-9\-]+\s*plus
+b\.no\.?:?\s*[a-z0-9\-]+
+exp\.?:?\s*\d{2}[\/\-]\d{2,4}
+mrp\s*₹?:?\s*\d+(?:\.\d{2})?

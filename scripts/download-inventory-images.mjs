@@ -179,7 +179,21 @@ function readInventoryMedicines() {
   return products;
 }
 
-// Fetch images for a medicine from PharmEasy CDN API
+// Check if candidate product is a genuine brand match
+function isBrandMatch(query, candidateName) {
+  if (!candidateName || !query) return false;
+  const cleanQ = query.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
+  const cleanCand = candidateName.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
+  const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 3 && !['tab', 'tablet', 'tablets', 'cap', 'capsule', 'capsules', 'syp', 'syrup', 'inj', 'injection', 'drop', 'drops', 'pack', 'bottle', 'strip'].includes(w));
+  if (qWords.length === 0) return true;
+  const brand = qWords[0];
+  const candWords = new Set(cleanCand.split(/\s+/));
+  const compactQ = cleanQ.replace(/\s+/g, '');
+  const compactCand = cleanCand.replace(/\s+/g, '');
+  return candWords.has(brand) || cleanCand.includes(brand) || compactCand.includes(brand);
+}
+
+// Fetch images for a medicine from PharmEasy CDN API, prioritizing maximum views (front, back, side, combo)
 async function fetchImagesForMedicine(query) {
   const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
   const response = await fetch(url, {
@@ -198,31 +212,52 @@ async function fetchImagesForMedicine(query) {
   const prods = data?.data?.products || [];
   if (prods.length === 0) return null;
 
-  const top = prods[0];
-  const damImages = top.damImages || [];
-  
+  // Filter candidates that have images
+  const candidatesWithImages = prods.filter(c => (c.damImages && c.damImages.length > 0) || Boolean(c.image));
+  if (candidatesWithImages.length === 0) return null;
+
+  // Sort: brand matches first, then candidate with the highest number of angles (front, back, side, combo)
+  candidatesWithImages.sort((a, b) => {
+    const aBrand = isBrandMatch(query, a.name) ? 1 : 0;
+    const bBrand = isBrandMatch(query, b.name) ? 1 : 0;
+    if (aBrand !== bBrand) return bBrand - aBrand;
+    const aImgs = a.damImages?.length || (a.image ? 1 : 0);
+    const bImgs = b.damImages?.length || (b.image ? 1 : 0);
+    return bImgs - aImgs;
+  });
+
+  const best = candidatesWithImages[0];
+  const damImages = best.damImages || [];
   const imageMap = {};
+
+  // Capture all available angles: front, back, side, combo (combine), box-front, box-back
   for (const img of damImages) {
     const face = img.face || 'default';
     if (!imageMap[face] && img.url) {
-      // Clean url - remove query params for maximum resolution
       imageMap[face] = img.url.split('?')[0];
     }
   }
 
-  if (Object.keys(imageMap).length === 0 && top.image) {
-    imageMap['default'] = top.image.split('?')[0];
+  if (Object.keys(imageMap).length === 0 && best.image) {
+    imageMap['default'] = best.image.split('?')[0];
   }
 
-  return {
-    matchedName: top.name,
-    slug: top.slug,
-    images: imageMap
-  };
+  if (Object.keys(imageMap).length > 0) {
+    return {
+      matchedName: best.name,
+      slug: best.slug,
+      images: imageMap
+    };
+  }
+
+  return null;
 }
 
-// Download image file safely
+// Download image file safely — NEVER delete or truncate existing files
 async function downloadImage(url, destPath) {
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) {
+    return fs.statSync(destPath).size;
+  }
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
