@@ -1659,7 +1659,10 @@ export const api = {
     apiClient.get<{ success: boolean; items: { medicineName: string; lastOrderedDate: string; lastQty: number; lastDistributorName: string }[] }>('/pharmarack/reorder-recent', { params: months ? { months } : {} }).then(res => res.data),
 
   // Multi-Store & Central/Local Sync APIs
-  getStores: (includeInactive = false) => apiClient.get<Array<{ id: number; name: string; code?: string; address?: string; phone?: string; email?: string; is_central: number; is_active: number }>>('/stores', { params: { include_inactive: includeInactive } }).then(res => res.data),
+  getStores: (includeInactive = false) => apiClient.get('/stores', { params: { include_inactive: includeInactive } }).then(res => {
+    const d = res.data;
+    return Array.isArray(d) ? d : (Array.isArray(d?.stores) ? d.stores : []);
+  }),
   createStore: (data: { name: string; code?: string; address?: string; phone?: string; email?: string; is_central?: boolean | number }) => apiClient.post('/stores', data).then(res => res.data),
   updateStore: (id: number, data: any) => apiClient.put(`/stores/${id}`, data).then(res => res.data),
   getStoreSettings: (storeId: number) => apiClient.get<Record<string, string>>(`/stores/${storeId}/settings`).then(res => res.data),
@@ -1695,9 +1698,102 @@ export const api = {
     apiClient.get<{ success: boolean; count: number; bills: any[] }>('/customer-portal/customer/bills', { params }).then(res => res.data),
   getCustomerRefills: (params: { customer_id?: number; phone?: string }) =>
     apiClient.get<{ success: boolean; count: number; refills: any[] }>('/customer-portal/customer/refills', { params }).then(res => res.data),
-  placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; notes?: string }) =>
+  placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; delivery_mode?: 'pickup' | 'delivery'; delivery_address?: string; notes?: string }) =>
     apiClient.post<{ success: boolean; message: string; store_id: number; store_name: string; orders: any[]; customer: { name: string; phone: string } }>('/customer-portal/customer/refill-order', data).then(res => res.data),
   changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
+  getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number }) =>
+    apiClient.get<{
+      success: boolean;
+      category: string;
+      search: string;
+      page: number;
+      limit: number;
+      total_count: number;
+      total_pages: number;
+      medicines: Array<{
+        name: string;
+        category: string;
+        pack: string;
+        composition: string;
+        manufacturer: string;
+        mrp: number;
+        sell_price: number;
+        stock_qty: number;
+        in_stock: boolean;
+        image_url: string | null;
+        images: Record<string, any>;
+      }>;
+    }>('/customer-portal/public-catalog', { params }).then(res => res.data),
+  getPublicCatalogSummary: () =>
+    apiClient.get<{
+      success: boolean;
+      summary: {
+        all: number;
+        diabetic: number;
+        inhalation_rotacaps: number;
+        cholesterol: number;
+        tb: number;
+        thyroid: number;
+        bp_cardiac: number;
+      };
+    }>('/customer-portal/categories-summary').then(res => res.data),
+  getCatalogImages: (params?: { status?: string; search?: string; medicine_id?: number; page?: number; limit?: number }) =>
+    apiClient.get<{ success: boolean; images: CatalogImageItem[]; totalCount: number; totalPages: number; page: number }>('/catalog/images', { params }).then(res => res.data),
+  getCatalogImageCounts: () =>
+    apiClient.get<{ success: boolean; counts: CatalogImageCounts }>('/catalog/images/counts').then(res => res.data),
+  approveCatalogImage: (id: number, verified_by?: string) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/approve`, { verified_by }).then(res => res.data),
+  rejectCatalogImage: (id: number, reason?: string, verified_by?: string) =>
+    apiClient.post<{ success: boolean; message: string; autoRedownloadTriggered: boolean }>(`/catalog/images/${id}/reject`, { reason, verified_by }).then(res => res.data),
+  removeCatalogImage: (id: number, verified_by?: string) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/remove`, { verified_by }).then(res => res.data),
+  replaceCatalogImage: (id: number, data: { new_image_path: string; source_url?: string; verified_by?: string }) =>
+    apiClient.post<{ success: boolean; message: string; image: CatalogImageItem }>(`/catalog/images/${id}/replace`, data).then(res => res.data),
+  redownloadCatalogImage: (id: number) =>
+    apiClient.post<{ success: boolean; message: string; image?: CatalogImageItem }>(`/catalog/images/${id}/redownload`).then(res => res.data),
+  syncCatalogImageState: () =>
+    apiClient.post<{ success: boolean; synced: number; skipped: number; totalInState: number }>('/catalog/images/sync-state').then(res => res.data),
 };
+
+export interface CatalogImageItem {
+  id: number;
+  medicine_id: number;
+  company_name: string | null;
+  product_name: string;
+  image_path: string;
+  thumbnail_path: string | null;
+  image_source: string;
+  source_url: string | null;
+  image_hash: string | null;
+  confidence_score: number;
+  matching_method: string;
+  verification_status: 'HIGH_CONFIDENCE' | 'APPROVED' | 'PENDING_REVIEW' | 'REJECTED' | 'REMOVED';
+  verification_reason: string | null;
+  ocr_text: string | null;
+  ocr_confidence: number | null;
+  is_active: number;
+  retry_count: number;
+  replaced_from_image_id: number | null;
+  verified_by: string | null;
+  verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+  medicine_name?: string;
+  generic_name?: string;
+  strength?: string;
+  packaging?: string;
+  mrp?: number;
+  manufacturer?: string;
+}
+
+export interface CatalogImageCounts {
+  total: number;
+  pending_review: number;
+  high_confidence: number;
+  approved: number;
+  rejected: number;
+  removed: number;
+}
+
 

@@ -299,6 +299,7 @@ app.use('/api/schedule-drugs', lazyRoute(() => import('./routes/scheduleDrugs.js
 app.use('/api/email-order-reviews', lazyRoute(() => import('./routes/emailOrderReviews.js')));
 // Generic /api routes
 app.use('/api', lazyRoute(() => import('./routes/upload.js')));
+app.use('/api/catalog/images', lazyRoute(() => import('./routes/catalogImages.js'), 'hot'));
 app.use('/api', lazyRoute(() => import('./routes/catalog.js')));
 app.use('/api', lazyRoute(() => import('./routes/medicines.js'), 'hot'));
 app.use('/api', lazyRoute(() => import('./routes/enrichment.js')));

@@ -242,6 +242,18 @@ After fixing a bug in this repo, update `SMALL_BUG_FIX_PLAN.md` (move Open → F
 
 ---
 
+## Database & Backend Schema Safety (mandatory for data-backed features)
+
+When creating or modifying features that query or persist SQLite data, agents **MUST** read before editing:
+
+1. **`BACKEND SCHEMA SAFETY.md`** (repository root) — **universal** standard for schema completeness, boot safety, and post-implementation audits
+2. **`src/database.ts`** — ensure changes exist across **both** the full DDL migration block AND the fast-boot path in `ensureSchema`
+3. Always-on pointer: **`.agents/rules/backend-schema-safety.md`**
+
+Every database-backed feature must treat Feature → Backend Code → Database Schema → Migration → Indexes → Constraints → Seeds → Initialization → Runtime Verification → Tests as ONE atomic unit. Every database task must conclude with the Section 24 Final Mandatory Report from `BACKEND SCHEMA SAFETY.md`.
+
+---
+
 ## Ponytail — Lazy Senior Dev Mode
 
 Ponytail is installed as an always-on ruleset at `.agents/rules/ponytail.md`.

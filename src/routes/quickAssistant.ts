@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
 
       db.all(
         `SELECT s.* FROM special_orders s
-         WHERE s.customer_order_source = 'website'
+         WHERE (s.customer_order_source IN ('website', 'website_refill') OR s.notes LIKE '[Website Order%')
            AND s.status NOT IN ('Fulfilled', 'FULFILLED', 'Cancelled')
            AND ${storeClause}
          ORDER BY s.id DESC`,

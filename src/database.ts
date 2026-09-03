@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 47;
+const CURRENT_SCHEMA_VERSION = 48;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -282,6 +282,82 @@ export async function ensureSchema(dbPath: string) {
         }
       } catch (_) {}
       await db.run('CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)');
+
+      // Ensure catalog_images and catalog_image_rejections tables exist on fast-boot
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS catalog_images (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          medicine_id INTEGER NOT NULL,
+          company_name TEXT,
+          product_name TEXT NOT NULL,
+          image_path TEXT NOT NULL,
+          thumbnail_path TEXT,
+          image_source TEXT DEFAULT 'pharmeasy',
+          source_url TEXT,
+          image_hash TEXT,
+          confidence_score REAL DEFAULT 0,
+          matching_method TEXT DEFAULT 'ai_multi_signal',
+          verification_status TEXT DEFAULT 'PENDING_REVIEW',
+          verification_reason TEXT,
+          ocr_text TEXT,
+          ocr_confidence REAL,
+          is_active INTEGER DEFAULT 0,
+          retry_count INTEGER DEFAULT 0,
+          replaced_from_image_id INTEGER,
+          verified_by TEXT,
+          verified_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS catalog_image_rejections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          medicine_id INTEGER NOT NULL,
+          rejected_image_url TEXT,
+          rejected_image_hash TEXT,
+          rejected_source TEXT,
+          reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+
+      // Ensure customer portal tables exist on fast-boot
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS customer_portal_accounts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL UNIQUE,
+          login_id TEXT NOT NULL UNIQUE,
+          pin_hash TEXT NOT NULL,
+          pin_display TEXT,
+          preferred_store_id INTEGER DEFAULT 1,
+          status TEXT DEFAULT 'active',
+          last_login_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(customer_id) REFERENCES customers(id)
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id)');
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS customer_portal_otps (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          login_id TEXT NOT NULL,
+          otp_code TEXT NOT NULL,
+          expires_at DATETIME NOT NULL,
+          is_used INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await db.run('CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id)');
 
       await ensureMedicinesFts(db);
       return;
@@ -2747,6 +2823,53 @@ export async function ensureSchema(dbPath: string) {
   } catch (syncErr) {
     console.warn('[Database Schema] Distributor phone sync warning:', syncErr);
   }
+
+  // Catalogue Image Connection & Verification Tables
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS catalog_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL,
+      company_name TEXT,
+      product_name TEXT NOT NULL,
+      image_path TEXT NOT NULL,
+      thumbnail_path TEXT,
+      image_source TEXT DEFAULT 'pharmeasy',
+      source_url TEXT,
+      image_hash TEXT,
+      confidence_score REAL DEFAULT 0,
+      matching_method TEXT DEFAULT 'ai_multi_signal',
+      verification_status TEXT DEFAULT 'PENDING_REVIEW',
+      verification_reason TEXT,
+      ocr_text TEXT,
+      ocr_confidence REAL,
+      is_active INTEGER DEFAULT 0,
+      retry_count INTEGER DEFAULT 0,
+      replaced_from_image_id INTEGER,
+      verified_by TEXT,
+      verified_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS catalog_image_rejections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL,
+      rejected_image_url TEXT,
+      rejected_image_hash TEXT,
+      rejected_source TEXT,
+      reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

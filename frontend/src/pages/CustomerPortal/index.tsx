@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   Store as StoreIcon, Phone, Key, ShieldCheck, CheckCircle2, Clock,
   ArrowRight, RefreshCw, ShoppingCart, Check, X, AlertCircle, MapPin,
-  QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare
+  QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
+  Activity, Pill, Heart, Wind, Search, ChevronRight
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { PublicCatalogView } from './PublicCatalogView';
 
 interface CustomerSession {
   id: number;
@@ -62,6 +64,12 @@ interface SelectedMedicine {
 }
 
 export default function CustomerPortal() {
+  // ─── Portal Navigation Tab ──────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<'catalog' | 'portal'>('catalog');
+  const [isCartModalOpen, setIsCartModalOpen] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+
   // ─── Authentication States ──────────────────────────────────────────────────
   const [session, setSession] = useState<CustomerSession | null>(() => {
     try {
@@ -90,6 +98,9 @@ export default function CustomerPortal() {
   // ─── Selection & Checkout States ───────────────────────────────────────────
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedMedicine>>({});
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('COUNTER_PICKUP');
+  const [deliveryMode, setDeliveryMode] = useState<'pickup' | 'delivery'>('pickup');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [orderNotes, setOrderNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{
     store_name: string;
@@ -107,13 +118,16 @@ export default function CustomerPortal() {
   // Load stores on mount
   useEffect(() => {
     api.getStores().then(data => {
-      if (Array.isArray(data) && data.length > 0) {
-        setStores(data.map(s => ({
+      const arr = Array.isArray(data) ? data : ((data as any)?.stores || []);
+      if (arr.length > 0) {
+        const mapped = arr.map((s: any) => ({
           id: s.id,
           name: s.name,
           address: s.address || '',
           phone: s.phone || ''
-        })));
+        }));
+        setStores(mapped);
+        setSelectedStoreId(prev => (mapped.some((st: StoreItem) => st.id === prev) ? prev : mapped[0].id));
       }
     }).catch(() => {});
   }, []);
@@ -291,7 +305,22 @@ export default function CustomerPortal() {
   const [orderError, setOrderError] = useState('');
 
   const handlePlaceOrder = async () => {
-    if (!session) return;
+    const custName = (session?.name || guestName || '').trim();
+    const custPhone = (session?.phone || guestPhone || '').replace(/\D/g, '');
+
+    if (!custName) {
+      setOrderError('Please enter your full name');
+      return;
+    }
+    if (!custPhone || custPhone.length < 10) {
+      setOrderError('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    if (deliveryMode === 'delivery' && !deliveryAddress.trim() && !(session?.address)) {
+      setOrderError('Please enter your delivery address');
+      return;
+    }
+
     setOrderError('');
     const itemsList = Object.values(selectedItems);
     if (itemsList.length === 0) {
@@ -302,12 +331,15 @@ export default function CustomerPortal() {
     setIsSubmitting(true);
     try {
       const res = await api.placeCustomerRefillOrder({
-        customer_id: session.id,
-        customer_name: session.name,
-        customer_phone: session.phone,
-        store_id: selectedStoreId,
+        customer_id: session?.id,
+        customer_name: custName,
+        customer_phone: custPhone,
+        store_id: selectedStoreId || 1,
         items: itemsList,
-        payment_method: paymentMethod
+        payment_method: paymentMethod,
+        delivery_mode: deliveryMode,
+        delivery_address: deliveryAddress.trim() || session?.address || '',
+        notes: orderNotes.trim()
       });
 
       if (res.success) {
@@ -316,9 +348,13 @@ export default function CustomerPortal() {
           orders: res.orders,
           message: res.message
         });
+        setIsCartModalOpen(false);
+        setSelectedItems({});
+        setDeliveryAddress('');
+        setOrderNotes('');
       }
     } catch (err: any) {
-      setOrderError(err.response?.data?.error || 'Failed to place refill order');
+      setOrderError(err.response?.data?.error || 'Failed to place order');
     } finally {
       setIsSubmitting(false);
     }
@@ -328,170 +364,7 @@ export default function CustomerPortal() {
   const totalAmount = selectedList.reduce((sum, item) => sum + (item.price * item.qty), 0);
   const activeStore = stores.find(s => s.id === selectedStoreId) || stores[0];
 
-  // ─── 1. LOGIN VIEW ─────────────────────────────────────────────────────────
-
-  if (!session) {
-    return (
-      <div className="min-h-screen bg-bg flex flex-col justify-center items-center p-4">
-        <div className="w-full max-w-md bg-bg2 border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
-          <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-2">
-              <StoreIcon className="w-7 h-7" />
-            </div>
-            <h1 className="text-2xl font-bold text-text">Customer Refill Portal</h1>
-            <p className="text-sm text-muted">
-              Login to view your previous bills & reorder regular medicines for counter collection
-            </p>
-          </div>
-
-          {authError && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{authError}</span>
-            </div>
-          )}
-
-          {!isOtpMode ? (
-            <form onSubmit={handleLoginWithPin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                  Mobile Number (Login ID)
-                </label>
-                <div className="relative">
-                  <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-                  <input
-                    type="tel"
-                    placeholder="e.g. 9876543210"
-                    value={phoneInput}
-                    onChange={e => setPhoneInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-text uppercase tracking-wider">
-                    4-Digit PIN / Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleRequestOtp}
-                    className="text-xs text-primary hover:underline font-medium"
-                  >
-                    Forgot / WhatsApp OTP
-                  </button>
-                </div>
-                <div className="relative">
-                  <Key className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-                  <input
-                    type="password"
-                    maxLength={6}
-                    placeholder="Enter 4-digit PIN"
-                    value={pinInput}
-                    onChange={e => setPinInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium tracking-widest"
-                    required
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                <span>Login to My Portal</span>
-              </button>
-
-              <div className="pt-2 text-center">
-                <button
-                  type="button"
-                  onClick={() => { setIsOtpMode(true); setOtpSent(false); }}
-                  className="text-xs text-muted hover:text-text transition-colors flex items-center justify-center gap-1.5 mx-auto"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Login with WhatsApp OTP instead</span>
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifyOtp} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                  Mobile Number
-                </label>
-                <div className="relative">
-                  <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-                  <input
-                    type="tel"
-                    placeholder="9876543210"
-                    value={phoneInput}
-                    onChange={e => setPhoneInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
-                    required
-                  />
-                </div>
-              </div>
-
-              {otpSent ? (
-                <div>
-                  <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                    6-Digit OTP (Sent to WhatsApp)
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    placeholder="123456"
-                    value={otpInput}
-                    onChange={e => setOtpInput(e.target.value)}
-                    className="w-full text-center tracking-widest py-2.5 bg-bg border border-border rounded-xl text-text text-lg font-bold focus:outline-none focus:border-primary"
-                    required
-                  />
-                  <p className="text-[11px] text-emerald-600 mt-1">✓ OTP sent to your WhatsApp number</p>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleRequestOtp}
-                  disabled={authLoading}
-                  className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-medium text-sm hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Send OTP via WhatsApp</span>
-                </button>
-              )}
-
-              {otpSent && (
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2"
-                >
-                  {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  <span>Verify & Login</span>
-                </button>
-              )}
-
-              <div className="pt-2 text-center">
-                <button
-                  type="button"
-                  onClick={() => setIsOtpMode(false)}
-                  className="text-xs text-muted hover:text-text transition-colors"
-                >
-                  ← Back to PIN Login
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ─── 2. ORDER SUCCESS CONFIRMATION ─────────────────────────────────────────
+  // ─── 1. ORDER SUCCESS CONFIRMATION ─────────────────────────────────────────
 
   if (orderSuccess) {
     return (
@@ -533,63 +406,318 @@ export default function CustomerPortal() {
             <span>Order confirmation and receipt have been sent to your WhatsApp!</span>
           </div>
 
-          <button
-            onClick={() => {
-              setOrderSuccess(null);
-              if (session) loadCustomerData(session.id, session.phone);
-            }}
-            className="w-full py-3 bg-primary text-white rounded-xl font-semibold hover:opacity-95 transition-all"
-          >
-            Back to Dashboard
-          </button>
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <button
+              onClick={() => {
+                setOrderSuccess(null);
+                setActiveTab('catalog');
+              }}
+              className="flex-1 w-full py-3 bg-primary text-white rounded-xl font-semibold hover:opacity-95 transition-all text-sm"
+            >
+              Browse More Medicines
+            </button>
+            {session && (
+              <button
+                onClick={() => {
+                  setOrderSuccess(null);
+                  setActiveTab('portal');
+                  loadCustomerData(session.id, session.phone);
+                }}
+                className="flex-1 w-full py-3 bg-bg border border-border rounded-xl font-semibold hover:bg-bg3 transition-all text-sm text-text"
+              >
+                View My Refills
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
-  // ─── 3. MAIN DASHBOARD / REFILL SELECTION VIEW ─────────────────────────────
+  // ─── 2. MASTER PORTAL & CATALOG LAYOUT ─────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-bg text-text pb-16">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 bg-bg2/90 backdrop-blur-md border-b border-border px-4 py-3 sm:px-8">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-              <StoreIcon className="w-5 h-5" />
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+          {/* Logo & Store Title */}
+          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                <StoreIcon className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-sm font-bold block leading-tight">Pune Pharmacy Web Portal</span>
+                <span className="text-[11px] text-muted">
+                  {session ? `Welcome, ${session.name}` : 'Live Medicine Catalog & Refills'}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-sm font-bold block leading-tight">Patient Refill Portal</span>
-              <span className="text-xs text-muted">Welcome, {session.name}</span>
+
+            {/* Mobile Account Action */}
+            <div className="sm:hidden">
+              {session ? (
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-red-500 font-semibold px-2 py-1 border border-red-500/20 rounded-lg"
+                >
+                  Logout
+                </button>
+              ) : (
+                <button
+                  onClick={() => setActiveTab('portal')}
+                  className="text-xs text-primary font-semibold px-2.5 py-1 bg-primary/10 rounded-lg"
+                >
+                  Login
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          {/* Center Navigation Tabs */}
+          <div className="flex items-center bg-bg border border-border rounded-xl p-1 gap-1 w-full sm:w-auto">
             <button
-              onClick={() => {
-                setIsChangePinOpen(true);
-                setPinChangeError('');
-                setPinChangeSuccess('');
-              }}
-              className="text-xs text-text hover:text-primary px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 transition-colors flex items-center gap-1.5 font-medium"
+              onClick={() => setActiveTab('catalog')}
+              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === 'catalog'
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'text-muted hover:text-text'
+              }`}
             >
-              <Key className="w-3.5 h-3.5 text-primary" />
-              <span>Change PIN</span>
+              <Activity className="w-3.5 h-3.5" />
+              <span>Browse Catalog & Refills</span>
             </button>
 
             <button
-              onClick={handleLogout}
-              className="text-xs text-muted hover:text-red-500 px-3 py-1.5 rounded-lg border border-border hover:border-red-500/30 transition-colors"
+              onClick={() => setActiveTab('portal')}
+              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === 'portal'
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'text-muted hover:text-text'
+              }`}
             >
-              Logout
+              <FileText className="w-3.5 h-3.5" />
+              <span>{session ? 'My Prescriptions & Bills' : 'My Account / Login'}</span>
             </button>
+          </div>
+
+          {/* Desktop User Actions */}
+          <div className="hidden sm:flex items-center gap-2.5">
+            {session ? (
+              <>
+                <button
+                  onClick={() => {
+                    setIsChangePinOpen(true);
+                    setPinChangeError('');
+                    setPinChangeSuccess('');
+                  }}
+                  className="text-xs text-text hover:text-primary px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 transition-colors flex items-center gap-1.5 font-medium"
+                >
+                  <Key className="w-3.5 h-3.5 text-primary" />
+                  <span>Change PIN</span>
+                </button>
+
+                <button
+                  onClick={handleLogout}
+                  className="text-xs text-muted hover:text-red-500 px-3 py-1.5 rounded-lg border border-border hover:border-red-500/30 transition-colors"
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setActiveTab('portal')}
+                className="text-xs px-3.5 py-1.5 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-white transition-all flex items-center gap-1.5"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Patient Login</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
-        {/* Dynamic Branch / Store Selector Card */}
-        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
+        {/* VIEW 1: PUBLIC CATALOG */}
+        {activeTab === 'catalog' && (
+          <PublicCatalogView
+            stores={stores}
+            activeStoreId={selectedStoreId}
+            onChangeStore={setSelectedStoreId}
+            selectedItems={selectedItems}
+            onToggleItem={toggleItem}
+            onUpdateQuantity={updateQuantity}
+            onOpenCartModal={() => setIsCartModalOpen(true)}
+            onOpenLogin={() => setActiveTab('portal')}
+          />
+        )}
+
+        {/* VIEW 2: PERSONAL PORTAL & LOGIN */}
+        {activeTab === 'portal' && !session && (
+          <div className="flex flex-col justify-center items-center py-8">
+            <div className="w-full max-w-md bg-bg2 border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-2">
+                  <StoreIcon className="w-7 h-7" />
+                </div>
+                <h1 className="text-2xl font-bold text-text">Patient Refill Portal</h1>
+                <p className="text-sm text-muted">
+                  Login to view your previous bills & reorder regular medicines for counter collection
+                </p>
+              </div>
+
+              {authError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-600">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              {!isOtpMode ? (
+                <form onSubmit={handleLoginWithPin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
+                      Mobile Number (Login ID)
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <input
+                        type="tel"
+                        placeholder="e.g. 9876543210"
+                        value={phoneInput}
+                        onChange={e => setPhoneInput(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-text uppercase tracking-wider">
+                        4-Digit PIN / Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRequestOtp}
+                        className="text-xs text-primary hover:underline font-medium"
+                      >
+                        Forgot / WhatsApp OTP
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <Key className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <input
+                        type="password"
+                        maxLength={6}
+                        placeholder="Enter 4-digit PIN"
+                        value={pinInput}
+                        onChange={e => setPinInput(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium tracking-widest"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                    <span>Login to My Portal</span>
+                  </button>
+
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => { setIsOtpMode(true); setOtpSent(false); }}
+                      className="text-xs text-muted hover:text-text transition-colors flex items-center justify-center gap-1.5 mx-auto"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Login with WhatsApp OTP instead</span>
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyOtp} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
+                      Mobile Number
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <input
+                        type="tel"
+                        placeholder="9876543210"
+                        value={phoneInput}
+                        onChange={e => setPhoneInput(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {otpSent ? (
+                    <div>
+                      <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
+                        6-Digit OTP (Sent to WhatsApp)
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={6}
+                        placeholder="123456"
+                        value={otpInput}
+                        onChange={e => setOtpInput(e.target.value)}
+                        className="w-full text-center tracking-widest py-2.5 bg-bg border border-border rounded-xl text-text text-lg font-bold focus:outline-none focus:border-primary"
+                        required
+                      />
+                      <p className="text-[11px] text-emerald-600 mt-1">✓ OTP sent to your WhatsApp number</p>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleRequestOtp}
+                      disabled={authLoading}
+                      className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-medium text-sm hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      <span>Send OTP via WhatsApp</span>
+                    </button>
+                  )}
+
+                  {otpSent && (
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2"
+                    >
+                      {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      <span>Verify & Login</span>
+                    </button>
+                  )}
+
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setIsOtpMode(false)}
+                      className="text-xs text-muted hover:text-text transition-colors"
+                    >
+                      ← Back to PIN Login
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 2: LOGGED IN PORTAL DASHBOARD */}
+        {activeTab === 'portal' && session && (
+          <div className="space-y-6">
+            {/* Dynamic Branch / Store Selector Card */}
+            <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-bold flex items-center gap-2 text-text">
@@ -852,7 +980,246 @@ export default function CustomerPortal() {
             </div>
           </div>
         </div>
-      </main>
+      </div>
+      )}
+    </main>
+
+      {/* Public Catalog Cart Checkout Modal */}
+      {isCartModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-lg p-5 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <ShoppingCart className="w-5 h-5 text-primary" />
+                <h3 className="text-base font-bold text-text">Refill Order Checkout</h3>
+              </div>
+              <button
+                onClick={() => setIsCartModalOpen(false)}
+                className="text-muted hover:text-text p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {orderError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-600 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{orderError}</span>
+              </div>
+            )}
+
+            {/* Selected Items List */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-muted uppercase tracking-wider block">
+                Selected Medicines ({selectedList.length})
+              </span>
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                {selectedList.map(item => (
+                  <div key={item.product} className="flex items-center justify-between p-3 bg-bg rounded-xl border border-border">
+                    <div className="space-y-0.5 max-w-[60%]">
+                      <span className="text-xs font-bold text-text block truncate">{item.product}</span>
+                      <span className="text-[11px] text-muted">₹{item.price.toFixed(2)} each</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => updateQuantity(item.product, -1)}
+                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="text-xs font-bold text-primary px-1.5">{item.qty}</span>
+                      <button
+                        onClick={() => updateQuantity(item.product, 1)}
+                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <span className="text-xs font-bold text-text ml-2 min-w-16 text-right">
+                        ₹{(item.price * item.qty).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Total */}
+            <div className="p-3 bg-primary/10 rounded-xl border border-primary/20 flex items-center justify-between">
+              <span className="text-xs font-semibold text-text">Estimated Total Amount:</span>
+              <span className="text-base font-extrabold text-primary">₹{totalAmount.toFixed(2)}</span>
+            </div>
+
+            {/* Delivery / Collection Mode Selection */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-text uppercase tracking-wider block">
+                Order Fulfillment
+              </label>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryMode('pickup')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
+                    deliveryMode === 'pickup'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-bg text-muted'
+                  }`}
+                >
+                  🏢 In-Store Pickup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeliveryMode('delivery')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
+                    deliveryMode === 'delivery'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-bg text-muted'
+                  }`}
+                >
+                  🚚 Home Delivery
+                </button>
+              </div>
+            </div>
+
+            {/* Branch Selection (for pickup or primary branch) */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-text uppercase tracking-wider flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-primary" />
+                <span>{deliveryMode === 'delivery' ? 'Fulfilling Pharmacy Branch' : 'Pickup Branch'}</span>
+              </label>
+              <select
+                value={selectedStoreId}
+                onChange={e => setSelectedStoreId(parseInt(e.target.value, 10))}
+                className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs font-semibold text-text focus:outline-none focus:border-primary"
+              >
+                {stores.length > 0 ? (
+                  stores.map(st => (
+                    <option key={st.id} value={st.id}>
+                      Store #{st.id} - {st.name} {st.address ? `(${st.address})` : ''}
+                    </option>
+                  ))
+                ) : (
+                  <option value={1}>Store #1 - Main Store</option>
+                )}
+              </select>
+            </div>
+
+            {/* Delivery Address (when Home Delivery is selected) */}
+            {deliveryMode === 'delivery' && (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-text uppercase tracking-wider block">
+                  Delivery Address <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Full delivery address with flat/house no, landmark, pincode"
+                  value={deliveryAddress || session?.address || ''}
+                  onChange={e => setDeliveryAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary resize-none"
+                  required
+                />
+              </div>
+            )}
+
+            {/* Customer Details (If Guest) */}
+            {!session && (
+              <div className="space-y-3 pt-2 border-t border-border">
+                <span className="text-xs font-bold text-muted uppercase tracking-wider block">
+                  Patient Contact Info (For Order Updates on WhatsApp)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-text mb-1">Full Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Rahul Sharma"
+                      value={guestName}
+                      onChange={e => setGuestName(e.target.value)}
+                      className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-text mb-1">WhatsApp Mobile Number</label>
+                    <input
+                      type="tel"
+                      placeholder="e.g. 9876543210"
+                      value={guestPhone}
+                      onChange={e => setGuestPhone(e.target.value)}
+                      className="w-full px-3 py-2 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Optional Instructions / Notes */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-muted block">
+                Special Instructions (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Call before delivery, prefer evening pickup, etc."
+                value={orderNotes}
+                onChange={e => setOrderNotes(e.target.value)}
+                className="w-full px-3 py-1.5 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+
+            {/* Payment Mode */}
+            <div className="space-y-1.5 pt-1">
+              <label className="text-xs font-semibold text-text uppercase tracking-wider block">
+                {deliveryMode === 'delivery' ? 'Payment Method' : 'Collection Payment Mode'}
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('COUNTER_PICKUP')}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold text-left transition-all ${
+                    paymentMethod === 'COUNTER_PICKUP'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-bg text-muted'
+                  }`}
+                >
+                  {deliveryMode === 'delivery' ? 'Cash on Delivery (COD)' : 'Pay at Counter'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('UPI')}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold text-left transition-all ${
+                    paymentMethod === 'UPI'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-bg text-muted'
+                  }`}
+                >
+                  Pay via UPI
+                </button>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setIsCartModalOpen(false)}
+                className="px-4 py-2 border border-border rounded-xl text-xs font-semibold text-muted hover:text-text"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || selectedList.length === 0}
+                onClick={handlePlaceOrder}
+                className="px-5 py-2.5 bg-primary text-white rounded-xl text-xs font-bold shadow-md hover:opacity-95 transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>{deliveryMode === 'delivery' ? 'Confirm & Place Delivery Order' : 'Confirm & Place Pickup Order'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Change PIN Modal */}
       {isChangePinOpen && (

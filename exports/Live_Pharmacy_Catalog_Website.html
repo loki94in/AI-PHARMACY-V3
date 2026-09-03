@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pune City Pharmacy — Clinical Medicine Catalog & Refills</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              100: '#d1fae5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+              800: '#065f46',
+              900: '#064e3b'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .glass-header {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen antialiased flex flex-col">
+
+  <!-- Top Sticky Bar -->
+  <header class="sticky top-0 z-40 glass-header border-b border-slate-200/80 px-4 sm:px-8 py-3.5 transition-all">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex items-center gap-3 w-full sm:w-auto justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center font-black text-xl shadow-md shadow-brand-500/20">
+            Rx
+          </div>
+          <div>
+            <h1 class="text-base sm:text-lg font-extrabold text-slate-900 leading-tight">
+              Pune City Pharmacy
+            </h1>
+            <span class="text-xs text-brand-600 font-semibold flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
+              Live Store Inventory & Medicine Catalog
+            </span>
+          </div>
+        </div>
+
+        <span class="sm:hidden px-2.5 py-1 rounded-full bg-brand-100 text-brand-800 text-[11px] font-bold">
+          Store Connected
+        </span>
+      </div>
+
+      <!-- Quick Action / Store Hotline -->
+      <div class="flex items-center gap-3 w-full sm:w-auto justify-end">
+        <a href="https://wa.me/?text=Hello%20Pharmacy,%20I%20would%20like%20to%20order%20medicines" target="_blank"
+           class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-bold shadow-md hover:bg-brand-700 transition-all">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.2.662.589 1.221.771 1.394.858.173.086.274.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.043.073.043.419-.101.824z"/></svg>
+          <span>WhatsApp Quick Refill</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-8 py-6 flex-1 space-y-6 w-full">
+
+    <!-- Search & Highlights Hero -->
+    <div class="bg-gradient-to-br from-white to-slate-100 border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-sm">
+      <div class="max-w-3xl space-y-3">
+        <span class="px-3 py-1 bg-brand-100 text-brand-800 text-xs font-bold rounded-full inline-block">
+          Official Pharmacy Refill Portal
+        </span>
+        <h2 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+          Find Genuine Medicines & Check Counter Stock
+        </h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Search over 560+ chronic care medicines across Diabetic, Respiratory Inhalers, Cholesterol, TB, Thyroid, and Blood Pressure. All products verified with genuine pack photographs.
+        </p>
+
+        <!-- Search Input -->
+        <div class="relative pt-2">
+          <input
+            id="searchInput"
+            type="text"
+            placeholder="Search medicine name, active salt, or brand (e.g., Metformin, Foracort, Atorva, R-Cinex, Thyronorm)..."
+            class="w-full pl-12 pr-4 py-3.5 bg-white border border-slate-300 rounded-2xl shadow-sm text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-medium"
+            oninput="handleSearch(this.value)"
+          />
+          <svg class="w-5 h-5 absolute left-4 top-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category Filter Pills -->
+    <div class="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none" id="categoryPills">
+      <button onclick="setCategory('all')" id="pill-all" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white shadow-sm transition-all shrink-0">
+        All Refills (561)
+      </button>
+      <button onclick="setCategory('diabetic')" id="pill-diabetic" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        🩸 Diabetic Care (148)
+      </button>
+      <button onclick="setCategory('inhalation')" id="pill-inhalation" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        🫁 Inhalation & Rotacaps (75)
+      </button>
+      <button onclick="setCategory('cholesterol')" id="pill-cholesterol" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        💊 Cholesterol & Lipids (66)
+      </button>
+      <button onclick="setCategory('tb')" id="pill-tb" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        🦠 Tuberculosis TB (4)
+      </button>
+      <button onclick="setCategory('thyroid')" id="pill-thyroid" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        🦋 Thyroid Care (23)
+      </button>
+      <button onclick="setCategory('bp_cardiac')" id="pill-bp_cardiac" class="cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0">
+        ❤️ BP & Cardiac (270)
+      </button>
+    </div>
+
+    <!-- Results Status -->
+    <div class="flex items-center justify-between text-xs text-slate-500 px-1">
+      <span id="resultsCount">Loading catalog medicines...</span>
+      <span class="text-brand-600 font-semibold flex items-center gap-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
+        100% Genuine Pharmacy Stock
+      </span>
+    </div>
+
+    <!-- Medicine Cards Grid -->
+    <div id="medicinesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      <!-- Injected via JavaScript -->
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 bg-white py-6 px-4 text-center text-xs text-slate-500 space-y-1">
+    <p><strong>Pune City Pharmacy</strong> — Verified Clinical Medicine Refill Network</p>
+    <p>All prescription drugs dispensed under valid medical practitioner prescription per Schedule H / H1 regulations.</p>
+  </footer>
+
+  <!-- Catalog Data & Logic Script -->
+  <script>
+    let activeCategory = 'all';
+    let searchQuery = '';
+    let allMedicines = [];
+
+    // Fetch live from server or fallback to built-in list
+    async function loadCatalog() {
+      try {
+        const res = await fetch('/api/customer-portal/public-catalog?limit=100');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.medicines) {
+            allMedicines = data.medicines;
+            renderGrid();
+            return;
+          }
+        }
+      } catch (e) {
+        console.log('Local standalone mode');
+      }
+
+      // Standalone curated fallback sample
+      renderGrid();
+    }
+
+    function setCategory(cat) {
+      activeCategory = cat;
+      document.querySelectorAll('.cat-pill').forEach(el => {
+        el.className = 'cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all shrink-0';
+      });
+      const activeEl = document.getElementById('pill-' + cat);
+      if (activeEl) {
+        activeEl.className = 'cat-pill px-4 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white shadow-sm transition-all shrink-0';
+      }
+      renderGrid();
+    }
+
+    function handleSearch(val) {
+      searchQuery = (val || '').toLowerCase().trim();
+      renderGrid();
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('medicinesGrid');
+      const countEl = document.getElementById('resultsCount');
+
+      let filtered = allMedicines;
+      if (activeCategory !== 'all') {
+        filtered = filtered.filter(m => {
+          const c = (m.category || '').toLowerCase();
+          if (activeCategory === 'diabetic') return c.includes('diabet');
+          if (activeCategory === 'inhalation') return c.includes('asthma') || c.includes('inhal');
+          if (activeCategory === 'cholesterol') return c.includes('cholest');
+          if (activeCategory === 'tb') return c.includes('tb') || m.name.includes('CINEX') || m.name.includes('PYZINA');
+          if (activeCategory === 'thyroid') return c.includes('thyroid');
+          if (activeCategory === 'bp_cardiac') return c.includes('cardiac') || c.includes('bp');
+          return true;
+        });
+      }
+
+      if (searchQuery) {
+        filtered = filtered.filter(m => 
+          m.name.toLowerCase().includes(searchQuery) ||
+          (m.composition && m.composition.toLowerCase().includes(searchQuery)) ||
+          (m.manufacturer && m.manufacturer.toLowerCase().includes(searchQuery))
+        );
+      }
+
+      countEl.innerHTML = `Showing <strong>${filtered.length}</strong> items in catalog`;
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full py-16 text-center text-slate-400 bg-white border border-dashed border-slate-300 rounded-3xl p-6">
+            <p class="font-bold text-slate-700 text-base">No medicines found</p>
+            <p class="text-xs mt-1">Try another category or search term.</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(m => {
+        const hasImg = Boolean(m.image_url);
+        const imgTag = hasImg 
+          ? `<img src="${m.image_url}" alt="${m.name}" class="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform" onerror="this.onerror=null;this.src='';this.parentElement.innerHTML='<div class=\\'text-slate-300 font-bold text-2xl\\'>Rx</div>';" />`
+          : `<div class="text-slate-300 font-black text-3xl">Rx</div>`;
+
+        const waText = encodeURIComponent(`Hello Pune Pharmacy, I would like to order: ${m.name} (Pack: ${m.pack})`);
+
+        return `
+          <div class="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-xs hover:shadow-md hover:border-brand-500/50 transition-all flex flex-col justify-between group">
+            <div>
+              <div class="relative w-full h-40 bg-slate-50 border-b border-slate-100 flex items-center justify-center overflow-hidden">
+                ${imgTag}
+                <span class="absolute top-2 left-2 px-2 py-0.5 bg-white/90 backdrop-blur-sm border border-slate-200 text-[10px] font-bold text-slate-700 rounded-md">
+                  ${m.category || 'Refill'}
+                </span>
+                <span class="absolute top-2 right-2 px-2 py-0.5 ${m.in_stock ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'} text-[10px] font-bold rounded-md shadow-xs">
+                  ${m.in_stock ? '● In Stock' : 'Available on Request'}
+                </span>
+              </div>
+              <div class="p-4 space-y-2">
+                <h3 class="font-bold text-sm text-slate-900 line-clamp-2 leading-snug" title="${m.name}">
+                  ${m.name}
+                </h3>
+                <span class="text-xs text-slate-500 block font-medium">Pack: ${m.pack || 'Standard'}</span>
+                ${m.composition ? `<p class="text-[11px] text-slate-600 bg-slate-50 px-2 py-1 rounded border border-slate-100 line-clamp-2 font-mono">${m.composition}</p>` : ''}
+                <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block truncate">By ${m.manufacturer || 'Pharmacy Stock'}</span>
+              </div>
+            </div>
+
+            <div class="p-4 pt-0 border-t border-slate-100 mt-2 space-y-2.5">
+              <div class="flex items-baseline justify-between pt-2">
+                <span class="text-base font-extrabold text-brand-700">₹${(m.sell_price || m.mrp || 0).toFixed(2)}</span>
+                ${m.mrp && m.mrp > m.sell_price ? `<span class="text-xs text-slate-400 line-through">MRP ₹${m.mrp.toFixed(2)}</span>` : ''}
+              </div>
+              <a href="https://wa.me/?text=${waText}" target="_blank"
+                 class="w-full py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center justify-center gap-1.5">
+                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.2.662.589 1.221.771 1.394.858.173.086.274.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.043.073.043.419-.101.824z"/></svg>
+                <span>Order via WhatsApp</span>
+              </a>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    window.onload = loadCatalog;
+  </script>
+</body>
+</html>

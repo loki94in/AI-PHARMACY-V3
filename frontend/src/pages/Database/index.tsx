@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Database as DatabaseIcon, RefreshCw, BookOpen, ArrowDownAZ, Clock, X, Edit, Trash2, Plus, Upload, Unlock, ShoppingCart } from 'lucide-react';
+import { Database as DatabaseIcon, RefreshCw, BookOpen, ArrowDownAZ, Clock, X, Edit, Trash2, Plus, Upload, Unlock, ShoppingCart, Image as ImageIcon } from 'lucide-react';
 import { api } from '../../services/api';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
 import { parsePackSizeFromPackaging } from '../../utils/packagingMatcher';
@@ -8,6 +8,7 @@ import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import CatalogUpload from '../CatalogUpload';
+import { CatalogImageVerificationTab } from './CatalogImageVerificationTab';
 import { formatDisplayDate } from '../../utils/date';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { toastEvent } from '../../services/events';
@@ -577,6 +578,7 @@ const DatabasePage = () => {
           {[
             { id: 'db', label: 'Master Database', icon: DatabaseIcon },
             { id: 'catalog', label: 'Catalog Upload', icon: Upload },
+            { id: 'images', label: 'Image Verification', icon: ImageIcon },
           ].map(t => {
             const Icon = t.icon;
             const isActive = currentTab === t.id;
@@ -601,6 +603,10 @@ const DatabasePage = () => {
       {currentTab === 'catalog' ? (
         <div className="glass-panel flex-1 flex flex-col overflow-hidden">
           <CatalogUpload />
+        </div>
+      ) : currentTab === 'images' ? (
+        <div className="glass-panel flex-1 flex flex-col overflow-hidden">
+          <CatalogImageVerificationTab initialFilter={searchParams.get('filter') || 'review'} />
         </div>
       ) : (
         <div className="glass-panel flex-1 flex flex-col overflow-hidden">

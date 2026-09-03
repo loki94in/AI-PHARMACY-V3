@@ -1,5 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { eventService } from '../services/eventService.js';
@@ -630,7 +632,7 @@ router.get('/customer/refills', async (req, res) => {
   }
 });
 
-// POST /api/website/customer/refill-order — Place customized in-store pickup refill order
+// POST /api/website/customer/refill-order — Place customized in-store pickup or home delivery refill order
 router.post('/customer/refill-order', async (req, res) => {
   const {
     customer_id,
@@ -639,7 +641,9 @@ router.post('/customer/refill-order', async (req, res) => {
     store_id = 1,
     items,
     payment_method = 'COUNTER_PICKUP',
-    notes
+    delivery_mode = 'pickup',
+    delivery_address = '',
+    notes = ''
   } = req.body;
 
   if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -650,31 +654,46 @@ router.post('/customer/refill-order', async (req, res) => {
   const cleanName = formatCustomerName(customer_name);
   const targetStoreId = parseInt(String(store_id), 10) || 1;
   const todayStr = new Date().toISOString();
+  const cleanAddress = String(delivery_address || '').trim();
+  const isDelivery = delivery_mode === 'delivery';
 
   try {
     const db = await dbManager.getConnection();
 
-    // 1. Verify customer exists (pharmacy-managed only)
+    // 1. Verify or create customer
     let custId = customer_id ? parseInt(String(customer_id), 10) : null;
     let registeredCustomer = null;
 
     if (custId) {
-      registeredCustomer = await db.get('SELECT id, name FROM customers WHERE id = ?', [custId]);
+      registeredCustomer = await db.get('SELECT id, name, address FROM customers WHERE id = ?', [custId]);
     } else if (cleanPhone) {
-      registeredCustomer = await db.get('SELECT id, name FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+      registeredCustomer = await db.get('SELECT id, name, address FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
       if (registeredCustomer) custId = registeredCustomer.id;
     }
 
     if (!registeredCustomer || !custId) {
-      return res.status(403).json({
-        error: 'Customer profile not found. Online refill ordering is only available for registered pharmacy customers.'
-      });
+      if (cleanName && cleanPhone) {
+        const insRes = await db.run(
+          'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+          [cleanName, cleanPhone, cleanAddress || 'Website Customer']
+        );
+        custId = Number(insRes.lastID);
+        registeredCustomer = { id: custId, name: cleanName, address: cleanAddress };
+      } else {
+        return res.status(400).json({
+          error: 'Please provide valid customer name and mobile number to place order.'
+        });
+      }
+    } else if (cleanAddress && !registeredCustomer.address) {
+      await db.run('UPDATE customers SET address = ? WHERE id = ?', [cleanAddress, custId]).catch(() => {});
     }
 
-    const officialCustomerName = registeredCustomer.name || cleanName;
-
-    // 2. Insert items into special_orders (with collection_mode = 'counter_pickup')
+    // 2. Insert items into special_orders (tagged with customer_order_source = 'website')
     const createdOrders: Array<{ id: number; product: string; qty: number; price: number }> = [];
+    const modeLabel = isDelivery ? 'Home Delivery' : 'In-Store Pickup';
+    const deliveryStatus = isDelivery ? 'pending_dispatch' : 'counter_pickup';
+    const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
+    const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ''}${notes ? ` Notes: ${notes}` : ''}`;
 
     await db.run('BEGIN TRANSACTION');
     try {
@@ -688,7 +707,7 @@ router.post('/customer/refill-order', async (req, res) => {
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, delivery_status, return_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website_refill', 'counter_pickup', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             custId,
@@ -697,7 +716,8 @@ router.post('/customer/refill-order', async (req, res) => {
             cleanPhone,
             qty,
             todayStr,
-            notes ? `[Refill Collection - ${payment_method}] ${notes}` : `[Refill Collection - ${payment_method}]`
+            fullNotes,
+            deliveryStatus
           ]
         );
 
@@ -707,8 +727,8 @@ router.post('/customer/refill-order', async (req, res) => {
         // Record tracking event
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Refill order placed for In-Store Pickup at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
+           VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+          [orderId, `Website order placed for ${modeLabel} at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
         );
       }
 
@@ -729,7 +749,7 @@ router.post('/customer/refill-order', async (req, res) => {
     // 4. Send WhatsApp Confirmation to Customer
     const storeInfo = await storeContextService.getStoreById(targetStoreId);
     const storeName = storeInfo?.name || (await getStoreMedicalNameAndPhone(db));
-    const storeAddress = storeInfo?.address ? `\n📍 *Address:* ${storeInfo.address}` : '';
+    const storeAddress = storeInfo?.address ? `\n📍 *Store Address:* ${storeInfo.address}` : '';
     const storePhone = storeInfo?.phone ? `\n📞 *Contact:* ${storeInfo.phone}` : '';
 
     if (cleanPhone && cleanPhone.length >= 10) {
@@ -738,33 +758,294 @@ router.post('/customer/refill-order', async (req, res) => {
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
       const totalAmount = createdOrders.reduce((sum, o) => sum + (o.price * o.qty), 0);
 
-      const pickupMsg = `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${storePhone}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+      const confirmMsg = isDelivery
+        ? `*Online Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for ordering at *${storeName}*.\n\n*Ordered Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n🚚 *Mode:* Home Delivery\n📍 *Address:* ${cleanAddress || 'As per records'}${storePhone}\n\n*Our team is packaging your order and will alert you upon dispatch!*`
+        : `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${storePhone}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
 
       try {
-        await whatsappQueueWorker.enqueue(formattedPhone, pickupMsg, 'refill_collection_confirmation', cleanName);
+        await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, 'website_order_confirmation', cleanName);
       } catch (waErr) {
         console.warn('[CustomerPortal] WhatsApp confirmation warning:', waErr);
       }
     }
 
-    // 5. Broadcast SSE push so store POS refreshes instantly
+    // 5. Broadcast SSE push so Quick Assist and POS refresh instantly
     try {
-      eventService.broadcast('order_updated', { at: Date.now(), source: 'customer_portal', store_id: targetStoreId });
-      eventService.broadcast('refill_updated', { at: Date.now(), source: 'customer_portal', store_id: targetStoreId });
+      eventService.broadcast('order_updated', { at: Date.now(), source: 'website', store_id: targetStoreId });
+      eventService.broadcast('refill_updated', { at: Date.now(), source: 'website', store_id: targetStoreId });
+      eventService.broadcast('website_order_created', { at: Date.now(), store_id: targetStoreId, customer: cleanName });
     } catch (_) {}
 
     res.status(201).json({
       success: true,
-      message: 'Refill collection order placed successfully',
+      message: `${modeLabel} order placed successfully`,
       store_id: targetStoreId,
       store_name: storeName,
+      delivery_mode: modeLabel,
       orders: createdOrders,
       customer: { name: cleanName, phone: cleanPhone }
     });
   } catch (err: any) {
     console.error('[CustomerPortal] Refill order error:', err);
-    res.status(500).json({ error: 'Failed to place refill order: ' + (err.message || 'Unknown error') });
+    res.status(500).json({ error: 'Failed to place order: ' + (err.message || 'Unknown error') });
   }
+});
+
+// ─── Public Website Catalog & Categories Endpoints ────────────────────────────
+
+interface CachedCatalogItem {
+  category: string;
+  name: string;
+  pack: string;
+  schedule: string;
+  composition: string;
+  manufacturer: string;
+}
+
+let catalogCache: CachedCatalogItem[] | null = null;
+let imageStateCache: Record<string, any> | null = null;
+let lastCacheLoad = 0;
+
+function loadCatalogAndImages() {
+  const now = Date.now();
+  if (catalogCache && imageStateCache && (now - lastCacheLoad < 60000)) {
+    return { catalog: catalogCache, images: imageStateCache };
+  }
+
+  try {
+    const csvPath = path.resolve(process.cwd(), 'CATALOG/monthly_refill_master_list.csv');
+    if (fs.existsSync(csvPath)) {
+      const content = fs.readFileSync(csvPath, 'utf-8');
+      const lines = content.split(/\r?\n/);
+      const items: CachedCatalogItem[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let inQuotes = false;
+        let cur = '';
+        const parts: string[] = [];
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c];
+          if (ch === '"') inQuotes = !inQuotes;
+          else if (ch === ',' && !inQuotes) {
+            parts.push(cur.trim());
+            cur = '';
+          } else {
+            cur += ch;
+          }
+        }
+        parts.push(cur.trim());
+        items.push({
+          category: parts[0]?.replace(/^"|"$/g, ''),
+          name: parts[1]?.replace(/^"|"$/g, ''),
+          pack: parts[2]?.replace(/^"|"$/g, ''),
+          schedule: parts[3]?.replace(/^"|"$/g, ''),
+          composition: parts[4]?.replace(/^"|"$/g, ''),
+          manufacturer: parts[5]?.replace(/^"|"$/g, '')
+        });
+      }
+      catalogCache = items;
+    }
+  } catch (e) {
+    catalogCache = [];
+  }
+
+  try {
+    const statePath = path.resolve(process.cwd(), 'data/image_download_state.json');
+    if (fs.existsSync(statePath)) {
+      const stateData = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      imageStateCache = stateData.products || {};
+    }
+  } catch (e) {
+    imageStateCache = {};
+  }
+
+  lastCacheLoad = now;
+  return { catalog: catalogCache || [], images: imageStateCache || {} };
+}
+
+// GET /api/customer-portal/public-catalog — Public live medicine catalog connected to inventory
+router.get('/public-catalog', async (req, res) => {
+  try {
+    const category = (String(req.query.category || 'all')).toLowerCase();
+    const search = (String(req.query.search || '')).trim().toLowerCase();
+    const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+    const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || '40'), 10)));
+
+    const { catalog, images } = loadCatalogAndImages();
+    const db = await dbManager.getConnection();
+
+    // Map categories to filter
+    let filtered = catalog;
+
+    if (category && category !== 'all') {
+      if (category.includes('diabet')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('diabet'));
+      } else if (category.includes('tb') || category.includes('tuber')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('tb') || i.name.toUpperCase().includes('R-CINEX') || i.name.toUpperCase().includes('PYZINA') || i.name.toUpperCase().includes('COMBUTOL'));
+      } else if (category.includes('inhal') || category.includes('rota') || category.includes('asthma')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('asthma') || i.category.toLowerCase().includes('inhal'));
+      } else if (category.includes('cholest') || category.includes('lipid')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('cholest'));
+      } else if (category.includes('thyroid')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('thyroid'));
+      } else if (category.includes('bp') || category.includes('cardiac') || category.includes('heart')) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('cardiac') || i.category.toLowerCase().includes('bp'));
+      }
+    }
+
+    if (search) {
+      filtered = filtered.filter(i =>
+        i.name.toLowerCase().includes(search) ||
+        i.composition.toLowerCase().includes(search) ||
+        i.manufacturer.toLowerCase().includes(search)
+      );
+
+      // Expand search into live pharmacy medicines table if CSV has fewer results
+      if (filtered.length < 30) {
+        const existingNames = new Set(filtered.map(f => f.name.toUpperCase().trim()));
+        const dbMatches = await db.all(
+          `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category, m.mrp, m.sell_price
+           FROM medicines m
+           WHERE m.name LIKE ? OR m.generic_name LIKE ?
+           ORDER BY m.name ASC
+           LIMIT 30`,
+          [`%${search}%`, `%${search}%`]
+        ).catch(() => []);
+
+        for (const dbm of dbMatches) {
+          const key = (dbm.name || '').toUpperCase().trim();
+          if (key && !existingNames.has(key)) {
+            filtered.push({
+              category: dbm.category || 'General Medicine',
+              name: dbm.name,
+              pack: dbm.packaging || '',
+              schedule: '',
+              composition: dbm.generic_name || '',
+              manufacturer: dbm.manufacturer || ''
+            });
+            existingNames.add(key);
+          }
+        }
+      }
+    }
+
+    const totalCount = filtered.length;
+    const startIndex = (page - 1) * limit;
+    const paginated = filtered.slice(startIndex, startIndex + limit);
+
+    // Enrich with live database inventory (stock, price, mrp) and verified active catalogue images
+    const enriched = [];
+    for (const item of paginated) {
+      const dbMed = await db.get(
+        `SELECT m.id, m.mrp, m.sell_price, m.generic_name, m.strength, m.pack_size,
+                COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+         FROM medicines m
+         WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
+        [item.name, `${item.name.split(' ')[0]}%`]
+      ).catch(() => null);
+
+      let imageUrl: string | null = null;
+      let allImages: Record<string, any> = {};
+
+      if (dbMed && dbMed.id) {
+        // Query verified active image strictly complying with public catalogue rules (Task 21/25)
+        const verifiedImg = await db.get(
+          `SELECT image_path, thumbnail_path, source_url, verification_status 
+           FROM catalog_images 
+           WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+           ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+          [dbMed.id]
+        ).catch(() => null);
+
+        if (verifiedImg && verifiedImg.image_path) {
+          imageUrl = verifiedImg.image_path;
+          allImages = { front: { url: verifiedImg.image_path } };
+        }
+      }
+
+      // Fallback to verified image in imageStateCache only if approved in state and not in DB
+      if (!imageUrl) {
+        const imgData = images[item.name];
+        if (imgData && imgData.verified && imgData.images) {
+          allImages = imgData.images;
+          const front = imgData.images['front'] || imgData.images['box-front'] || imgData.images['default'] || Object.values(imgData.images)[0];
+          if (front && front.url) imageUrl = front.url;
+        }
+      }
+
+      const stockQty = Number(dbMed?.stock_qty || 0);
+
+      enriched.push({
+        name: item.name,
+        category: item.category,
+        pack: item.pack || dbMed?.pack_size || '',
+        composition: item.composition || dbMed?.generic_name || '',
+        manufacturer: item.manufacturer,
+        mrp: Number(dbMed?.mrp || 0),
+        sell_price: Number(dbMed?.sell_price || dbMed?.mrp || 0),
+        stock_qty: stockQty,
+        in_stock: stockQty > 0,
+        image_url: imageUrl,
+        images: allImages
+      });
+    }
+
+    res.json({
+      success: true,
+      category,
+      search,
+      page,
+      limit,
+      total_count: totalCount,
+      total_pages: Math.ceil(totalCount / limit),
+      medicines: enriched
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Public catalog error:', err);
+    res.status(500).json({ error: 'Failed to fetch catalog: ' + err.message });
+  }
+});
+
+// GET /api/customer-portal/categories-summary — Returns count summary for all clinical categories
+router.get('/categories-summary', (req, res) => {
+  const { catalog } = loadCatalogAndImages();
+  const summary: Record<string, number> = {
+    all: catalog.length,
+    diabetic: 0,
+    inhalation_rotacaps: 0,
+    cholesterol: 0,
+    tb: 0,
+    thyroid: 0,
+    bp_cardiac: 0
+  };
+
+  catalog.forEach(item => {
+    const c = item.category.toLowerCase();
+    if (c.includes('diabet')) summary.diabetic++;
+    else if (c.includes('asthma') || c.includes('inhal')) summary.inhalation_rotacaps++;
+    else if (c.includes('cholest')) summary.cholesterol++;
+    else if (c.includes('thyroid')) summary.thyroid++;
+    else if (c.includes('cardiac') || c.includes('bp')) summary.bp_cardiac++;
+  });
+
+  // TB check
+  summary.tb = catalog.filter(i =>
+    i.name.toUpperCase().includes('R-CINEX') ||
+    i.name.toUpperCase().includes('PYZINA') ||
+    i.name.toUpperCase().includes('COMBUTOL')
+  ).length;
+
+  res.json({ success: true, summary });
+});
+
+// GET /api/customer-portal/standalone-catalog — Serves the standalone responsive website
+router.get('/standalone-catalog', (req, res) => {
+  const filePath = path.resolve(process.cwd(), 'exports/Live_Pharmacy_Catalog_Website.html');
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+  res.status(404).send('Live catalog website file not found');
 });
 
 export default router;

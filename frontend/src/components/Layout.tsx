@@ -2146,10 +2146,31 @@ const QuickAssistSidebar = memo(({
 
   // Expand / collapse state for grouped patients (collapsed by default)
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
+  const [expandedWebsiteOrderKeys, setExpandedWebsiteOrderKeys] = useState<Set<string>>(new Set());
   const [expandedSpecialOrderKeys, setExpandedSpecialOrderKeys] = useState<Set<string>>(new Set());
+  const [imageReviewCount, setImageReviewCount] = useState<number>(0);
+
+  useEffect(() => {
+    api.getCatalogImageCounts()
+      .then(res => {
+        if (res?.success && res.counts) {
+          setImageReviewCount(res.counts.pending_review || 0);
+        }
+      })
+      .catch(() => {});
+  }, [expanded]);
 
   const toggleRefillKey = (key: string) => {
     setExpandedRefillKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleWebsiteOrderKey = (key: string) => {
+    setExpandedWebsiteOrderKeys(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -2554,12 +2575,92 @@ const QuickAssistSidebar = memo(({
     }
   };
 
+  // Distinguish Online Website Orders from Local In-Store Special Requests
+  const isWebsiteOrder = (o: SpecialOrder) => {
+    const src = (o as any).customer_order_source || '';
+    const notes = o.notes || '';
+    return src === 'website' || src === 'website_refill' || notes.startsWith('[Website Order]') || notes.startsWith('[Refill Collection');
+  };
+
   // Group active special orders by requester
   const activeSpecialOrders = useMemo(() => {
     return Array.isArray(specialOrders)
       ? specialOrders.filter(s => s.status !== 'Completed' && s.status !== 'Fulfilled' && s.status !== 'Cancelled' && !optimisticHiddenOrderIds.has(s.id))
       : [];
   }, [specialOrders, optimisticHiddenOrderIds]);
+
+  const activeWebsiteOrders = useMemo(() => {
+    return activeSpecialOrders.filter(isWebsiteOrder);
+  }, [activeSpecialOrders]);
+
+  const activeLocalSpecialOrders = useMemo(() => {
+    return activeSpecialOrders.filter(o => !isWebsiteOrder(o));
+  }, [activeSpecialOrders]);
+
+  const groupedWebsiteOrders = useMemo(() => {
+    const list: Array<{
+      key: string;
+      requester: string;
+      phone: string;
+      overallStatus: string;
+      deliveryMode: string;
+      paymentMethod: string;
+      address: string;
+      items: Array<{
+        id: number;
+        product: string;
+        qty: number;
+        status: string;
+        priority: string;
+        notification_count?: number;
+        notes?: string;
+      }>;
+    }> = [];
+
+    const map = new Map<string, (typeof list)[0]>();
+
+    for (const order of activeWebsiteOrders) {
+      const key = (order.phone || order.requester || String(order.id)).trim();
+      let existing = map.get(key);
+      if (!existing) {
+        const notes = order.notes || '';
+        const isDeliv = (order as any).delivery_status === 'pending_dispatch' || notes.includes('Home Delivery');
+        const isCOD = notes.includes('COD');
+        const isUPI = notes.includes('UPI');
+        const addrMatch = notes.match(/Delivery Address:\s*([^.]+)/i) || notes.match(/Address:\s*([^.]+)/i);
+        existing = {
+          key,
+          requester: order.requester || 'Website Customer',
+          phone: order.phone || '',
+          overallStatus: order.status || 'Pending',
+          deliveryMode: isDeliv ? 'Home Delivery' : 'In-Store Pickup',
+          paymentMethod: isCOD ? 'COD' : isUPI ? 'UPI' : 'Pay at Counter',
+          address: addrMatch ? addrMatch[1].trim() : '',
+          items: [],
+        };
+        map.set(key, existing);
+        list.push(existing);
+      }
+      existing.items.push({
+        id: order.id,
+        product: order.product || 'Item',
+        qty: Number(order.qty || 1),
+        status: order.status || 'Pending',
+        priority: order.priority || 'Normal',
+        notification_count: Number((order as any).notification_count || 0),
+        notes: order.notes,
+      });
+    }
+
+    for (const g of list) {
+      if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
+      else if (g.items.some(i => i.status === 'Ordered')) g.overallStatus = 'Ordered';
+      else if (g.items.some(i => i.status === 'Ready')) g.overallStatus = 'Ready';
+      else g.overallStatus = 'Other';
+    }
+
+    return list;
+  }, [activeWebsiteOrders]);
 
   const groupedSpecialOrders = useMemo(() => {
     const list: Array<{
@@ -2579,7 +2680,7 @@ const QuickAssistSidebar = memo(({
 
     const map = new Map<string, (typeof list)[0]>();
 
-    for (const order of activeSpecialOrders) {
+    for (const order of activeLocalSpecialOrders) {
       const key = (order.phone || order.requester || String(order.id)).trim();
       let existing = map.get(key);
       if (!existing) {
@@ -2611,7 +2712,7 @@ const QuickAssistSidebar = memo(({
     }
 
     return list;
-  }, [activeSpecialOrders]);
+  }, [activeLocalSpecialOrders]);
 
   const groupedNotifications = useMemo(() => {
     if (!Array.isArray(notifications)) return [];
@@ -2680,6 +2781,7 @@ const QuickAssistSidebar = memo(({
 
   if (!expanded) {
     const activeRefillsCount = groupedActionableRefills.length;
+    const activeWebsiteOrdersCount = groupedWebsiteOrders.length;
     const activeSpecialOrdersCount = groupedSpecialOrders.length;
     const stagedNotificationsCount = groupedNotifications.length;
 
@@ -2691,7 +2793,7 @@ const QuickAssistSidebar = memo(({
       >
         <ChevronLeftIcon size={16} className="text-muted mt-1" />
 
-        {/* 3 Distinct Category Count Badges at TOP */}
+        {/* Distinct Category Count Badges at TOP */}
         <div className="flex flex-col gap-1.5 items-center mt-1">
           {/* 1. Refills Due Soon (Purple) */}
           {activeRefillsCount > 0 && (
@@ -2703,23 +2805,43 @@ const QuickAssistSidebar = memo(({
             </div>
           )}
 
-          {/* 2. Quick Special Requests (Amber) */}
+          {/* 2. Online Website Orders (Cyan) */}
+          {activeWebsiteOrdersCount > 0 && (
+            <div
+              className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30 shadow-sm animate-pulse"
+              title={`Online Website Orders: ${activeWebsiteOrdersCount} customer(s)`}
+            >
+              {activeWebsiteOrdersCount}
+            </div>
+          )}
+
+          {/* 3. Quick Special Requests (Amber) */}
           {activeSpecialOrdersCount > 0 && (
             <div
-              className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-amber-500/15 text-amber-300 text-[9px] font-black border border-amber-500/30 shadow-sm animate-pulse"
+              className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-amber-500/15 text-amber-300 text-[9px] font-black border border-amber-500/30 shadow-sm"
               title={`Quick Special Requests: ${activeSpecialOrdersCount} customer(s)`}
             >
               {activeSpecialOrdersCount}
             </div>
           )}
 
-          {/* 3. Staged Messages / Notifications (Emerald) */}
+          {/* 4. Staged Messages / Notifications (Emerald) */}
           {stagedNotificationsCount > 0 && (
             <div
               className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-emerald-500/15 text-emerald-300 text-[9px] font-black border border-emerald-500/30 shadow-sm"
               title={`Staged Messages: ${stagedNotificationsCount}`}
             >
               {stagedNotificationsCount}
+            </div>
+          )}
+
+          {/* 5. Images Needing Review (Sky Blue) */}
+          {imageReviewCount > 0 && (
+            <div
+              className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-sky-500/15 text-sky-300 text-[9px] font-black border border-sky-500/30 shadow-sm"
+              title={`Images Needing Review: ${imageReviewCount}`}
+            >
+              {imageReviewCount}
             </div>
           )}
         </div>
@@ -2924,6 +3046,136 @@ const QuickAssistSidebar = memo(({
                           <span>Complete All</span>
                         </button>
                       </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Online Website Orders */}
+        <div>
+          <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
+            <div className="flex items-center gap-1.5">
+              <Globe size={14} className="text-cyan-400" />
+              <span>Online Website Orders ({groupedWebsiteOrders.length})</span>
+            </div>
+            <button
+              onClick={() => navigate('/portal')}
+              className="text-[9px] font-black text-cyan-300 hover:underline uppercase tracking-widest cursor-pointer"
+            >
+              Website
+            </button>
+          </div>
+          {groupedWebsiteOrders.length === 0 ? (
+            <p className="text-xs text-muted/60 italic pl-2 py-1">No pending website orders</p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {groupedWebsiteOrders.map(group => {
+                const isExpanded = expandedWebsiteOrderKeys.has(group.key);
+                const isProcessing = group.items.some(i => processingOrderIds.has(i.id));
+
+                return (
+                  <div
+                    key={group.key}
+                    className={`p-3 rounded-xl border flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs ${
+                      group.overallStatus === 'Ready'
+                        ? 'bg-sky-500/[0.06] border-sky-500/30'
+                        : 'bg-cyan-500/[0.06] border-cyan-500/30'
+                    }`}
+                  >
+                    {/* Header (Click to toggle expansion / fold & unfold) */}
+                    <div
+                      onClick={() => toggleWebsiteOrderKey(group.key)}
+                      className="flex items-start justify-between gap-1.5 min-w-0 cursor-pointer select-none"
+                    >
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className="font-bold text-xs text-text truncate" title={group.requester}>
+                            {group.requester}
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-bold shrink-0 border border-cyan-500/20">
+                            {group.items.length} item{group.items.length > 1 ? 's' : ''}
+                          </span>
+                          <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 border ${
+                            group.deliveryMode === 'Home Delivery'
+                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/25'
+                              : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+                          }`}>
+                            {group.deliveryMode}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-muted truncate mt-0.5">
+                          {group.phone && <span className="font-mono">{group.phone}</span>}
+                          <span>• {group.paymentMethod}</span>
+                          {group.address && <span className="truncate" title={group.address}>• {group.address}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
+                            group.overallStatus === 'Ready'
+                              ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                              : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                          }`}
+                        >
+                          {group.overallStatus}
+                        </span>
+                        <ChevronDown size={14} className={`text-muted transition-transform duration-200 ${isExpanded ? 'rotate-180 text-cyan-400' : ''}`} />
+                      </div>
+                    </div>
+
+                    {/* Unfolded Medicine Names */}
+                    {isExpanded && (
+                      <div className="flex flex-col gap-1.5 pt-1 border-t border-border">
+                        {group.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-bg2 border border-border text-[11px] min-w-0"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <Package size={11} className="text-cyan-400 shrink-0" />
+                              <span className="font-medium text-text truncate">{item.product}</span>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 text-[10px] font-mono font-bold shrink-0">
+                              Qty: {item.qty}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Action Buttons Footer */}
+                    <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-border min-w-0">
+                      {group.overallStatus !== 'Ready' && (
+                        <button
+                          disabled={isProcessing}
+                          onClick={() => handleUpdateGroupStatus(group, 'Ready')}
+                          className="flex-1 py-1 px-2 rounded bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
+                          title="Mark ready and queue WhatsApp alert to customer"
+                        >
+                          {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                          Mark Ready
+                        </button>
+                      )}
+                      <button
+                        disabled={isProcessing}
+                        onClick={() => handleUpdateGroupStatus(group, 'Completed', { navigateToPos: true })}
+                        className="flex-1 py-1 px-2 rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 shadow-sm cursor-pointer whitespace-nowrap min-w-0"
+                        title="Complete order and open POS prefilled with customer & medicines"
+                      >
+                        {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <ShoppingCart size={11} />}
+                        Bill in POS
+                      </button>
+                      <button
+                        disabled={isProcessing}
+                        onClick={() => handleUpdateGroupStatus(group, 'Cancelled')}
+                        className="py-1 px-2 rounded bg-bg3 hover:bg-red-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                        title="Cancel this website order"
+                      >
+                        <X size={11} />
+                      </button>
                     </div>
                   </div>
                 );
@@ -3176,18 +3428,47 @@ const QuickAssistSidebar = memo(({
                             <SendIcon size={10} /> Send WhatsApp
                           </>
                         )}
-          </button>
-                     </div>
-                   </div>
-                 );
-               })}
-             </div>
-           )}
-         </div>
-       </div>
-     </div>
-   );
- });
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 4. Catalogue Image Verification Queue */}
+        {imageReviewCount > 0 && (
+          <div className="p-3 rounded-xl bg-sky-500/[0.06] border border-sky-500/30 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-sky-400">
+                  <ShieldCheckIcon size={14} />
+                  <span>Image Review Queue</span>
+                </div>
+                <span className="px-1.5 py-0.2 rounded-md bg-sky-500/20 text-sky-300 text-[10px] font-black font-mono">
+                  {imageReviewCount}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted leading-snug">
+                {imageReviewCount} product images need pharmacist inspection.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  navigate('/database?tab=images&filter=review');
+                  setExpanded(false);
+                }}
+                className="w-full py-1.5 px-3 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              >
+                <span>Inspect & Verify</span>
+                <ChevronRightIcon size={13} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  });
 
 // Module-level cache for staged counts to prevent redundant database fetches on page switches (G4)
 let cachedStagedSalesCount: number | null = null;
