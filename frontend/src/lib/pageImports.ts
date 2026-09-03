@@ -29,4 +29,5 @@ export const pageImports: Record<string, () => Promise<{ default: ComponentType 
   '/customer/login': () => import('../pages/CustomerPortal'),
   '/my-bills': () => import('../pages/CustomerPortal'),
   '/customer-bills': () => import('../pages/CustomerPortal'),
+  '/image-correction': () => import('../pages/ImageCorrection'),
 };

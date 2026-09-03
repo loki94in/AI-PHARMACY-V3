@@ -69,6 +69,32 @@ router.post('/auth/login', async (req: Request, res: Response) => {
   }
 });
 
+router.post('/auth/heartbeat', requireCustomerAuth, async (req: CustomerAuthRequest, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
+    if (!token) return sendError(res, 'UNAUTHORIZED', 'Session token missing', 401);
+
+    const result = await customerAuthService.recordHeartbeat(token);
+    return sendSuccess(res, result);
+  } catch (err: any) {
+    return sendError(res, 'HEARTBEAT_FAILED', err.message || 'Failed to update heartbeat', 500);
+  }
+});
+
+router.post('/auth/logout', requireCustomerAuth, async (req: CustomerAuthRequest, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
+    if (!token) return sendError(res, 'UNAUTHORIZED', 'Session token missing', 401);
+
+    const result = await customerAuthService.logoutSession(token);
+    return sendSuccess(res, { ...result, message: 'Logged out successfully' });
+  } catch (err: any) {
+    return sendError(res, 'LOGOUT_FAILED', err.message || 'Failed to logout session', 500);
+  }
+});
+
 // ─── Customer Portal Data Endpoints ──────────────────────────────────────────
 
 router.get('/dashboard', requireCustomerAuth, async (req: CustomerAuthRequest, res: Response) => {

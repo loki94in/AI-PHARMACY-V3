@@ -7,6 +7,7 @@ import {
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { authApi } from '../../api/authApi';
 import { PublicCatalogView } from './PublicCatalogView';
 
 interface CustomerSession {
@@ -267,7 +268,21 @@ export default function CustomerPortal() {
     }
   };
 
+  // Periodic session heartbeat (every 60s while active tab)
+  useEffect(() => {
+    if (!session) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        authApi.heartbeat().catch(() => {});
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [session]);
+
   const handleLogout = () => {
+    try {
+      authApi.logout().catch(() => {});
+    } catch (_) {}
     setSession(null);
     localStorage.removeItem('customer_portal_session');
     localStorage.removeItem('customer_portal_token');

@@ -50,6 +50,51 @@ router.get('/counts', async (req, res) => {
 });
 
 /**
+ * GET /api/catalog/images/queue — Unresolved images for Dedicated Correction Center
+ */
+router.get('/queue', async (req, res) => {
+  try {
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const status = (typeof req.query.status === 'string' ? req.query.status : 'unresolved') as any;
+    const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+
+    const result = await catalogImageService.getCorrectionQueue({
+      category,
+      search,
+      status,
+      page,
+      limit
+    });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error fetching correction queue:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to fetch correction queue' });
+  }
+});
+
+/**
+ * GET /api/catalog/images/stats — Dedicated Correction Quality Dashboard stats
+ */
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await catalogImageService.getCorrectionStats();
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error fetching correction stats:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to fetch correction stats' });
+  }
+});
+
+/**
  * GET /api/catalog/images/:id — Specific image details with rejection history
  */
 router.get('/:id', async (req, res) => {
@@ -244,6 +289,208 @@ router.post('/sync-state', async (req, res) => {
   } catch (err: any) {
     console.error('[CatalogImages API] Error syncing state:', err);
     res.status(500).json({ success: false, error: err.message || 'Failed to sync image state' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/audit — Run Image Health Auditor (Section 6, 19, 34)
+ */
+router.post('/audit', async (req, res) => {
+  try {
+    const report = await catalogImageService.auditImageHealth();
+    res.json({
+      success: true,
+      ...report
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error auditing images:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to audit images' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/auto-approve — Batch auto-approve high confidence matches (Section 10 & 34)
+ */
+router.post('/auto-approve', async (req, res) => {
+  try {
+    const result = await catalogImageService.autoApproveHighConfidence();
+    res.json({
+      success: true,
+      message: `Successfully evaluated ${result.evaluated} images and approved ${result.approved} verified active images.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error auto-approving images:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to auto-approve images' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/repair-missing — Re-check & auto-repair missing catalog images (Section 18 & 34)
+ */
+router.post('/repair-missing', async (req, res) => {
+  try {
+    const limit = req.body?.limit ? parseInt(String(req.body.limit), 10) : 50;
+    const result = await catalogImageService.repairMissingImages(limit);
+    res.json({
+      success: true,
+      message: `Scanned ${result.scanned} medicines: repaired ${result.repaired}, ${result.failed} not found/failed.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error repairing missing images:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to repair missing images' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/correct — Mark image as verified / correct
+ */
+router.post('/:id/correct', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const imageType = req.body?.image_type || undefined;
+    const isPrimary = typeof req.body?.is_primary === 'boolean' ? req.body.is_primary : undefined;
+    const ok = await catalogImageService.markImageCorrect(id, verifiedBy, imageType, isPrimary);
+    if (!ok) return res.status(404).json({ success: false, error: 'Image not found' });
+    res.json({ success: true, message: 'Image marked as correct and verified.' });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error marking correct:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to mark correct' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/incorrect — Flag image as incorrect or trigger smart angle workflow
+ */
+router.post('/:id/incorrect', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const reason = req.body?.reason || 'Incorrect image';
+    const reasonCode = req.body?.reason_code || undefined;
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const result = await catalogImageService.markImageIncorrect(id, reason, verifiedBy, reasonCode);
+    if (!result.success) return res.status(404).json({ success: false, error: result.message || 'Image not found' });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error marking incorrect:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to mark incorrect' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/skip — Skip review temporarily with delay
+ */
+router.post('/:id/skip', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const hours = parseInt(String(req.body?.hours || 24), 10);
+    const reason = req.body?.reason || 'Temporarily skipped';
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const ok = await catalogImageService.skipImage(id, hours, reason, verifiedBy);
+    if (!ok) return res.status(404).json({ success: false, error: 'Image not found' });
+    res.json({ success: true, message: `Image review skipped for ${hours} hours.` });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error skipping image:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to skip image' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/search-candidates — Search online candidate images
+ */
+router.post('/:id/search-candidates', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT medicine_id FROM catalog_images WHERE id = ?', [id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Image not found' });
+
+    const queryOverride = req.body?.query || undefined;
+    const imageType = req.body?.image_type || undefined;
+    const candidates = await catalogImageService.searchCandidates(current.medicine_id, queryOverride, imageType);
+    res.json({ success: true, candidates });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error searching candidates:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to search candidate images' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/replace-candidate — Replace image with selected candidate
+ */
+router.post('/:id/replace-candidate', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { candidate_url, candidate_title, verified_by, image_type, is_primary, keep_existing } = req.body;
+    if (!candidate_url) {
+      return res.status(400).json({ success: false, error: 'candidate_url is required' });
+    }
+
+    const newRecord = await catalogImageService.replaceWithCandidate(
+      id,
+      candidate_url,
+      candidate_title,
+      verified_by || 'admin',
+      image_type,
+      is_primary,
+      !!keep_existing
+    );
+    if (!newRecord) return res.status(404).json({ success: false, error: 'Original image not found' });
+
+    res.json({ success: true, message: 'Image successfully saved and verified.', image: newRecord });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error replacing candidate:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to replace image' });
+  }
+});
+
+/**
+ * GET /api/catalog/images/medicine/:medicineId/gallery — All angles/slots for a medicine
+ */
+router.get('/medicine/:medicineId/gallery', async (req, res) => {
+  try {
+    const medicineId = parseInt(req.params.medicineId, 10);
+    const images = await catalogImageService.getMedicineGallery(medicineId);
+    res.json({ success: true, images });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error fetching medicine gallery:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to fetch gallery' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/:id/reopen — Reopen verified image for QC review
+ */
+router.post('/:id/reopen', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const ok = await catalogImageService.reopenImage(id, verifiedBy);
+    if (!ok) return res.status(404).json({ success: false, error: 'Image not found' });
+    res.json({ success: true, message: 'Image reopened for review.' });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error reopening image:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to reopen image' });
+  }
+});
+
+/**
+ * GET /api/catalog/images/:id/history — Audit trail of reviews and replacements
+ */
+router.get('/:id/history', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT medicine_id FROM catalog_images WHERE id = ?', [id]);
+    if (!current) return res.status(404).json({ success: false, error: 'Image not found' });
+
+    const history = await catalogImageService.getImageHistory(current.medicine_id);
+    res.json({ success: true, history });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error fetching history:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to fetch history' });
   }
 });
 

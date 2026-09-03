@@ -65,6 +65,8 @@ const ALLOW = {
     'frontend/src/pages/aiengineering/panels/compositionpanel.tsx',
     // 10s transient send countdown animation timer in open popover, self-clearing on completion
     'frontend/src/components/automationhubpopover.tsx',
+    // 60s visibility-gated customer session duration heartbeat while active in portal
+    'frontend/src/pages/customerportal/index.tsx',
   ],
   directSendWorkers: ['src/services/whatsappqueueworker.ts'], // flushes USER-clicked queue items only
   // Pill toggle thumbs (after:bg-white / after:border-gray-300) are structurally white by design —

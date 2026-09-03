@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Key, Phone, Store, RefreshCw, Send, Plus, Search,
   CheckCircle2, AlertCircle, ShieldCheck, Copy, Check, Lock,
-  MessageSquare, ToggleLeft, ToggleRight, Trash2, Globe
+  MessageSquare, ToggleLeft, ToggleRight, Trash2, Globe, Clock, History, X
 } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
@@ -16,11 +16,24 @@ interface PortalAccount {
   preferred_store_name?: string;
   status: string;
   last_login_at?: string;
+  total_login_count?: number;
+  total_time_spent_seconds?: number;
+  last_logout_at?: string;
   customer_name: string;
   customer_address?: string;
   active_refills_count: number;
   total_bills_count: number;
   created_at: string;
+}
+
+function formatDuration(seconds?: number): string {
+  if (!seconds || seconds <= 0) return '0m';
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hours}h ${remMins}m`;
 }
 
 interface StoreItem {
@@ -52,6 +65,28 @@ export function PortalAccountsManager() {
   const [overridePinInput, setOverridePinInput] = useState('');
   const [overrideSendWa, setOverrideSendWa] = useState(true);
   const [isOverriding, setIsOverriding] = useState(false);
+
+  // Session History Modal State
+  const [sessionModalAcc, setSessionModalAcc] = useState<PortalAccount | null>(null);
+  const [sessionLogs, setSessionLogs] = useState<any[]>([]);
+  const [sessionStats, setSessionStats] = useState<any>(null);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+
+  const handleOpenSessions = async (acc: PortalAccount) => {
+    setSessionModalAcc(acc);
+    setLoadingSessions(true);
+    try {
+      const res = await api.getPortalAccountSessions(acc.id);
+      if (res.success) {
+        setSessionLogs(res.sessions || []);
+        setSessionStats(res.stats || null);
+      }
+    } catch (err) {
+      toastEvent.trigger('Failed to fetch session history', 'error');
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
 
   // Load stores
   useEffect(() => {
@@ -276,6 +311,7 @@ export function PortalAccountsManager() {
                 <th className="py-3 px-4">4-Digit PIN</th>
                 <th className="py-3 px-4">Preferred Branch</th>
                 <th className="py-3 px-4">Refills / Bills</th>
+                <th className="py-3 px-4">Logins & Time</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
@@ -283,14 +319,14 @@ export function PortalAccountsManager() {
             <tbody className="divide-y divide-border/60">
               {isLoading && accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-muted">
+                  <td colSpan={8} className="text-center py-12 text-muted">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     <span>Loading portal accounts...</span>
                   </td>
                 </tr>
               ) : accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-muted">
+                  <td colSpan={8} className="text-center py-12 text-muted">
                     No customer portal accounts found. Click "+ Create Customer Web Login" to add one!
                   </td>
                 </tr>
@@ -343,6 +379,23 @@ export function PortalAccountsManager() {
                       <span className="font-semibold text-emerald-600">{acc.active_refills_count} Refills</span>
                       <span className="mx-1">•</span>
                       <span>{acc.total_bills_count} Bills</span>
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5 font-bold text-text">
+                          <Clock className="w-3.5 h-3.5 text-primary" />
+                          <span>{acc.total_login_count || 0} logins</span>
+                          <span className="text-[10px] text-muted font-normal">({formatDuration(acc.total_time_spent_seconds)})</span>
+                        </div>
+                        <button
+                          onClick={() => handleOpenSessions(acc)}
+                          className="text-[10px] text-primary hover:underline text-left flex items-center gap-1 font-medium mt-0.5"
+                        >
+                          <History className="w-3 h-3" />
+                          <span>View Sessions</span>
+                        </button>
+                      </div>
                     </td>
 
                     <td className="py-3 px-4">
@@ -607,6 +660,125 @@ export function PortalAccountsManager() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Session History & Usage Auditing */}
+      {sessionModalAcc && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-border pb-3 shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-text flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-primary" />
+                  <span>Customer Login & Session Auditing</span>
+                </h3>
+                <p className="text-xs text-muted">
+                  {sessionModalAcc.customer_name} • Phone: {sessionModalAcc.login_id}
+                </p>
+              </div>
+              <button
+                onClick={() => setSessionModalAcc(null)}
+                className="text-muted hover:text-text p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Top Summary Cards */}
+            <div className="grid grid-cols-3 gap-3 shrink-0">
+              <div className="p-3 bg-bg rounded-xl border border-border">
+                <span className="text-[10px] uppercase font-bold text-muted block tracking-wider">Total Logins</span>
+                <span className="text-lg font-black text-text block mt-0.5">
+                  {sessionStats?.totalLogins ?? sessionModalAcc.total_login_count ?? 0}
+                </span>
+              </div>
+              <div className="p-3 bg-bg rounded-xl border border-border">
+                <span className="text-[10px] uppercase font-bold text-muted block tracking-wider">Total Time Spent</span>
+                <span className="text-lg font-black text-primary block mt-0.5">
+                  {formatDuration(sessionStats?.totalTimeSpentSeconds ?? sessionModalAcc.total_time_spent_seconds)}
+                </span>
+              </div>
+              <div className="p-3 bg-bg rounded-xl border border-border">
+                <span className="text-[10px] uppercase font-bold text-muted block tracking-wider">Active Sessions</span>
+                <span className="text-lg font-black text-emerald-500 block mt-0.5">
+                  {sessionStats?.activeSessionsCount ?? 0}
+                </span>
+              </div>
+            </div>
+
+            {/* Sessions Table */}
+            <div className="flex-1 overflow-y-auto border border-border rounded-xl bg-bg">
+              {loadingSessions ? (
+                <div className="py-12 text-center text-muted text-xs">
+                  <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
+                  <span>Loading session history...</span>
+                </div>
+              ) : sessionLogs.length === 0 ? (
+                <div className="py-12 text-center text-muted text-xs">
+                  No recorded sessions found for this customer.
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="sticky top-0 bg-bg2 border-b border-border text-muted font-bold text-[10px] uppercase">
+                    <tr>
+                      <th className="py-2.5 px-3">Session Start</th>
+                      <th className="py-2.5 px-3">Last Active / Logout</th>
+                      <th className="py-2.5 px-3">Duration</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Channel</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {sessionLogs.map((s: any) => (
+                      <tr key={s.id} className="hover:bg-bg2/50 transition-colors">
+                        <td className="py-2 px-3 text-text font-mono text-[11px]">
+                          {s.logged_in_at ? new Date(s.logged_in_at).toLocaleString() : '—'}
+                        </td>
+                        <td className="py-2 px-3 text-muted text-[11px]">
+                          {s.logged_out_at ? (
+                            <span>Logged out {new Date(s.logged_out_at).toLocaleTimeString()}</span>
+                          ) : s.last_active_at ? (
+                            <span>Active {new Date(s.last_active_at).toLocaleTimeString()}</span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-text">
+                          {formatDuration(s.duration_seconds)}
+                        </td>
+                        <td className="py-2 px-3">
+                          {s.is_active === 1 ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-bg2 text-muted border border-border">
+                              Closed
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 uppercase text-[10px] font-bold text-muted">
+                          {s.channel || 'portal'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-border shrink-0">
+              <button
+                type="button"
+                onClick={() => setSessionModalAcc(null)}
+                className="px-4 py-2 bg-bg border border-border rounded-xl text-xs font-semibold text-text hover:bg-bg3 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -19,11 +19,21 @@ describe('CustomerAuthService', () => {
         channel TEXT DEFAULT 'portal',
         device_info TEXT,
         ip_address TEXT,
+        logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        logged_out_at DATETIME,
+        duration_seconds INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
         expires_at DATETIME NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    try {
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
+    } catch (_) {}
     await db.run(`
       CREATE TABLE IF NOT EXISTS customer_portal_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,11 +43,19 @@ describe('CustomerAuthService', () => {
         pin_display TEXT,
         preferred_store_id INTEGER DEFAULT 1,
         status TEXT DEFAULT 'active',
+        total_login_count INTEGER DEFAULT 0,
+        total_time_spent_seconds INTEGER DEFAULT 0,
         last_login_at DATETIME,
+        last_logout_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    try {
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+    } catch (_) {}
     await db.run(`
       CREATE TABLE IF NOT EXISTS customer_portal_otps (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,5 +124,46 @@ describe('CustomerAuthService', () => {
 
     expect(hash1).toBe(hash2);
     expect(hash1).not.toBe(hashDifferent);
+  });
+
+  test('blocks OTP request for unregistered phone numbers', async () => {
+    await expect(customerAuthService.requestOtp('9999988888'))
+      .rejects
+      .toThrow('This mobile number is not registered in pharmacy records');
+  });
+
+  test('allows OTP request for registered CRM customers and tracks sessions', async () => {
+    const db = await dbManager.getConnection();
+    const testPhone = '9888877777';
+    
+    // Register customer in CRM
+    await db.run(
+      `INSERT INTO customers (name, phone) VALUES (?, ?)`,
+      ['Test CRM Patient', testPhone]
+    );
+
+    const otpRes = await customerAuthService.requestOtp(testPhone);
+    expect(otpRes.success).toBe(true);
+    expect(otpRes.debugOtp).toBeTruthy();
+
+    // Verify OTP and check login
+    const loginRes = await customerAuthService.verifyOtp(testPhone, otpRes.debugOtp!);
+    expect(loginRes.token).toBeTruthy();
+    expect(loginRes.customer.phone).toBe(testPhone);
+
+    // Heartbeat updates session duration
+    const hbRes = await customerAuthService.recordHeartbeat(loginRes.token);
+    expect(hbRes.success).toBe(true);
+
+    // Logout session
+    const logoutRes = await customerAuthService.logoutSession(loginRes.token);
+    expect(logoutRes.success).toBe(true);
+    expect(logoutRes.durationSeconds).toBeGreaterThanOrEqual(0);
+
+    // Customer sessions history
+    const history = await customerAuthService.getCustomerSessions(loginRes.customer.id);
+    expect(history.stats.totalLogins).toBeGreaterThanOrEqual(1);
+    expect(history.sessions.length).toBeGreaterThanOrEqual(1);
+    expect(history.sessions[0].is_active).toBe(0);
   });
 });

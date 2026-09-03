@@ -91,4 +91,17 @@ router.put('/catalog/:id/visibility', async (req: Request, res: Response) => {
   }
 });
 
+// ─── Customer Session Auditing Endpoints ─────────────────────────────────────
+
+router.get('/customers/:id/sessions', async (req: Request, res: Response) => {
+  try {
+    const customerId = parseInt(String(req.params.id), 10);
+    const { customerAuthService } = await import('../../services/auth/customerAuthService.js');
+    const sessionData = await customerAuthService.getCustomerSessions(customerId);
+    return sendSuccess(res, sessionData);
+  } catch (err: any) {
+    return sendError(res, 'SESSION_FETCH_ERROR', err.message || 'Failed to fetch sessions', 500);
+  }
+});
+
 export default router;

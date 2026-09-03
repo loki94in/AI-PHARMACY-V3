@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   CheckCircle2, XCircle, RefreshCw, Eye, Trash2, Search,
   ShieldCheck, AlertTriangle, AlertCircle, ArrowRight, ArrowLeft,
-  Upload, ZoomIn, X, ExternalLink, Database, Check
+  Upload, ZoomIn, X, ExternalLink, Database, Check, Sparkles, Wrench, Activity
 } from 'lucide-react';
 import { api } from '../../services/api';
 import type { CatalogImageItem, CatalogImageCounts } from '../../services/api';
@@ -45,6 +45,60 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
 
   // Remove Confirmation Modal
   const [removingImage, setRemovingImage] = useState<CatalogImageItem | null>(null);
+
+  // Image Health & Bulk Repair States (Section 6, 18, 19, 34)
+  const [auditReport, setAuditReport] = useState<any | null>(null);
+  const [auditing, setAuditing] = useState(false);
+  const [autoApproving, setAutoApproving] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+
+  const handleAuditHealth = async () => {
+    setAuditing(true);
+    try {
+      const res = await api.auditCatalogImages();
+      if (res.success) {
+        setAuditReport(res);
+        toastEvent.trigger(`Image Audit Complete: ${res.summary.healthyActive} healthy active images verified.`, 'info');
+        loadCounts();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Audit failed: ' + err.message, 'error');
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const handleAutoApprove = async () => {
+    setAutoApproving(true);
+    try {
+      const res = await api.autoApproveCatalogImages();
+      if (res.success) {
+        toastEvent.trigger(res.message || `Auto-approved ${res.approved} high-confidence images!`, 'success');
+        loadCounts();
+        loadImages();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Auto-approve failed: ' + err.message, 'error');
+    } finally {
+      setAutoApproving(false);
+    }
+  };
+
+  const handleRepairMissing = async () => {
+    setRepairing(true);
+    try {
+      const res = await api.repairMissingCatalogImages(50);
+      if (res.success) {
+        toastEvent.trigger(res.message || `Repaired ${res.repaired} missing images!`, 'success');
+        loadCounts();
+        loadImages();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Repair failed: ' + err.message, 'error');
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   // Debounce search
   useEffect(() => {
@@ -246,6 +300,39 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
             />
           </div>
 
+          {/* Audit Image Health Button */}
+          <button
+            onClick={handleAuditHealth}
+            disabled={auditing}
+            className="px-3 py-1.5 bg-bg3 hover:bg-bg2 border border-glass-border rounded-xl text-xs font-semibold text-text flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Scan all medicines to audit healthy, missing, broken, and pending images"
+          >
+            <Activity size={13} className={auditing ? 'animate-spin text-primary' : 'text-emerald-400'} />
+            <span>{auditing ? 'Auditing...' : 'Audit Image Health'}</span>
+          </button>
+
+          {/* Auto-Approve High Confidence Button */}
+          <button
+            onClick={handleAutoApprove}
+            disabled={autoApproving}
+            className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-xs font-semibold text-emerald-400 flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Auto-approve and activate all pending images with confidence >= 80% and verified disk file"
+          >
+            <Sparkles size={13} className={autoApproving ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
+            <span>{autoApproving ? 'Approving...' : 'Auto-Approve (≥80%)'}</span>
+          </button>
+
+          {/* Repair Missing Images Button */}
+          <button
+            onClick={handleRepairMissing}
+            disabled={repairing}
+            className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 border border-primary/30 rounded-xl text-xs font-semibold text-primary flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Re-check and auto-repair missing catalog images from genuine pharmaceutical CDNs"
+          >
+            <Wrench size={13} className={repairing ? 'animate-spin text-primary' : 'text-primary'} />
+            <span>{repairing ? 'Repairing...' : 'Re-Check & Repair Missing'}</span>
+          </button>
+
           {/* Sync Existing Scraped Button */}
           <button
             onClick={handleSyncState}
@@ -254,7 +341,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
             title="Import and score all images currently on disk and state file"
           >
             <RefreshCw size={13} className={syncing ? 'animate-spin text-primary' : 'text-muted'} />
-            <span>{syncing ? 'Syncing...' : 'Sync Image State'}</span>
+            <span>{syncing ? 'Syncing...' : 'Sync State'}</span>
           </button>
         </div>
       </div>
@@ -263,7 +350,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       <div className="px-4 py-2.5 border-b border-glass-border flex items-center gap-2 overflow-x-auto scrollbar-none bg-bg">
         {[
           { id: 'review', label: 'Needs Review', count: counts.pending_review, color: 'text-amber-400', badgeBg: 'bg-amber-500/20' },
-          { id: 'high_confidence', label: 'High Confidence (≥99%)', count: counts.high_confidence, color: 'text-emerald-400', badgeBg: 'bg-emerald-500/20' },
+          { id: 'high_confidence', label: 'High Confidence (≥80%)', count: counts.high_confidence, color: 'text-emerald-400', badgeBg: 'bg-emerald-500/20' },
           { id: 'approved', label: 'User Approved', count: counts.approved, color: 'text-sky-400', badgeBg: 'bg-sky-500/20' },
           { id: 'rejected', label: 'Rejected', count: counts.rejected, color: 'text-rose-400', badgeBg: 'bg-rose-500/20' },
           { id: 'all', label: 'All Images', count: counts.total, color: 'text-text', badgeBg: 'bg-bg3' },
@@ -671,6 +758,131 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                 <Check size={13} />
                 <span>Save Replacement</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Health Audit Report Modal (Section 6, 19, 34) */}
+      {auditReport && (
+        <div className="fixed inset-0 z-50 bg-bg/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-2xl w-full p-5 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Activity size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-text">Catalogue Image Health Audit</h3>
+                  <p className="text-[11px] text-muted">Complete verification status across medicines database and website refill catalogue</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setAuditReport(null)}
+                className="p-1.5 rounded-xl bg-bg3 text-muted hover:text-text border border-border cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="p-3 bg-bg border border-border rounded-xl">
+                <div className="text-[11px] text-muted font-medium">Refill Catalog Items</div>
+                <div className="text-base font-bold text-text mt-0.5">{auditReport.summary.refillCatalogMedicines}</div>
+                <div className="text-[10px] text-muted">Public website products</div>
+              </div>
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+                <div className="text-[11px] text-emerald-400 font-medium">Healthy Active Images</div>
+                <div className="text-base font-bold text-emerald-400 mt-0.5">{auditReport.summary.healthyActive}</div>
+                <div className="text-[10px] text-muted">Verified & physically on disk</div>
+              </div>
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                <div className="text-[11px] text-amber-400 font-medium">Pending Review</div>
+                <div className="text-base font-bold text-amber-400 mt-0.5">{auditReport.summary.pendingReview}</div>
+                <div className="text-[10px] text-muted">Eligible for auto-approve</div>
+              </div>
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl">
+                <div className="text-[11px] text-rose-400 font-medium">Broken Files</div>
+                <div className="text-base font-bold text-rose-400 mt-0.5">{auditReport.summary.broken}</div>
+                <div className="text-[10px] text-muted">File missing from disk</div>
+              </div>
+              <div className="p-3 bg-bg3 border border-border rounded-xl">
+                <div className="text-[11px] text-text font-medium">Approved by User</div>
+                <div className="text-base font-bold text-sky-400 mt-0.5">{auditReport.summary.approved}</div>
+                <div className="text-[10px] text-muted">Pharmacist confirmed</div>
+              </div>
+              <div className="p-3 bg-bg border border-border rounded-xl">
+                <div className="text-[11px] text-muted font-medium">Total DB Medicines</div>
+                <div className="text-base font-bold text-text mt-0.5">{auditReport.summary.totalMedicines}</div>
+                <div className="text-[10px] text-muted">Master pharmacy inventory</div>
+              </div>
+            </div>
+
+            {/* Refill Missing Preview */}
+            <div className="flex-1 overflow-y-auto border border-border rounded-xl p-3 bg-bg space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-text">
+                  Refill Catalog Items Missing Images ({auditReport.refillMissingItems?.length || 0})
+                </span>
+                <span className="text-[11px] text-muted">Targeted for immediate auto-repair</span>
+              </div>
+              {auditReport.refillMissingItems && auditReport.refillMissingItems.length > 0 ? (
+                <div className="divide-y divide-border/40">
+                  {auditReport.refillMissingItems.slice(0, 30).map((item: any, i: number) => (
+                    <div key={i} className="py-1.5 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-semibold text-text">{item.name}</span>
+                        <span className="text-[10px] text-muted ml-2">({item.category})</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 font-mono">
+                        {item.reason}
+                      </span>
+                    </div>
+                  ))}
+                  {auditReport.refillMissingItems.length > 30 && (
+                    <div className="py-1 text-center text-[11px] text-muted italic">
+                      + {auditReport.refillMissingItems.length - 30} more items
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="py-6 text-center text-xs text-muted">
+                  All refill catalogue medicines have healthy active images!
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <button
+                onClick={() => setAuditReport(null)}
+                className="px-4 py-2 rounded-xl bg-bg3 text-xs font-semibold text-text hover:bg-bg border border-border cursor-pointer"
+              >
+                Close Audit
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setAuditReport(null);
+                    handleAutoApprove();
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles size={13} />
+                  <span>Auto-Approve High Confidence</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setAuditReport(null);
+                    handleRepairMissing();
+                  }}
+                  className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Wrench size={13} />
+                  <span>Repair Missing Images Now</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

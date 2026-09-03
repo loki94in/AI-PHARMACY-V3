@@ -17,13 +17,19 @@ export interface CatalogImageRecord {
   image_hash: string | null;
   confidence_score: number;
   matching_method: string;
-  verification_status: 'HIGH_CONFIDENCE' | 'APPROVED' | 'PENDING_REVIEW' | 'REJECTED' | 'REMOVED';
+  verification_status: 'HIGH_CONFIDENCE' | 'APPROVED' | 'PENDING_REVIEW' | 'REJECTED' | 'REMOVED' | 'CORRECT' | 'INCORRECT' | 'CORRECTED' | 'SKIPPED' | string;
   verification_reason: string | null;
   ocr_text: string | null;
   ocr_confidence: number | null;
   is_active: number;
   retry_count: number;
   replaced_from_image_id: number | null;
+  previous_image_url?: string | null;
+  next_review_at?: string | null;
+  skip_reason?: string | null;
+  locked_by?: string | null;
+  locked_at?: string | null;
+  verification_version?: number;
   verified_by: string | null;
   verified_at: string | null;
   created_at: string;
@@ -35,6 +41,34 @@ export interface CatalogImageRecord {
   packaging?: string;
   mrp?: number;
   manufacturer?: string;
+  category?: string;
+}
+
+export interface ImageReviewHistoryRecord {
+  id: number;
+  product_image_id: number;
+  medicine_id: number;
+  previous_status: string | null;
+  new_status: string;
+  previous_image_url: string | null;
+  new_image_url: string | null;
+  action: string;
+  reason: string | null;
+  performed_by: string;
+  performed_at: string;
+  metadata: string | null;
+}
+
+export interface CandidateImage {
+  id: string;
+  name: string;
+  manufacturer: string;
+  imageUrl: string;
+  source: string;
+  confidenceScore: number;
+  verificationStatus: 'HIGH_CONFIDENCE' | 'PENDING_REVIEW' | 'REJECTED';
+  reason: string;
+  signals?: any;
 }
 
 export interface MatchScoreResult {
@@ -154,18 +188,17 @@ export class CatalogImageService {
     const candUpper = (candidate.name || '').toUpperCase();
     const ocrUpper = (candidate.ocrText || '').toUpperCase();
 
-    // 1. Brand Match (35%)
+    // 1. Brand Match (35%) — Strict boundary/whole-word check (Section 11)
     let brandMatch = false;
     let brandScore = 0;
-    if (medBrand && candUpper.includes(medBrand)) {
-      brandMatch = true;
-      brandScore = 35;
-    } else if (medBrand) {
-      // Partial brand prefix (min 4 chars)
-      const prefix = medBrand.slice(0, Math.min(medBrand.length, 5));
-      if (prefix.length >= 4 && candUpper.includes(prefix)) {
+    if (medBrand) {
+      const candWords = candUpper.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 2);
+      const exactWordMatch = candWords.some(w => w === medBrand || (medBrand.length >= 5 && w.startsWith(medBrand) && w.length <= medBrand.length + 2));
+      const wordBoundaryMatch = new RegExp(`\\b${medBrand}\\b`, 'i').test(candUpper);
+
+      if (exactWordMatch || wordBoundaryMatch) {
         brandMatch = true;
-        brandScore = 20;
+        brandScore = 35;
       }
     }
 
@@ -270,11 +303,11 @@ export class CatalogImageService {
 
     totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
 
-    // Categorization
+    // Categorization (Calibrated per Section 10 & 34 of PRODUCT IMAGE MISSING.MD)
     let verificationStatus: 'HIGH_CONFIDENCE' | 'PENDING_REVIEW' | 'REJECTED' = 'PENDING_REVIEW';
-    if (totalScore >= 99 && brandMatch && !strengthConflict && !dosageFormConflict) {
+    if (totalScore >= 80 && brandMatch && !strengthConflict && !dosageFormConflict) {
       verificationStatus = 'HIGH_CONFIDENCE';
-    } else if (totalScore < 45 || strengthConflict || dosageFormConflict) {
+    } else if (totalScore < 45 || strengthConflict || dosageFormConflict || !brandMatch) {
       verificationStatus = 'REJECTED';
     } else {
       verificationStatus = 'PENDING_REVIEW';
@@ -446,32 +479,61 @@ export class CatalogImageService {
   }
 
   /**
-   * Approve an image -> marks as APPROVED and active catalogue image
+   * Approve an image -> marks as APPROVED and active catalogue image for its image_type slot
    */
-  public async approveImage(imageId: number, verifiedBy = 'pharmacist'): Promise<boolean> {
+  public async approveImage(
+    imageId: number, 
+    verifiedBy = 'pharmacist', 
+    imageType: string = 'combined',
+    isPrimary?: boolean
+  ): Promise<boolean> {
     const db = await dbManager.getConnection();
     const image = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
     if (!image) return false;
 
+    const targetType = imageType || image.image_type || 'combined';
+    let primaryVal = isPrimary ? 1 : 0;
+    if (isPrimary === undefined) {
+      if (targetType === 'combined') {
+        primaryVal = 1;
+      } else {
+        const existingPrimary = await db.get(
+          'SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1',
+          [image.medicine_id]
+        );
+        primaryVal = existingPrimary ? 0 : 1;
+      }
+    }
+
     // Begin transaction
     await db.run('BEGIN TRANSACTION');
     try {
-      // 1. Deactivate any previous active image for this medicine
+      // 1. Deactivate any previous active image for this medicine of the SAME image_type
       await db.run(
-        'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND id != ?',
-        [image.medicine_id, imageId]
+        'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?',
+        [image.medicine_id, targetType, imageId]
       );
+
+      // If this image is primary, clear is_primary on other images for this medicine
+      if (primaryVal === 1) {
+        await db.run(
+          'UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?',
+          [image.medicine_id, imageId]
+        );
+      }
 
       // 2. Mark this image approved and active
       await db.run(
         `UPDATE catalog_images 
          SET verification_status = 'APPROVED', 
              is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
              verified_by = ?, 
              verified_at = CURRENT_TIMESTAMP, 
              updated_at = CURRENT_TIMESTAMP 
          WHERE id = ?`,
-        [verifiedBy, imageId]
+        [targetType, primaryVal, verifiedBy, imageId]
       );
 
       await db.run('COMMIT');
@@ -480,6 +542,8 @@ export class CatalogImageService {
         id: imageId,
         medicine_id: image.medicine_id,
         status: 'APPROVED',
+        image_type: targetType,
+        is_primary: primaryVal,
         is_active: 1
       });
 
@@ -749,12 +813,17 @@ export class CatalogImageService {
 
       const relPath = `/products/${filename}`;
 
+      const isActive = matchResult.verificationStatus === 'HIGH_CONFIDENCE' ? 1 : 0;
+      if (isActive === 1) {
+        await db.run('UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?', [med.id]);
+      }
+
       const insertRes = await db.run(
         `INSERT INTO catalog_images (
            medicine_id, company_name, product_name, image_path, thumbnail_path,
            image_source, source_url, image_hash, confidence_score, matching_method,
            verification_status, verification_reason, is_active, retry_count
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, 0, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?)`,
         [
           med.id,
           med.manufacturer || null,
@@ -767,6 +836,7 @@ export class CatalogImageService {
           matchResult.confidenceScore,
           matchResult.verificationStatus,
           matchResult.reason,
+          isActive,
           retryCount
         ]
       );
@@ -894,6 +964,1656 @@ export class CatalogImageService {
     }
 
     return { synced, skipped, totalInState: entries.length };
+  }
+
+  /**
+   * Check if image file physically exists on disk (Section 7 & 15)
+   */
+  public verifyImageFileExists(imagePath: string | null): boolean {
+    if (!imagePath) return false;
+    const cleanPath = imagePath.split('?')[0].replace(/^\/+/, '');
+    const p1 = path.resolve(process.cwd(), 'frontend/public', cleanPath);
+    const p2 = path.resolve(process.cwd(), cleanPath);
+    const p3 = path.resolve(process.cwd(), 'uploads', cleanPath.replace(/^uploads\//, ''));
+    return fs.existsSync(p1) || fs.existsSync(p2) || fs.existsSync(p3);
+  }
+
+  /**
+   * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
+   * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
+   */
+  public async resolveProductImage(medicineId: number, options: { version?: boolean } = { version: true }): Promise<{
+    url: string;
+    status: string;
+    id: number;
+  } | null> {
+    const db = await dbManager.getConnection();
+    const row = await db.get(
+      `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+      [medicineId]
+    ).catch(() => null);
+
+    if (!row || !row.image_path) {
+      return null;
+    }
+
+    // Verify physical file exists on disk
+    if (!this.verifyImageFileExists(row.image_path)) {
+      // Mark as BROKEN and deactivate to prevent broken 404 image display
+      await db.run(
+        `UPDATE catalog_images SET is_active = 0, verification_status = 'BROKEN', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [row.id]
+      ).catch(() => null);
+      return null;
+    }
+
+    let url = row.image_path;
+    if (options.version && row.updated_at) {
+      const v = Math.floor(new Date(row.updated_at).getTime() / 1000) || 1;
+      url = `${url}?v=${v}`;
+    }
+
+    return {
+      url,
+      status: row.verification_status,
+      id: row.id
+    };
+  }
+
+  /**
+   * Multi-Angle Gallery Resolver for Customer Portal & Website Shop
+   * Resolves up to 4-5 verified angle images per medicine (Combined, Front, Back, Box, Tablet)
+   */
+  public async resolveProductImages(medicineId: number, options: { version?: boolean } = { version: true }): Promise<{
+    primaryUrl: string | null;
+    images: Record<string, { url: string; type: string; is_primary: boolean }>;
+    gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }>;
+  }> {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(
+      `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY 
+         is_primary DESC,
+         CASE COALESCE(image_type, 'combined')
+           WHEN 'combined' THEN 1
+           WHEN 'front' THEN 2
+           WHEN 'back' THEN 3
+           WHEN 'box' THEN 4
+           WHEN 'tablet' THEN 5
+           ELSE 6
+         END ASC,
+         id DESC`,
+      [medicineId]
+    ).catch(() => []);
+
+    const gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }> = [];
+    const imagesDict: Record<string, { url: string; type: string; is_primary: boolean }> = {};
+    const seenTypes = new Set<string>();
+
+    const LABEL_MAP: Record<string, string> = {
+      combined: 'Front & Back (Combined)',
+      front: 'Front View',
+      back: 'Back / Blister View',
+      box: 'Packaging Box',
+      tablet: 'Tablet / Pill'
+    };
+
+    for (const row of rows) {
+      if (!row.image_path) continue;
+      if (!this.verifyImageFileExists(row.image_path)) continue;
+
+      const type = (row.image_type || 'combined').toLowerCase();
+      if (seenTypes.has(type) && gallery.length >= 4) continue;
+      seenTypes.add(type);
+
+      let url = row.image_path;
+      if (options.version && row.updated_at) {
+        const v = Math.floor(new Date(row.updated_at).getTime() / 1000) || 1;
+        url = `${url}?v=${v}`;
+      }
+
+      const item = {
+        url,
+        type,
+        label: LABEL_MAP[type] || 'Product View',
+        is_primary: row.is_primary === 1 || gallery.length === 0
+      };
+
+      gallery.push(item);
+      imagesDict[type] = item;
+      if (gallery.length >= 4) break;
+    }
+
+    const primary = gallery.find(g => g.is_primary) || gallery[0] || null;
+
+    return {
+      primaryUrl: primary ? primary.url : null,
+      images: imagesDict,
+      gallery
+    };
+  }
+
+  /**
+   * Normalize image state cache angles into structured 3-4 image gallery
+   */
+  public extractGalleryFromState(imgData: any): Array<{ url: string; type: string; label: string; is_primary: boolean }> {
+    if (!imgData || !imgData.images) return [];
+    const gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }> = [];
+    const seenTypes = new Set<string>();
+
+    const LABEL_MAP: Record<string, string> = {
+      combined: 'Front & Back (Combined)',
+      front: 'Front View',
+      back: 'Back / Blister View',
+      box: 'Packaging Box',
+      tablet: 'Tablet / Pill'
+    };
+
+    const typeMapping: Array<{ raw: string; normalized: string }> = [
+      { raw: 'combo', normalized: 'combined' },
+      { raw: 'combo-front', normalized: 'combined' },
+      { raw: 'front', normalized: 'front' },
+      { raw: 'back', normalized: 'back' },
+      { raw: 'box-front', normalized: 'box' },
+      { raw: 'box-back', normalized: 'box' },
+      { raw: 'box-side', normalized: 'box' },
+      { raw: 'side', normalized: 'tablet' }
+    ];
+
+    for (const map of typeMapping) {
+      if (seenTypes.has(map.normalized)) continue;
+      const imgObj = imgData.images[map.raw];
+      if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+        seenTypes.add(map.normalized);
+        gallery.push({
+          url: imgObj.url,
+          type: map.normalized,
+          label: LABEL_MAP[map.normalized] || 'Product View',
+          is_primary: map.normalized === 'combined' || (gallery.length === 0 && !seenTypes.has('combined'))
+        });
+      }
+      if (gallery.length >= 4) break;
+    }
+
+    if (gallery.length === 0) {
+      const keys = Object.keys(imgData.images);
+      for (const k of keys) {
+        const imgObj = imgData.images[k];
+        if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+          gallery.push({
+            url: imgObj.url,
+            type: 'front',
+            label: 'Front View',
+            is_primary: true
+          });
+          break;
+        }
+      }
+    }
+
+    return gallery;
+  }
+
+  /**
+   * Backfill all available secondary angles (back, box, tablet, combined) from data/image_download_state.json
+   */
+  public async syncMultiAngleImages(): Promise<{ added: number; total: number }> {
+    const db = await dbManager.getConnection();
+    const stateFile = path.resolve(process.cwd(), 'data/image_download_state.json');
+    if (!fs.existsSync(stateFile)) {
+      return { added: 0, total: 0 };
+    }
+
+    const stateData = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+    const products = stateData.products || {};
+    const entries = Object.entries(products);
+
+    const meds = await db.all('SELECT id, name, manufacturer FROM medicines');
+    const medMap = new Map<string, any>();
+    for (const m of meds) {
+      if (m.name) medMap.set(m.name.trim().toLowerCase(), m);
+    }
+
+    const existing = await db.all('SELECT medicine_id, image_path, image_type FROM catalog_images');
+    const existingSet = new Set(existing.map((e: any) => `${e.medicine_id}::${e.image_path}`));
+    const existingTypes = new Map<number, Set<string>>();
+    for (const e of existing) {
+      if (!existingTypes.has(e.medicine_id)) existingTypes.set(e.medicine_id, new Set());
+      existingTypes.get(e.medicine_id)!.add(e.image_type || 'combined');
+    }
+
+    const typeMapping: Array<{ raw: string; normalized: string; slot: number }> = [
+      { raw: 'combo', normalized: 'combined', slot: 1 },
+      { raw: 'combo-front', normalized: 'combined', slot: 1 },
+      { raw: 'front', normalized: 'front', slot: 2 },
+      { raw: 'back', normalized: 'back', slot: 3 },
+      { raw: 'box-front', normalized: 'box', slot: 4 },
+      { raw: 'box-back', normalized: 'box', slot: 4 },
+      { raw: 'side', normalized: 'tablet', slot: 5 }
+    ];
+
+    let added = 0;
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const [rawName, p] of entries) {
+        const item: any = p;
+        if (item.status !== 'success' || !item.images) continue;
+        let med = medMap.get(rawName.trim().toLowerCase());
+        if (!med) {
+          const clean = rawName.replace(/\[.*?\]/g, '').trim().toLowerCase();
+          med = medMap.get(clean);
+        }
+        if (!med) continue;
+
+        const currentTypes = existingTypes.get(med.id) || new Set();
+
+        for (const tm of typeMapping) {
+          const imgObj = item.images[tm.raw];
+          if (!imgObj || !imgObj.url) continue;
+          if (!this.verifyImageFileExists(imgObj.url)) continue;
+
+          const key = `${med.id}::${imgObj.url}`;
+          if (existingSet.has(key)) continue;
+          if (currentTypes.has(tm.normalized)) continue;
+
+          const isPrimary = tm.normalized === 'combined' ? 1 : 0;
+
+          await db.run(
+            `INSERT INTO catalog_images (
+               medicine_id, company_name, product_name, image_path, thumbnail_path,
+               image_source, source_url, image_hash, confidence_score, matching_method,
+               verification_status, verification_reason, is_active, image_type, is_primary, slot_number
+             ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, 90, 'state_sync', 'HIGH_CONFIDENCE', 'Downloaded angle', 1, ?, ?, ?)`,
+            [
+              med.id,
+              med.manufacturer || null,
+              item.matched_name || med.name,
+              imgObj.url,
+              imgObj.url,
+              imgObj.url,
+              tm.normalized,
+              isPrimary,
+              tm.slot
+            ]
+          );
+
+          currentTypes.add(tm.normalized);
+          existingSet.add(key);
+          added++;
+        }
+      }
+      await db.run('COMMIT');
+    } catch (e) {
+      await db.run('ROLLBACK');
+      throw e;
+    }
+
+    return { added, total: entries.length };
+  }
+
+  /**
+   * Multi-tier query generation for pharmaceutical search (Section 10 & 34)
+   */
+  public generateAccurateQueries(rawName: string, mfg?: string | null): string[] {
+    const queries: string[] = [];
+    const clean = rawName
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Known specific clinical mappings
+    if (/^BUDETROL\b/i.test(rawName)) {
+      const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || '400';
+      queries.push(`Budetrol ${str}`, `Budetrol Inhalation`);
+    } else if (/^THYROX\b/i.test(rawName)) {
+      const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || '';
+      queries.push(`Thyrox ${str} Macleods`, `Thyrox ${str}`, `Thyrox`);
+    } else if (/^DAPARYL\b/i.test(rawName)) {
+      const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || '';
+      queries.push(`Daparyl ${str}`, `Daparyl`);
+    } else if (/^VOGS M\b/i.test(rawName)) {
+      const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || '';
+      queries.push(`Vogs M ${str}`, `Vogs M`);
+    } else if (/^O2 TAB/i.test(rawName)) {
+      queries.push('O2 Tablet', 'O2 Medley Tablet');
+    }
+
+    // Tier 1: Core Brand + Strength
+    const brand = this.extractCoreBrand(rawName);
+    const strength = this.extractStrength(rawName);
+    if (brand && strength) {
+      queries.push(`${brand} ${strength}`);
+    }
+
+    // Tier 2: Cleaned Name
+    queries.push(clean);
+
+    // Tier 3: Core Brand + Manufacturer
+    if (brand && mfg) {
+      const cleanMfg = mfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim().split(/\s+/)[0];
+      if (cleanMfg && cleanMfg.length >= 3) {
+        queries.push(`${brand} ${cleanMfg}`);
+      }
+    }
+
+    // Tier 4: Core Brand alone
+    if (brand) {
+      queries.push(brand);
+    }
+
+    return Array.from(new Set(queries.filter(q => q && q.trim().length >= 2)));
+  }
+
+  /**
+   * Batch auto-approve high-confidence pending images (Section 10 & 34)
+   * Promotes PENDING_REVIEW images with score >= 80% and verified physical file to HIGH_CONFIDENCE and active.
+   */
+  public async autoApproveHighConfidence(): Promise<{
+    evaluated: number;
+    approved: number;
+    skipped: number;
+  }> {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(
+      `SELECT ci.id, ci.medicine_id, ci.product_name, ci.confidence_score, ci.image_path,
+              m.name as med_name, m.manufacturer, m.strength, m.packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 0 AND ci.verification_status IN ('PENDING_REVIEW', 'HIGH_CONFIDENCE')`
+    );
+
+    let approved = 0;
+    let skipped = 0;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const row of rows) {
+        // 1. Verify physical file exists
+        if (!this.verifyImageFileExists(row.image_path)) {
+          skipped++;
+          continue;
+        }
+
+        // 2. Re-verify confidence with current calibrated engine
+        const matchRes = this.computeConfidence(
+          {
+            name: row.med_name,
+            manufacturer: row.manufacturer,
+            strength: row.strength,
+            packaging: row.packaging
+          },
+          {
+            name: row.product_name,
+            manufacturer: row.manufacturer
+          }
+        );
+
+        if (matchRes.verificationStatus === 'HIGH_CONFIDENCE' || matchRes.confidenceScore >= 80) {
+          // Deactivate any other active image for this medicine
+          await db.run(
+            'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND id != ?',
+            [row.medicine_id, row.id]
+          );
+
+          // Activate this image
+          await db.run(
+            `UPDATE catalog_images 
+             SET verification_status = 'HIGH_CONFIDENCE',
+                 confidence_score = ?,
+                 verification_reason = ?,
+                 is_active = 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [matchRes.confidenceScore, matchRes.reason, row.id]
+          );
+          approved++;
+        } else {
+          skipped++;
+        }
+      }
+
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+
+    eventService.broadcast('catalog_image_updated', {
+      action: 'auto_approve_completed',
+      approved,
+      evaluated: rows.length
+    });
+
+    return { evaluated: rows.length, approved, skipped };
+  }
+
+  /**
+   * Image Health Auditor (Section 6, 7, 19, 34 of PRODUCT IMAGE MISSING.MD)
+   * Audits all database medicines and monthly refill catalog items.
+   */
+  public async auditImageHealth(): Promise<{
+    summary: {
+      totalMedicines: number;
+      refillCatalogMedicines: number;
+      healthyActive: number;
+      missing: number;
+      broken: number;
+      pendingReview: number;
+      approved: number;
+      highConfidence: number;
+      rejected: number;
+    };
+    refillMissingItems: Array<{ name: string; category: string; reason: string }>;
+  }> {
+    const db = await dbManager.getConnection();
+
+    // 1. Total DB medicines
+    const totalMedsRow = await db.get('SELECT COUNT(*) as count FROM medicines');
+    const totalMedicines = totalMedsRow ? totalMedsRow.count : 0;
+
+    // 2. Status counts from catalog_images
+    const statusRows = await db.all(
+      `SELECT verification_status, is_active, COUNT(*) as count 
+       FROM catalog_images 
+       GROUP BY verification_status, is_active`
+    );
+
+    let approved = 0;
+    let highConfidence = 0;
+    let pendingReview = 0;
+    let rejected = 0;
+
+    for (const r of statusRows) {
+      if (r.verification_status === 'APPROVED') approved += r.count;
+      else if (r.verification_status === 'HIGH_CONFIDENCE') highConfidence += r.count;
+      else if (r.verification_status === 'PENDING_REVIEW') pendingReview += r.count;
+      else if (r.verification_status === 'REJECTED') rejected += r.count;
+    }
+
+    // 3. Scan active images to verify physical disk existence
+    const activeRows = await db.all(
+      `SELECT id, medicine_id, image_path FROM catalog_images WHERE is_active = 1`
+    );
+    let healthyActive = 0;
+    let broken = 0;
+
+    for (const img of activeRows) {
+      if (this.verifyImageFileExists(img.image_path)) {
+        healthyActive++;
+      } else {
+        broken++;
+      }
+    }
+
+    // 4. Audit Refill Catalog CSV (561 public website items)
+    const refillMissingItems: Array<{ name: string; category: string; reason: string }> = [];
+    let refillCatalogMedicines = 0;
+
+    try {
+      const csvPath = path.resolve(process.cwd(), 'CATALOG/monthly_refill_master_list.csv');
+      if (fs.existsSync(csvPath)) {
+        const content = fs.readFileSync(csvPath, 'utf-8');
+        const lines = content.split(/\r?\n/).slice(1);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          refillCatalogMedicines++;
+          const parts = line.split(',');
+          const category = parts[0]?.replace(/^"|"$/g, '').trim() || '';
+          const name = parts[1]?.replace(/^"|"$/g, '').trim() || '';
+          if (!name) continue;
+
+          const med = await db.get(
+            `SELECT id FROM medicines WHERE name = ? OR name LIKE ? LIMIT 1`,
+            [name, `${name.split(' ')[0]}%`]
+          );
+          if (!med) {
+            refillMissingItems.push({ name, category, reason: 'Medicine not linked in DB' });
+            continue;
+          }
+
+          const activeImg = await db.get(
+            `SELECT image_path FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1`,
+            [med.id]
+          );
+
+          if (!activeImg) {
+            refillMissingItems.push({ name, category, reason: 'No active image record' });
+          } else if (!this.verifyImageFileExists(activeImg.image_path)) {
+            refillMissingItems.push({ name, category, reason: 'Physical image file missing on disk' });
+          }
+        }
+      }
+    } catch (_) {}
+
+    const missing = Math.max(0, totalMedicines - healthyActive);
+
+    return {
+      summary: {
+        totalMedicines,
+        refillCatalogMedicines,
+        healthyActive,
+        missing,
+        broken,
+        pendingReview,
+        approved,
+        highConfidence,
+        rejected
+      },
+      refillMissingItems
+    };
+  }
+
+  /**
+   * Bulk Missing Image Re-check & Auto-Repair Pipeline (Section 18 & 34 of PRODUCT IMAGE MISSING.MD)
+   * Scans medicines that lack an active verified image, generates tiered queries, downloads candidates,
+   * validates against product brand and strength, and activates high-confidence images.
+   */
+  public async repairMissingImages(limit = 50): Promise<{
+    scanned: number;
+    repaired: number;
+    failed: number;
+    results: Array<{ medicine_id: number; name: string; status: string; matched_name?: string; reason?: string }>;
+  }> {
+    const db = await dbManager.getConnection();
+    const results: Array<{ medicine_id: number; name: string; status: string; matched_name?: string; reason?: string }> = [];
+
+    // Prioritize refill catalog medicines that are missing images
+    const targetMeds: Array<{ id: number; name: string; manufacturer: string | null; strength: string | null; packaging: string | null }> = [];
+    const seenIds = new Set<number>();
+
+    try {
+      const csvPath = path.resolve(process.cwd(), 'CATALOG/monthly_refill_master_list.csv');
+      if (fs.existsSync(csvPath)) {
+        const content = fs.readFileSync(csvPath, 'utf-8');
+        const lines = content.split(/\r?\n/).slice(1);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const parts = line.split(',');
+          const name = parts[1]?.replace(/^"|"$/g, '').trim() || '';
+          if (!name) continue;
+
+          const med = await db.get(
+            `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging,
+                    (SELECT COUNT(*) FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) as active_count
+             FROM medicines m WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
+            [name, `${name.split(' ')[0]}%`]
+          );
+
+          if (med && med.active_count === 0 && !seenIds.has(med.id)) {
+            seenIds.add(med.id);
+            targetMeds.push(med);
+            if (targetMeds.length >= limit) break;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // If still have room, add general DB medicines without active image
+    if (targetMeds.length < limit) {
+      const remainingLimit = limit - targetMeds.length;
+      const additional = await db.all(
+        `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging
+         FROM medicines m
+         WHERE m.id NOT IN (SELECT medicine_id FROM catalog_images WHERE is_active = 1)
+         ORDER BY m.id ASC
+         LIMIT ?`,
+        [remainingLimit]
+      );
+      for (const m of additional) {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id);
+          targetMeds.push(m);
+        }
+      }
+    }
+
+    let repaired = 0;
+    let failed = 0;
+
+    for (const med of targetMeds) {
+      try {
+        const queries = this.generateAccurateQueries(med.name, med.manufacturer);
+        let matchedCandidate: any = null;
+        let matchedImageUrl: string | null = null;
+        let bestScoreResult: MatchScoreResult | null = null;
+
+        // Query rejections blacklist
+        const rejections = await db.all(
+          'SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?',
+          [med.id]
+        );
+        const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
+        const rejectedHashes = new Set(rejections.map(r => r.rejected_image_hash).filter(Boolean));
+
+        for (const query of queries) {
+          const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
+          try {
+            const resp = await fetch(url, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+              signal: AbortSignal.timeout(6000)
+            });
+            if (!resp.ok) continue;
+            const json = await resp.json();
+            const products = json?.data?.products || [];
+
+            for (const prod of products) {
+              const damImages = prod.damImages || [];
+              const frontImg = damImages.find((img: any) => img.face === 'front' || img.face === 'box-front' || img.face === 'default') || (prod.image ? { url: prod.image } : null);
+              if (!frontImg || !frontImg.url) continue;
+
+              const candidateUrl = frontImg.url.split('?')[0];
+              if (rejectedUrls.has(candidateUrl)) continue;
+
+              const matchRes = this.computeConfidence(med, {
+                name: prod.name,
+                manufacturer: prod.manufacturer
+              });
+
+              // Strictly reject brand mismatches or strength conflicts
+              if (matchRes.verificationStatus === 'REJECTED' || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict) {
+                continue;
+              }
+
+              if (matchRes.confidenceScore >= 75) {
+                matchedCandidate = prod;
+                matchedImageUrl = candidateUrl;
+                bestScoreResult = matchRes;
+                break;
+              }
+            }
+          } catch (_) {}
+
+          if (matchedCandidate) break;
+          await new Promise(r => setTimeout(r, 100)); // anti-hammer pacing
+        }
+
+        if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
+          failed++;
+          results.push({
+            medicine_id: med.id,
+            name: med.name,
+            status: 'NOT_FOUND',
+            reason: 'No high-confidence non-conflicting online image candidate found'
+          });
+          continue;
+        }
+
+        // Download candidate image
+        const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 50);
+        const filename = `${slug}-${Date.now()}.jpg`;
+        const frontendDir = path.resolve(process.cwd(), 'frontend/public/products');
+        const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
+
+        fs.mkdirSync(frontendDir, { recursive: true });
+        fs.mkdirSync(uploadsDir, { recursive: true });
+
+        const frontendPath = path.join(frontendDir, filename);
+        const uploadsPath = path.join(uploadsDir, filename);
+
+        const imgRes = await fetch(matchedImageUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(8000)
+        });
+        if (!imgRes.ok) {
+          failed++;
+          results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
+          continue;
+        }
+
+        const buffer = Buffer.from(await imgRes.arrayBuffer());
+        const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+        if (rejectedHashes.has(hash)) {
+          failed++;
+          results.push({ medicine_id: med.id, name: med.name, status: 'HASH_BLACKLISTED' });
+          continue;
+        }
+
+        fs.writeFileSync(frontendPath, buffer);
+        fs.writeFileSync(uploadsPath, buffer);
+
+        const relPath = `/products/${filename}`;
+        const isHighConfidence = bestScoreResult.verificationStatus === 'HIGH_CONFIDENCE' || bestScoreResult.confidenceScore >= 80;
+        const status = isHighConfidence ? 'HIGH_CONFIDENCE' : 'PENDING_REVIEW';
+        const isActive = isHighConfidence ? 1 : 0;
+
+        await db.run('BEGIN TRANSACTION');
+        if (isActive === 1) {
+          await db.run('UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?', [med.id]);
+        }
+
+        await db.run(
+          `INSERT INTO catalog_images (
+             medicine_id, company_name, product_name, image_path, thumbnail_path,
+             image_source, source_url, image_hash, confidence_score, matching_method,
+             verification_status, verification_reason, is_active
+           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
+          [
+            med.id,
+            med.manufacturer || null,
+            matchedCandidate.name,
+            relPath,
+            relPath,
+            matchedImageUrl,
+            hash,
+            bestScoreResult.confidenceScore,
+            status,
+            bestScoreResult.reason,
+            isActive
+          ]
+        );
+        await db.run('COMMIT');
+
+        // Also keep legacy state file in sync
+        try {
+          const stateFile = path.resolve(process.cwd(), 'data/image_download_state.json');
+          if (fs.existsSync(stateFile)) {
+            const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+            if (!state.products) state.products = {};
+            state.products[med.name] = {
+              status: 'success',
+              matched_name: matchedCandidate.name,
+              slug,
+              images: {
+                front: {
+                  fileName: filename,
+                  url: relPath,
+                  uploadsUrl: `/uploads/products/${filename}`,
+                  bytes: buffer.length
+                }
+              },
+              verified: isHighConfidence,
+              updated_at: new Date().toISOString()
+            };
+            state.last_updated = new Date().toISOString();
+            fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
+          }
+        } catch (_) {}
+
+        repaired++;
+        results.push({
+          medicine_id: med.id,
+          name: med.name,
+          status,
+          matched_name: matchedCandidate.name,
+          reason: bestScoreResult.reason
+        });
+      } catch (err: any) {
+        failed++;
+        results.push({
+          medicine_id: med.id,
+          name: med.name,
+          status: 'ERROR',
+          reason: err.message
+        });
+      }
+    }
+
+    eventService.broadcast('catalog_image_updated', {
+      action: 'repair_batch_completed',
+      repaired,
+      failed,
+      scanned: targetMeds.length
+    });
+
+    return {
+      scanned: targetMeds.length,
+      repaired,
+      failed,
+      results
+    };
+  }
+
+  /**
+   * Dedicated Correction Queue:
+   * Returns unresolved images (PENDING_REVIEW, PENDING, INCORRECT)
+   * where next_review_at is NULL or <= CURRENT_TIMESTAMP.
+   * Excludes CORRECT, APPROVED, CORRECTED, and active SKIPPED.
+   */
+  public async getCorrectionQueue(options: {
+    category?: string;
+    search?: string;
+    status?: 'unresolved' | 'pending' | 'incorrect' | 'skipped' | 'all';
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    images: CatalogImageRecord[];
+    totalCount: number;
+    totalPages: number;
+    page: number;
+    categories: Array<{ category: string; count: number }>;
+  }> {
+    const db = await dbManager.getConnection();
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.min(100, Math.max(1, options.limit || 20));
+    const offset = (page - 1) * limit;
+
+    let whereSql = '1=1';
+    const params: any[] = [];
+
+    const statusMode = options.status || 'unresolved';
+    if (statusMode === 'unresolved') {
+      whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+    } else if (statusMode === 'pending') {
+      whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+    } else if (statusMode === 'incorrect') {
+      whereSql += ` AND ci.verification_status = 'INCORRECT'`;
+    } else if (statusMode === 'skipped') {
+      whereSql += ` AND ci.verification_status = 'SKIPPED' AND ci.next_review_at > CURRENT_TIMESTAMP`;
+    }
+
+    if (options.category && options.category !== 'all' && options.category !== 'All Categories') {
+      whereSql += ` AND (m.category = ? OR m.packaging LIKE ? OR m.name LIKE ?)`;
+      params.push(options.category, `%${options.category}%`, `%${options.category}%`);
+    }
+
+    if (options.search) {
+      whereSql += ' AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)';
+      const term = `%${options.search}%`;
+      params.push(term, term, term, term);
+    }
+
+    const countRow = await db.get(
+      `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}`,
+      params
+    );
+    const totalCount = countRow ? countRow.count : 0;
+
+    const rows = await db.all(
+      `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer,
+              m.category
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}
+       ORDER BY 
+         CASE WHEN ci.verification_status = 'INCORRECT' THEN 1
+              WHEN ci.verification_status IN ('PENDING_REVIEW', 'PENDING') THEN 2
+              ELSE 3 END,
+         ci.id ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    // Compute category counters for pills (Tabs, Caps, Syrups, Injections, Ointments, Drops, etc.)
+    const categoryTokens = ['TABLET', 'CAPSULE', 'SYRUP', 'INJECTION', 'CREAM', 'DROPS', 'POWDER'];
+    const categories: Array<{ category: string; count: number }> = [];
+
+    // Total unresolved
+    const unresolvedTotal = await db.get(
+      `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+         AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`
+    );
+    categories.push({ category: 'All Categories', count: unresolvedTotal?.count || 0 });
+
+    for (const token of categoryTokens) {
+      const catCount = await db.get(
+        `SELECT COUNT(*) as count 
+         FROM catalog_images ci 
+         LEFT JOIN medicines m ON m.id = ci.medicine_id 
+         WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+           AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)
+           AND (m.packaging LIKE ? OR m.name LIKE ?)`,
+        [`%${token}%`, `%${token}%`]
+      );
+      if (catCount && catCount.count > 0) {
+        categories.push({ category: token, count: catCount.count });
+      }
+    }
+
+    return {
+      images: rows,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limit) || 1,
+      page,
+      categories
+    };
+  }
+
+  /**
+   * Quality Dashboard & Verification Stats
+   */
+  public async getCorrectionStats(): Promise<{
+    pending: number;
+    incorrect: number;
+    corrected: number;
+    verified: number;
+    skipped: number;
+    total: number;
+    accuracyPercent: number;
+    verifiedToday: number;
+    correctedToday: number;
+  }> {
+    const db = await dbManager.getConnection();
+
+    const pendingRow = await db.get(
+      `SELECT COUNT(*) as c FROM catalog_images 
+       WHERE verification_status IN ('PENDING_REVIEW', 'PENDING')
+         AND (next_review_at IS NULL OR next_review_at <= CURRENT_TIMESTAMP)`
+    );
+    const incorrectRow = await db.get(
+      `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'INCORRECT'`
+    );
+    const correctedRow = await db.get(
+      `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'CORRECTED'`
+    );
+    const verifiedRow = await db.get(
+      `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status IN ('APPROVED', 'CORRECT')`
+    );
+    const skippedRow = await db.get(
+      `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'SKIPPED' AND next_review_at > CURRENT_TIMESTAMP`
+    );
+    const totalRow = await db.get(`SELECT COUNT(*) as c FROM catalog_images`);
+
+    const verifiedTodayRow = await db.get(
+      `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'MARK_CORRECT' AND DATE(performed_at) = DATE('now')`
+    );
+    const correctedTodayRow = await db.get(
+      `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'IMAGE_REPLACED' AND DATE(performed_at) = DATE('now')`
+    );
+
+    const pending = pendingRow?.c || 0;
+    const incorrect = incorrectRow?.c || 0;
+    const corrected = correctedRow?.c || 0;
+    const verified = verifiedRow?.c || 0;
+    const skipped = skippedRow?.c || 0;
+    const total = totalRow?.c || 0;
+
+    const accurateCount = verified + corrected;
+    const evaluatedTotal = accurateCount + incorrect + pending;
+    const accuracyPercent = evaluatedTotal > 0 ? Math.round((accurateCount / evaluatedTotal) * 100) : 100;
+
+    return {
+      pending,
+      incorrect,
+      corrected,
+      verified,
+      skipped,
+      total,
+      accuracyPercent,
+      verifiedToday: verifiedTodayRow?.c || 0,
+      correctedToday: correctedTodayRow?.c || 0
+    };
+  }
+
+  /**
+   * Action: Mark image as CORRECT
+   */
+  public async markImageCorrect(
+    imageId: number, 
+    verifiedBy = 'admin',
+    imageType?: string,
+    isPrimary?: boolean
+  ): Promise<boolean> {
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!current) return false;
+
+    const targetType = imageType || current.image_type || 'combined';
+    let primaryVal = isPrimary ? 1 : 0;
+    if (isPrimary === undefined) {
+      if (targetType === 'combined') {
+        primaryVal = 1;
+      } else {
+        const existingPrimary = await db.get(
+          'SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1',
+          [current.medicine_id]
+        );
+        primaryVal = existingPrimary ? 0 : 1;
+      }
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // 1. Deactivate other active images of the same type for this medicine
+      await db.run(
+        'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?',
+        [current.medicine_id, targetType, imageId]
+      );
+
+      // If primary, clear is_primary on other images for this medicine
+      if (primaryVal === 1) {
+        await db.run(
+          'UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?',
+          [current.medicine_id, imageId]
+        );
+      }
+
+      // 2. Mark as APPROVED / CORRECT
+      const nextVersion = (current.verification_version || 1) + 1;
+      await db.run(
+        `UPDATE catalog_images 
+         SET verification_status = 'APPROVED', 
+             is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [targetType, primaryVal, verifiedBy, nextVersion, imageId]
+      );
+
+      // 3. Record in audit history
+      await db.run(
+        `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Confirmed correct by human agent', ?)`,
+        [
+          imageId,
+          current.medicine_id,
+          current.verification_status,
+          current.image_path,
+          current.image_path,
+          verifiedBy
+        ]
+      );
+
+      await db.run('COMMIT');
+
+      eventService.broadcast('catalog_image_updated', {
+        id: imageId,
+        medicine_id: current.medicine_id,
+        status: 'APPROVED',
+        image_type: targetType,
+        is_primary: primaryVal,
+        is_active: 1
+      });
+
+      return true;
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Action: Mark image as INCORRECT or trigger smart angle workflow
+   */
+  public async markImageIncorrect(
+    imageId: number, 
+    reason = 'Incorrect image', 
+    verifiedBy = 'admin',
+    reasonCode?: string
+  ): Promise<{ success: boolean; action?: string; targetType?: string; medicineId?: number; message?: string }> {
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!current) return { success: false, message: 'Image not found' };
+
+    // Smart Handler: Need backside image (Current image is valid Front; search for Backside)
+    if (reasonCode === 'NEED_BACKSIDE') {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        await db.run(
+          `UPDATE catalog_images 
+           SET image_type = 'front', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [verifiedBy, imageId]
+        );
+
+        await db.run(
+          `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_BACKSIDE', ?, ?)`,
+          [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+        );
+
+        await db.run('COMMIT');
+
+        eventService.broadcast('catalog_image_updated', {
+          id: imageId,
+          medicine_id: current.medicine_id,
+          status: 'APPROVED',
+          image_type: 'front',
+          is_active: 1
+        });
+
+        return {
+          success: true,
+          action: 'search_candidate',
+          targetType: 'back',
+          medicineId: current.medicine_id,
+          message: 'Front image verified! Opening search for Backside image.'
+        };
+      } catch (err) {
+        await db.run('ROLLBACK');
+        throw err;
+      }
+    }
+
+    // Smart Handler: Need front side image (Current image is Back/Box; search for Front)
+    if (reasonCode === 'NEED_FRONT') {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        await db.run(
+          `UPDATE catalog_images 
+           SET image_type = 'back', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [verifiedBy, imageId]
+        );
+
+        await db.run(
+          `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_FRONT', ?, ?)`,
+          [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+        );
+
+        await db.run('COMMIT');
+
+        eventService.broadcast('catalog_image_updated', {
+          id: imageId,
+          medicine_id: current.medicine_id,
+          status: 'APPROVED',
+          image_type: 'back',
+          is_active: 1
+        });
+
+        return {
+          success: true,
+          action: 'search_candidate',
+          targetType: 'front',
+          medicineId: current.medicine_id,
+          message: 'Current image saved as Back! Opening search for Front image.'
+        };
+      } catch (err) {
+        await db.run('ROLLBACK');
+        throw err;
+      }
+    }
+
+    // General Rejection: WRONG_PRODUCT, WRONG_VARIANT, POOR_QUALITY, OLD_PACKAGING, CUSTOM
+    await db.run('BEGIN TRANSACTION');
+    try {
+      const nextVersion = (current.verification_version || 1) + 1;
+      await db.run(
+        `UPDATE catalog_images 
+         SET verification_status = 'INCORRECT', 
+             is_active = 0, 
+             verification_reason = ?, 
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [reason, verifiedBy, nextVersion, imageId]
+      );
+
+      // Blacklist to prevent recurring wrong suggestions
+      if (current.source_url || current.image_hash) {
+        await db.run(
+          `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [current.medicine_id, current.source_url || null, current.image_hash || null, current.image_source || 'pharmeasy', reason]
+        );
+      }
+
+      // Record in audit history
+      await db.run(
+        `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'INCORRECT', ?, ?, 'MARK_INCORRECT', ?, ?)`,
+        [
+          imageId,
+          current.medicine_id,
+          current.verification_status,
+          current.image_path,
+          current.image_path,
+          reason,
+          verifiedBy
+        ]
+      );
+
+      await db.run('COMMIT');
+
+      eventService.broadcast('catalog_image_updated', {
+        id: imageId,
+        medicine_id: current.medicine_id,
+        status: 'INCORRECT',
+        is_active: 0
+      });
+
+      return {
+        success: true,
+        action: 'flagged_incorrect',
+        medicineId: current.medicine_id,
+        message: 'Image flagged as incorrect.'
+      };
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Action: Skip image review temporarily with cooldown
+   */
+  public async skipImage(imageId: number, hours = 24, reason = 'Temporarily skipped', verifiedBy = 'admin'): Promise<boolean> {
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!current) return false;
+
+    const nextReview = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+    const nextVersion = (current.verification_version || 1) + 1;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      await db.run(
+        `UPDATE catalog_images 
+         SET verification_status = 'SKIPPED', 
+             skip_reason = ?, 
+             next_review_at = ?, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [reason, nextReview, nextVersion, imageId]
+      );
+
+      await db.run(
+        `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by, metadata
+         ) VALUES (?, ?, ?, 'SKIPPED', ?, ?, 'IMAGE_SKIPPED', ?, ?, ?)`,
+        [
+          imageId,
+          current.medicine_id,
+          current.verification_status,
+          current.image_path,
+          current.image_path,
+          reason,
+          verifiedBy,
+          JSON.stringify({ next_review_at: nextReview, skip_hours: hours })
+        ]
+      );
+
+      await db.run('COMMIT');
+
+      eventService.broadcast('catalog_image_updated', {
+        id: imageId,
+        medicine_id: current.medicine_id,
+        status: 'SKIPPED',
+        next_review_at: nextReview
+      });
+
+      return true;
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Search internet candidate images for review & correction
+   */
+  public async searchCandidates(medicineId: number, queryOverride?: string, imageType: string = 'combined'): Promise<CandidateImage[]> {
+    const db = await dbManager.getConnection();
+    const med = await db.get('SELECT * FROM medicines WHERE id = ?', [medicineId]);
+    if (!med) return [];
+
+    const rejections = await db.all(
+      'SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?',
+      [medicineId]
+    );
+    const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
+
+    const baseQuery = queryOverride && queryOverride.trim() 
+      ? queryOverride.trim()
+      : (this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim());
+
+    // Contextual query enhancement based on desired image angle
+    let cleanQuery = baseQuery;
+    if (imageType === 'back' && !cleanQuery.toLowerCase().includes('back')) {
+      cleanQuery += ' back';
+    }
+
+    const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
+
+    let products: any[] = [];
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        products = json?.data?.products || [];
+      }
+    } catch (err: any) {
+      console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
+    }
+
+    const candidates: CandidateImage[] = [];
+
+    for (const prod of products) {
+      const damImages = prod.damImages || [];
+      // Prefer image matching requested imageType
+      let targetImg = null;
+      if (imageType === 'back') {
+        targetImg = damImages.find((img: any) => img.face === 'back' || (img.url && img.url.toLowerCase().includes('back')));
+        if (!targetImg && damImages.length > 1) targetImg = damImages[1];
+      } else if (imageType === 'front') {
+        targetImg = damImages.find((img: any) => img.face === 'front' || img.face === 'default');
+      }
+      if (!targetImg) {
+        targetImg = damImages.find((img: any) => img.face === 'front' || img.face === 'default') || (prod.image ? { url: prod.image } : null);
+      }
+      if (!targetImg || !targetImg.url) continue;
+
+      const candidateUrl = targetImg.url.split('?')[0];
+      if (rejectedUrls.has(candidateUrl)) continue;
+
+      const scoreResult = this.computeConfidence(med, {
+        name: prod.name,
+        manufacturer: prod.manufacturer
+      });
+
+      candidates.push({
+        id: String(prod.productId || candidateUrl),
+        name: prod.name,
+        manufacturer: prod.manufacturer || 'Unknown',
+        imageUrl: candidateUrl,
+        source: 'pharmeasy',
+        confidenceScore: scoreResult.confidenceScore,
+        verificationStatus: scoreResult.verificationStatus,
+        reason: scoreResult.reason,
+        signals: scoreResult.signals
+      });
+    }
+
+    // Sort descending by confidence
+    candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
+    return candidates;
+  }
+
+  /**
+   * Action: Replace or add image with chosen candidate & mark as CORRECTED
+   */
+  public async replaceWithCandidate(
+    imageId: number,
+    candidateUrl: string,
+    candidateTitle?: string,
+    verifiedBy = 'admin',
+    imageType?: string,
+    isPrimary?: boolean,
+    keepExisting = false
+  ): Promise<CatalogImageRecord | null> {
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!current) return null;
+
+    const med = await db.get('SELECT * FROM medicines WHERE id = ?', [current.medicine_id]);
+    if (!med) return null;
+
+    const targetType = imageType || (keepExisting ? 'back' : current.image_type || 'combined');
+    let primaryVal = isPrimary ? 1 : 0;
+    if (isPrimary === undefined) {
+      if (targetType === 'combined') {
+        primaryVal = 1;
+      } else {
+        const existingPrimary = await db.get(
+          'SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1',
+          [med.id]
+        );
+        primaryVal = existingPrimary ? 0 : 1;
+      }
+    }
+
+    // Download image
+    const slug = (med.name || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+    const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
+    const frontendDir = path.resolve(process.cwd(), 'frontend/public/products');
+    const uploadsDir = path.resolve(process.cwd(), 'uploads/products');
+
+    fs.mkdirSync(frontendDir, { recursive: true });
+    fs.mkdirSync(uploadsDir, { recursive: true });
+
+    const frontendPath = path.join(frontendDir, filename);
+    const uploadsPath = path.join(uploadsDir, filename);
+
+    const imgRes = await fetch(candidateUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!imgRes.ok) {
+      throw new Error(`Failed to download candidate image: HTTP ${imgRes.status}`);
+    }
+
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    // Check rejections
+    const rejection = await db.get(
+      'SELECT id FROM catalog_image_rejections WHERE medicine_id = ? AND rejected_image_hash = ?',
+      [med.id, hash]
+    );
+    if (rejection) {
+      throw new Error('This image was previously rejected for this medicine.');
+    }
+
+    fs.writeFileSync(frontendPath, buffer);
+    fs.writeFileSync(uploadsPath, buffer);
+
+    const relPath = `/products/${filename}`;
+    const nextVersion = (current.verification_version || 1) + 1;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      if (!keepExisting) {
+        // 1. Deactivate old image only if not keeping both
+        await db.run(
+          `UPDATE catalog_images 
+           SET is_active = 0, 
+               verification_status = 'REPLACED', 
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [imageId]
+        );
+      }
+
+      // Deactivate any other active image with the SAME image_type for this medicine
+      await db.run(
+        'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?',
+        [med.id, targetType, imageId]
+      );
+
+      // If primary, clear is_primary on other images for this medicine
+      if (primaryVal === 1) {
+        await db.run(
+          'UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?',
+          [med.id, imageId]
+        );
+      }
+
+      // 2. Insert new corrected record
+      const res = await db.run(
+        `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, is_active, image_type, is_primary, replaced_from_image_id, previous_image_url,
+           verification_version, verified_by, verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_correction', 'CORRECTED', 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          med.id,
+          med.manufacturer || current.company_name,
+          candidateTitle || med.name,
+          relPath,
+          relPath,
+          'online_correction',
+          candidateUrl,
+          hash,
+          targetType,
+          primaryVal,
+          keepExisting ? null : imageId,
+          current.image_path,
+          nextVersion,
+          verifiedBy
+        ]
+      );
+
+      // 3. Record in audit history
+      await db.run(
+        `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'CORRECTED', ?, ?, 'IMAGE_REPLACED', ?, ?)`,
+        [
+          res.lastID,
+          med.id,
+          current.verification_status,
+          current.image_path,
+          relPath,
+          keepExisting ? `Added ${targetType} image` : 'Replaced with online candidate',
+          verifiedBy
+        ]
+      );
+
+      await db.run('COMMIT');
+
+      const newRecord = await db.get('SELECT * FROM catalog_images WHERE id = ?', [res.lastID]);
+      eventService.broadcast('catalog_image_updated', {
+        id: res.lastID,
+        medicine_id: med.id,
+        status: 'CORRECTED',
+        image_type: targetType,
+        is_primary: primaryVal,
+        is_active: 1
+      });
+
+      return newRecord;
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Retrieve all image slots / angles for a specific medicine
+   */
+  public async getMedicineGallery(medicineId: number): Promise<CatalogImageRecord[]> {
+    const db = await dbManager.getConnection();
+    return db.all(
+      `SELECT ci.*, m.category, m.packaging, m.strength, m.generic_name
+       FROM catalog_images ci
+       LEFT JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.medicine_id = ? 
+       ORDER BY 
+         ci.is_active DESC,
+         ci.is_primary DESC,
+         CASE COALESCE(ci.image_type, 'combined')
+           WHEN 'combined' THEN 1 
+           WHEN 'front' THEN 2 
+           WHEN 'back' THEN 3 
+           WHEN 'box' THEN 4 
+           WHEN 'tablet' THEN 5 
+           ELSE 6 END,
+         ci.id DESC`,
+      [medicineId]
+    ).catch(() => []);
+  }
+
+  /**
+   * Action: Reopen an approved/corrected image for QC review
+   */
+  public async reopenImage(imageId: number, verifiedBy = 'admin'): Promise<boolean> {
+    const db = await dbManager.getConnection();
+    const current = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!current) return false;
+
+    const nextVersion = (current.verification_version || 1) + 1;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      await db.run(
+        `UPDATE catalog_images 
+         SET verification_status = 'PENDING_REVIEW', 
+             next_review_at = NULL, 
+             verification_version = ?,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [nextVersion, imageId]
+      );
+
+      await db.run(
+        `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, 'REOPENED', 'Reopened for quality control review', ?)`,
+        [
+          imageId,
+          current.medicine_id,
+          current.verification_status,
+          current.image_path,
+          current.image_path,
+          verifiedBy
+        ]
+      );
+
+      await db.run('COMMIT');
+
+      eventService.broadcast('catalog_image_updated', {
+        id: imageId,
+        medicine_id: current.medicine_id,
+        status: 'PENDING_REVIEW'
+      });
+
+      return true;
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
+   * Fetch complete audit log from image_review_history
+   */
+  public async getImageHistory(medicineId: number): Promise<ImageReviewHistoryRecord[]> {
+    const db = await dbManager.getConnection();
+    return db.all(
+      `SELECT * FROM image_review_history WHERE medicine_id = ? ORDER BY performed_at DESC`,
+      [medicineId]
+    );
   }
 }
 

@@ -44,6 +44,7 @@ import {
   MessageSquareText,
   Zap,
   Globe,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {
@@ -159,6 +160,7 @@ const Sidebar = memo(({
     { path: '/crm', label: 'CRM & Messages', icon: <Users size={18} /> },
     { path: '/returns', label: 'Supplier Returns', icon: <RotateCcw size={18} /> },
     { path: '/database', label: 'Master Database', icon: <Database size={18} /> },
+    { path: '/image-correction', label: 'Image Correction', icon: <ImageIcon size={18} /> },
     { path: '/phone-sales', label: 'Phone Sales', icon: <Smartphone size={18} /> },
     { path: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     { path: '/migration', label: 'Data Migration', icon: <Database size={18} /> },

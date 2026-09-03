@@ -5,7 +5,7 @@
   "bin": "dist-pkg/server.cjs",
   "scripts": {
     "start": "tsx src/bootstrap.ts",
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev": "concurrently \"npm run dev:server:watch\" \"npm run dev:client\"",
     "dev:server": "tsx src/bootstrap.ts",
     "dev:server:watch": "tsx watch --exclude \".wwebjs_auth/**\" --exclude \"pharmarack_profile/**\" --exclude \"data/**\" --exclude \"uploads/**\" --exclude \"dist/**\" --exclude \"dist-pkg/**\" --exclude \".understand-anything/**\" --exclude \"*.log\" --exclude \"crash_log*\" --exclude \"*.sqlite*\" --exclude \"*.db*\" src/bootstrap.ts",
     "dev:client": "npm run dev --prefix frontend",

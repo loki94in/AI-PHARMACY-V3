@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-03T04:11:55.130Z",
+  "last_updated": "2026-09-03T11:03:51.093Z",
   "products": {
     "COTTON 30 COTTON 20GM [HIRAL LABS LTD]": {
       "status": "success",
@@ -371,64 +371,18 @@
       "verified": true
     },
     "3X COLD AND FEW TAB 10TAB [ALLO PHARMA]": {
-      "status": "success",
-      "matched_name": "Cheston Cold And Flu Strip Of 10 Tablets",
-      "slug": "3x-cold-and-few-tab-10tab",
-      "images": {
-        "front": {
-          "fileName": "3x-cold-and-few-tab-10tab-front.jpg",
-          "url": "/products/3x-cold-and-few-tab-10tab-front.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-and-few-tab-10tab-front.jpg",
-          "bytes": 115661
-        },
-        "box-side": {
-          "fileName": "3x-cold-and-few-tab-10tab-box-side.jpg",
-          "url": "/products/3x-cold-and-few-tab-10tab-box-side.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-and-few-tab-10tab-box-side.jpg",
-          "bytes": 55331
-        },
-        "side": {
-          "fileName": "3x-cold-and-few-tab-10tab-side.jpg",
-          "url": "/products/3x-cold-and-few-tab-10tab-side.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-and-few-tab-10tab-side.jpg",
-          "bytes": 59511
-        },
-        "back": {
-          "fileName": "3x-cold-and-few-tab-10tab-back.jpg",
-          "url": "/products/3x-cold-and-few-tab-10tab-back.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-and-few-tab-10tab-back.jpg",
-          "bytes": 93121
-        }
-      },
-      "updated_at": "2026-09-02T17:23:41.501Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Cheston Cold And Flu Strip Of 10 Tablets",
+      "updated_at": "2026-09-03T10:23:20.045Z"
     },
     "3X COLD FLU  DROP 15ML [MEDICO HEALTHCARE]": {
-      "status": "success",
-      "matched_name": "Wellbeing Nutrition Grandma's Kadha For Immunity Cough Cold & Flu Symptom Support 15 Tab (Pack Of 1)",
-      "slug": "3x-cold-flu-drop-15ml",
-      "images": {
-        "front": {
-          "fileName": "3x-cold-flu-drop-15ml-front.jpg",
-          "url": "/products/3x-cold-flu-drop-15ml-front.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-flu-drop-15ml-front.jpg",
-          "bytes": 70747
-        },
-        "side": {
-          "fileName": "3x-cold-flu-drop-15ml-side.jpg",
-          "url": "/products/3x-cold-flu-drop-15ml-side.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-flu-drop-15ml-side.jpg",
-          "bytes": 59825
-        },
-        "back": {
-          "fileName": "3x-cold-flu-drop-15ml-back.jpg",
-          "url": "/products/3x-cold-flu-drop-15ml-back.jpg",
-          "uploadsUrl": "/uploads/products/3x-cold-flu-drop-15ml-back.jpg",
-          "bytes": 47194
-        }
-      },
-      "updated_at": "2026-09-02T17:23:43.320Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Wellbeing Nutrition Grandma's Kadha For Immunity Cough Cold & Flu Symptom Support 15 Tab (Pack Of 1)",
+      "updated_at": "2026-09-03T10:23:20.061Z"
     },
     "4QUIN KT EYE DROPS [ENTOD PHARMACEUTICALS PVT LTD]": {
       "status": "success",
@@ -40633,43 +40587,11 @@
       "verified": true
     },
     "D-DERM-KT CREAM 15GM [UNIVERSAL LIFE SCIENCES]": {
-      "status": "success",
-      "matched_name": "New O2 Derm Lavender Fragrannce Tube Of 15Gm Cream",
-      "slug": "d-derm-kt-cream-15gm",
-      "images": {
-        "front": {
-          "fileName": "d-derm-kt-cream-15gm-front.jpg",
-          "url": "/products/d-derm-kt-cream-15gm-front.jpg",
-          "uploadsUrl": "/uploads/products/d-derm-kt-cream-15gm-front.jpg",
-          "bytes": 29555
-        },
-        "box-back": {
-          "fileName": "d-derm-kt-cream-15gm-box-back.jpg",
-          "url": "/products/d-derm-kt-cream-15gm-box-back.jpg",
-          "uploadsUrl": "/uploads/products/d-derm-kt-cream-15gm-box-back.jpg",
-          "bytes": 29422
-        },
-        "box-side": {
-          "fileName": "d-derm-kt-cream-15gm-box-side.jpg",
-          "url": "/products/d-derm-kt-cream-15gm-box-side.jpg",
-          "uploadsUrl": "/uploads/products/d-derm-kt-cream-15gm-box-side.jpg",
-          "bytes": 65314
-        },
-        "back": {
-          "fileName": "d-derm-kt-cream-15gm-back.jpg",
-          "url": "/products/d-derm-kt-cream-15gm-back.jpg",
-          "uploadsUrl": "/uploads/products/d-derm-kt-cream-15gm-back.jpg",
-          "bytes": 33578
-        },
-        "UNKNOWN": {
-          "fileName": "d-derm-kt-cream-15gm-UNKNOWN.jpg",
-          "url": "/products/d-derm-kt-cream-15gm-UNKNOWN.jpg",
-          "uploadsUrl": "/uploads/products/d-derm-kt-cream-15gm-UNKNOWN.jpg",
-          "bytes": 31853
-        }
-      },
-      "updated_at": "2026-09-02T18:15:36.782Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "New O2 Derm Lavender Fragrannce Tube Of 15Gm Cream",
+      "updated_at": "2026-09-03T10:23:20.077Z"
     },
     "D-PROTIN POWDER - 200GM - JAR [BRITISH BIOLOGICALS]": {
       "status": "unverified",
@@ -43457,9 +43379,19 @@
       }
     },
     "DAPARYL 10MG STRIP OF 10 TABLETS [INTAS PHARMACEUTICALS LTD]": {
-      "status": "not_found",
-      "searched_query": "DAPARYL 10MG",
-      "updated_at": "2026-09-02T18:19:02.883Z"
+      "status": "success",
+      "matched_name": "Daparyl 10Mg Strip Of 10 Tablets",
+      "slug": "daparyl-10mg-strip-of-10-tablets-intas-pharmaceuti",
+      "images": {
+        "front": {
+          "fileName": "daparyl-10mg-strip-of-10-tablets-intas-pharmaceuti-1788433112360.jpg",
+          "url": "/products/daparyl-10mg-strip-of-10-tablets-intas-pharmaceuti-1788433112360.jpg",
+          "uploadsUrl": "/uploads/products/daparyl-10mg-strip-of-10-tablets-intas-pharmaceuti-1788433112360.jpg",
+          "bytes": 25664
+        }
+      },
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:32.743Z"
     },
     "DAPASMART M 10/500 STRIP OF 10TAB [HEALING PHARMA INDIA PVTV LTD]": {
       "status": "success",
@@ -51776,19 +51708,11 @@
       "verified": true
     },
     "E 24 SACHET 15GM [EPIONE]": {
-      "status": "success",
-      "matched_name": "Lineator F Sachet Of 15Gm Granules",
-      "slug": "e-24-sachet-15gm",
-      "images": {
-        "side": {
-          "fileName": "e-24-sachet-15gm-side.jpg",
-          "url": "/products/e-24-sachet-15gm-side.jpg",
-          "uploadsUrl": "/uploads/products/e-24-sachet-15gm-side.jpg",
-          "bytes": 127813
-        }
-      },
-      "updated_at": "2026-09-02T18:29:54.399Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Lineator F Sachet Of 15Gm Granules",
+      "updated_at": "2026-09-03T10:23:20.081Z"
     },
     "E D PHENICOL 200MG STRIP OF 10 CAPSULES [EAMON DRUGS PRIVATE LIMITED]": {
       "status": "success",
@@ -59033,91 +58957,25 @@
       "verified": true
     },
     "FB 70 BOTTLE 125ML [SMAYAN HEALTHCARE PRIVATE LIMITED]": {
-      "status": "success",
-      "matched_name": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
-      "slug": "fb-70-bottle-125ml",
-      "images": {
-        "box-front": {
-          "fileName": "fb-70-bottle-125ml-box-front.jpg",
-          "url": "/products/fb-70-bottle-125ml-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-70-bottle-125ml-box-front.jpg",
-          "bytes": 31330
-        },
-        "front": {
-          "fileName": "fb-70-bottle-125ml-front.jpg",
-          "url": "/products/fb-70-bottle-125ml-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-70-bottle-125ml-front.jpg",
-          "bytes": 36375
-        },
-        "combo": {
-          "fileName": "fb-70-bottle-125ml-combo.jpg",
-          "url": "/products/fb-70-bottle-125ml-combo.jpg",
-          "uploadsUrl": "/uploads/products/fb-70-bottle-125ml-combo.jpg",
-          "bytes": 63853
-        },
-        "side": {
-          "fileName": "fb-70-bottle-125ml-side.jpg",
-          "url": "/products/fb-70-bottle-125ml-side.jpg",
-          "uploadsUrl": "/uploads/products/fb-70-bottle-125ml-side.jpg",
-          "bytes": 54349
-        }
-      },
-      "updated_at": "2026-09-02T18:38:57.068Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
+      "updated_at": "2026-09-03T10:23:20.097Z"
     },
     "FB 75 BOTTLE 75ML [MAYA]": {
-      "status": "success",
-      "matched_name": "Sinarest Bottle Of 75Ml Syrup",
-      "slug": "fb-75-bottle-75ml",
-      "images": {
-        "front": {
-          "fileName": "fb-75-bottle-75ml-front.jpg",
-          "url": "/products/fb-75-bottle-75ml-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-75-bottle-75ml-front.jpg",
-          "bytes": 32955
-        },
-        "back": {
-          "fileName": "fb-75-bottle-75ml-back.jpg",
-          "url": "/products/fb-75-bottle-75ml-back.jpg",
-          "uploadsUrl": "/uploads/products/fb-75-bottle-75ml-back.jpg",
-          "bytes": 32511
-        }
-      },
-      "updated_at": "2026-09-02T18:38:58.744Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Sinarest Bottle Of 75Ml Syrup",
+      "updated_at": "2026-09-03T10:23:20.102Z"
     },
     "FB 80 BOTTLE 125 [MAYA]": {
-      "status": "success",
-      "matched_name": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
-      "slug": "fb-80-bottle-125",
-      "images": {
-        "box-front": {
-          "fileName": "fb-80-bottle-125-box-front.jpg",
-          "url": "/products/fb-80-bottle-125-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-80-bottle-125-box-front.jpg",
-          "bytes": 31330
-        },
-        "front": {
-          "fileName": "fb-80-bottle-125-front.jpg",
-          "url": "/products/fb-80-bottle-125-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-80-bottle-125-front.jpg",
-          "bytes": 36375
-        },
-        "combo": {
-          "fileName": "fb-80-bottle-125-combo.jpg",
-          "url": "/products/fb-80-bottle-125-combo.jpg",
-          "uploadsUrl": "/uploads/products/fb-80-bottle-125-combo.jpg",
-          "bytes": 63853
-        },
-        "side": {
-          "fileName": "fb-80-bottle-125-side.jpg",
-          "url": "/products/fb-80-bottle-125-side.jpg",
-          "uploadsUrl": "/uploads/products/fb-80-bottle-125-side.jpg",
-          "bytes": 54349
-        }
-      },
-      "updated_at": "2026-09-02T18:39:00.303Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
+      "updated_at": "2026-09-03T10:23:20.116Z"
     },
     "FB 85 BOTTLE 1 [MAYA SA]": {
       "status": "success",
@@ -59147,37 +59005,11 @@
       "verified": true
     },
     "FB 90 BOTTLE 125ML [MAYA]": {
-      "status": "success",
-      "matched_name": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
-      "slug": "fb-90-bottle-125ml",
-      "images": {
-        "box-front": {
-          "fileName": "fb-90-bottle-125ml-box-front.jpg",
-          "url": "/products/fb-90-bottle-125ml-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-90-bottle-125ml-box-front.jpg",
-          "bytes": 31330
-        },
-        "front": {
-          "fileName": "fb-90-bottle-125ml-front.jpg",
-          "url": "/products/fb-90-bottle-125ml-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-90-bottle-125ml-front.jpg",
-          "bytes": 36375
-        },
-        "combo": {
-          "fileName": "fb-90-bottle-125ml-combo.jpg",
-          "url": "/products/fb-90-bottle-125ml-combo.jpg",
-          "uploadsUrl": "/uploads/products/fb-90-bottle-125ml-combo.jpg",
-          "bytes": 63853
-        },
-        "side": {
-          "fileName": "fb-90-bottle-125ml-side.jpg",
-          "url": "/products/fb-90-bottle-125ml-side.jpg",
-          "uploadsUrl": "/uploads/products/fb-90-bottle-125ml-side.jpg",
-          "bytes": 54349
-        }
-      },
-      "updated_at": "2026-09-02T18:39:03.998Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Densita | Everyday Clarifying Shampoo | Bottle | 125 Ml",
+      "updated_at": "2026-09-03T10:23:20.132Z"
     },
     "FB 95 BOTTLE 1 [MAYA]": {
       "status": "success",
@@ -66794,24 +66626,18 @@
     },
     "GEMINOR M 1/500 MG TABLET 10 [MACLEODS PHARMACEUTICALS]": {
       "status": "success",
-      "matched_name": "Geminor M 1Mg Forte Strip Of 15 Tablets",
-      "slug": "geminor-m-1500-mg-tablet-10",
+      "matched_name": "Geminor M4 Forte Strip Of 15 Tablets",
+      "slug": "geminor-m-1-500-mg-tablet-10-macleods-pharmaceutic",
       "images": {
         "front": {
-          "fileName": "geminor-m-1500-mg-tablet-10-front.jpg",
-          "url": "/products/geminor-m-1500-mg-tablet-10-front.jpg",
-          "uploadsUrl": "/uploads/products/geminor-m-1500-mg-tablet-10-front.jpg",
-          "bytes": 87712
-        },
-        "back": {
-          "fileName": "geminor-m-1500-mg-tablet-10-back.jpg",
-          "url": "/products/geminor-m-1500-mg-tablet-10-back.jpg",
-          "uploadsUrl": "/uploads/products/geminor-m-1500-mg-tablet-10-back.jpg",
-          "bytes": 135372
+          "fileName": "geminor-m-1-500-mg-tablet-10-macleods-pharmaceutic-1788433409483.jpg",
+          "url": "/products/geminor-m-1-500-mg-tablet-10-macleods-pharmaceutic-1788433409483.jpg",
+          "uploadsUrl": "/uploads/products/geminor-m-1-500-mg-tablet-10-macleods-pharmaceutic-1788433409483.jpg",
+          "bytes": 91021
         }
       },
-      "updated_at": "2026-09-02T18:48:30.631Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T11:03:29.841Z"
     },
     "GEMINOR M2 TAB 15`S [MACLEODS PHARMACEUTICALS]": {
       "status": "success",
@@ -68951,9 +68777,19 @@
       }
     },
     "GLADOR M 1MG FORTE TABLET 15'S [LUPIN]": {
-      "status": "not_found",
-      "searched_query": "GLADOR M 1MG FORTE TABLET 15'S",
-      "updated_at": "2026-09-02T18:51:23.971Z"
+      "status": "success",
+      "matched_name": "Glador 1Mg Strip Of 15 Tablets",
+      "slug": "glador-m-1mg-forte-tablet-15-s-lupin",
+      "images": {
+        "front": {
+          "fileName": "glador-m-1mg-forte-tablet-15-s-lupin-1788433120459.jpg",
+          "url": "/products/glador-m-1mg-forte-tablet-15-s-lupin-1788433120459.jpg",
+          "uploadsUrl": "/uploads/products/glador-m-1mg-forte-tablet-15-s-lupin-1788433120459.jpg",
+          "bytes": 52043
+        }
+      },
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:40.855Z"
     },
     "GLEMPA 10 STRIP OF 10TAB [GLENMARK PHARMACEUTICALS]": {
       "status": "success",
@@ -69280,47 +69116,17 @@
     "GLIMESTAR M2 TAB [MANKIND PHARMACEUTICALS LTD]": {
       "status": "success",
       "matched_name": "Glimestar Pm 2Mg Strip Of 10 Tablets",
-      "slug": "glimestar-m2-tab",
+      "slug": "glimestar-m2-tab-mankind-pharmaceuticals-ltd",
       "images": {
-        "box-front": {
-          "fileName": "glimestar-m2-tab-box-front.jpg",
-          "url": "/products/glimestar-m2-tab-box-front.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-box-front.jpg",
-          "bytes": 43952
-        },
         "front": {
-          "fileName": "glimestar-m2-tab-front.jpg",
-          "url": "/products/glimestar-m2-tab-front.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-front.jpg",
-          "bytes": 109912
-        },
-        "combo": {
-          "fileName": "glimestar-m2-tab-combo.jpg",
-          "url": "/products/glimestar-m2-tab-combo.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-combo.jpg",
-          "bytes": 43177
-        },
-        "box-back": {
-          "fileName": "glimestar-m2-tab-box-back.jpg",
-          "url": "/products/glimestar-m2-tab-box-back.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-box-back.jpg",
-          "bytes": 55256
-        },
-        "side": {
-          "fileName": "glimestar-m2-tab-side.jpg",
-          "url": "/products/glimestar-m2-tab-side.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-side.jpg",
-          "bytes": 27772
-        },
-        "back": {
-          "fileName": "glimestar-m2-tab-back.jpg",
-          "url": "/products/glimestar-m2-tab-back.jpg",
-          "uploadsUrl": "/uploads/products/glimestar-m2-tab-back.jpg",
-          "bytes": 133790
+          "fileName": "glimestar-m2-tab-mankind-pharmaceuticals-ltd-1788433410389.jpg",
+          "url": "/products/glimestar-m2-tab-mankind-pharmaceuticals-ltd-1788433410389.jpg",
+          "uploadsUrl": "/uploads/products/glimestar-m2-tab-mankind-pharmaceuticals-ltd-1788433410389.jpg",
+          "bytes": 43952
         }
       },
-      "updated_at": "2026-09-02T18:51:47.065Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T11:03:30.541Z"
     },
     "GLIMESTAR PM 2MG/500MG/15MG STRIP OF 30 TABLETS [MANKIND PHARMACEUTICALS LTD]": {
       "status": "success",
@@ -69411,36 +69217,18 @@
     },
     "GLIMIPREX 1MG TABLET [ARISTO PHARMACEUTICALS PVT LTD]": {
       "status": "success",
-      "matched_name": "Glimiprex Mf 1/500Mg Strip Of 15 Tablets",
-      "slug": "glimiprex-1mg-tablet",
+      "matched_name": "Glimiprex 1Mg Strip Of 10 Tablets",
+      "slug": "glimiprex-1mg-tablet-aristo-pharmaceuticals-pvt-lt",
       "images": {
-        "box-front": {
-          "fileName": "glimiprex-1mg-tablet-box-front.jpg",
-          "url": "/products/glimiprex-1mg-tablet-box-front.jpg",
-          "uploadsUrl": "/uploads/products/glimiprex-1mg-tablet-box-front.jpg",
-          "bytes": 51969
-        },
         "front": {
-          "fileName": "glimiprex-1mg-tablet-front.jpg",
-          "url": "/products/glimiprex-1mg-tablet-front.jpg",
-          "uploadsUrl": "/uploads/products/glimiprex-1mg-tablet-front.jpg",
-          "bytes": 90603
-        },
-        "box-back": {
-          "fileName": "glimiprex-1mg-tablet-box-back.jpg",
-          "url": "/products/glimiprex-1mg-tablet-box-back.jpg",
-          "uploadsUrl": "/uploads/products/glimiprex-1mg-tablet-box-back.jpg",
-          "bytes": 59876
-        },
-        "back": {
-          "fileName": "glimiprex-1mg-tablet-back.jpg",
-          "url": "/products/glimiprex-1mg-tablet-back.jpg",
-          "uploadsUrl": "/uploads/products/glimiprex-1mg-tablet-back.jpg",
-          "bytes": 126880
+          "fileName": "glimiprex-1mg-tablet-aristo-pharmaceuticals-pvt-lt-1788433122562.jpg",
+          "url": "/products/glimiprex-1mg-tablet-aristo-pharmaceuticals-pvt-lt-1788433122562.jpg",
+          "uploadsUrl": "/uploads/products/glimiprex-1mg-tablet-aristo-pharmaceuticals-pvt-lt-1788433122562.jpg",
+          "bytes": 91108
         }
       },
-      "updated_at": "2026-09-02T18:51:54.554Z",
-      "verified": true
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:42.805Z"
     },
     "GLIMISAVE M3 TAB 15'S [ERIS LIFE SCIENCES PVT LTD]": {
       "status": "success",
@@ -69733,27 +69521,19 @@
       "verified": true
     },
     "GLIZID M OD 60MG TAB [PANACEA BIOTEC LTD]": {
-      "status": "unverified",
-      "matched_name": "Glycinorm M Od 60Mg Strip Of 10 Tablets",
-      "slug": "glizid-m-od-60mg-tab",
-      "images": {},
-      "updated_at": "2026-09-02T18:52:16.255Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:49.246Z",
-      "unverified_images": {
+      "status": "success",
+      "matched_name": "Glizid Mr 60Mg Strip Of 10 Tablets",
+      "slug": "glizid-m-od-60mg-tab-panacea-biotec-ltd",
+      "images": {
         "front": {
-          "fileName": "glizid-m-od-60mg-tab-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/glizid-m-od-60mg-tab-front.jpg",
-          "originalUrl": "/products/glizid-m-od-60mg-tab-front.jpg",
-          "bytes": 45316
-        },
-        "back": {
-          "fileName": "glizid-m-od-60mg-tab-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/glizid-m-od-60mg-tab-back.jpg",
-          "originalUrl": "/products/glizid-m-od-60mg-tab-back.jpg",
-          "bytes": 102161
+          "fileName": "glizid-m-od-60mg-tab-panacea-biotec-ltd-1788433123543.jpg",
+          "url": "/products/glizid-m-od-60mg-tab-panacea-biotec-ltd-1788433123543.jpg",
+          "uploadsUrl": "/uploads/products/glizid-m-od-60mg-tab-panacea-biotec-ltd-1788433123543.jpg",
+          "bytes": 65147
         }
-      }
+      },
+      "verified": false,
+      "updated_at": "2026-09-03T10:58:43.698Z"
     },
     "GLIZID M STRIP OF 15 TABLETS [PANACEA BIOTEC LTD]": {
       "status": "success",
@@ -72044,25 +71824,11 @@
       }
     },
     "GN ROLL ON 80 ROLL ON 5 [RECKNOR LIFESCIENCES PVT LTD]": {
-      "status": "success",
-      "matched_name": "Cap Under Arm Roll On Woody Musk Fragrance | 40Ml",
-      "slug": "gn-roll-on-80-roll-on-5",
-      "images": {
-        "front": {
-          "fileName": "gn-roll-on-80-roll-on-5-front.jpg",
-          "url": "/products/gn-roll-on-80-roll-on-5-front.jpg",
-          "uploadsUrl": "/uploads/products/gn-roll-on-80-roll-on-5-front.jpg",
-          "bytes": 57745
-        },
-        "side": {
-          "fileName": "gn-roll-on-80-roll-on-5-side.jpg",
-          "url": "/products/gn-roll-on-80-roll-on-5-side.jpg",
-          "uploadsUrl": "/uploads/products/gn-roll-on-80-roll-on-5-side.jpg",
-          "bytes": 25947
-        }
-      },
-      "updated_at": "2026-09-02T18:54:57.608Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Cap Under Arm Roll On Woody Musk Fragrance | 40Ml",
+      "updated_at": "2026-09-03T10:23:20.138Z"
     },
     "GN10 PAPER 1 [RECKET]": {
       "status": "unverified",
@@ -84012,154 +83778,64 @@
       "verified": true
     },
     "INSULIN 40 IU INJ [BRITISH BIOLOGICALS]": {
-      "status": "unverified",
-      "matched_name": "Human Mixtard 30/70 40Iu Vial Of 10Ml Suspension For Injection",
-      "slug": "insulin-40-iu-inj",
-      "images": {},
-      "updated_at": "2026-09-02T19:09:03.266Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:49.917Z",
-      "unverified_images": {
-        "box-front": {
-          "fileName": "insulin-40-iu-inj-box-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40-iu-inj-box-front.jpg",
-          "originalUrl": "/products/insulin-40-iu-inj-box-front.jpg",
-          "bytes": 32894
-        },
+      "status": "success",
+      "matched_name": "Huminsulin 30/70 40Iu Vial Of 10Ml Injection",
+      "slug": "insulin-40-iu-inj-british-biologicals",
+      "images": {
         "front": {
-          "fileName": "insulin-40-iu-inj-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40-iu-inj-front.jpg",
-          "originalUrl": "/products/insulin-40-iu-inj-front.jpg",
-          "bytes": 38907
-        },
-        "combo": {
-          "fileName": "insulin-40-iu-inj-combo.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40-iu-inj-combo.jpg",
-          "originalUrl": "/products/insulin-40-iu-inj-combo.jpg",
-          "bytes": 41639
-        },
-        "box-back": {
-          "fileName": "insulin-40-iu-inj-box-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40-iu-inj-box-back.jpg",
-          "originalUrl": "/products/insulin-40-iu-inj-box-back.jpg",
-          "bytes": 41344
-        },
-        "side": {
-          "fileName": "insulin-40-iu-inj-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40-iu-inj-side.jpg",
-          "originalUrl": "/products/insulin-40-iu-inj-side.jpg",
-          "bytes": 46028
+          "fileName": "insulin-40-iu-inj-british-biologicals-1788433126847.jpg",
+          "url": "/products/insulin-40-iu-inj-british-biologicals-1788433126847.jpg",
+          "uploadsUrl": "/uploads/products/insulin-40-iu-inj-british-biologicals-1788433126847.jpg",
+          "bytes": 93651
         }
-      }
+      },
+      "verified": false,
+      "updated_at": "2026-09-03T10:58:47.019Z"
     },
     "INSULIN 40IU SYRANGE 1 PCS [B D PHARMACEUTICAL WORKS PVT. LTD]": {
-      "status": "unverified",
-      "matched_name": "Human Mixtard 30/70 40Iu Vial Of 10Ml Suspension For Injection",
-      "slug": "insulin-40iu-syrange-1-pcs",
-      "images": {},
-      "updated_at": "2026-09-02T19:09:05.016Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:49.923Z",
-      "unverified_images": {
-        "box-front": {
-          "fileName": "insulin-40iu-syrange-1-pcs-box-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40iu-syrange-1-pcs-box-front.jpg",
-          "originalUrl": "/products/insulin-40iu-syrange-1-pcs-box-front.jpg",
-          "bytes": 32894
-        },
+      "status": "success",
+      "matched_name": "Huminsulin R 40Iu Vial Of 10Ml Solution For Injection",
+      "slug": "insulin-40iu-syrange-1-pcs-b-d-pharmaceutical-work",
+      "images": {
         "front": {
-          "fileName": "insulin-40iu-syrange-1-pcs-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40iu-syrange-1-pcs-front.jpg",
-          "originalUrl": "/products/insulin-40iu-syrange-1-pcs-front.jpg",
-          "bytes": 38907
-        },
-        "combo": {
-          "fileName": "insulin-40iu-syrange-1-pcs-combo.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40iu-syrange-1-pcs-combo.jpg",
-          "originalUrl": "/products/insulin-40iu-syrange-1-pcs-combo.jpg",
-          "bytes": 41639
-        },
-        "box-back": {
-          "fileName": "insulin-40iu-syrange-1-pcs-box-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40iu-syrange-1-pcs-box-back.jpg",
-          "originalUrl": "/products/insulin-40iu-syrange-1-pcs-box-back.jpg",
-          "bytes": 41344
-        },
-        "side": {
-          "fileName": "insulin-40iu-syrange-1-pcs-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-40iu-syrange-1-pcs-side.jpg",
-          "originalUrl": "/products/insulin-40iu-syrange-1-pcs-side.jpg",
-          "bytes": 46028
+          "fileName": "insulin-40iu-syrange-1-pcs-b-d-pharmaceutical-work-1788433127331.jpg",
+          "url": "/products/insulin-40iu-syrange-1-pcs-b-d-pharmaceutical-work-1788433127331.jpg",
+          "uploadsUrl": "/uploads/products/insulin-40iu-syrange-1-pcs-b-d-pharmaceutical-work-1788433127331.jpg",
+          "bytes": 34613
         }
-      }
+      },
+      "verified": false,
+      "updated_at": "2026-09-03T10:58:47.564Z"
     },
     "INSULIN COOL POUCH SINGLE POUCH 1 [ARKRAY HEATHCARE PVT LTD]": {
       "status": "success",
-      "matched_name": "Outer Woods Insulin Cooler Pouch With 2 Mini Ice Gel Packs | 3+ Hrs Cooling | Insulin Pouch - Black",
-      "slug": "insulin-cool-pouch-single-pouch-1",
+      "matched_name": "Arkray Original Insulin Cooling Travelling Pouch For Diabetics (Duo) - 1 Black Travel Case Pack",
+      "slug": "insulin-cool-pouch-single-pouch-1-arkray-heathcare",
       "images": {
-        "side": {
-          "fileName": "insulin-cool-pouch-single-pouch-1-side.jpg",
-          "url": "/products/insulin-cool-pouch-single-pouch-1-side.jpg",
-          "uploadsUrl": "/uploads/products/insulin-cool-pouch-single-pouch-1-side.jpg",
-          "bytes": 100882
+        "front": {
+          "fileName": "insulin-cool-pouch-single-pouch-1-arkray-heathcare-1788433127929.jpg",
+          "url": "/products/insulin-cool-pouch-single-pouch-1-arkray-heathcare-1788433127929.jpg",
+          "uploadsUrl": "/uploads/products/insulin-cool-pouch-single-pouch-1-arkray-heathcare-1788433127929.jpg",
+          "bytes": 35351
         }
       },
-      "updated_at": "2026-09-02T19:09:06.592Z",
-      "verified": true
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:48.054Z"
     },
     "INSULIN SYR HMD SINGLE  40IU  SYRANGE 1PCS [MCRO]": {
-      "status": "unverified",
-      "matched_name": "Novopen 4 Pen",
-      "slug": "insulin-syr-hmd-single-40iu-syrange-1pcs",
-      "images": {},
-      "updated_at": "2026-09-02T19:09:08.686Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:49.930Z",
-      "unverified_images": {
-        "box-front": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-box-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-box-front.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-box-front.jpg",
-          "bytes": 19641
-        },
+      "status": "success",
+      "matched_name": "Huminsulin 30/70 40Iu Vial Of 10Ml Injection",
+      "slug": "insulin-syr-hmd-single-40iu-syrange-1pcs-mcro",
+      "images": {
         "front": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-front.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-front.jpg",
-          "bytes": 11276
-        },
-        "combo": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-combo.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-combo.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-combo.jpg",
-          "bytes": 21903
-        },
-        "box-back": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-box-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-box-back.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-box-back.jpg",
-          "bytes": 39464
-        },
-        "box-side": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-box-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-box-side.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-box-side.jpg",
-          "bytes": 20309
-        },
-        "side": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-side.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-side.jpg",
-          "bytes": 23426
-        },
-        "back": {
-          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/insulin-syr-hmd-single-40iu-syrange-1pcs-back.jpg",
-          "originalUrl": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-back.jpg",
-          "bytes": 13976
+          "fileName": "insulin-syr-hmd-single-40iu-syrange-1pcs-mcro-1788433128377.jpg",
+          "url": "/products/insulin-syr-hmd-single-40iu-syrange-1pcs-mcro-1788433128377.jpg",
+          "uploadsUrl": "/uploads/products/insulin-syr-hmd-single-40iu-syrange-1pcs-mcro-1788433128377.jpg",
+          "bytes": 93651
         }
-      }
+      },
+      "verified": false,
+      "updated_at": "2026-09-03T10:58:48.514Z"
     },
     "INSULINE NEEDLE PLASTER 1PCS [LORD'S CARES BETTER]": {
       "status": "unverified",
@@ -85177,24 +84853,18 @@
     },
     "ISRYL M 1MG TABLET [SYSTOPIC LABORATORIES]": {
       "status": "success",
-      "matched_name": "Isryl M 1 Strip Of 15 Tablets",
-      "slug": "isryl-m-1mg-tablet",
+      "matched_name": "Isryl 1Mg Strip Of 10 Tablets",
+      "slug": "isryl-m-1mg-tablet-systopic-laboratories",
       "images": {
         "front": {
-          "fileName": "isryl-m-1mg-tablet-front.jpg",
-          "url": "/products/isryl-m-1mg-tablet-front.jpg",
-          "uploadsUrl": "/uploads/products/isryl-m-1mg-tablet-front.jpg",
-          "bytes": 90467
-        },
-        "back": {
-          "fileName": "isryl-m-1mg-tablet-back.jpg",
-          "url": "/products/isryl-m-1mg-tablet-back.jpg",
-          "uploadsUrl": "/uploads/products/isryl-m-1mg-tablet-back.jpg",
-          "bytes": 116732
+          "fileName": "isryl-m-1mg-tablet-systopic-laboratories-1788433129346.jpg",
+          "url": "/products/isryl-m-1mg-tablet-systopic-laboratories-1788433129346.jpg",
+          "uploadsUrl": "/uploads/products/isryl-m-1mg-tablet-systopic-laboratories-1788433129346.jpg",
+          "bytes": 49555
         }
       },
-      "updated_at": "2026-09-02T19:10:18.521Z",
-      "verified": true
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:50.057Z"
     },
     "ISRYL M 2MG TAB 15'S [SYSTOPIC LABORATORIES]": {
       "status": "success",
@@ -88739,24 +88409,18 @@
     },
     "K VOG 0.2MG TABLET [BLUE CROSS LABORATORIES PRIVATE LIMITED]": {
       "status": "success",
-      "matched_name": "K Vog 0.3Mg Strip Of 15 Tablets",
-      "slug": "k-vog-02mg-tablet",
+      "matched_name": "K Vog 0.2Mg Strip Of 15 Tablets",
+      "slug": "k-vog-0-2mg-tablet-blue-cross-laboratories-private",
       "images": {
         "front": {
-          "fileName": "k-vog-02mg-tablet-front.jpg",
-          "url": "/products/k-vog-02mg-tablet-front.jpg",
-          "uploadsUrl": "/uploads/products/k-vog-02mg-tablet-front.jpg",
-          "bytes": 19108
-        },
-        "back": {
-          "fileName": "k-vog-02mg-tablet-back.jpg",
-          "url": "/products/k-vog-02mg-tablet-back.jpg",
-          "uploadsUrl": "/uploads/products/k-vog-02mg-tablet-back.jpg",
-          "bytes": 87188
+          "fileName": "k-vog-0-2mg-tablet-blue-cross-laboratories-private-1788433419096.jpg",
+          "url": "/products/k-vog-0-2mg-tablet-blue-cross-laboratories-private-1788433419096.jpg",
+          "uploadsUrl": "/uploads/products/k-vog-0-2mg-tablet-blue-cross-laboratories-private-1788433419096.jpg",
+          "bytes": 45154
         }
       },
-      "updated_at": "2026-09-02T19:14:35.542Z",
-      "verified": true
+      "verified": true,
+      "updated_at": "2026-09-03T11:03:39.499Z"
     },
     "K.S 210 SPRAY 260 ML [RAYMOND PHARMACEUTICAL PVT LTD]": {
       "status": "success",
@@ -93082,34 +92746,18 @@
       }
     },
     "KS 65 SPRAY 1 [RAYMOND PHARMACEUTICAL PVT LTD]": {
-      "status": "success",
-      "matched_name": "Nasoclear 0.65% Bottle Of 20Ml Nasal Spray",
-      "slug": "ks-65-spray-1",
-      "images": {
-        "side": {
-          "fileName": "ks-65-spray-1-side.jpg",
-          "url": "/products/ks-65-spray-1-side.jpg",
-          "uploadsUrl": "/uploads/products/ks-65-spray-1-side.jpg",
-          "bytes": 44032
-        }
-      },
-      "updated_at": "2026-09-02T19:19:35.981Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Nasoclear 0.65% Bottle Of 20Ml Nasal Spray",
+      "updated_at": "2026-09-03T10:23:20.141Z"
     },
     "KS 65 SPRAY 65ML [RAYMOND PHARMACEUTICAL PVT LTD]": {
-      "status": "success",
-      "matched_name": "Nasoclear 0.65% Bottle Of 20Ml Nasal Spray",
-      "slug": "ks-65-spray-65ml",
-      "images": {
-        "side": {
-          "fileName": "ks-65-spray-65ml-side.jpg",
-          "url": "/products/ks-65-spray-65ml-side.jpg",
-          "uploadsUrl": "/uploads/products/ks-65-spray-65ml-side.jpg",
-          "bytes": 44032
-        }
-      },
-      "updated_at": "2026-09-02T19:19:37.473Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Nasoclear 0.65% Bottle Of 20Ml Nasal Spray",
+      "updated_at": "2026-09-03T10:23:20.144Z"
     },
     "KS 90 CONDOM 1 [RAYMOND CONSUMERS]": {
       "status": "unverified",
@@ -93141,31 +92789,11 @@
       }
     },
     "KS LONG LAST  SUPER THIN DOTTED PACK OF 12S X 3": {
-      "status": "success",
-      "matched_name": "Sloan's Kills Pain Quick Action Long Last Relief- 55Gm Pack Of 1 Spray",
-      "slug": "ks-long-last-super-thin-dotted-pack-of-12s-x-3",
-      "images": {
-        "front": {
-          "fileName": "ks-long-last-super-thin-dotted-pack-of-12s-x-3-front.jpg",
-          "url": "/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-front.jpg",
-          "uploadsUrl": "/uploads/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-front.jpg",
-          "bytes": 34491
-        },
-        "side": {
-          "fileName": "ks-long-last-super-thin-dotted-pack-of-12s-x-3-side.jpg",
-          "url": "/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-side.jpg",
-          "uploadsUrl": "/uploads/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-side.jpg",
-          "bytes": 83617
-        },
-        "back": {
-          "fileName": "ks-long-last-super-thin-dotted-pack-of-12s-x-3-back.jpg",
-          "url": "/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-back.jpg",
-          "uploadsUrl": "/uploads/products/ks-long-last-super-thin-dotted-pack-of-12s-x-3-back.jpg",
-          "bytes": 40995
-        }
-      },
-      "updated_at": "2026-09-02T19:19:40.719Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Sloan's Kills Pain Quick Action Long Last Relief- 55Gm Pack Of 1 Spray",
+      "updated_at": "2026-09-03T10:23:20.152Z"
     },
     "KS LUBRICANT 80ML [GODREJ SARA LEE LIMITED]": {
       "status": "unverified",
@@ -106272,51 +105900,19 @@
       }
     },
     "MEFOMIN SR 500MG TABLET [MACLEODS PHARMACEUTICALS]": {
-      "status": "unverified",
-      "matched_name": "Glycomet Sr 500Mg Strip Of 20 Tablets",
-      "slug": "mefomin-sr-500mg-tablet",
-      "images": {},
-      "updated_at": "2026-09-02T19:35:14.608Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:51.473Z",
-      "unverified_images": {
-        "box-front": {
-          "fileName": "mefomin-sr-500mg-tablet-box-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-box-front.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-box-front.jpg",
-          "bytes": 52691
-        },
+      "status": "success",
+      "matched_name": "Mefomin Sr 500Mg Strip Of 10 Tablets",
+      "slug": "mefomin-sr-500mg-tablet-macleods-pharmaceuticals",
+      "images": {
         "front": {
-          "fileName": "mefomin-sr-500mg-tablet-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-front.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-front.jpg",
-          "bytes": 181303
-        },
-        "combo": {
-          "fileName": "mefomin-sr-500mg-tablet-combo.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-combo.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-combo.jpg",
-          "bytes": 194338
-        },
-        "box-back": {
-          "fileName": "mefomin-sr-500mg-tablet-box-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-box-back.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-box-back.jpg",
-          "bytes": 32591
-        },
-        "side": {
-          "fileName": "mefomin-sr-500mg-tablet-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-side.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-side.jpg",
-          "bytes": 34646
-        },
-        "back": {
-          "fileName": "mefomin-sr-500mg-tablet-back.jpg",
-          "quarantineUrl": "/uploads/products_unverified/mefomin-sr-500mg-tablet-back.jpg",
-          "originalUrl": "/products/mefomin-sr-500mg-tablet-back.jpg",
-          "bytes": 184111
+          "fileName": "mefomin-sr-500mg-tablet-macleods-pharmaceuticals-1788433132099.jpg",
+          "url": "/products/mefomin-sr-500mg-tablet-macleods-pharmaceuticals-1788433132099.jpg",
+          "uploadsUrl": "/uploads/products/mefomin-sr-500mg-tablet-macleods-pharmaceuticals-1788433132099.jpg",
+          "bytes": 41418
         }
-      }
+      },
+      "verified": true,
+      "updated_at": "2026-09-03T10:58:52.304Z"
     },
     "MEFTAGESIC DS DELICIOUS MANGO SUSP 60ML [BLUE CROSS LABORATORIES PRIVATE LIMITED]": {
       "status": "success",
@@ -107700,23 +107296,17 @@
     "METFFIL G2 TAB [FOURRTS INDIA LABORATORIES PVT LTD]": {
       "status": "success",
       "matched_name": "Metffil Vg 2Mg Strip Of 15 Tablets",
-      "slug": "metffil-g2-tab",
+      "slug": "metffil-g2-tab-fourrts-india-laboratories-pvt-ltd",
       "images": {
         "front": {
-          "fileName": "metffil-g2-tab-front.jpg",
-          "url": "/products/metffil-g2-tab-front.jpg",
-          "uploadsUrl": "/uploads/products/metffil-g2-tab-front.jpg",
+          "fileName": "metffil-g2-tab-fourrts-india-laboratories-pvt-ltd-1788433424952.jpg",
+          "url": "/products/metffil-g2-tab-fourrts-india-laboratories-pvt-ltd-1788433424952.jpg",
+          "uploadsUrl": "/uploads/products/metffil-g2-tab-fourrts-india-laboratories-pvt-ltd-1788433424952.jpg",
           "bytes": 119721
-        },
-        "back": {
-          "fileName": "metffil-g2-tab-back.jpg",
-          "url": "/products/metffil-g2-tab-back.jpg",
-          "uploadsUrl": "/uploads/products/metffil-g2-tab-back.jpg",
-          "bytes": 159276
         }
       },
-      "updated_at": "2026-09-02T19:37:05.144Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T11:03:45.372Z"
     },
     "METHERGIN TABLET [NOVARTIS INDIA LTD]": {
       "status": "success",
@@ -108709,35 +108299,17 @@
     "METSMALL 1000 STRIP OF 14 TABLETS [DR REDDY'S LABORATORIES LTD]": {
       "status": "success",
       "matched_name": "Metsmall 1000Mg Strip Of 15 Tablets",
-      "slug": "metsmall-1000",
+      "slug": "metsmall-1000-strip-of-14-tablets-dr-reddy-s-labor",
       "images": {
-        "box-front": {
-          "fileName": "metsmall-1000-box-front.jpg",
-          "url": "/products/metsmall-1000-box-front.jpg",
-          "uploadsUrl": "/uploads/products/metsmall-1000-box-front.jpg",
-          "bytes": 46363
-        },
         "front": {
-          "fileName": "metsmall-1000-front.jpg",
-          "url": "/products/metsmall-1000-front.jpg",
-          "uploadsUrl": "/uploads/products/metsmall-1000-front.jpg",
-          "bytes": 133587
-        },
-        "box-back": {
-          "fileName": "metsmall-1000-box-back.jpg",
-          "url": "/products/metsmall-1000-box-back.jpg",
-          "uploadsUrl": "/uploads/products/metsmall-1000-box-back.jpg",
-          "bytes": 75612
-        },
-        "back": {
-          "fileName": "metsmall-1000-back.jpg",
-          "url": "/products/metsmall-1000-back.jpg",
-          "uploadsUrl": "/uploads/products/metsmall-1000-back.jpg",
-          "bytes": 103802
+          "fileName": "metsmall-1000-strip-of-14-tablets-dr-reddy-s-labor-1788433428225.jpg",
+          "url": "/products/metsmall-1000-strip-of-14-tablets-dr-reddy-s-labor-1788433428225.jpg",
+          "uploadsUrl": "/uploads/products/metsmall-1000-strip-of-14-tablets-dr-reddy-s-labor-1788433428225.jpg",
+          "bytes": 46363
         }
       },
-      "updated_at": "2026-09-02T19:38:28.156Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T11:03:48.490Z"
     },
     "METZOK 25MG TAB [USV PVT LTD]": {
       "status": "success",
@@ -115428,58 +115000,18 @@
       "updated_at": "2026-09-02T19:46:18.861Z"
     },
     "N 95 FACE MASK 8210 [3M INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Quarant 3 Ply Black Surgical Face Mask With Adjustable Nose Pin Uv Sterilized - Pack Of 50",
-      "slug": "n-95-face-mask-8210",
-      "images": {
-        "front": {
-          "fileName": "n-95-face-mask-8210-front.jpg",
-          "url": "/products/n-95-face-mask-8210-front.jpg",
-          "uploadsUrl": "/uploads/products/n-95-face-mask-8210-front.jpg",
-          "bytes": 84790
-        },
-        "side": {
-          "fileName": "n-95-face-mask-8210-side.jpg",
-          "url": "/products/n-95-face-mask-8210-side.jpg",
-          "uploadsUrl": "/uploads/products/n-95-face-mask-8210-side.jpg",
-          "bytes": 83176
-        },
-        "back": {
-          "fileName": "n-95-face-mask-8210-back.jpg",
-          "url": "/products/n-95-face-mask-8210-back.jpg",
-          "uploadsUrl": "/uploads/products/n-95-face-mask-8210-back.jpg",
-          "bytes": 95099
-        }
-      },
-      "updated_at": "2026-09-02T19:46:20.495Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Quarant 3 Ply Black Surgical Face Mask With Adjustable Nose Pin Uv Sterilized - Pack Of 50",
+      "updated_at": "2026-09-03T10:23:20.162Z"
     },
     "N.K  CAP 6 [KUMAR PEODUSCTS]": {
-      "status": "success",
-      "matched_name": "Ova News - Ovulation Detection Kit From Prega News | Identifies 5 Most Fertile Days In 5 Mins - 6N",
-      "slug": "nk-cap-6",
-      "images": {
-        "front": {
-          "fileName": "nk-cap-6-front.jpg",
-          "url": "/products/nk-cap-6-front.jpg",
-          "uploadsUrl": "/uploads/products/nk-cap-6-front.jpg",
-          "bytes": 41593
-        },
-        "side": {
-          "fileName": "nk-cap-6-side.jpg",
-          "url": "/products/nk-cap-6-side.jpg",
-          "uploadsUrl": "/uploads/products/nk-cap-6-side.jpg",
-          "bytes": 82268
-        },
-        "back": {
-          "fileName": "nk-cap-6-back.jpg",
-          "url": "/products/nk-cap-6-back.jpg",
-          "uploadsUrl": "/uploads/products/nk-cap-6-back.jpg",
-          "bytes": 49036
-        }
-      },
-      "updated_at": "2026-09-02T19:46:22.236Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Ova News - Ovulation Detection Kit From Prega News | Identifies 5 Most Fertile Days In 5 Mins - 6N",
+      "updated_at": "2026-09-03T10:23:20.174Z"
     },
     "N95 C COTTON 1 [FILTRT]": {
       "status": "unverified",
@@ -117090,7 +116622,7 @@
           "bytes": 130117
         }
       },
-      "updated_at": "2026-09-02T19:48:16.865Z",
+      "updated_at": "2026-09-03T10:25:40.914Z",
       "verified": true
     },
     "NEBICARD 2.5MG STRIP OF 15 TABLETS [TORRENT PHARMACEUTICALS LTD]": {
@@ -123545,29 +123077,23 @@
     },
     "O2 TAB 10 S [MEDLY]": {
       "status": "success",
-      "matched_name": "Revital Woman Tab 10`S",
+      "matched_name": "O2 Strip Of 10 Tablets",
       "slug": "o2-tab-10-s",
       "images": {
         "front": {
           "fileName": "o2-tab-10-s-front.jpg",
           "url": "/products/o2-tab-10-s-front.jpg",
           "uploadsUrl": "/uploads/products/o2-tab-10-s-front.jpg",
-          "bytes": 72435
-        },
-        "side": {
-          "fileName": "o2-tab-10-s-side.jpg",
-          "url": "/products/o2-tab-10-s-side.jpg",
-          "uploadsUrl": "/uploads/products/o2-tab-10-s-side.jpg",
-          "bytes": 88894
+          "bytes": 117702
         },
         "back": {
           "fileName": "o2-tab-10-s-back.jpg",
           "url": "/products/o2-tab-10-s-back.jpg",
           "uploadsUrl": "/uploads/products/o2-tab-10-s-back.jpg",
-          "bytes": 121724
+          "bytes": 125257
         }
       },
-      "updated_at": "2026-09-02T19:56:08.656Z",
+      "updated_at": "2026-09-03T10:25:39.303Z",
       "verified": true
     },
     "O2M DELICIOUS MANGO FLAV SUSP 60ML [MEDLEY PHARMACEUTICAL PVT LTD]": {
@@ -130606,23 +130132,17 @@
     "OZOMET G2 TAB [OZONE PHARMACEUTICALS LTD]": {
       "status": "success",
       "matched_name": "Ozomet G2 Strip Of 15 Tablets",
-      "slug": "ozomet-g2-tab",
+      "slug": "ozomet-g2-tab-ozone-pharmaceuticals-ltd",
       "images": {
         "front": {
-          "fileName": "ozomet-g2-tab-front.jpg",
-          "url": "/products/ozomet-g2-tab-front.jpg",
-          "uploadsUrl": "/uploads/products/ozomet-g2-tab-front.jpg",
+          "fileName": "ozomet-g2-tab-ozone-pharmaceuticals-ltd-1788433430879.jpg",
+          "url": "/products/ozomet-g2-tab-ozone-pharmaceuticals-ltd-1788433430879.jpg",
+          "uploadsUrl": "/uploads/products/ozomet-g2-tab-ozone-pharmaceuticals-ltd-1788433430879.jpg",
           "bytes": 119132
-        },
-        "back": {
-          "fileName": "ozomet-g2-tab-back.jpg",
-          "url": "/products/ozomet-g2-tab-back.jpg",
-          "uploadsUrl": "/uploads/products/ozomet-g2-tab-back.jpg",
-          "bytes": 155652
         }
       },
-      "updated_at": "2026-09-02T20:04:46.358Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T11:03:51.093Z"
     },
     "OZOMET PG 2MG TABLET 15'S [OZONE PHARMACEUTICALS LTD]": {
       "status": "success",
@@ -130688,31 +130208,11 @@
       "verified": true
     },
     "P-ENZYME STRIP OF 15TAB [SGS PHARMACEUTICALS PVT LTD]": {
-      "status": "success",
-      "matched_name": "Unienzyme Strip Of 15 Tablets",
-      "slug": "p-enzyme-strip-of-15tab",
-      "images": {
-        "front": {
-          "fileName": "p-enzyme-strip-of-15tab-front.jpg",
-          "url": "/products/p-enzyme-strip-of-15tab-front.jpg",
-          "uploadsUrl": "/uploads/products/p-enzyme-strip-of-15tab-front.jpg",
-          "bytes": 115779
-        },
-        "side": {
-          "fileName": "p-enzyme-strip-of-15tab-side.jpg",
-          "url": "/products/p-enzyme-strip-of-15tab-side.jpg",
-          "uploadsUrl": "/uploads/products/p-enzyme-strip-of-15tab-side.jpg",
-          "bytes": 116233
-        },
-        "back": {
-          "fileName": "p-enzyme-strip-of-15tab-back.jpg",
-          "url": "/products/p-enzyme-strip-of-15tab-back.jpg",
-          "uploadsUrl": "/uploads/products/p-enzyme-strip-of-15tab-back.jpg",
-          "bytes": 91593
-        }
-      },
-      "updated_at": "2026-09-02T20:04:53.304Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Unienzyme Strip Of 15 Tablets",
+      "updated_at": "2026-09-03T10:23:20.208Z"
     },
     "P RD STRIP OF 10 CAPSULES [BLUE CROSS LABORATORIES PRIVATE LIMITED]": {
       "status": "success",
@@ -134219,67 +133719,25 @@
       }
     },
     "PD 20 FOOD 1 [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Whiskas Adult (1+ Years) Dry Cat Food | Ocean Fish Flavour | 20 Kg",
-      "slug": "pd-20-food-1",
-      "images": {
-        "side": {
-          "fileName": "pd-20-food-1-side.jpg",
-          "url": "/products/pd-20-food-1-side.jpg",
-          "uploadsUrl": "/uploads/products/pd-20-food-1-side.jpg",
-          "bytes": 70740
-        }
-      },
-      "updated_at": "2026-09-02T20:09:10.941Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Whiskas Adult (1+ Years) Dry Cat Food | Ocean Fish Flavour | 20 Kg",
+      "updated_at": "2026-09-03T10:23:20.214Z"
     },
     "PD 25  FOOD 1 [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
-      "slug": "pd-25-food-1",
-      "images": {
-        "front": {
-          "fileName": "pd-25-food-1-front.jpg",
-          "url": "/products/pd-25-food-1-front.jpg",
-          "uploadsUrl": "/uploads/products/pd-25-food-1-front.jpg",
-          "bytes": 45752
-        },
-        "side": {
-          "fileName": "pd-25-food-1-side.jpg",
-          "url": "/products/pd-25-food-1-side.jpg",
-          "uploadsUrl": "/uploads/products/pd-25-food-1-side.jpg",
-          "bytes": 95686
-        }
-      },
-      "updated_at": "2026-09-02T20:09:12.630Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
+      "updated_at": "2026-09-03T10:23:20.220Z"
     },
     "PD 320 GRANUALS 1 [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Stayfree Secure Nights Cottony Soft Comfort 320Mm Xxl Size 6 Sanitary Pads",
-      "slug": "pd-320-granuals-1",
-      "images": {
-        "front": {
-          "fileName": "pd-320-granuals-1-front.jpg",
-          "url": "/products/pd-320-granuals-1-front.jpg",
-          "uploadsUrl": "/uploads/products/pd-320-granuals-1-front.jpg",
-          "bytes": 82692
-        },
-        "side": {
-          "fileName": "pd-320-granuals-1-side.jpg",
-          "url": "/products/pd-320-granuals-1-side.jpg",
-          "uploadsUrl": "/uploads/products/pd-320-granuals-1-side.jpg",
-          "bytes": 30656
-        },
-        "back": {
-          "fileName": "pd-320-granuals-1-back.jpg",
-          "url": "/products/pd-320-granuals-1-back.jpg",
-          "uploadsUrl": "/uploads/products/pd-320-granuals-1-back.jpg",
-          "bytes": 97568
-        }
-      },
-      "updated_at": "2026-09-02T20:09:14.200Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Stayfree Secure Nights Cottony Soft Comfort 320Mm Xxl Size 6 Sanitary Pads",
+      "updated_at": "2026-09-03T10:23:20.248Z"
     },
     "PD 40 GRANUALS 1 [PEDIGREE]": {
       "status": "unverified",
@@ -134369,31 +133827,11 @@
       }
     },
     "PD FOOD 50 GRAVY 1 [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Whiskas Junior Kitten (2-12 Months) Wet Cat Food | Chicken In Gravy | 80 G (Pack Of 14)",
-      "slug": "pd-food-50-gravy-1",
-      "images": {
-        "combo": {
-          "fileName": "pd-food-50-gravy-1-combo.jpg",
-          "url": "/products/pd-food-50-gravy-1-combo.jpg",
-          "uploadsUrl": "/uploads/products/pd-food-50-gravy-1-combo.jpg",
-          "bytes": 126673
-        },
-        "side": {
-          "fileName": "pd-food-50-gravy-1-side.jpg",
-          "url": "/products/pd-food-50-gravy-1-side.jpg",
-          "uploadsUrl": "/uploads/products/pd-food-50-gravy-1-side.jpg",
-          "bytes": 159760
-        },
-        "back": {
-          "fileName": "pd-food-50-gravy-1-back.jpg",
-          "url": "/products/pd-food-50-gravy-1-back.jpg",
-          "uploadsUrl": "/uploads/products/pd-food-50-gravy-1-back.jpg",
-          "bytes": 107632
-        }
-      },
-      "updated_at": "2026-09-02T20:09:21.915Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Whiskas Junior Kitten (2-12 Months) Wet Cat Food | Chicken In Gravy | 80 G (Pack Of 14)",
+      "updated_at": "2026-09-03T10:23:20.258Z"
     },
     "PD GRAVY CREAM 50GM [PEDIGREE]": {
       "status": "unverified",
@@ -134472,7 +133910,7 @@
           "bytes": 88778
         }
       },
-      "updated_at": "2026-09-02T20:09:25.341Z",
+      "updated_at": "2026-09-03T10:25:39.825Z",
       "verified": true
     },
     "PD PUPPY FOOD 90GM [PEDIGREE]": {
@@ -136135,31 +135573,11 @@
       "verified": true
     },
     "PK 240 SPRAY 1 [RAYMOND PHARMACEUTICAL PVT LTD]": {
-      "status": "success",
-      "matched_name": "Flomist F 240Md Bottle Of 12Gm Nasal Spray",
-      "slug": "pk-240-spray-1",
-      "images": {
-        "box-front": {
-          "fileName": "pk-240-spray-1-box-front.jpg",
-          "url": "/products/pk-240-spray-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/pk-240-spray-1-box-front.jpg",
-          "bytes": 24360
-        },
-        "box-back": {
-          "fileName": "pk-240-spray-1-box-back.jpg",
-          "url": "/products/pk-240-spray-1-box-back.jpg",
-          "uploadsUrl": "/uploads/products/pk-240-spray-1-box-back.jpg",
-          "bytes": 28831
-        },
-        "side": {
-          "fileName": "pk-240-spray-1-side.jpg",
-          "url": "/products/pk-240-spray-1-side.jpg",
-          "uploadsUrl": "/uploads/products/pk-240-spray-1-side.jpg",
-          "bytes": 29799
-        }
-      },
-      "updated_at": "2026-09-02T20:11:26.487Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Flomist F 240Md Bottle Of 12Gm Nasal Spray",
+      "updated_at": "2026-09-03T10:23:20.267Z"
     },
     "PL105 PANTS 10 [PANDG]": {
       "status": "unverified",
@@ -137405,31 +136823,11 @@
       }
     },
     "POWDER PUP PUP P [ALKEM LABORATORIES LTD]": {
-      "status": "success",
-      "matched_name": "Drools Pup Booster Puppy Weaning Diet For All Breeds 300G",
-      "slug": "powder-pup-pup-p",
-      "images": {
-        "front": {
-          "fileName": "powder-pup-pup-p-front.jpg",
-          "url": "/products/powder-pup-pup-p-front.jpg",
-          "uploadsUrl": "/uploads/products/powder-pup-pup-p-front.jpg",
-          "bytes": 107441
-        },
-        "side": {
-          "fileName": "powder-pup-pup-p-side.jpg",
-          "url": "/products/powder-pup-pup-p-side.jpg",
-          "uploadsUrl": "/uploads/products/powder-pup-pup-p-side.jpg",
-          "bytes": 75770
-        },
-        "back": {
-          "fileName": "powder-pup-pup-p-back.jpg",
-          "url": "/products/powder-pup-pup-p-back.jpg",
-          "uploadsUrl": "/uploads/products/powder-pup-pup-p-back.jpg",
-          "bytes": 105182
-        }
-      },
-      "updated_at": "2026-09-02T20:13:09.727Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Drools Pup Booster Puppy Weaning Diet For All Breeds 300G",
+      "updated_at": "2026-09-03T10:23:20.273Z"
     },
     "POWDER WAX 399 POWDER 1 [URBAN GABRU]": {
       "status": "unverified",
@@ -137670,31 +137068,11 @@
       }
     },
     "PRE-FRESH 10ML DROP 10ML [PRECISE CHEMIPHARMA PVT LTD]": {
-      "status": "success",
-      "matched_name": "Predira Bottle Of 10Ml Eye Drops",
-      "slug": "pre-fresh-10ml-drop-10ml",
-      "images": {
-        "box-front": {
-          "fileName": "pre-fresh-10ml-drop-10ml-box-front.jpg",
-          "url": "/products/pre-fresh-10ml-drop-10ml-box-front.jpg",
-          "uploadsUrl": "/uploads/products/pre-fresh-10ml-drop-10ml-box-front.jpg",
-          "bytes": 31281
-        },
-        "box-back": {
-          "fileName": "pre-fresh-10ml-drop-10ml-box-back.jpg",
-          "url": "/products/pre-fresh-10ml-drop-10ml-box-back.jpg",
-          "uploadsUrl": "/uploads/products/pre-fresh-10ml-drop-10ml-box-back.jpg",
-          "bytes": 40632
-        },
-        "side": {
-          "fileName": "pre-fresh-10ml-drop-10ml-side.jpg",
-          "url": "/products/pre-fresh-10ml-drop-10ml-side.jpg",
-          "uploadsUrl": "/uploads/products/pre-fresh-10ml-drop-10ml-side.jpg",
-          "bytes": 42350
-        }
-      },
-      "updated_at": "2026-09-02T20:13:27.577Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Predira Bottle Of 10Ml Eye Drops",
+      "updated_at": "2026-09-03T10:23:20.278Z"
     },
     "PRE-FRESH TEARS DROP 10ML [PRECISE CHEMIPHARMA PVT LTD]": {
       "status": "unverified",
@@ -141750,17 +141128,17 @@
     },
     "R7 DROP 30ML [DR RECKEWEG]": {
       "status": "success",
-      "matched_name": "Sbl Clearstone Drop 30 Ml Pack Of 2",
+      "matched_name": "Dr. Reckeweg R7 Liver And Gallbladder Drops | For Liver Care 22 Ml",
       "slug": "r7-drop-30ml",
       "images": {
-        "front": {
-          "fileName": "r7-drop-30ml-front.jpg",
-          "url": "/products/r7-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/r7-drop-30ml-front.jpg",
-          "bytes": 78670
+        "box-front": {
+          "fileName": "r7-drop-30ml-box-front.jpg",
+          "url": "/products/r7-drop-30ml-box-front.jpg",
+          "uploadsUrl": "/uploads/products/r7-drop-30ml-box-front.jpg",
+          "bytes": 34791
         }
       },
-      "updated_at": "2026-09-02T20:18:24.626Z",
+      "updated_at": "2026-09-03T10:25:41.240Z",
       "verified": true
     },
     "R7 LIVER AND GALLBLADDER  DROP 30ML [RECKITT BENCKISER PVT LTD]": {
@@ -146617,19 +145995,11 @@
       }
     },
     "RK BLADE BLADE 10 [RK BLADE]": {
-      "status": "success",
-      "matched_name": "Gillette Mach 3 Shaving Blades Pack Of 10",
-      "slug": "rk-blade-blade-10",
-      "images": {
-        "side": {
-          "fileName": "rk-blade-blade-10-side.jpg",
-          "url": "/products/rk-blade-blade-10-side.jpg",
-          "uploadsUrl": "/uploads/products/rk-blade-blade-10-side.jpg",
-          "bytes": 57128
-        }
-      },
-      "updated_at": "2026-09-02T20:24:20.766Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Gillette Mach 3 Shaving Blades Pack Of 10",
+      "updated_at": "2026-09-03T10:23:20.282Z"
     },
     "RL 500ML [ABARIS HEALTHCARE]": {
       "status": "not_found",
@@ -148342,19 +147712,11 @@
       "verified": true
     },
     "RR BLADE 3 METAL 1 [RR]": {
-      "status": "success",
-      "matched_name": "Gillette Mach 3 Shaving Blades Pack Of 10",
-      "slug": "rr-blade-3-metal-1",
-      "images": {
-        "side": {
-          "fileName": "rr-blade-3-metal-1-side.jpg",
-          "url": "/products/rr-blade-3-metal-1-side.jpg",
-          "uploadsUrl": "/uploads/products/rr-blade-3-metal-1-side.jpg",
-          "bytes": 57128
-        }
-      },
-      "updated_at": "2026-09-02T20:26:29.870Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Gillette Mach 3 Shaving Blades Pack Of 10",
+      "updated_at": "2026-09-03T10:23:20.284Z"
     },
     "RUBIRED SYP 150ML [MACLEODS PHARMACEUTICALS]": {
       "status": "success",
@@ -153449,31 +152811,11 @@
       }
     },
     "SH 160 SPRAY 1 [GEN BIOTEC PRIVATE LIMITED]": {
-      "status": "success",
-      "matched_name": "Flutiways 160 Md Bottle Of 16Gm Nasal Spray",
-      "slug": "sh-160-spray-1",
-      "images": {
-        "box-front": {
-          "fileName": "sh-160-spray-1-box-front.jpg",
-          "url": "/products/sh-160-spray-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/sh-160-spray-1-box-front.jpg",
-          "bytes": 64996
-        },
-        "combo": {
-          "fileName": "sh-160-spray-1-combo.jpg",
-          "url": "/products/sh-160-spray-1-combo.jpg",
-          "uploadsUrl": "/uploads/products/sh-160-spray-1-combo.jpg",
-          "bytes": 92627
-        },
-        "side": {
-          "fileName": "sh-160-spray-1-side.jpg",
-          "url": "/products/sh-160-spray-1-side.jpg",
-          "uploadsUrl": "/uploads/products/sh-160-spray-1-side.jpg",
-          "bytes": 43372
-        }
-      },
-      "updated_at": "2026-09-02T20:32:39.001Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Flutiways 160 Md Bottle Of 16Gm Nasal Spray",
+      "updated_at": "2026-09-03T10:23:20.290Z"
     },
     "SH 165 SPRAY 1 [CM C]": {
       "status": "unverified",
@@ -153499,25 +152841,11 @@
       }
     },
     "SH 50 SPRAY 1 [GEN BIOTEC PRIVATE LIMITED]": {
-      "status": "success",
-      "matched_name": "Myco Spray 1% Bottle Of 50Ml Solution",
-      "slug": "sh-50-spray-1",
-      "images": {
-        "box-front": {
-          "fileName": "sh-50-spray-1-box-front.jpg",
-          "url": "/products/sh-50-spray-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/sh-50-spray-1-box-front.jpg",
-          "bytes": 27329
-        },
-        "side": {
-          "fileName": "sh-50-spray-1-side.jpg",
-          "url": "/products/sh-50-spray-1-side.jpg",
-          "uploadsUrl": "/uploads/products/sh-50-spray-1-side.jpg",
-          "bytes": 24116
-        }
-      },
-      "updated_at": "2026-09-02T20:32:42.005Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Myco Spray 1% Bottle Of 50Ml Solution",
+      "updated_at": "2026-09-03T10:23:20.296Z"
     },
     "SH PERFUM  108 SPRAY 1 [KAVYS PHARMA]": {
       "status": "unverified",
@@ -162662,40 +161990,18 @@
       "verified": true
     },
     "SW  GEL 10GM [SET WET]": {
-      "status": "success",
-      "matched_name": "Quik Kool Mouth Ulcer Gel 10Gm",
-      "slug": "sw-gel-10gm",
-      "images": {
-        "front": {
-          "fileName": "sw-gel-10gm-front.jpg",
-          "url": "/products/sw-gel-10gm-front.jpg",
-          "uploadsUrl": "/uploads/products/sw-gel-10gm-front.jpg",
-          "bytes": 71056
-        },
-        "side": {
-          "fileName": "sw-gel-10gm-side.jpg",
-          "url": "/products/sw-gel-10gm-side.jpg",
-          "uploadsUrl": "/uploads/products/sw-gel-10gm-side.jpg",
-          "bytes": 114393
-        }
-      },
-      "updated_at": "2026-09-02T20:43:37.450Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Quik Kool Mouth Ulcer Gel 10Gm",
+      "updated_at": "2026-09-03T10:23:20.300Z"
     },
     "SW GEL 50 ML [SET WET]": {
-      "status": "success",
-      "matched_name": "Durex Strawberry Lubricant Gel 50Ml",
-      "slug": "sw-gel-50-ml",
-      "images": {
-        "side": {
-          "fileName": "sw-gel-50-ml-side.jpg",
-          "url": "/products/sw-gel-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/sw-gel-50-ml-side.jpg",
-          "bytes": 45485
-        }
-      },
-      "updated_at": "2026-09-02T20:43:38.719Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Durex Strawberry Lubricant Gel 50Ml",
+      "updated_at": "2026-09-03T10:23:20.301Z"
     },
     "SW10 GEL 10 ML [SETWET]": {
       "status": "unverified",
@@ -165910,17 +165216,17 @@
     "TENIVA M STRIP OF 15 TABLETS [INTAS PHARMACEUTICALS LTD]": {
       "status": "success",
       "matched_name": "Teniva M Strip Of 20 Tablets",
-      "slug": "teniva-m",
+      "slug": "teniva-m-strip-of-15-tablets-intas-pharmaceuticals",
       "images": {
         "front": {
-          "fileName": "teniva-m-front.jpg",
-          "url": "/products/teniva-m-front.jpg",
-          "uploadsUrl": "/uploads/products/teniva-m-front.jpg",
+          "fileName": "teniva-m-strip-of-15-tablets-intas-pharmaceuticals-1788433151481.jpg",
+          "url": "/products/teniva-m-strip-of-15-tablets-intas-pharmaceuticals-1788433151481.jpg",
+          "uploadsUrl": "/uploads/products/teniva-m-strip-of-15-tablets-intas-pharmaceuticals-1788433151481.jpg",
           "bytes": 106615
         }
       },
-      "updated_at": "2026-09-02T20:47:32.530Z",
-      "verified": true
+      "verified": false,
+      "updated_at": "2026-09-03T10:59:11.689Z"
     },
     "TENLIMAC 20MG TABLET [MACLEODS PHARMACEUTICALS]": {
       "status": "success",
@@ -177305,24 +176611,18 @@
     },
     "VILDASMART M 50/1000MG STRIP OF 15 TABLETS [HEALING PHARMA INDIA PVT LTD]": {
       "status": "success",
-      "matched_name": "Vildasmart M 50/500Mg Strip Of 15 Tablets",
-      "slug": "vildasmart-m-501000mg",
+      "matched_name": "Vildasmart M 50/1000Mg Strip Of 15 Tablets",
+      "slug": "vildasmart-m-50-1000mg-strip-of-15-tablets-healing",
       "images": {
-        "combo": {
-          "fileName": "vildasmart-m-501000mg-combo.jpg",
-          "url": "/products/vildasmart-m-501000mg-combo.jpg",
-          "uploadsUrl": "/uploads/products/vildasmart-m-501000mg-combo.jpg",
-          "bytes": 55566
-        },
-        "side": {
-          "fileName": "vildasmart-m-501000mg-side.jpg",
-          "url": "/products/vildasmart-m-501000mg-side.jpg",
-          "uploadsUrl": "/uploads/products/vildasmart-m-501000mg-side.jpg",
-          "bytes": 64766
+        "front": {
+          "fileName": "vildasmart-m-50-1000mg-strip-of-15-tablets-healing-1788433152563.jpg",
+          "url": "/products/vildasmart-m-50-1000mg-strip-of-15-tablets-healing-1788433152563.jpg",
+          "uploadsUrl": "/uploads/products/vildasmart-m-50-1000mg-strip-of-15-tablets-healing-1788433152563.jpg",
+          "bytes": 201564
         }
       },
-      "updated_at": "2026-09-02T21:00:51.166Z",
-      "verified": true
+      "verified": true,
+      "updated_at": "2026-09-03T10:59:12.901Z"
     },
     "VINARSH CAP 21 CAPS [SENSUS PHARM]": {
       "status": "unverified",
@@ -182271,19 +181571,11 @@
       }
     },
     "WS 400 FOOD 1 [WHISKES]": {
-      "status": "success",
-      "matched_name": "Mms Stage 1 Infant Formula Powder - 400Gm Tin",
-      "slug": "ws-400-food-1",
-      "images": {
-        "side": {
-          "fileName": "ws-400-food-1-side.jpg",
-          "url": "/products/ws-400-food-1-side.jpg",
-          "uploadsUrl": "/uploads/products/ws-400-food-1-side.jpg",
-          "bytes": 95552
-        }
-      },
-      "updated_at": "2026-09-02T21:07:02.750Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Mms Stage 1 Infant Formula Powder - 400Gm Tin",
+      "updated_at": "2026-09-03T10:23:20.303Z"
     },
     "WS CAT ADULT FOOD 7 [WHISPER]": {
       "status": "unverified",
@@ -182303,46 +181595,18 @@
       }
     },
     "WS CAT FOOD ADULT FOOD 50GM [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
-      "slug": "ws-cat-food-adult-food-50gm",
-      "images": {
-        "front": {
-          "fileName": "ws-cat-food-adult-food-50gm-front.jpg",
-          "url": "/products/ws-cat-food-adult-food-50gm-front.jpg",
-          "uploadsUrl": "/uploads/products/ws-cat-food-adult-food-50gm-front.jpg",
-          "bytes": 45752
-        },
-        "side": {
-          "fileName": "ws-cat-food-adult-food-50gm-side.jpg",
-          "url": "/products/ws-cat-food-adult-food-50gm-side.jpg",
-          "uploadsUrl": "/uploads/products/ws-cat-food-adult-food-50gm-side.jpg",
-          "bytes": 95686
-        }
-      },
-      "updated_at": "2026-09-02T21:07:06.019Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
+      "updated_at": "2026-09-03T10:23:20.309Z"
     },
     "WS CAT FOOD FOOD 50GM [PEDIGREE]": {
-      "status": "success",
-      "matched_name": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
-      "slug": "ws-cat-food-food-50gm",
-      "images": {
-        "front": {
-          "fileName": "ws-cat-food-food-50gm-front.jpg",
-          "url": "/products/ws-cat-food-food-50gm-front.jpg",
-          "uploadsUrl": "/uploads/products/ws-cat-food-food-50gm-front.jpg",
-          "bytes": 45752
-        },
-        "side": {
-          "fileName": "ws-cat-food-food-50gm-side.jpg",
-          "url": "/products/ws-cat-food-food-50gm-side.jpg",
-          "uploadsUrl": "/uploads/products/ws-cat-food-food-50gm-side.jpg",
-          "bytes": 95686
-        }
-      },
-      "updated_at": "2026-09-02T21:07:07.404Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Royal Canin Persian Adult Cat Food | 1 Kg | Dry Food",
+      "updated_at": "2026-09-03T10:23:20.311Z"
     },
     "WS CAT FOOD FOOD 70GM [WHISPER]": {
       "status": "unverified",
@@ -182362,46 +181626,18 @@
       }
     },
     "WS FOOD 1100 GRANUAL 3.3KG [PEDEGREE]": {
-      "status": "success",
-      "matched_name": "Pedigree Pro Puppy | Large Breed (3-18 Months) Dry Dog Food | 3 Kg Pack | Chicken",
-      "slug": "ws-food-1100-granual-33kg",
-      "images": {
-        "front": {
-          "fileName": "ws-food-1100-granual-33kg-front.jpg",
-          "url": "/products/ws-food-1100-granual-33kg-front.jpg",
-          "uploadsUrl": "/uploads/products/ws-food-1100-granual-33kg-front.jpg",
-          "bytes": 74929
-        },
-        "side": {
-          "fileName": "ws-food-1100-granual-33kg-side.jpg",
-          "url": "/products/ws-food-1100-granual-33kg-side.jpg",
-          "uploadsUrl": "/uploads/products/ws-food-1100-granual-33kg-side.jpg",
-          "bytes": 143806
-        },
-        "back": {
-          "fileName": "ws-food-1100-granual-33kg-back.jpg",
-          "url": "/products/ws-food-1100-granual-33kg-back.jpg",
-          "uploadsUrl": "/uploads/products/ws-food-1100-granual-33kg-back.jpg",
-          "bytes": 76037
-        }
-      },
-      "updated_at": "2026-09-02T21:07:11.055Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Pedigree Pro Puppy | Large Breed (3-18 Months) Dry Dog Food | 3 Kg Pack | Chicken",
+      "updated_at": "2026-09-03T10:23:20.314Z"
     },
     "WS FOOD 1120 FOOD 3KG [SHREE SO]": {
-      "status": "success",
-      "matched_name": "Royal Canin Shih Tzu Adult Dog Food | 3 Kg | Dry Food",
-      "slug": "ws-food-1120-food-3kg",
-      "images": {
-        "side": {
-          "fileName": "ws-food-1120-food-3kg-side.jpg",
-          "url": "/products/ws-food-1120-food-3kg-side.jpg",
-          "uploadsUrl": "/uploads/products/ws-food-1120-food-3kg-side.jpg",
-          "bytes": 79160
-        }
-      },
-      "updated_at": "2026-09-02T21:07:12.464Z",
-      "verified": true
+      "status": "not_found",
+      "images": {},
+      "matched_name": null,
+      "purged_previous_wrong_match": "Royal Canin Shih Tzu Adult Dog Food | 3 Kg | Dry Food",
+      "updated_at": "2026-09-03T10:23:20.315Z"
     },
     "WYMOX 250MG CAPSULE [PFIZER LTD]": {
       "status": "success",

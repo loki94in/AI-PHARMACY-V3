@@ -52,8 +52,10 @@ class CustomerAuthService {
       const db = await dbManager.getConnection();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
       await db.run(
-        `INSERT INTO customer_sessions (customer_id, phone, session_token, channel, device_info, ip_address, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO customer_sessions (
+           customer_id, phone, session_token, channel, device_info, ip_address,
+           logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
         [
           customerId,
           phone,
@@ -95,7 +97,7 @@ class CustomerAuthService {
   }
 
   /**
-   * Request OTP for customer mobile login
+   * Request OTP for customer mobile login - strictly for existing CRM patients
    */
   async requestOtp(phoneRaw: string): Promise<{ success: boolean; message: string; debugOtp?: string }> {
     const phone = normalizePhone(phoneRaw);
@@ -105,22 +107,17 @@ class CustomerAuthService {
 
     const db = await dbManager.getConnection();
 
-    // 1. Locate existing customer by phone
-    let customer = await db.get(
+    // 1. Locate existing customer in CRM / pharmacy database
+    const customer = await db.get(
       `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
       [`%${phone}%`, phone]
     );
 
-    // If no customer exists, register customer record so historical bills/orders link properly
     if (!customer) {
-      const res = await db.run(
-        `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-        [`Customer ${phone.slice(-4)}`, phone]
-      );
-      customer = { id: res.lastID, name: `Customer ${phone.slice(-4)}`, phone };
+      throw new Error('This mobile number is not registered in pharmacy records. Please contact the pharmacy to register.');
     }
 
-    // 2. Ensure customer_portal_accounts entry exists
+    // 2. Ensure customer_portal_accounts entry exists for this registered customer
     const loginId = phone;
     let account = await db.get(
       `SELECT id, customer_id, login_id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?`,
@@ -224,9 +221,12 @@ class CustomerAuthService {
       throw new Error('Your account is inactive or blocked. Please contact pharmacy staff.');
     }
 
-    // Update last login
+    // Update last login and increment total login count
     await db.run(
-      `UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
       [account.id]
     );
 
@@ -289,8 +289,12 @@ class CustomerAuthService {
       throw new Error('Invalid Login ID or PIN');
     }
 
+    // Update last login and increment total login count
     await db.run(
-      `UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
       [account.id]
     );
 
@@ -315,6 +319,127 @@ class CustomerAuthService {
         catalog: true,
         prescriptions: true
       }
+    };
+  }
+
+  /**
+   * Heartbeat to track active presence and calculate session duration
+   */
+  async recordHeartbeat(sessionToken: string): Promise<{ success: boolean; durationSeconds: number }> {
+    try {
+      const db = await dbManager.getConnection();
+      const session = await db.get(
+        `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+        [sessionToken]
+      );
+
+      if (!session) return { success: false, durationSeconds: 0 };
+
+      // Calculate elapsed seconds from logged_in_at to now
+      const loggedInTime = new Date(session.logged_in_at).getTime();
+      const now = Date.now();
+      const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1000));
+
+      await db.run(
+        `UPDATE customer_sessions 
+         SET last_active_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?
+         WHERE id = ?`,
+        [durationSeconds, session.id]
+      );
+
+      // Keep cumulative total_time_spent_seconds updated in customer_portal_accounts
+      await db.run(
+        `UPDATE customer_portal_accounts 
+         SET total_time_spent_seconds = COALESCE(total_time_spent_seconds, 0) + 30
+         WHERE customer_id = ?`,
+        [session.customer_id]
+      );
+
+      return { success: true, durationSeconds };
+    } catch (err) {
+      logger.warn('Heartbeat update failed', { module: 'CustomerAuthService', error: err });
+      return { success: false, durationSeconds: 0 };
+    }
+  }
+
+  /**
+   * Terminate session on explicit customer logout and finalize duration
+   */
+  async logoutSession(sessionToken: string): Promise<{ success: boolean; durationSeconds: number }> {
+    try {
+      const db = await dbManager.getConnection();
+      const session = await db.get(
+        `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+        [sessionToken]
+      );
+
+      if (!session) return { success: false, durationSeconds: 0 };
+
+      const loggedInTime = new Date(session.logged_in_at).getTime();
+      const now = Date.now();
+      const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1000));
+
+      await db.run(
+        `UPDATE customer_sessions 
+         SET is_active = 0,
+             logged_out_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?,
+             last_active_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [durationSeconds, session.id]
+      );
+
+      await db.run(
+        `UPDATE customer_portal_accounts 
+         SET last_logout_at = CURRENT_TIMESTAMP
+         WHERE customer_id = ?`,
+        [session.customer_id]
+      );
+
+      logger.info(`Session logged out (duration: ${durationSeconds}s)`, {
+        module: 'CustomerAuthService',
+        operation: 'logoutSession',
+        customerId: session.customer_id
+      });
+
+      return { success: true, durationSeconds };
+    } catch (err) {
+      logger.error('Logout session failed', err, { module: 'CustomerAuthService' });
+      return { success: false, durationSeconds: 0 };
+    }
+  }
+
+  /**
+   * Get customer session history for CRM auditing
+   */
+  async getCustomerSessions(customerId: number) {
+    const db = await dbManager.getConnection();
+    const account = await db.get(
+      `SELECT total_login_count, total_time_spent_seconds, last_login_at, last_logout_at
+       FROM customer_portal_accounts WHERE customer_id = ?`,
+      [customerId]
+    );
+
+    const sessions = await db.all(
+      `SELECT id, channel, device_info, ip_address, logged_in_at, last_active_at, logged_out_at, duration_seconds, is_active
+       FROM customer_sessions
+       WHERE customer_id = ?
+       ORDER BY id DESC LIMIT 50`,
+      [customerId]
+    );
+
+    return {
+      stats: {
+        totalLogins: account?.total_login_count || sessions.length,
+        totalTimeSpentSeconds: account?.total_time_spent_seconds || 0,
+        lastLoginAt: account?.last_login_at || null,
+        lastLogoutAt: account?.last_logout_at || null,
+        activeSessionsCount: sessions.filter((s: any) => s.is_active === 1).length
+      },
+      sessions
     };
   }
 }

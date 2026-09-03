@@ -32,4 +32,12 @@ export const authApi = {
   // Login with ID and PIN
   loginWithPin: (loginId: string, pin: string) =>
     http.post<CustomerAuthResponse>('/customer/auth/login', { loginId, pin }),
+
+  // Heartbeat to maintain active session duration
+  heartbeat: () =>
+    http.post<{ durationSeconds: number }>('/customer/auth/heartbeat'),
+
+  // Logout session
+  logout: () =>
+    http.post<{ durationSeconds: number; message: string }>('/customer/auth/logout'),
 };

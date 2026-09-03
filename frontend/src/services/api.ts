@@ -1681,7 +1681,9 @@ export const api = {
 
   // Customer Portal & Refill Management APIs
   getPortalAccounts: (params?: { search?: string; store_id?: number }) =>
-    apiClient.get<{ success: boolean; count: number; accounts: Array<{ id: number; customer_id: number; login_id: string; pin_display?: string; preferred_store_id: number; preferred_store_name?: string; status: string; last_login_at?: string; customer_name: string; customer_address?: string; active_refills_count: number; total_bills_count: number; created_at: string }> }>('/customer-portal/accounts', { params }).then(res => res.data),
+    apiClient.get<{ success: boolean; count: number; accounts: Array<{ id: number; customer_id: number; login_id: string; pin_display?: string; preferred_store_id: number; preferred_store_name?: string; status: string; last_login_at?: string; total_login_count?: number; total_time_spent_seconds?: number; last_logout_at?: string; customer_name: string; customer_address?: string; active_refills_count: number; total_bills_count: number; created_at: string }> }>('/customer-portal/accounts', { params }).then(res => res.data),
+  getPortalAccountSessions: (accountId: number) =>
+    apiClient.get<{ success: boolean; stats: { totalLogins: number; totalTimeSpentSeconds: number; lastLoginAt?: string; lastLogoutAt?: string; activeSessionsCount: number }; sessions: any[] }>(`/customer-portal/accounts/${accountId}/sessions`).then(res => res.data),
   generatePortalAccount: (data: { customer_id?: number; phone: string; name?: string; preferred_store_id?: number; custom_pin?: string; send_whatsapp?: boolean }) =>
     apiClient.post<{ success: boolean; account_id: number; customer_id: number; login_id: string; pin: string; preferred_store_id: number; whatsapp_queued: boolean }>('/customer-portal/accounts/generate', data).then(res => res.data),
   resendPortalCredentials: (accountId: number) =>
@@ -1718,6 +1720,7 @@ export const api = {
       total_count: number;
       total_pages: number;
       medicines: Array<{
+        id?: number;
         name: string;
         category: string;
         pack: string;
@@ -1729,6 +1732,7 @@ export const api = {
         in_stock: boolean;
         image_url: string | null;
         images: Record<string, any>;
+        gallery?: Array<{ url: string; type: string; label: string; is_primary?: boolean }>;
       }>;
     }>('/customer-portal/public-catalog', { params }).then(res => res.data),
   getPublicCatalogSummary: () =>
@@ -1760,6 +1764,97 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; image?: CatalogImageItem }>(`/catalog/images/${id}/redownload`).then(res => res.data),
   syncCatalogImageState: () =>
     apiClient.post<{ success: boolean; synced: number; skipped: number; totalInState: number }>('/catalog/images/sync-state').then(res => res.data),
+  auditCatalogImages: () =>
+    apiClient.post<{
+      success: boolean;
+      summary: {
+        totalMedicines: number;
+        refillCatalogMedicines: number;
+        healthyActive: number;
+        missing: number;
+        broken: number;
+        pendingReview: number;
+        approved: number;
+        highConfidence: number;
+        rejected: number;
+      };
+      refillMissingItems: Array<{ name: string; category: string; reason: string }>;
+    }>('/catalog/images/audit').then(res => res.data),
+  autoApproveCatalogImages: () =>
+    apiClient.post<{ success: boolean; message: string; evaluated: number; approved: number; skipped: number }>('/catalog/images/auto-approve').then(res => res.data),
+  repairMissingCatalogImages: (limit = 50) =>
+    apiClient.post<{ success: boolean; message: string; scanned: number; repaired: number; failed: number }>('/catalog/images/repair-missing', { limit }).then(res => res.data),
+  
+  // Dedicated Image Correction & Verification System
+  getCorrectionQueue: (params?: { category?: string; search?: string; status?: string; page?: number; limit?: number }) =>
+    apiClient.get<{
+      success: boolean;
+      images: CatalogImageItem[];
+      totalCount: number;
+      totalPages: number;
+      page: number;
+      categories: Array<{ category: string; count: number }>;
+    }>('/catalog/images/queue', { params }).then(res => res.data),
+  getCorrectionStats: () =>
+    apiClient.get<{
+      success: boolean;
+      stats: {
+        pending: number;
+        incorrect: number;
+        corrected: number;
+        verified: number;
+        skipped: number;
+        total: number;
+        accuracyPercent: number;
+        verifiedToday: number;
+        correctedToday: number;
+      };
+    }>('/catalog/images/stats').then(res => res.data),
+  markImageCorrect: (id: number, verified_by?: string, image_type?: string, is_primary?: boolean) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/correct`, { verified_by, image_type, is_primary }).then(res => res.data),
+  markImageIncorrect: (id: number, reason?: string, verified_by?: string, reason_code?: string) =>
+    apiClient.post<{ success: boolean; message: string; action?: string; targetType?: string; medicineId?: number }>(`/catalog/images/${id}/incorrect`, { reason, verified_by, reason_code }).then(res => res.data),
+  skipImage: (id: number, hours = 24, reason?: string, verified_by?: string) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/skip`, { hours, reason, verified_by }).then(res => res.data),
+  searchCandidateImages: (id: number, query?: string, image_type?: string) =>
+    apiClient.post<{
+      success: boolean;
+      candidates: Array<{
+        id: string;
+        name: string;
+        manufacturer: string;
+        imageUrl: string;
+        source: string;
+        confidenceScore: number;
+        verificationStatus: string;
+        reason: string;
+        signals?: any;
+      }>;
+    }>(`/catalog/images/${id}/search-candidates`, { query, image_type }).then(res => res.data),
+  replaceWithCandidate: (id: number, data: { candidate_url: string; candidate_title?: string; verified_by?: string; image_type?: string; is_primary?: boolean; keep_existing?: boolean }) =>
+    apiClient.post<{ success: boolean; message: string; image: CatalogImageItem }>(`/catalog/images/${id}/replace-candidate`, data).then(res => res.data),
+  getMedicineImageGallery: (medicineId: number) =>
+    apiClient.get<{ success: boolean; images: CatalogImageItem[] }>(`/catalog/images/medicine/${medicineId}/gallery`).then(res => res.data),
+  reopenImage: (id: number, verified_by?: string) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/reopen`, { verified_by }).then(res => res.data),
+  getImageHistory: (id: number) =>
+    apiClient.get<{
+      success: boolean;
+      history: Array<{
+        id: number;
+        product_image_id: number;
+        medicine_id: number;
+        previous_status: string | null;
+        new_status: string;
+        previous_image_url: string | null;
+        new_image_url: string | null;
+        action: string;
+        reason: string | null;
+        performed_by: string;
+        performed_at: string;
+        metadata: string | null;
+      }>;
+    }>(`/catalog/images/${id}/history`).then(res => res.data),
 };
 
 export interface CatalogImageItem {
@@ -1774,13 +1869,22 @@ export interface CatalogImageItem {
   image_hash: string | null;
   confidence_score: number;
   matching_method: string;
-  verification_status: 'HIGH_CONFIDENCE' | 'APPROVED' | 'PENDING_REVIEW' | 'REJECTED' | 'REMOVED';
+  verification_status: 'HIGH_CONFIDENCE' | 'APPROVED' | 'PENDING_REVIEW' | 'REJECTED' | 'REMOVED' | 'CORRECT' | 'INCORRECT' | 'CORRECTED' | 'SKIPPED' | string;
   verification_reason: string | null;
   ocr_text: string | null;
   ocr_confidence: number | null;
   is_active: number;
+  image_type?: 'combined' | 'front' | 'back' | 'box' | 'tablet' | string;
+  is_primary?: number;
+  slot_number?: number;
   retry_count: number;
   replaced_from_image_id: number | null;
+  previous_image_url?: string | null;
+  next_review_at?: string | null;
+  skip_reason?: string | null;
+  locked_by?: string | null;
+  locked_at?: string | null;
+  verification_version?: number;
   verified_by: string | null;
   verified_at: string | null;
   created_at: string;
@@ -1791,6 +1895,7 @@ export interface CatalogImageItem {
   packaging?: string;
   mrp?: number;
   manufacturer?: string;
+  category?: string;
 }
 
 export interface CatalogImageCounts {

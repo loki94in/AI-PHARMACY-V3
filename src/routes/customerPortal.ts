@@ -8,6 +8,7 @@ import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js';
 import { storeContextService } from '../services/storeContextService.js';
+import { catalogImageService } from '../services/catalogImageService.js';
 
 const router = express.Router();
 
@@ -83,6 +84,9 @@ router.get('/accounts', async (req, res) => {
         pa.preferred_store_id,
         pa.status,
         pa.last_login_at,
+        COALESCE(pa.total_login_count, 0) as total_login_count,
+        COALESCE(pa.total_time_spent_seconds, 0) as total_time_spent_seconds,
+        pa.last_logout_at,
         pa.created_at,
         c.name as customer_name,
         c.address as customer_address,
@@ -113,6 +117,25 @@ router.get('/accounts', async (req, res) => {
   } catch (err: any) {
     console.error('[CustomerPortal] List accounts error:', err);
     res.status(500).json({ error: 'Failed to fetch portal accounts' });
+  }
+});
+
+// GET /api/crm/portal-accounts/:id/sessions — Inspect customer login/logout sessions
+router.get('/accounts/:id/sessions', async (req, res) => {
+  try {
+    const accountId = parseInt(String(req.params.id), 10);
+    const db = await dbManager.getConnection();
+    const account = await db.get(`SELECT customer_id FROM customer_portal_accounts WHERE id = ?`, [accountId]);
+    if (!account) {
+      return res.status(404).json({ error: 'Portal account not found' });
+    }
+
+    const { customerAuthService } = await import('../services/auth/customerAuthService.js');
+    const sessionData = await customerAuthService.getCustomerSessions(account.customer_id);
+    res.json({ success: true, ...sessionData });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Fetch sessions error:', err);
+    res.status(500).json({ error: 'Failed to fetch customer sessions' });
   }
 });
 
@@ -1035,6 +1058,36 @@ function loadCatalogAndImages() {
           sell_price: parseFloat(parts[7]) || parseFloat(parts[6]) || 0
         });
       }
+
+      // Complement with clinical TB medicines if not already in refill CSV
+      try {
+        const clinicalCsvPath = path.resolve(process.cwd(), 'CATALOG/clinical_categories_list.csv');
+        if (fs.existsSync(clinicalCsvPath)) {
+          const clinContent = fs.readFileSync(clinicalCsvPath, 'utf-8');
+          const clinLines = clinContent.split(/\r?\n/);
+          for (let j = 1; j < clinLines.length; j++) {
+            const clinLine = clinLines[j].trim();
+            if (!clinLine) continue;
+            if (clinLine.startsWith('TB,') || clinLine.startsWith('"TB",')) {
+              const p = clinLine.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+              const name = (p[1] || '').replace(/^"|"$/g, '').trim();
+              if (name && !items.some(it => it.name === name)) {
+                items.push({
+                  category: 'Tuberculosis (TB) Care',
+                  name,
+                  pack: (p[2] || '').replace(/^"|"$/g, '').trim(),
+                  schedule: (p[3] || '').replace(/^"|"$/g, '').trim(),
+                  composition: (p[4] || '').replace(/^"|"$/g, '').trim(),
+                  manufacturer: (p[5] || '').replace(/^"|"$/g, '').trim(),
+                  mrp: 0,
+                  sell_price: 0
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
       catalogCache = items;
     }
   } catch (e) {
@@ -1066,22 +1119,51 @@ router.get('/public-catalog', async (req, res) => {
     const { catalog, images } = loadCatalogAndImages();
     const db = await dbManager.getConnection();
 
-    // Map categories to filter
-    let filtered = catalog;
+    // Restrict catalog strictly to the 4 approved categories:
+    // 1. Diabetic Care
+    // 2. Blood Pressure & Cardiac
+    // 3. Thyroid Care
+    // 4. Tuberculosis (TB)
+    const isApprovedRefillCategory = (item: CachedCatalogItem) => {
+      const c = (item.category || '').toLowerCase();
+      const n = (item.name || '').toUpperCase();
+      return (
+        c.includes('diabet') ||
+        c.includes('bp') ||
+        c.includes('cardiac') ||
+        c.includes('heart') ||
+        c.includes('thyroid') ||
+        c.includes('tb') ||
+        c.includes('tuber') ||
+        n.includes('R-CINEX') ||
+        n.includes('PYZINA') ||
+        n.includes('COMBUTOL')
+      );
+    };
+
+    let filtered = catalog.filter(isApprovedRefillCategory);
 
     if (category && category !== 'all') {
       if (category.includes('diabet')) {
         filtered = filtered.filter(i => i.category.toLowerCase().includes('diabet'));
-      } else if (category.includes('tb') || category.includes('tuber')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('tb') || i.name.toUpperCase().includes('R-CINEX') || i.name.toUpperCase().includes('PYZINA') || i.name.toUpperCase().includes('COMBUTOL'));
-      } else if (category.includes('inhal') || category.includes('rota') || category.includes('asthma')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('asthma') || i.category.toLowerCase().includes('inhal'));
-      } else if (category.includes('cholest') || category.includes('lipid')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('cholest'));
+      } else if (
+        category.includes('bp') ||
+        category.includes('cardiac') ||
+        category.includes('heart') ||
+        category.includes('blood') ||
+        category.includes('pressure')
+      ) {
+        filtered = filtered.filter(i => i.category.toLowerCase().includes('cardiac') || i.category.toLowerCase().includes('bp'));
       } else if (category.includes('thyroid')) {
         filtered = filtered.filter(i => i.category.toLowerCase().includes('thyroid'));
-      } else if (category.includes('bp') || category.includes('cardiac') || category.includes('heart')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('cardiac') || i.category.toLowerCase().includes('bp'));
+      } else if (category.includes('tb') || category.includes('tuber')) {
+        filtered = filtered.filter(i =>
+          i.category.toLowerCase().includes('tb') ||
+          i.category.toLowerCase().includes('tuber') ||
+          i.name.toUpperCase().includes('R-CINEX') ||
+          i.name.toUpperCase().includes('PYZINA') ||
+          i.name.toUpperCase().includes('COMBUTOL')
+        );
       }
     }
 
@@ -1140,30 +1222,40 @@ router.get('/public-catalog', async (req, res) => {
 
       let imageUrl: string | null = null;
       let allImages: Record<string, any> = {};
+      let gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }> = [];
 
       if (dbMed && dbMed.id) {
-        // Query verified active image strictly complying with public catalogue rules (Task 21/25)
-        const verifiedImg = await db.get(
-          `SELECT image_path, thumbnail_path, source_url, verification_status 
-           FROM catalog_images 
-           WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
-           ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
-          [dbMed.id]
-        ).catch(() => null);
-
-        if (verifiedImg && verifiedImg.image_path) {
-          imageUrl = verifiedImg.image_path;
-          allImages = { front: { url: verifiedImg.image_path } };
+        // Multi-Angle Image Resolver (Combined, Front, Back, Box, Tablet)
+        const resolved = await catalogImageService.resolveProductImages(dbMed.id);
+        if (resolved && resolved.primaryUrl) {
+          imageUrl = resolved.primaryUrl;
+          allImages = resolved.images;
+          gallery = resolved.gallery;
         }
       }
 
-      // Fallback to verified image in imageStateCache only if approved in state and not in DB
-      if (!imageUrl) {
-        const imgData = images[item.name];
-        if (imgData && imgData.verified && imgData.images) {
-          allImages = imgData.images;
-          const front = imgData.images['front'] || imgData.images['box-front'] || imgData.images['default'] || Object.values(imgData.images)[0];
-          if (front && front.url) imageUrl = front.url;
+      // If fewer than 2 angles resolved from DB, complement from imageStateCache if present
+      const imgData = images[item.name];
+      if (imgData && imgData.images) {
+        const stateGallery = catalogImageService.extractGalleryFromState(imgData);
+        if (stateGallery.length > 0) {
+          if (gallery.length === 0) {
+            gallery = stateGallery;
+            const primaryItem = stateGallery.find(g => g.is_primary) || stateGallery[0];
+            imageUrl = primaryItem?.url || null;
+            stateGallery.forEach(g => {
+              allImages[g.type] = g;
+            });
+          } else if (gallery.length < 4) {
+            const existingTypes = new Set(gallery.map(g => g.type));
+            for (const sg of stateGallery) {
+              if (!existingTypes.has(sg.type) && gallery.length < 4) {
+                gallery.push(sg);
+                existingTypes.add(sg.type);
+                allImages[sg.type] = sg;
+              }
+            }
+          }
         }
       }
 
@@ -1172,6 +1264,7 @@ router.get('/public-catalog', async (req, res) => {
       const resolvedSellPrice = Number(dbMed?.sell_price || item.sell_price || resolvedMrp || 0);
 
       enriched.push({
+        id: dbMed?.id,
         name: item.name,
         category: item.category,
         pack: item.pack || dbMed?.pack_size || '',
@@ -1182,7 +1275,8 @@ router.get('/public-catalog', async (req, res) => {
         stock_qty: stockQty,
         in_stock: stockQty > 0,
         image_url: imageUrl,
-        images: allImages
+        images: allImages,
+        gallery: gallery
       });
     }
 
@@ -1202,34 +1296,46 @@ router.get('/public-catalog', async (req, res) => {
   }
 });
 
-// GET /api/customer-portal/categories-summary — Returns count summary for all clinical categories
+// GET /api/customer-portal/categories-summary — Returns count summary for the 4 approved refill categories
 router.get('/categories-summary', (req, res) => {
   const { catalog } = loadCatalogAndImages();
   const summary: Record<string, number> = {
-    all: catalog.length,
+    all: 0,
     diabetic: 0,
-    inhalation_rotacaps: 0,
-    cholesterol: 0,
-    tb: 0,
+    bp_cardiac: 0,
     thyroid: 0,
-    bp_cardiac: 0
+    tb: 0
   };
 
   catalog.forEach(item => {
-    const c = item.category.toLowerCase();
-    if (c.includes('diabet')) summary.diabetic++;
-    else if (c.includes('asthma') || c.includes('inhal')) summary.inhalation_rotacaps++;
-    else if (c.includes('cholest')) summary.cholesterol++;
-    else if (c.includes('thyroid')) summary.thyroid++;
-    else if (c.includes('cardiac') || c.includes('bp')) summary.bp_cardiac++;
-  });
+    const c = (item.category || '').toLowerCase();
+    const n = (item.name || '').toUpperCase();
+    let isAllowed = false;
 
-  // TB check
-  summary.tb = catalog.filter(i =>
-    i.name.toUpperCase().includes('R-CINEX') ||
-    i.name.toUpperCase().includes('PYZINA') ||
-    i.name.toUpperCase().includes('COMBUTOL')
-  ).length;
+    if (c.includes('diabet')) {
+      summary.diabetic++;
+      isAllowed = true;
+    } else if (c.includes('cardiac') || c.includes('bp')) {
+      summary.bp_cardiac++;
+      isAllowed = true;
+    } else if (c.includes('thyroid')) {
+      summary.thyroid++;
+      isAllowed = true;
+    } else if (
+      c.includes('tb') ||
+      c.includes('tuber') ||
+      n.includes('R-CINEX') ||
+      n.includes('PYZINA') ||
+      n.includes('COMBUTOL')
+    ) {
+      summary.tb++;
+      isAllowed = true;
+    }
+
+    if (isAllowed) {
+      summary.all++;
+    }
+  });
 
   res.json({ success: true, summary });
 });

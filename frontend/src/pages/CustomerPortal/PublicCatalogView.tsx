@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, ShoppingCart, CheckCircle2, AlertCircle, RefreshCw,
   Plus, Minus, MessageSquare, MapPin, Pill, Activity, Heart,
-  Wind, ShieldCheck, ChevronRight, Store as StoreIcon, ExternalLink
+  Wind, ShieldCheck, ChevronRight, Store as StoreIcon, ExternalLink,
+  Eye, Camera, Layers, X, Sparkles
 } from 'lucide-react';
 import { api } from '../../services/api';
 
 interface CatalogMedicine {
+  id?: number;
   name: string;
   category: string;
   pack: string;
@@ -18,6 +20,7 @@ interface CatalogMedicine {
   in_stock: boolean;
   image_url: string | null;
   images: Record<string, any>;
+  gallery?: Array<{ url: string; type: string; label: string; is_primary?: boolean }>;
 }
 
 interface PublicCatalogViewProps {
@@ -32,13 +35,11 @@ interface PublicCatalogViewProps {
 }
 
 const CATEGORIES = [
-  { key: 'all', label: 'All Chronic Refills', icon: Activity, countKey: 'all' },
+  { key: 'all', label: 'All Refills (Diabetic, BP, Thyroid, TB)', icon: Activity, countKey: 'all' },
   { key: 'diabetic', label: 'Diabetic Care', icon: Pill, countKey: 'diabetic' },
-  { key: 'inhalation', label: 'Inhalation & Rotacaps', icon: Wind, countKey: 'inhalation_rotacaps' },
-  { key: 'cholesterol', label: 'Cholesterol & Lipids', icon: ShieldCheck, countKey: 'cholesterol' },
-  { key: 'tb', label: 'Tuberculosis (TB)', icon: Pill, countKey: 'tb' },
+  { key: 'bp_cardiac', label: 'Blood Pressure & Cardiac', icon: Heart, countKey: 'bp_cardiac' },
   { key: 'thyroid', label: 'Thyroid Care', icon: Activity, countKey: 'thyroid' },
-  { key: 'bp_cardiac', label: 'BP & Cardiac', icon: Heart, countKey: 'bp_cardiac' },
+  { key: 'tb', label: 'Tuberculosis (TB)', icon: ShieldCheck, countKey: 'tb' },
 ];
 
 export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
@@ -61,6 +62,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<Record<string, number>>({});
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [selectedAngleMap, setSelectedAngleMap] = useState<Record<string, string>>({});
+  const [quickViewMed, setQuickViewMed] = useState<CatalogMedicine | null>(null);
+  const [modalActiveImage, setModalActiveImage] = useState<string | null>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -141,7 +145,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             {activeStore ? activeStore.name : 'Pune Pharmacy'} — Online Medicine & Refill Catalog
           </h1>
           <p className="text-xs sm:text-sm text-muted">
-            Browse verified clinical medicines, check live counter availability, and place 1-click monthly refills.
+            Browse verified clinical medicines for Diabetes, Blood Pressure, Thyroid, and Tuberculosis (TB) with live counter availability.
           </p>
         </div>
 
@@ -171,7 +175,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
           <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
             type="text"
-            placeholder="Search medicine name, salt / composition, or brand (e.g., Metformin, Foracort, Atorva, R-Cinex)..."
+            placeholder="Search medicine name, salt / composition, or brand (e.g., Metformin, Telmisartan, Thyronorm, R-Cinex)..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-11 pr-4 py-3 bg-bg2 border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm shadow-sm"
@@ -249,7 +253,12 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {medicines.map((med, idx) => {
-            const hasCustomImage = med.image_url && !imageErrors[med.name];
+            const gallery = (med.gallery && med.gallery.length > 0)
+              ? med.gallery
+              : (med.image_url ? [{ url: med.image_url, type: 'combined', label: 'Front & Back', is_primary: true }] : []);
+            const activeImgUrl = selectedAngleMap[med.name] || med.image_url || (gallery[0]?.url ?? null);
+            const hasCustomImage = activeImgUrl && !imageErrors[activeImgUrl] && !imageErrors[med.name];
+            const currentAngle = gallery.find(g => g.url === activeImgUrl) || gallery[0];
             const selected = selectedItems[med.name];
             const hasDiscount = med.sell_price > 0 && med.mrp > 0 && med.sell_price < med.mrp;
             const discountPer = hasDiscount ? Math.round(((med.mrp - med.sell_price) / med.mrp) * 100) : 0;
@@ -260,13 +269,13 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                 className="bg-bg2 border border-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:border-primary/40 transition-all flex flex-col justify-between"
               >
                 <div>
-                  {/* Image Container */}
+                  {/* Image Container with Multi-Angle View */}
                   <div className="relative w-full h-44 bg-bg border-b border-border flex items-center justify-center p-3 group overflow-hidden">
                     {hasCustomImage ? (
                       <img
-                        src={med.image_url!}
+                        src={activeImgUrl!}
                         alt={med.name}
-                        onError={() => handleImageError(med.name)}
+                        onError={() => handleImageError(activeImgUrl!)}
                         className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
@@ -277,15 +286,37 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                       </div>
                     )}
 
-                    {/* Category & Schedule Badges */}
-                    <div className="absolute top-2 left-2 flex flex-col gap-1">
+                    {/* Quick View Hover Overlay */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuickViewMed(med);
+                        setModalActiveImage(activeImgUrl);
+                      }}
+                      className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-10"
+                      title="Inspect all product angles"
+                    >
+                      <span className="px-3 py-1.5 rounded-xl bg-bg/95 backdrop-blur-md border border-border text-xs font-bold text-text shadow-xl flex items-center gap-1.5 hover:scale-105 transition-transform">
+                        <Eye size={13} className="text-sky" />
+                        <span>Quick View ({gallery.length || 1})</span>
+                      </span>
+                    </button>
+
+                    {/* Category & Current Angle Badges */}
+                    <div className="absolute top-2 left-2 flex flex-col gap-1 z-10 pointer-events-none">
                       <span className="px-2 py-0.5 bg-bg2/90 backdrop-blur-sm border border-border text-[10px] font-bold text-text rounded-md shadow-xs">
                         {med.category}
                       </span>
+                      {currentAngle && (
+                        <span className="px-1.5 py-0.5 bg-sky/20 backdrop-blur-sm border border-sky/40 text-[9px] font-bold text-sky rounded-md shadow-xs flex items-center gap-1">
+                          {currentAngle.is_primary && <span>⭐</span>}
+                          <span>{currentAngle.label}</span>
+                        </span>
+                      )}
                     </div>
 
-                    {/* Stock Status Badge */}
-                    <div className="absolute top-2 right-2">
+                    {/* Stock Status & Angle Count Badges */}
+                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1 z-10 pointer-events-none">
                       {med.in_stock ? (
                         <span className="px-2 py-0.5 bg-emerald-500/90 text-white text-[10px] font-bold rounded-md shadow-xs flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-100 animate-pulse" />
@@ -296,8 +327,65 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                           Available on Request
                         </span>
                       )}
+                      {gallery.length > 1 && (
+                        <span className="px-1.5 py-0.5 bg-bg/90 backdrop-blur-sm border border-border text-[9px] font-bold text-text rounded-md shadow-xs flex items-center gap-1">
+                          <Camera size={10} className="text-sky" />
+                          <span>{gallery.length} Views</span>
+                        </span>
+                      )}
                     </div>
                   </div>
+
+                  {/* 3-4 Angle Micro-Thumbnail Strip (shown when product has multiple angles) */}
+                  {gallery.length > 1 && (
+                    <div className="px-3 py-1.5 bg-bg border-b border-border flex items-center justify-between gap-1 overflow-x-auto">
+                      <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                        {gallery.slice(0, 4).map((ang, aIdx) => {
+                          const isAngleSelected = (activeImgUrl === ang.url);
+                          return (
+                            <button
+                              key={`${ang.url}-${aIdx}`}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedAngleMap(prev => ({ ...prev, [med.name]: ang.url }));
+                              }}
+                              onMouseEnter={() => {
+                                setSelectedAngleMap(prev => ({ ...prev, [med.name]: ang.url }));
+                              }}
+                              title={ang.label}
+                              className={`relative w-8 h-8 rounded-lg overflow-hidden border p-0.5 transition-all cursor-pointer shrink-0 ${
+                                isAngleSelected
+                                  ? 'border-primary ring-2 ring-primary/40 bg-bg2 shadow-xs'
+                                  : 'border-border/60 bg-bg hover:border-primary/50 opacity-70 hover:opacity-100'
+                              }`}
+                            >
+                              <img
+                                src={ang.url}
+                                alt={ang.label}
+                                className="w-full h-full object-contain"
+                                onError={() => handleImageError(ang.url)}
+                              />
+                              {ang.is_primary && (
+                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 border border-bg shadow-xs" title="Primary 2-in-1" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickViewMed(med);
+                          setModalActiveImage(activeImgUrl);
+                        }}
+                        className="text-[10px] text-sky hover:underline font-bold shrink-0 flex items-center gap-0.5 cursor-pointer ml-1"
+                      >
+                        <span>{gallery.length} Views</span>
+                        <ChevronRight size={11} />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Card Content */}
                   <div className="p-4 space-y-2">
@@ -456,6 +544,221 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             <span>Review & Order</span>
             <ChevronRight className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Multi-Angle Quick View Modal */}
+      {quickViewMed && (
+        <div
+          className="fixed inset-0 z-50 bg-bg3/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setQuickViewMed(null)}
+        >
+          <div
+            className="bg-bg2 border border-border rounded-3xl shadow-2xl max-w-3xl w-full overflow-hidden flex flex-col md:flex-row max-h-[90vh]"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Left: Interactive Multi-Angle Gallery */}
+            <div className="md:w-1/2 bg-bg border-b md:border-b-0 md:border-r border-border p-6 flex flex-col justify-between">
+              {/* Main Angle Preview */}
+              <div className="relative w-full h-64 sm:h-72 bg-bg3/30 rounded-2xl border border-border/80 p-4 flex items-center justify-center overflow-hidden">
+                {modalActiveImage && !imageErrors[modalActiveImage] ? (
+                  <img
+                    src={modalActiveImage}
+                    alt={quickViewMed.name}
+                    className="max-h-full max-w-full object-contain drop-shadow-md transition-all duration-300"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 text-muted">
+                    <Pill className="w-12 h-12 text-muted/50" />
+                    <span className="text-xs font-semibold">Standard Pharma Packaging</span>
+                  </div>
+                )}
+
+                {/* Angle Tag on Preview */}
+                {(() => {
+                  const modalGallery = (quickViewMed.gallery && quickViewMed.gallery.length > 0)
+                    ? quickViewMed.gallery
+                    : (quickViewMed.image_url ? [{ url: quickViewMed.image_url, type: 'combined', label: 'Front & Back', is_primary: true }] : []);
+                  const curAngle = modalGallery.find(g => g.url === modalActiveImage) || modalGallery[0];
+                  if (!curAngle) return null;
+                  return (
+                    <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                      <span className="px-2.5 py-1 rounded-lg bg-bg2/90 backdrop-blur-md border border-sky/40 text-sky text-[11px] font-bold shadow-md flex items-center gap-1">
+                        {curAngle.is_primary && <span>⭐</span>}
+                        <span>{curAngle.label}</span>
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Angle Description Banner */}
+              {(() => {
+                const modalGallery = (quickViewMed.gallery && quickViewMed.gallery.length > 0)
+                  ? quickViewMed.gallery
+                  : (quickViewMed.image_url ? [{ url: quickViewMed.image_url, type: 'combined', label: 'Front & Back', is_primary: true }] : []);
+                const curAngle = modalGallery.find(g => g.url === modalActiveImage) || modalGallery[0];
+                const DESCRIPTIONS: Record<string, string> = {
+                  combined: 'Dual-sided overview: Displays both front branding and reverse composition simultaneously.',
+                  front: 'Front Face: Official packaging artwork showing trade name, dosage form & strength.',
+                  back: 'Back / Blister View: Active chemical salts, manufacturing license, batch & expiry details.',
+                  box: 'Packaging Carton: Outer 3D box view as received from verified pharmaceutical distributors.',
+                  tablet: 'Dosage Form: Close-up inspection of actual physical tablet/capsule.'
+                };
+                return (
+                  <div className="my-3 p-2.5 rounded-xl bg-bg3/60 border border-border text-[11px] text-muted">
+                    <span className="font-bold text-text">Angle Guide: </span>
+                    {DESCRIPTIONS[curAngle?.type || 'front'] || 'Verified authentic product photography.'}
+                  </div>
+                );
+              })()}
+
+              {/* 3-4 Angle Thumbnails Row */}
+              {(() => {
+                const modalGallery = (quickViewMed.gallery && quickViewMed.gallery.length > 0)
+                  ? quickViewMed.gallery
+                  : (quickViewMed.image_url ? [{ url: quickViewMed.image_url, type: 'combined', label: 'Front & Back', is_primary: true }] : []);
+                if (modalGallery.length <= 1) return null;
+                return (
+                  <div className="pt-2 border-t border-border">
+                    <span className="text-[10px] uppercase font-bold text-muted tracking-wider block mb-2">
+                      Available Views ({modalGallery.length}):
+                    </span>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                      {modalGallery.map((ang, idx) => {
+                        const isSelected = (modalActiveImage === ang.url);
+                        return (
+                          <button
+                            key={`${ang.url}-${idx}`}
+                            type="button"
+                            onClick={() => setModalActiveImage(ang.url)}
+                            className={`p-1.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                              isSelected
+                                ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
+                                : 'border-border bg-bg hover:border-primary/40 opacity-70 hover:opacity-100'
+                            }`}
+                          >
+                            <img
+                              src={ang.url}
+                              alt={ang.label}
+                              className="w-12 h-12 object-contain rounded-lg"
+                              onError={() => handleImageError(ang.url)}
+                            />
+                            <span className="text-[9px] font-bold text-text truncate max-w-[64px]">
+                              {ang.type === 'combined' ? '⭐ Both' : ang.label.split(' ')[0]}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Right: Product Master Specs & Actions */}
+            <div className="md:w-1/2 p-6 flex flex-col justify-between overflow-y-auto">
+              <div className="space-y-4">
+                {/* Header */}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="px-2 py-0.5 rounded-md bg-bg border border-border text-[10px] font-bold text-sky uppercase">
+                      {quickViewMed.category}
+                    </span>
+                    <h2 className="text-lg sm:text-xl font-black text-text mt-1 leading-snug">
+                      {quickViewMed.name}
+                    </h2>
+                    {quickViewMed.manufacturer && (
+                      <p className="text-xs text-muted font-medium mt-0.5">
+                        Mfg: <span className="text-text font-semibold">{quickViewMed.manufacturer}</span>
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setQuickViewMed(null)}
+                    className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Salt Composition */}
+                {quickViewMed.composition && (
+                  <div className="p-3 rounded-xl bg-bg border border-border space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-muted tracking-wider block">
+                      Active Composition / Salt
+                    </span>
+                    <p className="text-xs text-text font-mono font-medium leading-relaxed">
+                      {quickViewMed.composition}
+                    </p>
+                  </div>
+                )}
+
+                {/* Specs Grid */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-2.5 rounded-xl bg-bg border border-border">
+                    <span className="text-[10px] text-muted block uppercase font-bold">Packaging</span>
+                    <span className="font-semibold text-text">{quickViewMed.pack || 'Standard Strip'}</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-bg border border-border">
+                    <span className="text-[10px] text-muted block uppercase font-bold">Availability</span>
+                    <span className={`font-semibold ${quickViewMed.in_stock ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {quickViewMed.in_stock ? `In Stock (${quickViewMed.stock_qty})` : 'Order on Request'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Pricing Block */}
+                <div className="p-3.5 rounded-xl bg-bg3/40 border border-border flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-muted uppercase font-bold block">Patient Price</span>
+                    <div className="flex items-baseline gap-2 mt-0.5">
+                      <span className="text-xl font-black text-primary">
+                        ₹{quickViewMed.sell_price.toFixed(2)}
+                      </span>
+                      {quickViewMed.mrp > quickViewMed.sell_price && (
+                        <span className="text-xs text-muted line-through">
+                          ₹{quickViewMed.mrp.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {quickViewMed.mrp > quickViewMed.sell_price && (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs">
+                      {Math.round(((quickViewMed.mrp - quickViewMed.sell_price) / quickViewMed.mrp) * 100)}% OFF
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-4 border-t border-border mt-4 space-y-2">
+                <button
+                  onClick={() => {
+                    onToggleItem(quickViewMed.name, quickViewMed.sell_price, 1);
+                    setQuickViewMed(null);
+                  }}
+                  className="w-full py-3 rounded-xl bg-primary text-white font-bold text-xs shadow-lg hover:opacity-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ShoppingCart size={16} />
+                  <span>
+                    {selectedItems[quickViewMed.name] ? 'Update in Refill Cart' : 'Add to Monthly Refill Cart'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    openWhatsAppOrder(quickViewMed);
+                    setQuickViewMed(null);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-bg hover:bg-bg3 border border-border text-text font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer text-center"
+                >
+                  <MessageSquare size={15} className="text-emerald-500" />
+                  <span>Inquire / Order via WhatsApp</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 51;
+const CURRENT_SCHEMA_VERSION = 53;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -304,13 +304,36 @@ export async function ensureSchema(dbPath: string) {
           is_active INTEGER DEFAULT 0,
           retry_count INTEGER DEFAULT 0,
           replaced_from_image_id INTEGER,
+          previous_image_url TEXT,
+          next_review_at DATETIME,
+          skip_reason TEXT,
+          locked_by TEXT,
+          locked_at DATETIME,
+          verification_version INTEGER DEFAULT 1,
           verified_by TEXT,
           verified_at DATETIME,
+          image_type TEXT DEFAULT 'combined',
+          is_primary INTEGER DEFAULT 0,
+          slot_number INTEGER DEFAULT 1,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
+      try {
+        const ciCols = await db.all('PRAGMA table_info(catalog_images)');
+        const hasCol = (name: string) => ciCols.some((c: any) => c.name.toLowerCase() === name.toLowerCase());
+        if (!hasCol('previous_image_url')) await db.run('ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT');
+        if (!hasCol('next_review_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME');
+        if (!hasCol('skip_reason')) await db.run('ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT');
+        if (!hasCol('locked_by')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_by TEXT');
+        if (!hasCol('locked_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME');
+        if (!hasCol('verification_version')) await db.run('ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1');
+        if (!hasCol('image_type')) await db.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
+        if (!hasCol('is_primary')) await db.run('ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0');
+        if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
+      } catch (_e) {}
+
       await db.run(`
         CREATE TABLE IF NOT EXISTS catalog_image_rejections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,12 +346,34 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS image_review_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_image_id INTEGER NOT NULL,
+          medicine_id INTEGER NOT NULL,
+          previous_status TEXT,
+          new_status TEXT NOT NULL,
+          previous_image_url TEXT,
+          new_image_url TEXT,
+          action TEXT NOT NULL,
+          reason TEXT,
+          performed_by TEXT DEFAULT 'admin',
+          performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          metadata TEXT,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
 
       // Ensure customer portal tables exist on fast-boot
       await db.run(`
@@ -467,14 +512,49 @@ export async function ensureSchema(dbPath: string) {
           channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
           device_info TEXT,
           ip_address TEXT,
+          logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          logged_out_at DATETIME,
+          duration_seconds INTEGER DEFAULT 0,
+          is_active INTEGER DEFAULT 1,
           expires_at DATETIME NOT NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
       `);
+      try {
+        const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
+        const sessNames = new Set(sessCols.map((c: any) => c.name));
+        if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
+          await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+        }
+        if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
+          await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+        }
+        if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
+          await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+        }
+        if (sessCols.length > 0 && !sessNames.has('is_active')) {
+          await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
+        }
+      } catch (_) {}
       await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
+
+      try {
+        const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
+        const accNames = new Set(accCols.map((c: any) => c.name));
+        if (accCols.length > 0 && !accNames.has('total_login_count')) {
+          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+        }
+        if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
+          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+        }
+        if (accCols.length > 0 && !accNames.has('last_logout_at')) {
+          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+        }
+      } catch (_) {}
 
       await ensureMedicinesFts(db);
       return;
@@ -1571,8 +1651,14 @@ export async function ensureSchema(dbPath: string) {
     ['special_orders', 'pharmacy_verification_status', "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
     ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
     ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
-    ['special_orders', 'online_order_ref', 'ALTER TABLE special_orders ADD COLUMN online_order_ref TEXT'],
     ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
+    // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
+    ['catalog_images', 'previous_image_url', 'ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT'],
+    ['catalog_images', 'next_review_at', 'ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME'],
+    ['catalog_images', 'skip_reason', 'ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT'],
+    ['catalog_images', 'locked_by', 'ALTER TABLE catalog_images ADD COLUMN locked_by TEXT'],
+    ['catalog_images', 'locked_at', 'ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME'],
+    ['catalog_images', 'verification_version', 'ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
@@ -2972,8 +3058,17 @@ export async function ensureSchema(dbPath: string) {
       is_active INTEGER DEFAULT 0,
       retry_count INTEGER DEFAULT 0,
       replaced_from_image_id INTEGER,
+      previous_image_url TEXT,
+      next_review_at DATETIME,
+      skip_reason TEXT,
+      locked_by TEXT,
+      locked_at DATETIME,
+      verification_version INTEGER DEFAULT 1,
       verified_by TEXT,
       verified_at DATETIME,
+      image_type TEXT DEFAULT 'combined',
+      is_primary INTEGER DEFAULT 0,
+      slot_number INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
@@ -2991,12 +3086,34 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
     )
   `);
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS image_review_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_image_id INTEGER NOT NULL,
+      medicine_id INTEGER NOT NULL,
+      previous_status TEXT,
+      new_status TEXT NOT NULL,
+      previous_image_url TEXT,
+      new_image_url TEXT,
+      action TEXT NOT NULL,
+      reason TEXT,
+      performed_by TEXT DEFAULT 'admin',
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      metadata TEXT,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
 
   // Catalog correction audit log (Schema v50)
   await db.run(`
@@ -3058,14 +3175,49 @@ export async function ensureSchema(dbPath: string) {
       channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
       device_info TEXT,
       ip_address TEXT,
+      logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      logged_out_at DATETIME,
+      duration_seconds INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
       expires_at DATETIME NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
     )
   `);
+  try {
+    const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
+    const sessNames = new Set(sessCols.map((c: any) => c.name));
+    if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+    }
+    if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+    }
+    if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+    }
+    if (sessCols.length > 0 && !sessNames.has('is_active')) {
+      await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
+    }
+  } catch (_) {}
   await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
+
+  try {
+    const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
+    const accNames = new Set(accCols.map((c: any) => c.name));
+    if (accCols.length > 0 && !accNames.has('total_login_count')) {
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+    }
+    if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+    }
+    if (accCols.length > 0 && !accNames.has('last_logout_at')) {
+      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+    }
+  } catch (_) {}
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
