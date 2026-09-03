@@ -1707,7 +1707,26 @@ export const api = {
   updateCustomerPhone: (data: { customer_id?: number; new_phone: string; token?: string }) =>
     apiClient.put<{ success: boolean; message: string; customer_id: number; new_phone: string; token: string }>('/customer-portal/customer/phone', data, { headers: data.token ? { Authorization: `Bearer ${data.token}` } : undefined }).then(res => res.data),
   placeCustomerRefillOrder: (data: { customer_id?: number; customer_name: string; customer_phone: string; store_id: number; items: Array<{ product: string; qty: number; price?: number }>; payment_method?: string; delivery_mode?: 'pickup' | 'delivery'; delivery_address?: string; notes?: string; idempotency_key?: string }) =>
-    apiClient.post<{ success: boolean; message: string; store_id: number; store_name: string; orders: any[]; customer: { name: string; phone: string } }>('/customer-portal/customer/refill-order', data, { headers: data.idempotency_key ? { 'idempotency-key': data.idempotency_key } : undefined }).then(res => res.data),
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      store_id: number;
+      store_name: string;
+      orders: any[];
+      order_id?: number;
+      total_amount?: number;
+      payment_method?: string;
+      payment_qr?: {
+        qr_id: string;
+        label: string;
+        payee_name: string;
+        upi_id: string;
+        qr_image_url?: string;
+        amount: number;
+        upi_uri: string;
+      } | null;
+      customer: { name: string; phone: string };
+    }>('/customer-portal/customer/refill-order', data, { headers: data.idempotency_key ? { 'idempotency-key': data.idempotency_key } : undefined }).then(res => res.data),
   changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
   getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number }) =>
@@ -1748,12 +1767,12 @@ export const api = {
         bp_cardiac: number;
       };
     }>('/customer-portal/categories-summary').then(res => res.data),
-  getCatalogImages: (params?: { status?: string; search?: string; medicine_id?: number; page?: number; limit?: number }) =>
+  getCatalogImages: (params?: { status?: string; search?: string; medicine_id?: number; group_by_medicine?: boolean; page?: number; limit?: number }) =>
     apiClient.get<{ success: boolean; images: CatalogImageItem[]; totalCount: number; totalPages: number; page: number }>('/catalog/images', { params }).then(res => res.data),
   getCatalogImageCounts: () =>
     apiClient.get<{ success: boolean; counts: CatalogImageCounts }>('/catalog/images/counts').then(res => res.data),
-  approveCatalogImage: (id: number, verified_by?: string) =>
-    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/approve`, { verified_by }).then(res => res.data),
+  approveCatalogImage: (id: number, verified_by?: string, medicine_edits?: { name?: string; manufacturer?: string; mrp?: number }) =>
+    apiClient.post<{ success: boolean; message: string }>(`/catalog/images/${id}/approve`, { verified_by, medicine_edits }).then(res => res.data),
   rejectCatalogImage: (id: number, reason?: string, verified_by?: string) =>
     apiClient.post<{ success: boolean; message: string; autoRedownloadTriggered: boolean }>(`/catalog/images/${id}/reject`, { reason, verified_by }).then(res => res.data),
   removeCatalogImage: (id: number, verified_by?: string) =>
@@ -1784,6 +1803,8 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; evaluated: number; approved: number; skipped: number }>('/catalog/images/auto-approve').then(res => res.data),
   repairMissingCatalogImages: (limit = 50) =>
     apiClient.post<{ success: boolean; message: string; scanned: number; repaired: number; failed: number }>('/catalog/images/repair-missing', { limit }).then(res => res.data),
+  scanLocalImages: () =>
+    apiClient.post<{ success: boolean; message: string; matched: number; pending_review: number; unmatched: number; skipped: number }>('/catalog/images/scan-local').then(res => res.data),
   
   // Dedicated Image Correction & Verification System
   getCorrectionQueue: (params?: { category?: string; search?: string; status?: string; page?: number; limit?: number }) =>
@@ -1855,6 +1876,20 @@ export const api = {
         metadata: string | null;
       }>;
     }>(`/catalog/images/${id}/history`).then(res => res.data),
+
+  // 3-UPI QR Code System & Delivery Configuration (§13, §15)
+  getPaymentQrs: () =>
+    apiClient.get<{ success: boolean; configs: Array<{ id: string; label: string; payee_name: string; upi_id: string; qr_image_url?: string; is_active: boolean }> }>('/settings/payment-qrs').then(res => res.data),
+  savePaymentQrs: (configs: Array<{ id: string; label: string; payee_name: string; upi_id: string; qr_image_url?: string; is_active: boolean }>) =>
+    apiClient.post<{ success: boolean; message: string }>('/settings/payment-qrs', { configs }).then(res => res.data),
+  getDeliveryConfig: () =>
+    apiClient.get<{ success: boolean; delivery_enabled: boolean }>('/settings/delivery-config').then(res => res.data),
+  saveDeliveryConfig: (delivery_enabled: boolean) =>
+    apiClient.post<{ success: boolean; delivery_enabled: boolean }>('/settings/delivery-config', { delivery_enabled }).then(res => res.data),
+  markOrderPaid: (orderId: number) =>
+    apiClient.post<{ success: boolean; message: string; order_id: number; payment_status: string }>(`/website/orders/${orderId}/mark-paid`).then(res => res.data),
+  getOrderPaymentQr: (orderId: number) =>
+    apiClient.get<{ success: boolean; qr_id: string; label: string; payee_name: string; upi_id: string; upi_uri: string; qr_image_url: string; amount: number; payment_status: string }>(`/website/orders/${orderId}/payment-qr`).then(res => res.data),
 };
 
 export interface CatalogImageItem {
@@ -1896,7 +1931,11 @@ export interface CatalogImageItem {
   mrp?: number;
   manufacturer?: string;
   category?: string;
+  angle_count?: number;
+  match_source?: string | null;
+  match_confidence?: number | null;
 }
+
 
 export interface CatalogImageCounts {
   total: number;
@@ -1905,6 +1944,7 @@ export interface CatalogImageCounts {
   approved: number;
   rejected: number;
   removed: number;
+  missing_angles?: number;
 }
 
 // Modular Domain APIs (AI Pharmacy V3 Architecture)

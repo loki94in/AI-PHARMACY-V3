@@ -365,11 +365,21 @@ export default function WebsiteOrders() {
                   {/* Card Header: Order # & Status */}
                   <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2.5">
                     <div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-black text-primary">#{order.id}</span>
                         <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-primary/10 text-primary border border-primary/20">
                           Website
                         </span>
+                        {order.order_type && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase bg-bg3 text-muted border border-border">
+                            {order.order_type === 'DELIVERY' ? '🚚 Delivery' : '🏢 Pickup'}
+                          </span>
+                        )}
+                        {order.payment_qr_id && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                            {order.payment_qr_id}
+                          </span>
+                        )}
                         {order.prescription_url && (
                           <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center gap-0.5">
                             <FileImage size={10} /> Rx Attached
@@ -385,7 +395,7 @@ export default function WebsiteOrders() {
                     {/* Status Pill */}
                     <div className="flex flex-col items-end gap-1">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        order.status === 'Fulfilled'
+                        order.status === 'Fulfilled' || order.status === 'ORDER_READY_FOR_PICKUP'
                           ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
                           : order.status === 'Ready'
                           ? 'bg-blue-500/10 text-blue-500 border-blue-500/30'
@@ -393,11 +403,21 @@ export default function WebsiteOrders() {
                           ? 'bg-rose-500/10 text-rose-500 border-rose-500/30'
                           : 'bg-amber-500/10 text-amber-500 border-amber-500/30'
                       }`}>
-                        {order.status || 'Pending'}
+                        {order.status === 'ORDER_READY_FOR_PICKUP' ? 'Ready for Pickup' : (order.status || 'Pending')}
                       </span>
+                      {order.payment_status === 'PENDING_VERIFICATION' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-0.5">
+                          <Clock size={9} /> Paid (Verify)
+                        </span>
+                      )}
+                      {(order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+                          Paid ✓
+                        </span>
+                      )}
                       {order.delivery_status && (
                         <span className="text-[9px] font-mono text-muted capitalize">
-                          Delivery: {order.delivery_status}
+                          {order.order_type === 'PICKUP' ? 'Pickup' : `Delivery: ${order.delivery_status}`}
                         </span>
                       )}
                     </div>
@@ -503,21 +523,44 @@ export default function WebsiteOrders() {
 
                   {/* Actions Row */}
                   <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-1.5 flex-wrap">
-                    {/* Confirm Payment — for unpaid website orders */}
-                    {order.customer_order_source === 'website' && order.payment_status !== 'CONFIRMED' && order.status !== 'Cancelled' && (
+                    {/* Confirm Payment — for unpaid website orders or pending verification */}
+                    {order.customer_order_source === 'website' && order.payment_status !== 'CONFIRMED' && order.payment_status !== 'PAYMENT_CONFIRMED' && order.status !== 'Cancelled' && (
                       <button
                         type="button"
                         disabled={actionInProgress === order.id}
                         onClick={() => handleConfirmPayment(order.id)}
-                        className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                        className={`flex-1 py-1.5 px-2 text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 ${
+                          order.payment_status === 'PENDING_VERIFICATION'
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        }`}
                       >
                         <CreditCard size={13} />
-                        <span>{actionInProgress === order.id ? 'Confirming…' : 'Confirm Payment'}</span>
+                        <span>
+                          {actionInProgress === order.id
+                            ? 'Confirming…'
+                            : order.payment_status === 'PENDING_VERIFICATION'
+                            ? 'Verify Payment & Mark Ready'
+                            : 'Confirm Payment'}
+                        </span>
+                      </button>
+                    )}
+
+                    {/* Customer Handover — for Ready for Pickup orders */}
+                    {order.status === 'ORDER_READY_FOR_PICKUP' && (
+                      <button
+                        type="button"
+                        disabled={actionInProgress === order.id}
+                        onClick={() => handleMarkDelivered(order.id)}
+                        className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Check size={13} />
+                        <span>{actionInProgress === order.id ? 'Updating…' : 'Handover / Picked Up'}</span>
                       </button>
                     )}
 
                     {/* Move to Live Cart — for payment-confirmed orders */}
-                    {order.payment_status === 'CONFIRMED' && order.pharmacy_verification_status !== 'DONE' && (
+                    {(order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') && order.status !== 'ORDER_READY_FOR_PICKUP' && order.pharmacy_verification_status !== 'DONE' && (
                       <button
                         type="button"
                         onClick={() => navigate(`/live-cart?order=${order.id}`)}
@@ -528,7 +571,7 @@ export default function WebsiteOrders() {
                       </button>
                     )}
 
-                    {order.status === 'Pending' && order.payment_status !== 'CONFIRMED' && (
+                    {order.status === 'Pending' && order.payment_status !== 'CONFIRMED' && order.payment_status !== 'PAYMENT_CONFIRMED' && (
                       <button
                         type="button"
                         disabled={actionInProgress === order.id}

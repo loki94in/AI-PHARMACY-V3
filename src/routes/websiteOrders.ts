@@ -5,6 +5,8 @@ import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js';
+import { paymentQrService } from '../services/paymentQrService.js';
+import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 
 const router = express.Router();
 
@@ -15,6 +17,7 @@ const broadcastOrdersChanged = () => {
 };
 
 // ─── Medicine Search (spec §11: highest valid MRP from live batches) ──────────
+// ─── Medicine Search (spec §11, §7, §8: 3-word normalized prefix + token match) ──
 // GET /api/website/medicines/search
 // Customer-facing safe medicine search — never leaks distributor names, cost prices, or internal mappings.
 router.get('/medicines/search', async (req, res) => {
@@ -28,26 +31,43 @@ router.get('/medicines/search', async (req, res) => {
     }
 
     const db = await dbManager.getConnection();
+    const normalizedQuery = normalizeProductName(query);
+    const prefix = getThreeWordPrefix(query);
 
-    // Prefix search first (index scan), fall back to middle-word if too few results
-    let medicines = await db.all(
-      `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category
+    // Pass 1: 3-word prefix or normalized name match (index scan)
+    const medicines: any[] = await db.all(
+      `SELECT m.id, m.name, m.canonical_name, m.normalized_name, m.product_code, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category,
+              ci.image_path as image_url
        FROM medicines m
-       WHERE m.name LIKE ?
+       LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1
+       WHERE ((m.normalized_name IS NOT NULL AND m.normalized_name LIKE ?) OR m.name LIKE ?)
+         AND (m.status IS NULL OR m.status = 'ACTIVE')
        ORDER BY m.name ASC
        LIMIT ?`,
-      [`${query}%`, limit]
+      [`${prefix || normalizedQuery}%`, `${query}%`, limit]
     ).catch(() => []);
 
+    // Pass 2: Middle-word token containment if Pass 1 returned too few results
     if (medicines.length < 5 && query.length >= 2) {
-      medicines = await db.all(
-        `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category
+      const existingIds = new Set(medicines.map((m: any) => m.id));
+      const fallbackRows: any[] = await db.all(
+        `SELECT m.id, m.name, m.canonical_name, m.normalized_name, m.product_code, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category,
+                ci.image_path as image_url
          FROM medicines m
-         WHERE m.name LIKE ?
+         LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1
+         WHERE ((m.normalized_name IS NOT NULL AND m.normalized_name LIKE ?) OR m.name LIKE ?)
+           AND (m.status IS NULL OR m.status = 'ACTIVE')
          ORDER BY m.name ASC
          LIMIT ?`,
-        [`%${query}%`, limit]
+        [`%${normalizedQuery}%`, `%${query}%`, limit]
       ).catch(() => []);
+
+      for (const f of fallbackRows) {
+        if (!existingIds.has(f.id)) {
+          medicines.push(f);
+          existingIds.add(f.id);
+        }
+      }
     }
 
     const safeResults = [];
@@ -69,7 +89,9 @@ router.get('/medicines/search', async (req, res) => {
 
       safeResults.push({
         id: med.id,
+        product_id: med.product_code || formatProductCode(med.id),
         name: med.name,
+        canonical_name: med.canonical_name || med.name,
         generic_name: med.generic_name || '',
         strength: med.strength || '',
         packaging: med.packaging || '',
@@ -77,6 +99,7 @@ router.get('/medicines/search', async (req, res) => {
         category: med.category || '',
         mrp: highestMrp,
         price: highestSellPrice,
+        image_url: med.image_url || null,
         is_available: totalStock > 0,
         availability_status: totalStock > 0 ? 'Available' : 'Sold Out'
       });
@@ -97,6 +120,9 @@ router.get('/medicines/search', async (req, res) => {
 // ─── Create Online Order (spec §15, §18) ─────────────────────────────────────
 // POST /api/website/orders
 // Creates the order, inserts online_order_items rows, and tranasactionally reserves stock.
+// ─── Create Online Order (spec §15, §18, §12, §13) ───────────────────────────
+// POST /api/website/orders
+// Creates the order, assigns alternating UPI QR, inserts snapshots into online_order_items, and reserves stock.
 router.post('/orders', async (req, res) => {
   const {
     customer_name,
@@ -107,7 +133,9 @@ router.post('/orders', async (req, res) => {
     prescription_url,
     product_image_url,
     notes,
-    payment_method = 'COD'
+    payment_method = 'COUNTER_PICKUP',
+    delivery_mode = 'pickup',
+    order_type: explicitOrderType
   } = req.body;
 
   if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -120,6 +148,19 @@ router.post('/orders', async (req, res) => {
     const cleanName = formatCustomerName(customer_name);
     const targetStoreId = parseInt(String(store_id), 10) || 1;
     const todayStr = new Date().toISOString();
+    const orderType = (explicitOrderType || (delivery_mode === 'delivery' ? 'DELIVERY' : 'PICKUP')).toUpperCase();
+
+    // Calculate total order amount
+    const totalOrderAmount = items.reduce(
+      (sum: number, it: any) => sum + ((Number(it.qty) || 1) * (Number(it.price || it.mrp) || 0)),
+      0
+    );
+
+    // 3-QR Code Allocation (§13): Strict alternating rotation if UPI
+    let allocatedQr = null;
+    if (payment_method === 'UPI') {
+      allocatedQr = await paymentQrService.allocateNextQr();
+    }
 
     // Ensure customer exists
     let customerId: number | null = null;
@@ -138,7 +179,7 @@ router.post('/orders', async (req, res) => {
       } catch (_) {}
     }
 
-    const createdOrders: Array<{ id: number; product: string; qty: number }> = [];
+    const createdOrders: Array<{ id: number; product: string; qty: number; payment_qr_id?: string | null }> = [];
 
     await db.run('BEGIN TRANSACTION');
     try {
@@ -159,6 +200,8 @@ router.post('/orders', async (req, res) => {
           ).catch(() => null);
           mrp = batchRow?.max_mrp || 0;
         }
+
+        const itemSubtotal = qty * mrp;
 
         // Check stock availability and reservation race condition (spec §18)
         if (medicineId) {
@@ -186,13 +229,17 @@ router.post('/orders', async (req, res) => {
           }
         }
 
+        const initialPaymentStatus = payment_method === 'UPI' ? 'UNPAID' : 'UNPAID';
+        const initialVerificationStatus = 'PENDING';
+
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, prescription_url, product_image_url,
             delivery_status, return_status, payment_status, pharmacy_verification_status,
+            payment_qr_id, order_type, total_amount,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', 'UNPAID', 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             customerId,
@@ -203,18 +250,25 @@ router.post('/orders', async (req, res) => {
             todayStr,
             notes ? `[Website Order] ${notes}` : '[Website Order]',
             prescription_url || null,
-            product_image_url || null
+            product_image_url || null,
+            initialPaymentStatus,
+            initialVerificationStatus,
+            allocatedQr?.id || null,
+            orderType,
+            totalOrderAmount
           ]
         );
 
         const orderId = Number(result.lastID);
-        createdOrders.push({ id: orderId, product: prodName, qty });
+        createdOrders.push({ id: orderId, product: prodName, qty, payment_qr_id: allocatedQr?.id || null });
 
-        // Insert online_order_items row (spec §5 traceability)
+        // Insert online_order_items row with permanent snapshot data (§5, §6)
         const itemRes = await db.run(
-          `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
-           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
-          [orderId, medicineId, prodName, qty, mrp]
+          `INSERT INTO online_order_items (
+            order_id, medicine_id, product_name, product_name_snapshot,
+            requested_qty, mrp, price_snapshot, subtotal, item_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+          [orderId, medicineId, prodName, prodName, qty, mrp, mrp, itemSubtotal]
         );
         const orderItemId = Number(itemRes.lastID);
 
@@ -242,7 +296,7 @@ router.post('/orders', async (req, res) => {
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Order placed online via website for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty})`]
+          [orderId, `Order placed online (${orderType}) for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty})`]
         );
       }
 
@@ -252,13 +306,22 @@ router.post('/orders', async (req, res) => {
       throw txErr;
     }
 
-    // Send WhatsApp order confirmation
+    // Send WhatsApp order confirmation with exact same selected QR (§14)
     if (cleanPhone && cleanPhone.length >= 10) {
       const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
       const medicalName = await getStoreMedicalNameAndPhone(db);
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
-      const confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!\n\nOrder Items:\n${itemsSummary}\n\nWe are preparing your order and will notify you upon dispatch.`;
+
+      let confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!\n\nOrder Items:\n${itemsSummary}\nTotal Amount: ₹${totalOrderAmount.toFixed(2)}`;
+
+      if (allocatedQr) {
+        const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalOrderAmount, createdOrders[0]?.id || 1);
+        confirmMsg += `\n\n💳 Payment Instructions (${allocatedQr.label}):\nUPI ID: ${allocatedQr.upi_id}\nPayee: ${allocatedQr.payee_name}\nUPI Pay Link:\n${upiUri}\n\n*Important:* After paying via UPI, click "I HAVE PAID" on the website to notify the pharmacy to prepare your order.`;
+      } else {
+        confirmMsg += `\n\n🏢 Fulfillment: In-Store Pickup\nPlease collect and pay at our pharmacy counter.`;
+      }
+
       try {
         await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, 'website_order_confirmation', cleanName);
       } catch (_) {}
@@ -266,11 +329,34 @@ router.post('/orders', async (req, res) => {
 
     broadcastOrdersChanged();
 
+    const primaryOrderId = createdOrders[0]?.id;
+    const paymentQrResponse = allocatedQr
+      ? {
+          qr_id: allocatedQr.id,
+          label: allocatedQr.label,
+          payee_name: allocatedQr.payee_name,
+          upi_id: allocatedQr.upi_id,
+          qr_image_url: allocatedQr.qr_image_url || '',
+          amount: totalOrderAmount,
+          upi_uri: paymentQrService.buildUpiUri(
+            allocatedQr.upi_id,
+            allocatedQr.payee_name,
+            totalOrderAmount,
+            primaryOrderId || 1
+          )
+        }
+      : null;
+
     res.status(201).json({
       success: true,
       message: 'Website order placed successfully',
       store_id: targetStoreId,
+      order_type: orderType,
       orders: createdOrders,
+      order_id: primaryOrderId,
+      total_amount: totalOrderAmount,
+      payment_method,
+      payment_qr: paymentQrResponse,
       customer: { name: cleanName, phone: cleanPhone }
     });
   } catch (err: any) {
@@ -279,9 +365,66 @@ router.post('/orders', async (req, res) => {
   }
 });
 
-// ─── Confirm Payment (spec §2, §6) ───────────────────────────────────────────
+// ─── Customer Reports "I HAVE PAID" (§12) ────────────────────────────────────
+// POST /api/website/orders/:orderId/mark-paid
+router.post('/orders/:orderId/mark-paid', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    await db.run(
+      `UPDATE special_orders
+       SET payment_status = 'PENDING_VERIFICATION',
+           pharmacy_verification_status = 'PENDING',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [orderId]
+    );
+
+    await db.run(
+      `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'customer_marked_paid', 'Customer reported payment completed. Awaiting pharmacy verification.', 'customer', CURRENT_TIMESTAMP)`,
+      [orderId]
+    );
+
+    broadcastOrdersChanged();
+
+    res.json({
+      success: true,
+      message: 'Payment reported successfully. Pharmacy verification is in progress.',
+      order_id: orderId,
+      payment_status: 'PENDING_VERIFICATION'
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Mark paid error:', err);
+    res.status(500).json({ error: 'Failed to mark order paid' });
+  }
+});
+
+// ─── Fetch Order Payment QR Details (§13, §14) ───────────────────────────────
+// GET /api/website/orders/:orderId/payment-qr
+router.get('/orders/:orderId/payment-qr', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const details = await paymentQrService.getOrderQrDetails(orderId);
+    if (!details) return res.status(404).json({ error: 'Order or QR configuration not found' });
+
+    res.json({ success: true, ...details });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Payment QR fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch payment QR' });
+  }
+});
+
+// ─── Confirm Payment & Mark Ready for Pickup (§12, §6) ────────────────────────
 // PATCH /api/website/orders/:orderId/payment
-// Pharmacy marks payment as CONFIRMED — moves order into the Live Cart queue.
+// Pharmacy marks payment as CONFIRMED — transitions status to ORDER_READY_FOR_PICKUP.
 router.patch('/orders/:orderId/payment', async (req, res) => {
   try {
     const orderId = parseInt(req.params.orderId, 10);
@@ -293,30 +436,40 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    if (order.payment_status === 'CONFIRMED') {
+    if (order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') {
       return res.status(409).json({ error: 'Payment already confirmed for this order' });
     }
 
+    const nextOrderStatus = order.order_type === 'DELIVERY' ? 'Ready' : 'ORDER_READY_FOR_PICKUP';
+
     await db.run(
       `UPDATE special_orders
-       SET payment_status = 'CONFIRMED',
+       SET payment_status = 'PAYMENT_CONFIRMED',
+           pharmacy_verification_status = 'CONFIRMED',
+           status = ?,
            payment_reference = ?,
            payment_confirmed_at = CURRENT_TIMESTAMP,
            payment_confirmed_by = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
+      [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
     );
 
     await db.run(
       `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
        VALUES (?, 'payment_confirmed', ?, ?, CURRENT_TIMESTAMP)`,
-      [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || 'N/A'}`, confirmed_by]
+      [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || 'N/A'}. Ready for pickup.`, confirmed_by]
     );
 
     broadcastOrdersChanged();
 
-    res.json({ success: true, message: 'Payment confirmed. Order is now in the Live Cart queue.', order_id: orderId });
+    res.json({
+      success: true,
+      message: `Payment confirmed. Order #${orderId} is now ${nextOrderStatus}.`,
+      order_id: orderId,
+      status: nextOrderStatus,
+      payment_status: 'PAYMENT_CONFIRMED'
+    });
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Payment confirm error:', err);
     res.status(500).json({ error: 'Failed to confirm payment' });

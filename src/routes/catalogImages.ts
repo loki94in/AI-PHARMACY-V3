@@ -12,6 +12,7 @@ router.get('/', async (req, res) => {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const medicine_id = req.query.medicine_id ? parseInt(String(req.query.medicine_id), 10) : undefined;
+    const groupByMedicine = req.query.group_by_medicine === 'true' || req.query.groupByMedicine === 'true';
     const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
 
@@ -19,6 +20,7 @@ router.get('/', async (req, res) => {
       status,
       search,
       medicine_id,
+      groupByMedicine,
       page,
       limit
     });
@@ -136,14 +138,33 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
- * POST /api/catalog/images/:id/approve — Approve image as verified active catalog image
+ * POST /api/catalog/images/:id/approve — Approve image as verified active catalog image.
+ * Optionally accepts medicine_edits to atomically update medicine fields in the same call.
  */
 router.post('/:id/approve', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const verifiedBy = req.body?.verified_by || 'pharmacist';
-    const ok = await catalogImageService.approveImage(id, verifiedBy);
+    const medicineEdits: { name?: string; manufacturer?: string; mrp?: number } | undefined = req.body?.medicine_edits;
 
+    // If caller sent medicine field edits, apply them first (same logic as quick-edit)
+    if (medicineEdits && Object.keys(medicineEdits).length > 0) {
+      const db = await dbManager.getConnection();
+      const imageRow = await db.get('SELECT medicine_id FROM catalog_images WHERE id = ?', [id]);
+      if (imageRow?.medicine_id) {
+        const updates: string[] = [];
+        const vals: any[] = [];
+        if (medicineEdits.name !== undefined)         { updates.push('name = ?');         vals.push(medicineEdits.name); }
+        if (medicineEdits.manufacturer !== undefined) { updates.push('manufacturer = ?'); vals.push(medicineEdits.manufacturer); }
+        if (medicineEdits.mrp !== undefined)          { updates.push('mrp = ?');          vals.push(medicineEdits.mrp); }
+        if (updates.length > 0) {
+          vals.push(imageRow.medicine_id);
+          await db.run(`UPDATE medicines SET ${updates.join(', ')} WHERE id = ?`, vals);
+        }
+      }
+    }
+
+    const ok = await catalogImageService.approveImage(id, verifiedBy);
     if (!ok) {
       return res.status(404).json({ success: false, error: 'Image not found' });
     }
@@ -326,9 +347,27 @@ router.post('/auto-approve', async (req, res) => {
 });
 
 /**
+ * POST /api/catalog/images/scan-local — Scan uploads/products/ and auto-match filenames to medicines
+ */
+router.post('/scan-local', async (req, res) => {
+  try {
+    const result = await catalogImageService.scanAndAutoMatchLocalImages();
+    res.json({
+      success: true,
+      message: `Scan complete: ${result.matched} auto-matched, ${result.pending_review} need review, ${result.unmatched} unmatched, ${result.skipped} already linked.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error scanning local images:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to scan local images' });
+  }
+});
+
+/**
  * POST /api/catalog/images/repair-missing — Re-check & auto-repair missing catalog images (Section 18 & 34)
  */
 router.post('/repair-missing', async (req, res) => {
+
   try {
     const limit = req.body?.limit ? parseInt(String(req.body.limit), 10) : 50;
     const result = await catalogImageService.repairMissingImages(limit);

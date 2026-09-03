@@ -9,6 +9,7 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js';
 import { storeContextService } from '../services/storeContextService.js';
 import { catalogImageService } from '../services/catalogImageService.js';
+import { paymentQrService } from '../services/paymentQrService.js';
 
 const router = express.Router();
 
@@ -898,12 +899,25 @@ router.post('/customer/refill-order', async (req, res) => {
     }
 
     // 2. Insert items into special_orders (tagged with customer_order_source = 'website')
-    const createdOrders: Array<{ id: number; product: string; qty: number; price: number }> = [];
+    const createdOrders: Array<{ id: number; product: string; qty: number; price: number; payment_qr_id?: string | null }> = [];
     const modeLabel = isDelivery ? 'Home Delivery' : 'In-Store Pickup';
+    const orderType = isDelivery ? 'DELIVERY' : 'PICKUP';
     const deliveryStatus = isDelivery ? 'pending_dispatch' : 'counter_pickup';
     const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
     const idempotencyTag = idempotencyKey ? ` [Idempotency: ${idempotencyKey}]` : '';
     const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ''}${notes ? ` Notes: ${notes}` : ''}${idempotencyTag}`;
+
+    // Calculate total amount
+    const totalAmount = items.reduce(
+      (sum: number, it: any) => sum + ((Number(it.qty || it.quantity_needed) || 1) * (Number(it.price || it.sell_price || it.mrp) || 0)),
+      0
+    );
+
+    // 3-QR Allocation (§13): Strict alternating rotation if UPI
+    let allocatedQr = null;
+    if (payment_method === 'UPI') {
+      allocatedQr = await paymentQrService.allocateNextQr();
+    }
 
     await db.run('BEGIN TRANSACTION');
     try {
@@ -916,8 +930,10 @@ router.post('/customer/refill-order', async (req, res) => {
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
-            advance_payment, notes, customer_order_source, delivery_status, return_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            advance_payment, notes, customer_order_source, delivery_status, return_status,
+            payment_status, pharmacy_verification_status, payment_qr_id, order_type, total_amount,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             custId,
@@ -927,18 +943,21 @@ router.post('/customer/refill-order', async (req, res) => {
             qty,
             todayStr,
             fullNotes,
-            deliveryStatus
+            deliveryStatus,
+            allocatedQr?.id || null,
+            orderType,
+            totalAmount
           ]
         );
 
         const orderId = Number(result.lastID);
-        createdOrders.push({ id: orderId, product: prodName, qty, price });
+        createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null });
 
         // Record tracking event
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Website order placed for ${modeLabel} at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
+          [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
         );
       }
 
@@ -966,11 +985,15 @@ router.post('/customer/refill-order', async (req, res) => {
       const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
-      const totalAmount = createdOrders.reduce((sum, o) => sum + (o.price * o.qty), 0);
 
-      const confirmMsg = isDelivery
+      let confirmMsg = isDelivery
         ? `*Online Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for ordering at *${storeName}*.\n\n*Ordered Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n🚚 *Mode:* Home Delivery\n📍 *Address:* ${cleanAddress || 'As per records'}${storePhone}\n\n*Our team is packaging your order and will alert you upon dispatch!*`
         : `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${storePhone}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+
+      if (allocatedQr) {
+        const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
+        confirmMsg += `\n\n💳 *Payment Instructions (${allocatedQr.label}):*\nUPI ID: ${allocatedQr.upi_id}\nPayee: ${allocatedQr.payee_name}\nUPI Pay Link:\n${upiUri}\n\n*Important:* After transferring via UPI, click "I HAVE PAID" on the website to submit your payment for pharmacy verification.`;
+      }
 
       try {
         await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, 'website_order_confirmation', cleanName);
@@ -986,13 +1009,36 @@ router.post('/customer/refill-order', async (req, res) => {
       eventService.broadcast('website_order_created', { at: Date.now(), store_id: targetStoreId, customer: cleanName });
     } catch (_) {}
 
+    const primaryOrderId = createdOrders[0]?.id;
+    const paymentQrResponse = allocatedQr
+      ? {
+          qr_id: allocatedQr.id,
+          label: allocatedQr.label,
+          payee_name: allocatedQr.payee_name,
+          upi_id: allocatedQr.upi_id,
+          qr_image_url: allocatedQr.qr_image_url || '',
+          amount: totalAmount,
+          upi_uri: paymentQrService.buildUpiUri(
+            allocatedQr.upi_id,
+            allocatedQr.payee_name,
+            totalAmount,
+            primaryOrderId || 1
+          )
+        }
+      : null;
+
     res.status(201).json({
       success: true,
       message: `${modeLabel} order placed successfully`,
       store_id: targetStoreId,
       store_name: storeName,
       delivery_mode: modeLabel,
+      order_type: orderType,
       orders: createdOrders,
+      order_id: primaryOrderId,
+      total_amount: totalAmount,
+      payment_method,
+      payment_qr: paymentQrResponse,
       customer: { name: cleanName, phone: cleanPhone }
     });
   } catch (err: any) {

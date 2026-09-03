@@ -17,6 +17,7 @@ const UPLOADS_DIR = path.resolve(getAppDataDir(), 'uploads');
 
 import { triggerSchedulerService } from '../services/triggerSchedulerService.js';
 import { reconcileAllMedicineSalesMetrics } from '../services/medicineSalesMetricsService.js';
+import { paymentQrService } from '../services/paymentQrService.js';
 
 const router = express.Router();
 
@@ -1021,6 +1022,58 @@ router.delete('/signature', async (_req, res) => {
   } catch (error) {
     console.error('Failed to delete signature:', error);
     res.status(500).json({ error: 'Failed to delete signature' });
+  }
+});
+
+// ─── 3-UPI QR Code System & Delivery Configuration (§13, §15) ─────────────────
+router.get('/payment-qrs', async (_req, res) => {
+  try {
+    const configs = await paymentQrService.getQrConfigs();
+    res.json({ success: true, configs });
+  } catch (error: any) {
+    console.error('Fetch payment QRs error:', error);
+    res.status(500).json({ error: 'Failed to load QR configurations' });
+  }
+});
+
+router.post('/payment-qrs', async (req, res) => {
+  try {
+    const { configs } = req.body;
+    if (!Array.isArray(configs) || configs.length === 0) {
+      return res.status(400).json({ error: 'configs array is required' });
+    }
+    await paymentQrService.saveQrConfigs(configs);
+    res.json({ success: true, message: 'Payment QR configurations saved' });
+  } catch (error: any) {
+    console.error('Save payment QRs error:', error);
+    res.status(500).json({ error: 'Failed to save QR configurations' });
+  }
+});
+
+router.get('/delivery-config', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'delivery_enabled'");
+    const isDeliveryEnabled = row?.value === 'true';
+    res.json({ success: true, delivery_enabled: isDeliveryEnabled });
+  } catch (error: any) {
+    console.error('Fetch delivery config error:', error);
+    res.status(500).json({ error: 'Failed to fetch delivery configuration' });
+  }
+});
+
+router.post('/delivery-config', async (req, res) => {
+  try {
+    const { delivery_enabled } = req.body;
+    const db = await dbManager.getConnection();
+    await db.run(
+      "INSERT INTO app_settings (key, value) VALUES ('delivery_enabled', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      [delivery_enabled ? 'true' : 'false']
+    );
+    res.json({ success: true, delivery_enabled: !!delivery_enabled });
+  } catch (error: any) {
+    console.error('Save delivery config error:', error);
+    res.status(500).json({ error: 'Failed to update delivery configuration' });
   }
 });
 

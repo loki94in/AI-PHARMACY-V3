@@ -110,13 +110,26 @@ medicines.csv
 # Store in shared drive / release assets instead.
 CATALOG/
 
-# ─── Puppeteer Pharmarack Browser Session Profiles ───────────────────────────
+# ─── Puppeteer & Chrome Browser Session Profiles ─────────────────────────────
 # Chrome browser session data — thousands of files, never commit
 data/pharmarack_profile/
 data/pharmarack_profile_temp_*/
+data/app_browser_profile/
+data/app_browser_profile_temp_*/
+data/*_browser_profile*/
+
+# ─── OS-Specific Files ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── TypeScript / Linter Caches ──────────────────────────────────────────────
+*.tsbuildinfo
+.eslintcache
 
 # ─── Python Virtual Environments & Cache ──────────────────────────────────────
 .venv/
 venv/
 **/__pycache__/
 **/*.pyc
+

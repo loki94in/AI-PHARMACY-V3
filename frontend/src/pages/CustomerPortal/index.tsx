@@ -4,7 +4,8 @@ import {
   Store as StoreIcon, Phone, Key, ShieldCheck, CheckCircle2, Clock,
   ArrowRight, RefreshCw, ShoppingCart, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
-  Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt
+  Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
+  CreditCard, ExternalLink, Copy
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -130,9 +131,22 @@ export default function CustomerPortal() {
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedMedicine>>({});
   const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('COUNTER_PICKUP');
   const [deliveryMode, setDeliveryMode] = useState<'pickup' | 'delivery'>('pickup');
+  const [deliveryEnabled, setDeliveryEnabled] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentQrModal, setPaymentQrModal] = useState<{
+    isOpen: boolean;
+    orderId: number;
+    label: string;
+    payeeName: string;
+    upiId: string;
+    upiUri: string;
+    qrImageUrl?: string;
+    amount: number;
+    isPaidMarked?: boolean;
+  } | null>(null);
+  const [isMarkingPaid, setIsMarkingPaid] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{
     store_name: string;
     orders: any[];
@@ -146,7 +160,7 @@ export default function CustomerPortal() {
   const [pinChangeError, setPinChangeError] = useState('');
   const [pinChangeSuccess, setPinChangeSuccess] = useState('');
 
-  // Load stores on mount
+  // Load stores & delivery configuration on mount
   useEffect(() => {
     api.getStores().then(data => {
       const arr = Array.isArray(data) ? data : ((data as any)?.stores || []);
@@ -159,6 +173,15 @@ export default function CustomerPortal() {
         }));
         setStores(mapped);
         setSelectedStoreId(prev => (mapped.some((st: StoreItem) => st.id === prev) ? prev : mapped[0].id));
+      }
+    }).catch(() => {});
+
+    api.getDeliveryConfig().then(res => {
+      if (res?.success) {
+        setDeliveryEnabled(res.delivery_enabled);
+        if (!res.delivery_enabled) {
+          setDeliveryMode('pickup');
+        }
       }
     }).catch(() => {});
   }, []);
@@ -402,11 +425,40 @@ export default function CustomerPortal() {
         setSelectedItems({});
         setDeliveryAddress('');
         setOrderNotes('');
+
+        // Open 3-UPI QR modal if UPI payment was selected (§12, §13)
+        if (res.payment_qr) {
+          const qr = res.payment_qr;
+          setPaymentQrModal({
+            isOpen: true,
+            orderId: res.order_id || res.orders[0]?.id,
+            label: qr.label || 'Pharmacy Counter UPI (QR 1)',
+            payeeName: qr.payee_name || 'AI Pharmacy',
+            upiId: qr.upi_id,
+            upiUri: qr.upi_uri,
+            qrImageUrl: qr.qr_image_url,
+            amount: qr.amount || totalAmount,
+            isPaidMarked: false
+          });
+        }
       }
     } catch (err: any) {
       setOrderError(err.response?.data?.error || 'Failed to place order');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleMarkPaid = async () => {
+    if (!paymentQrModal?.orderId) return;
+    setIsMarkingPaid(true);
+    try {
+      await api.markOrderPaid(paymentQrModal.orderId);
+      setPaymentQrModal(prev => prev ? { ...prev, isPaidMarked: true } : null);
+    } catch (err: any) {
+      setOrderError(err.response?.data?.error || 'Failed to submit payment status');
+    } finally {
+      setIsMarkingPaid(false);
     }
   };
 
@@ -1169,42 +1221,57 @@ export default function CustomerPortal() {
               <span className="text-base font-extrabold text-primary">₹{totalAmount.toFixed(2)}</span>
             </div>
 
-            {/* Delivery / Collection Mode Selection */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-text uppercase tracking-wider block">
-                Order Fulfillment
-              </label>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMode('pickup')}
-                  className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
-                    deliveryMode === 'pickup'
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-bg text-muted'
-                  }`}
-                >
-                  🏢 In-Store Pickup
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeliveryMode('delivery')}
-                  className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
-                    deliveryMode === 'delivery'
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-bg text-muted'
-                  }`}
-                >
-                  🚚 Home Delivery
-                </button>
+            {/* Delivery / Collection Mode Selection (§15: Feature Flagged) */}
+            {deliveryEnabled ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-text uppercase tracking-wider block">
+                  Order Fulfillment
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryMode('pickup')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
+                      deliveryMode === 'pickup'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-bg text-muted'
+                    }`}
+                  >
+                    🏢 In-Store Pickup
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryMode('delivery')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
+                      deliveryMode === 'delivery'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-bg text-muted'
+                    }`}
+                  >
+                    🚚 Home Delivery
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="p-3 bg-bg rounded-xl border border-border flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-primary/10 text-primary text-sm">🏢</span>
+                  <div>
+                    <span className="text-xs font-bold text-text block">Order Fulfillment: In-Store Pickup</span>
+                    <span className="text-[11px] text-muted">Home delivery is currently disabled. Collect directly from the branch.</span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                  Pickup Only
+                </span>
+              </div>
+            )}
 
             {/* Branch Selection (for pickup or primary branch) */}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-text uppercase tracking-wider flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5 text-primary" />
-                <span>{deliveryMode === 'delivery' ? 'Fulfilling Pharmacy Branch' : 'Pickup Branch'}</span>
+                <span>Pickup Pharmacy Branch</span>
               </label>
               <select
                 value={selectedStoreId}
@@ -1223,8 +1290,8 @@ export default function CustomerPortal() {
               </select>
             </div>
 
-            {/* Delivery Address (when Home Delivery is selected) */}
-            {deliveryMode === 'delivery' && (
+            {/* Delivery Address (Preserved, shown only when delivery is enabled AND selected) */}
+            {deliveryEnabled && deliveryMode === 'delivery' && (
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-text uppercase tracking-wider block">
                   Delivery Address <span className="text-red-500">*</span>
@@ -1436,6 +1503,95 @@ export default function CustomerPortal() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3-UPI QR Payment Modal (§12, §13, §14) */}
+      {paymentQrModal && paymentQrModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-bg2 border border-border rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl text-center">
+            <div className="flex items-center justify-between border-b border-border pb-3 text-left">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-primary" />
+                <div>
+                  <h3 className="text-sm font-bold text-text">Scan & Pay via UPI</h3>
+                  <span className="text-[11px] text-muted block">{paymentQrModal.label}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setPaymentQrModal(null)}
+                className="text-muted hover:text-text p-1 rounded-lg text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Total Amount Badge */}
+            <div className="p-3 bg-primary/10 rounded-xl border border-primary/20">
+              <span className="text-[11px] text-muted block mb-0.5">Total Payable Amount</span>
+              <span className="text-xl font-extrabold text-primary">₹{paymentQrModal.amount.toFixed(2)}</span>
+            </div>
+
+            {/* QR Code Container */}
+            <div className="p-3 bg-bg3 rounded-xl border border-border inline-block shadow-sm mx-auto">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(paymentQrModal.upiUri)}`}
+                alt="UPI Payment QR"
+                className="w-44 h-44 mx-auto"
+              />
+            </div>
+
+            {/* UPI Account Details */}
+            <div className="space-y-1.5 text-left bg-bg p-3 rounded-xl border border-border text-[11px]">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Payee:</span>
+                <span className="font-semibold text-text">{paymentQrModal.payeeName}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted">UPI ID:</span>
+                <span className="font-mono font-bold text-primary">{paymentQrModal.upiId}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Order Ref:</span>
+                <span className="font-mono text-text">#{paymentQrModal.orderId}</span>
+              </div>
+            </div>
+
+            {/* Direct Pay Link for Mobile */}
+            <a
+              href={paymentQrModal.upiUri}
+              className="w-full py-2 bg-bg3 hover:bg-bg border border-border text-text rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open in UPI App (GPay / PhonePe / Paytm)</span>
+            </a>
+
+            {/* Actions: "I HAVE PAID" (§12) */}
+            <div className="space-y-2 pt-1">
+              {!paymentQrModal.isPaidMarked ? (
+                <button
+                  onClick={handleMarkPaid}
+                  disabled={isMarkingPaid}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50"
+                >
+                  {isMarkingPaid ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <span>I HAVE PAID</span>
+                </button>
+              ) : (
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-500 text-xs font-semibold flex items-center justify-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 shrink-0" />
+                  <span>Payment Reported — Awaiting Pharmacy Verification</span>
+                </div>
+              )}
+
+              <button
+                onClick={() => setPaymentQrModal(null)}
+                className="w-full py-1.5 text-xs text-muted hover:text-text font-medium"
+              >
+                {paymentQrModal.isPaidMarked ? 'Close & View Orders' : 'Close and Pay at Counter'}
+              </button>
+            </div>
           </div>
         </div>
       )}

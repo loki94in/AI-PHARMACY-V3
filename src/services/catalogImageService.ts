@@ -357,10 +357,11 @@ export class CatalogImageService {
     status?: string;
     search?: string;
     medicine_id?: number;
+    groupByMedicine?: boolean;
     page?: number;
     limit?: number;
   }): Promise<{
-    images: CatalogImageRecord[];
+    images: (CatalogImageRecord & { angle_count?: number })[];
     totalCount: number;
     totalPages: number;
     page: number;
@@ -374,8 +375,15 @@ export class CatalogImageService {
     const params: any[] = [];
 
     if (options.status && options.status !== 'all') {
-      if (options.status === 'review') {
-        whereSql += " AND ci.verification_status = 'PENDING_REVIEW'";
+      if (options.status === 'review' || options.status === 'pending') {
+        whereSql += " AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING')";
+      } else if (options.status === 'missing_angles') {
+        whereSql += ` AND ci.medicine_id IN (
+          SELECT ci_sub.medicine_id FROM catalog_images ci_sub 
+          WHERE ci_sub.is_active = 1 
+          GROUP BY ci_sub.medicine_id 
+          HAVING COUNT(*) < 2
+        )`;
       } else if (options.status === 'high_confidence') {
         whereSql += " AND ci.verification_status = 'HIGH_CONFIDENCE'";
       } else if (options.status === 'approved') {
@@ -388,6 +396,10 @@ export class CatalogImageService {
         whereSql += ' AND ci.verification_status = ?';
         params.push(options.status.toUpperCase());
       }
+    }
+
+    if (options.groupByMedicine) {
+      whereSql += ' AND (ci.is_primary = 1 OR ci.id = (SELECT MIN(ci3.id) FROM catalog_images ci3 WHERE ci3.medicine_id = ci.medicine_id))';
     }
 
     if (options.medicine_id) {
@@ -417,7 +429,8 @@ export class CatalogImageService {
               m.strength, 
               m.packaging, 
               m.mrp, 
-              m.manufacturer
+              m.manufacturer,
+              (SELECT COUNT(*) FROM catalog_images ci2 WHERE ci2.medicine_id = ci.medicine_id AND ci2.is_active = 1) as angle_count
        FROM catalog_images ci 
        LEFT JOIN medicines m ON m.id = ci.medicine_id 
        WHERE ${whereSql}
@@ -449,6 +462,7 @@ export class CatalogImageService {
     approved: number;
     rejected: number;
     removed: number;
+    missing_angles: number;
   }> {
     const db = await dbManager.getConnection();
     const rows = await db.all(
@@ -463,17 +477,25 @@ export class CatalogImageService {
       high_confidence: 0,
       approved: 0,
       rejected: 0,
-      removed: 0
+      removed: 0,
+      missing_angles: 0
     };
 
     for (const r of rows) {
       counts.total += r.count;
-      if (r.verification_status === 'PENDING_REVIEW') counts.pending_review = r.count;
+      if (r.verification_status === 'PENDING_REVIEW' || r.verification_status === 'PENDING') counts.pending_review += r.count;
       else if (r.verification_status === 'HIGH_CONFIDENCE') counts.high_confidence = r.count;
       else if (r.verification_status === 'APPROVED') counts.approved = r.count;
       else if (r.verification_status === 'REJECTED') counts.rejected = r.count;
       else if (r.verification_status === 'REMOVED') counts.removed = r.count;
     }
+
+    const missingRow = await db.get(
+      `SELECT COUNT(*) as count FROM (
+         SELECT medicine_id FROM catalog_images WHERE is_active = 1 GROUP BY medicine_id HAVING COUNT(*) < 2
+       )`
+    ).catch(() => ({ count: 0 }));
+    counts.missing_angles = missingRow?.count || 0;
 
     return counts;
   }
@@ -2614,6 +2636,179 @@ export class CatalogImageService {
       `SELECT * FROM image_review_history WHERE medicine_id = ? ORDER BY performed_at DESC`,
       [medicineId]
     );
+  }
+
+  /**
+   * Filename-based auto-match engine.
+   * Scans uploads/products/ directory, parses filenames, fuzzy-matches to medicines DB,
+   * and silently inserts into catalog_images.
+   * Idempotent — skips files already linked by image_path.
+   */
+  public async scanAndAutoMatchLocalImages(): Promise<{
+    matched: number;
+    pending_review: number;
+    unmatched: number;
+    skipped: number;
+  }> {
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'products');
+    const db = await dbManager.getConnection();
+
+    if (!fs.existsSync(uploadsDir)) {
+      return { matched: 0, pending_review: 0, unmatched: 0, skipped: 0 };
+    }
+
+    const allFiles = fs.readdirSync(uploadsDir).filter(f =>
+      /\.(jpg|jpeg|png|webp)$/i.test(f)
+    );
+
+    let matched = 0, pending_review = 0, unmatched = 0, skipped = 0;
+
+    for (const filename of allFiles) {
+      const relPath = `uploads/products/${filename}`;
+
+      // Idempotency: skip if already in catalog_images
+      const existing = await db.get(
+        'SELECT id FROM catalog_images WHERE image_path = ?',
+        [relPath]
+      );
+      if (existing) { skipped++; continue; }
+
+      // --- Parse filename ---
+      let cleanName = filename
+        .replace(/\.(jpg|jpeg|png|webp)$/i, '')      // strip extension
+        .replace(/-candidate-\d+$/i, '')              // strip -candidate-{timestamp}
+        .replace(/-(front|back|side|box|tablet|combined)$/i, '') // strip angle suffix
+        .replace(/-/g, ' ')                           // hyphens → spaces
+        .trim();
+
+      // Detect image_type from suffix before stripping
+      const angleMatch = filename.match(/-(front|back|side|box|tablet|combined)\.(jpg|jpeg|png|webp)$/i);
+      const imageType = angleMatch ? angleMatch[1].toLowerCase() : 'combined';
+
+      // Extract manufacturer hint: typically the last major segment before timestamp
+      // e.g. "geminor-m-1-500-mg-tablet-10-macleods-pharmaceuticals-candidate-1788441188108"
+      // → manufacturer candidates are words at the tail: "macleods pharmaceuticals"
+      const parts = cleanName.split(' ');
+      // Heuristic: last 2–3 words that look like a company name (capitalized, no digits)
+      const mfrWords: string[] = [];
+      for (let i = parts.length - 1; i >= 0 && mfrWords.length < 3; i--) {
+        if (/^[a-zA-Z]{3,}$/i.test(parts[i])) {
+          mfrWords.unshift(parts[i]);
+        } else {
+          break;
+        }
+      }
+      const manufacturerHint = mfrWords.join(' ');
+      // Product name: everything except the manufacturer tail words
+      const productNameWords = mfrWords.length > 0
+        ? parts.slice(0, parts.length - mfrWords.length)
+        : parts;
+      const productSearchName = productNameWords.join(' ');
+
+      // --- Fuzzy match against medicines ---
+      const candidates = await db.all<any>(
+        `SELECT id, name, manufacturer, strength, packaging, mrp, category
+         FROM medicines
+         WHERE name LIKE ? OR name LIKE ?
+         LIMIT 10`,
+        [`${productSearchName.slice(0, 15)}%`, `%${productSearchName.slice(0, 10)}%`]
+      );
+
+      let bestId: number | null = null;
+      let bestScore = 0;
+      let bestMed: any = null;
+
+      for (const med of candidates) {
+        const result = this.computeConfidence(med, {
+          name: cleanName,
+          manufacturer: manufacturerHint || null,
+        });
+        if (result.confidenceScore > bestScore) {
+          bestScore = result.confidenceScore;
+          bestId = med.id;
+          bestMed = med;
+        }
+      }
+
+      const imagePath = relPath;
+      const now = new Date().toISOString();
+
+      if (bestScore >= 85 && bestId) {
+        // HIGH_CONFIDENCE — silent auto-approve, make active
+        // Deactivate any existing active image of same type for this medicine
+        await db.run(
+          `UPDATE catalog_images SET is_active = 0
+           WHERE medicine_id = ? AND image_type = ? AND is_active = 1`,
+          [bestId, imageType]
+        );
+        await db.run(
+          `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, image_source,
+              confidence_score, matching_method, verification_status, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              verified_by, verified_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', 1,
+                   ?, ?, 'filename_auto', ?, 'auto_match', ?, ?, ?)`,
+          [
+            bestId,
+            bestMed?.name || cleanName,
+            bestMed?.manufacturer || manufacturerHint || null,
+            imagePath,
+            bestScore,
+            imageType,
+            imageType === 'combined' ? 1 : 0,
+            bestScore,
+            now, now, now
+          ]
+        );
+        matched++;
+      } else if (bestScore >= 60 && bestId) {
+        // PENDING_REVIEW — needs human confirmation
+        await db.run(
+          `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, image_source,
+              confidence_score, matching_method, verification_status, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', 0,
+                   ?, 0, 'filename_auto', ?, ?, ?)`,
+          [
+            bestId,
+            bestMed?.name || cleanName,
+            bestMed?.manufacturer || manufacturerHint || null,
+            imagePath,
+            bestScore,
+            imageType,
+            bestScore,
+            now, now
+          ]
+        );
+        pending_review++;
+      } else {
+        // UNMATCHED — no confident medicine match; store with product_name from filename
+        await db.run(
+          `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, image_source,
+              confidence_score, matching_method, verification_status, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              created_at, updated_at)
+           VALUES (NULL, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', 0,
+                   ?, 0, 'filename_unmatched', ?, ?, ?)`,
+          [
+            cleanName,
+            manufacturerHint || null,
+            imagePath,
+            bestScore,
+            imageType,
+            bestScore,
+            now, now
+          ]
+        );
+        unmatched++;
+      }
+    }
+
+    return { matched, pending_review, unmatched, skipped };
   }
 }
 

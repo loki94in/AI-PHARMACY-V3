@@ -332,6 +332,8 @@ export async function ensureSchema(dbPath: string) {
         if (!hasCol('image_type')) await db.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
         if (!hasCol('is_primary')) await db.run('ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0');
         if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
+        if (!hasCol('match_source')) await db.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
+        if (!hasCol('match_confidence')) await db.run('ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0');
       } catch (_e) {}
 
       await db.run(`
@@ -411,14 +413,17 @@ export async function ensureSchema(dbPath: string) {
           order_id INTEGER NOT NULL,
           medicine_id INTEGER,
           product_name TEXT NOT NULL,
+          product_name_snapshot TEXT,
           actual_medicine_id INTEGER,
           actual_batch_id INTEGER,
           requested_qty INTEGER NOT NULL DEFAULT 1,
           confirmed_qty INTEGER,
           mrp REAL,
+          price_snapshot REAL,
           sell_price REAL,
           discount REAL DEFAULT 0,
           final_price REAL,
+          subtotal REAL DEFAULT 0,
           item_status TEXT DEFAULT 'PENDING',
           replacement_reason TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -555,6 +560,76 @@ export async function ensureSchema(dbPath: string) {
           await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
         }
       } catch (_) {}
+
+      // Centralized Catalog & Booking/Pickup Schema (v52)
+      try {
+        const medCols = await db.all('PRAGMA table_info(medicines)');
+        const medNames = new Set(medCols.map((c: any) => c.name));
+        if (medCols.length > 0 && !medNames.has('canonical_name')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN canonical_name TEXT');
+        }
+        if (medCols.length > 0 && !medNames.has('normalized_name')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN normalized_name TEXT');
+        }
+        if (medCols.length > 0 && !medNames.has('product_code')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN product_code TEXT');
+        }
+        if (medCols.length > 0 && !medNames.has('status')) {
+          await db.run("ALTER TABLE medicines ADD COLUMN status TEXT DEFAULT 'ACTIVE'");
+        }
+        if (medCols.length > 0 && !medNames.has('dosage_form')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN dosage_form TEXT');
+        }
+        if (medCols.length > 0 && !medNames.has('pack_size')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN pack_size TEXT');
+        }
+        if (medCols.length > 0 && !medNames.has('barcode')) {
+          await db.run('ALTER TABLE medicines ADD COLUMN barcode TEXT');
+        }
+
+        // Backfill product_code if missing (MED-00001234)
+        await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
+        // Backfill canonical_name if missing
+        await db.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
+        // Backfill normalized_name if missing
+        await db.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
+      } catch (_) {}
+
+      try {
+        const orderCols = await db.all('PRAGMA table_info(special_orders)');
+        const orderNames = new Set(orderCols.map((c: any) => c.name));
+        if (orderCols.length > 0 && !orderNames.has('payment_qr_id')) {
+          await db.run('ALTER TABLE special_orders ADD COLUMN payment_qr_id TEXT');
+        }
+        if (orderCols.length > 0 && !orderNames.has('order_type')) {
+          await db.run("ALTER TABLE special_orders ADD COLUMN order_type TEXT DEFAULT 'PICKUP'");
+        }
+        if (orderCols.length > 0 && !orderNames.has('total_amount')) {
+          await db.run('ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0');
+        }
+      } catch (_) {}
+
+      try {
+        const ooiCols = await db.all('PRAGMA table_info(online_order_items)');
+        const ooiNames = new Set(ooiCols.map((c: any) => c.name));
+        if (ooiCols.length > 0 && !ooiNames.has('product_name_snapshot')) {
+          await db.run('ALTER TABLE online_order_items ADD COLUMN product_name_snapshot TEXT');
+          await db.run('UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL');
+        }
+        if (ooiCols.length > 0 && !ooiNames.has('price_snapshot')) {
+          await db.run('ALTER TABLE online_order_items ADD COLUMN price_snapshot REAL');
+          await db.run('UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL');
+        }
+        if (ooiCols.length > 0 && !ooiNames.has('subtotal')) {
+          await db.run('ALTER TABLE online_order_items ADD COLUMN subtotal REAL DEFAULT 0');
+          await db.run('UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL');
+        }
+      } catch (_) {}
+
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_normalized_name ON medicines(normalized_name)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_product_code ON medicines(product_code)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)');
 
       await ensureMedicinesFts(db);
       return;
@@ -713,6 +788,13 @@ export async function ensureSchema(dbPath: string) {
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      canonical_name TEXT,
+      normalized_name TEXT,
+      product_code TEXT,
+      status TEXT DEFAULT 'ACTIVE',
+      dosage_form TEXT,
+      pack_size TEXT,
+      barcode TEXT,
       api_reference TEXT,
       mrp REAL,
       hsn_code TEXT,
@@ -1163,6 +1245,9 @@ export async function ensureSchema(dbPath: string) {
       prescription_url TEXT DEFAULT NULL,
       product_image_url TEXT DEFAULT NULL,
       delivery_status TEXT DEFAULT 'pending',
+      payment_qr_id TEXT DEFAULT NULL,
+      order_type TEXT DEFAULT 'PICKUP',
+      total_amount REAL DEFAULT 0,
       delivered_at DATETIME DEFAULT NULL,
       return_window_until DATETIME DEFAULT NULL,
       return_status TEXT DEFAULT 'none',
@@ -1659,6 +1744,9 @@ export async function ensureSchema(dbPath: string) {
     ['catalog_images', 'locked_by', 'ALTER TABLE catalog_images ADD COLUMN locked_by TEXT'],
     ['catalog_images', 'locked_at', 'ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME'],
     ['catalog_images', 'verification_version', 'ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1'],
+    // Filename auto-match columns
+    ['catalog_images', 'match_source', "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
+    ['catalog_images', 'match_confidence', 'ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs

@@ -46,7 +46,8 @@ import {
   Store as StoreIcon,
   GitBranch,
   ArrowDownToLine,
-  ArrowUpFromLine
+  ArrowUpFromLine,
+  CreditCard
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -1659,6 +1660,26 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
 
+  // 3-UPI QR Code System & Delivery Feature Flag (§13, §15)
+  const [deliveryEnabled, setDeliveryEnabled] = useState(false);
+  const [paymentQrs, setPaymentQrs] = useState<Array<{ id: string; label: string; payee_name: string; upi_id: string; is_active: boolean }>>([
+    { id: 'QR_1', label: 'Pharmacy Counter UPI (QR 1)', payee_name: 'AI Pharmacy Counter 1', upi_id: 'aipharmacy1@upi', is_active: true },
+    { id: 'QR_2', label: 'Pharmacy Counter UPI (QR 2)', payee_name: 'AI Pharmacy Counter 2', upi_id: 'aipharmacy2@upi', is_active: true },
+    { id: 'QR_3', label: 'Pharmacy Counter UPI (QR 3)', payee_name: 'AI Pharmacy Counter 3', upi_id: 'aipharmacy3@upi', is_active: true }
+  ]);
+
+  useEffect(() => {
+    api.getDeliveryConfig().then(res => {
+      if (res?.success) setDeliveryEnabled(res.delivery_enabled);
+    }).catch(() => {});
+
+    api.getPaymentQrs().then(res => {
+      if (res?.success && Array.isArray(res.configs) && res.configs.length > 0) {
+        setPaymentQrs(res.configs);
+      }
+    }).catch(() => {});
+  }, []);
+
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1739,7 +1760,11 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
       };
 
       await apiClient.post('/settings/save', payload);
-      toastEvent.trigger('Integrations & API credentials saved successfully', 'success');
+      await Promise.all([
+        api.savePaymentQrs(paymentQrs),
+        api.saveDeliveryConfig(deliveryEnabled)
+      ]);
+      toastEvent.trigger('Integrations, 3-QR pool & API credentials saved successfully', 'success');
       updateSettingsCache(queryClient, payload);
       broadcastContactDataChanged(queryClient);
       refetchSettings();
@@ -2097,6 +2122,117 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
           <p className="text-[11px] text-muted mt-1">
             How far back sales/purchase history is weighed for restock suggestions and the &quot;Ordered Recently&quot; list in the Reorder Hub. Changing this recomputes suggestions in the background.
           </p>
+        </div>
+      </div>
+
+      {/* 3-UPI QR Rotation Pool & Fulfillment (§13, §15) */}
+      <div className="space-y-4 pt-4 border-t border-border">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <CreditCard size={16} /> Online Customer Payments & Fulfillment (3-QR Pool)
+          </h2>
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
+            Strict Alternating Rotation (QR N ≠ Previous QR)
+          </span>
+        </div>
+
+        {/* Feature Flag: Home Delivery vs In-Store Pickup */}
+        <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-text block">Enable Home Delivery Checkout</span>
+            <p className="text-[11px] text-muted max-w-xl">
+              When disabled, customer online checkout operates strictly in <strong>In-Store Pickup Only</strong> mode.
+              The customer address schema and database records remain fully preserved for future re-activation.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="enableDeliveryToggle"
+              checked={deliveryEnabled}
+              onChange={(e) => setDeliveryEnabled(e.target.checked)}
+              className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+            />
+            <label htmlFor="enableDeliveryToggle" className="text-xs font-semibold text-text cursor-pointer">
+              {deliveryEnabled ? 'Enabled' : 'Disabled'}
+            </label>
+          </div>
+        </div>
+
+        {/* 3 QR Code Configuration Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          {paymentQrs.map((qr, idx) => (
+            <div key={qr.id} className="bg-bg3/25 border border-border rounded-xl p-4 space-y-3 shadow-sm">
+              <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-md bg-primary/10 text-primary text-[10px] font-black flex items-center justify-center border border-primary/20">
+                    {idx + 1}
+                  </span>
+                  <span className="text-xs font-bold text-text">{qr.id} Slot</span>
+                </div>
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={qr.is_active}
+                    onChange={(e) => {
+                      const updated = [...paymentQrs];
+                      updated[idx] = { ...updated[idx], is_active: e.target.checked };
+                      setPaymentQrs(updated);
+                    }}
+                    className="rounded border-border text-primary focus:ring-0"
+                  />
+                  <span>Active</span>
+                </label>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Display Label</label>
+                  <input
+                    type="text"
+                    value={qr.label}
+                    onChange={(e) => {
+                      const updated = [...paymentQrs];
+                      updated[idx] = { ...updated[idx], label: e.target.value };
+                      setPaymentQrs(updated);
+                    }}
+                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                    placeholder="e.g. Counter UPI 1"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">Payee Name</label>
+                  <input
+                    type="text"
+                    value={qr.payee_name}
+                    onChange={(e) => {
+                      const updated = [...paymentQrs];
+                      updated[idx] = { ...updated[idx], payee_name: e.target.value };
+                      setPaymentQrs(updated);
+                    }}
+                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                    placeholder="e.g. AI Pharmacy Main"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-text mb-1">UPI ID / VPA</label>
+                  <input
+                    type="text"
+                    value={qr.upi_id}
+                    onChange={(e) => {
+                      const updated = [...paymentQrs];
+                      updated[idx] = { ...updated[idx], upi_id: e.target.value };
+                      setPaymentQrs(updated);
+                    }}
+                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text font-mono text-xs focus:border-primary focus:outline-none"
+                    placeholder="e.g. storename@upi"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
