@@ -205,10 +205,12 @@ export function buildStandardDistributorOrderMessage(params: DistributorOrderMes
       const qty = item.qty || 1;
       const packInfo = formatPackagingAndUnit(item.packaging, qty);
       const packLine = packInfo.packLabel ? `   📦 *${packInfo.packLabel}*\n` : '';
-      msg += `${idx + 1}. *${name}*\n${packLine}   🔢 Order Qty: *${packInfo.unitQtyStr}*\n`;
+      const mrpVal = Number((item as any).mrp || 0) > 0 ? Number((item as any).mrp) : 0;
+      const mrpLine = mrpVal > 0 ? `   (MRP: ₹${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})\n` : '';
+      msg += `${idx + 1}. *${name}*\n${packLine}   🔢 Order Qty: *${packInfo.unitQtyStr}*\n${mrpLine}\n`;
     });
   } else {
-    msg += `  • Standard Pharmacy Order Items\n`;
+    msg += `  • Standard Pharmacy Order Items\n\n`;
   }
 
   msg += `\n📊 *Total Items:* ${items.length}\n`;

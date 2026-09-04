@@ -151,11 +151,13 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
         {/* Branch Selector */}
         <div className="w-full md:w-72 space-y-1 shrink-0">
-          <label className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
+          <label htmlFor="pickup-branch-select" className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5 text-primary" />
             <span>Pickup Branch</span>
           </label>
           <select
+            id="pickup-branch-select"
+            aria-label="Pickup Branch"
             value={activeStoreId}
             onChange={e => onChangeStore(parseInt(e.target.value, 10))}
             className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-text focus:outline-none focus:border-primary"
@@ -172,8 +174,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       {/* Search & Category Filter Bar */}
       <div className="space-y-3">
         <div className="relative">
-          <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+          <label htmlFor="portal-search-input" className="sr-only">Search medicines</label>
+          <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true" />
           <input
+            id="portal-search-input"
+            aria-label="Search medicine name, salt or composition"
             type="text"
             placeholder="Search medicine name, salt / composition, or brand (e.g., Metformin, Telmisartan, Thyronorm, R-Cinex)..."
             value={search}
@@ -182,7 +187,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
           />
           {search && (
             <button
+              type="button"
               onClick={() => setSearch('')}
+              aria-label="Clear search input"
               className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-muted hover:text-text px-1.5 py-0.5 rounded bg-bg"
             >
               Clear
@@ -293,6 +300,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         setQuickViewMed(med);
                         setModalActiveImage(activeImgUrl);
                       }}
+                      aria-label={`Inspect all product angles for ${med.name}`}
                       className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-10"
                       title="Inspect all product angles"
                     >
@@ -353,6 +361,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                               onMouseEnter={() => {
                                 setSelectedAngleMap(prev => ({ ...prev, [med.name]: ang.url }));
                               }}
+                              aria-label={`${med.name} ${ang.label} angle view`}
                               title={ang.label}
                               className={`relative w-8 h-8 rounded-lg overflow-hidden border p-0.5 transition-all cursor-pointer shrink-0 ${
                                 isAngleSelected
@@ -449,14 +458,14 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         {discountPer}% OFF
                       </span>
                     )}
-                  </div>
-
-                  {/* Buttons */}
+                                  {/* Buttons */}
                   <div className="flex items-center gap-2">
                     {selected ? (
                       <div className="flex-1 flex items-center justify-between bg-primary/10 border border-primary/30 rounded-xl px-2 py-1.5">
                         <button
+                          type="button"
                           onClick={() => onUpdateQuantity(med.name, -1)}
+                          aria-label={`Decrease quantity for ${med.name}`}
                           className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
                         >
                           <Minus className="w-3.5 h-3.5" />
@@ -465,7 +474,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                           Qty: {selected.qty}
                         </span>
                         <button
+                          type="button"
                           onClick={() => onUpdateQuantity(med.name, 1)}
+                          aria-label={`Increase quantity for ${med.name}`}
                           className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -473,7 +484,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                       </div>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => onToggleItem(med.name, med.sell_price || med.mrp || 0)}
+                        aria-label={`Add ${med.name} to refill`}
                         className="flex-1 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:opacity-95 transition-all flex items-center justify-center gap-1.5 shadow-sm"
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -483,13 +496,16 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
                     {/* WhatsApp Inquire / Order Button */}
                     <button
+                      type="button"
                       onClick={() => openWhatsAppOrder(med)}
+                      aria-label={`Order or inquire about ${med.name} on WhatsApp`}
                       title="Order or inquire on WhatsApp"
                       className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 rounded-xl transition-colors shrink-0"
                     >
                       <MessageSquare className="w-4 h-4" />
                     </button>
                   </div>
+     </div>
                 </div>
               </div>
             );
@@ -501,8 +517,10 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-3 pt-4">
           <button
+            type="button"
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page <= 1}
+            aria-label="Go to previous page"
             className="px-4 py-2 bg-bg2 border border-border rounded-xl text-xs font-semibold text-text disabled:opacity-40 hover:bg-bg3 transition-colors"
           >
             ← Previous
@@ -511,8 +529,10 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             Page {page} of {totalPages}
           </span>
           <button
+            type="button"
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page >= totalPages}
+            aria-label="Go to next page"
             className="px-4 py-2 bg-bg2 border border-border rounded-xl text-xs font-semibold text-text disabled:opacity-40 hover:bg-bg3 transition-colors"
           >
             Next →

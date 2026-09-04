@@ -1683,14 +1683,20 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
-  // WhatsApp Web QR & Status — P1 "events, not timers": poll rapidly ONLY while
-  // connecting (QR scan in progress). Once ready, refresh via SSE push / focus.
+  // WhatsApp Web QR & Status — P1 "events, not timers": event-driven via SSE push / focus.
+  // Polls ONLY while actively awaiting a QR scan after explicit user connection.
   const [waStatus, setWaStatus] = useState<{ status: string; qr?: string; message?: string }>({ status: 'UNKNOWN' });
   const fetchWaStatus = useCallback(async () => {
     if (!isVisible) return;
     try {
-      const res = await apiClient.get('/whatsapp/status');
-      setWaStatus(res.data || { status: 'UNKNOWN' });
+      const res = await api.getWhatsAppStatus();
+      if (res) {
+        setWaStatus({
+          status: (res as any).status || (res.isReady ? 'READY' : 'DISCONNECTED'),
+          qr: res.qrUrl || undefined,
+          message: res.message
+        });
+      }
     } catch (_) {}
   }, [isVisible]);
 
@@ -1707,17 +1713,18 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   }, [fetchWaStatus]);
 
   useEffect(() => {
-    const connecting = waStatus.status !== 'READY' && waStatus.status !== 'CONNECTED';
-    if (!connecting || !isVisible) return;
+    // Poll ONLY while actively connecting (user initiated connection and QR code is standing by)
+    const isActivelyConnecting = waStatus.status === 'CONNECTING' || waStatus.status === 'SCAN_QR';
+    if (!isActivelyConnecting || !isVisible) return;
     const interval = setInterval(fetchWaStatus, 3000);
     return () => clearInterval(interval);
   }, [waStatus.status, isVisible, fetchWaStatus]);
 
-  // Telegram status poll
+  // Telegram status: fetched on mount / focus / setting change (zero unnecessary polling timers)
   const { data: telegramStatus } = useApiQuery<{ isReady: boolean }>(
     'telegram-status',
     () => apiClient.get('/settings/telegram-status').then(res => res.data),
-    { enabled: isVisible && telegramEnabled, refetchInterval: 10000 }
+    { enabled: isVisible && telegramEnabled }
   );
 
   const handleResetIntegrations = () => {

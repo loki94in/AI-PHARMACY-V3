@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, initClient, hasSavedSession, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, waitForWhatsAppReady } from '../whatsappClient.js';
+import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled } from '../whatsappClient.js';
 
 export interface QueueItem {
   id: number;
@@ -362,37 +362,11 @@ class WhatsAppQueueWorker {
     } catch (_) {}
 
     // Trigger processing if scheduled time is now or past; otherwise arm a
-    // one-shot timer so a delayed send still fires without needing the poll
-    // loop to be running (lazy loop — owner rule 2026-08).
+    // one-shot timer so a delayed send still fires without needing the poll loop.
+    // Strict manual-connection contract: Worker NEVER launches Chrome or connects autonomously.
     if (scheduledAt <= now) {
-      // Proactively trigger silent wake-up if WhatsApp is sleeping with a saved session
-      try {
-        const { hasSavedSession: checkSaved, getWhatsAppStatus: checkStatus, initClient: wakeClient, isWhatsAppExplicitlyDisabled: checkDisabled } = await import('../whatsappClient.js');
-        if (!(await checkDisabled()) && checkSaved()) {
-          checkStatus().then(st => {
-            if (!st.isReady && !st.initializing) {
-              wakeClient().catch(() => {});
-            }
-          }).catch(() => {});
-        }
-      } catch (_) {}
       this.triggerProcessing();
     } else {
-      // 2-MINUTE PRE-WAKE: If WhatsApp is sleeping, pre-warm it 2 minutes prior to scheduled dispatch
-      const wakeDelay = Math.max(0, scheduledAt - now - 120_000);
-      if (wakeDelay < (scheduledAt - now)) {
-        setTimeout(async () => {
-          try {
-            const { hasSavedSession, getWhatsAppStatus, initClient } = await import('../whatsappClient.js');
-            const status = await getWhatsAppStatus();
-            if (hasSavedSession() && (status.sleeping || !status.isReady) && !status.initializing) {
-              console.log('[WhatsApp Pre-Wake] 2-minute lead time triggered: silently warming up WhatsApp client...');
-              initClient().catch(() => {});
-            }
-          } catch (_) {}
-        }, wakeDelay);
-      }
-
       const delay = Math.min(scheduledAt - now, 2147483647);
       setTimeout(() => this.triggerProcessing(), delay);
     }
@@ -545,33 +519,14 @@ class WhatsAppQueueWorker {
         const useBusiness = await shouldRouteToBusiness();
         let status = await getWhatsAppStatus();
 
-        // If client is not ready, attempt graceful wait for waking browser if saved session exists
-        if (!useBusiness && !status.isReady) {
-          if (hasSavedSession() && !(await isWhatsAppExplicitlyDisabled())) {
-            console.log('[WhatsAppQueueWorker] WhatsApp not yet ready — awaiting on-demand session wake-up...');
-            const ready = await waitForWhatsAppReady(20_000);
-            if (ready) {
-              status = await getWhatsAppStatus();
-            }
-          }
-        }
-
-        // If client is still not ready, leave items pending until user connects on UI
+        // If client is not ready, leave items safely pending in queue without launching Chrome
         if (!useBusiness && !status.isReady) {
           const logNow = Date.now();
           if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 600000) {
-            console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving pending item(s) in queue until user connects on UI.`);
+            console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving pending item(s) in queue until user manually connects in UI.`);
             this.lastOfflineLogTime = logNow;
           }
           this.lastWasOffline = true;
-          // Self-heal a boot restore that failed transiently (Chrome busy/profile lock):
-          // retry the silent saved-session restore on a 60s cooldown so queued items can
-          // flow again without burning per-item retries. Never launches an unsolicited QR.
-          if (hasSavedSession() && !status.initializing && logNow - this.lastAutoInitAttempt > 60_000) {
-            this.lastAutoInitAttempt = logNow;
-            console.log('[WhatsAppQueueWorker] Saved session present but client idle — attempting silent WhatsApp restore...');
-            initClient().catch(() => {});
-          }
           break;
         }
 

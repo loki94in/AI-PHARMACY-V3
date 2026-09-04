@@ -48,7 +48,13 @@ const AuditCenter = lazy(pageImports['/audit']);
 const WebsiteOrders = lazy(pageImports['/website-orders']);
 const LiveCart = lazy(pageImports['/live-cart']);
 const CustomerPortal = lazy(pageImports['/portal']);
-const ImageCorrection = lazy(pageImports['/image-correction']);
+const ImageCorrectionRedirect: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const merged = new URLSearchParams(searchParams);
+  if (!merged.has('tab')) merged.set('tab', 'images');
+  if (!merged.has('filter')) merged.set('filter', 'review');
+  return <Navigate to={`/database?${merged.toString()}`} replace />;
+};
 
 // Legacy routes → Pharma Intelligence hub tabs. Query params (e.g. POS's
 // /composition-queue?highlight=N) are preserved through the redirect.
@@ -80,7 +86,7 @@ const pageRoutes: KeepAliveRoute[] = [
   { path: '/mail', element: <Mail /> },
   { path: '/dispatch', element: <DispatchPage /> },
   { path: '/database', element: <DatabasePage /> },
-  { path: '/image-correction', element: <ImageCorrection /> },
+  { path: '/image-correction', element: <ImageCorrectionRedirect /> },
   { path: '/learning', element: <Learning /> },
   { path: '/audit', element: <AuditCenter /> },
   { path: '/website-orders', element: <WebsiteOrders /> },

@@ -707,18 +707,8 @@ server.on('error', (err: any) => {
           }
         }, 8000);
 
-        // T+45s: WhatsApp client auto-init (silent restoration if saved session exists & WhatsApp is enabled)
-        setTimeout(() => {
-          import('./whatsappClient.js').then(async (m) => {
-            if (await m.isWhatsAppExplicitlyDisabled()) {
-              return;
-            }
-            if (m.hasSavedSession()) {
-              console.log('[Boot:Phase4] Saved WhatsApp session detected. Auto-starting WhatsApp client (staggered T+45s)...');
-              await m.initClient().catch(err => { bootWorkerFailures++; console.error('[Boot:Phase4] Auto WhatsApp init failed:', err); });
-            }
-          }).catch(err => { bootWorkerFailures++; console.error('[Boot:Phase4] WhatsApp client module load failed:', err); });
-        }, 45_000);
+        // WhatsApp client: Strict manual-connection contract — the app will NEVER auto-start
+        // or connect WhatsApp at boot. User must manually click Connect in Settings/Learning.
 
         // Startup live-cart warm-up: resolves startupSyncCoordinator from real data at boot
         // instead of waiting for the first UI visit to GET /api/pharmarack/cart.

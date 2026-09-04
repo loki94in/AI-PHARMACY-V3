@@ -10,6 +10,7 @@ import {
   shouldRouteToBusiness,
   isPuppeteerDetachedError,
   hasSavedSession,
+  isWhatsAppAutoConnectAllowed,
   getWhatsAppStatus,
   getWhatsAppReadiness,
   prewarmWhatsApp,
@@ -114,7 +115,8 @@ router.get('/qr', async (req, res) => {
       return res.json({ isReady: false, qrUrl, initializing: false, status: 'SCAN_QR' });
     }
 
-    if (hasSavedSession()) {
+    const isAutoAllowed = await isWhatsAppAutoConnectAllowed();
+    if (isAutoAllowed) {
       return res.json({
         isReady: false,
         qrUrl: null,
@@ -125,7 +127,7 @@ router.get('/qr', async (req, res) => {
       });
     }
 
-    res.json({ isReady: false, qrUrl: null, initializing: false, status: 'DISCONNECTED', message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
+    res.json({ isReady: false, qrUrl: null, initializing: false, hasSavedSession: false, status: 'DISCONNECTED', message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
   } catch (err) {
     console.error('QR check error:', err);
     res.status(500).json({ error: 'Failed to check QR status' });
@@ -139,7 +141,7 @@ router.post('/connect', async (req, res) => {
     if (explicitlyDisabled) {
       return res.status(400).json({ error: 'WhatsApp is currently disabled in Settings. Enable WhatsApp before connecting.' });
     }
-    initClient({ forceQr: true }).catch(console.error);
+    initClient({ forceQr: true, manual: true }).catch(console.error);
     res.json({ success: true, message: 'Initializing WhatsApp QR code scan...' });
   } catch (err: any) {
     console.error('[WhatsApp Connect] Error:', err);
@@ -284,14 +286,21 @@ router.post('/login-window', async (req, res) => {
             }
           }
 
-          // Save preference to database
+          // Save preference and authenticated session state to database
           try {
             const db = await dbManager.getConnection();
             await db.run(
               "INSERT INTO app_settings (key, value) VALUES ('whatsapp_preferred_system', 'automated') ON CONFLICT(key) DO UPDATE SET value = 'automated'"
             );
+            await db.run(
+              "INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true') ON CONFLICT(key) DO UPDATE SET value = 'true'"
+            );
+            await db.run(
+              "INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+              [new Date().toISOString()]
+            );
           } catch (e) {
-            console.warn('[WhatsApp] Could not set whatsapp_preferred_system setting:', e);
+            console.warn('[WhatsApp] Could not set whatsapp_session_authenticated setting:', e);
           }
 
           // Enforce 2-minute (120s) minimum window duration before auto-closing, checking if user closed window manually
@@ -340,10 +349,10 @@ router.post('/login-window', async (req, res) => {
           console.error('[WhatsApp] Error closing browser:', err);
         }
       }
-      // Re-initialize the background client now that Chrome is closed (if session exists)
-      if (hasSavedSession()) {
-        console.log('[WhatsApp] Re-initializing background client...');
-        initClient().catch(err => {
+      // Re-initialize the background client now that Chrome is closed (if authenticated session exists)
+      if (await isWhatsAppAutoConnectAllowed()) {
+        console.log('[WhatsApp] Re-initializing background client after manual user login...');
+        initClient({ manual: true }).catch(err => {
           console.error('[WhatsApp] Re-initialization after popup failed:', err);
         });
       }

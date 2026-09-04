@@ -1522,11 +1522,12 @@ export default function PharmarackCart() {
       const packInfo = formatPackagingAndUnit(item.packaging, item.qty);
       const packLine = packInfo.packLabel ? `   📦 *${packInfo.packLabel}*\n` : '';
       const mrpVal = Number(item.mrp || 0) > 0 ? Number(item.mrp) : (Number(item.ptr || 0) > 0 ? Number(item.ptr) : 0);
-      const mrpStr = mrpVal > 0 ? ` (MRP: ₹${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})` : '';
-      msg += `${idx + 1}. *${item.productName}*\n${packLine}   🔢 Order Qty: *${packInfo.unitQtyStr}*${mrpStr}\n`;
+      const mrpLine = mrpVal > 0 ? `   (MRP: ₹${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})\n` : '';
+      msg += `${idx + 1}. *${item.productName}*\n${packLine}   🔢 Order Qty: *${packInfo.unitQtyStr}*\n${mrpLine}\n`;
     });
 
-    msg += `\n🚚 *Delivery Person:*\n`;
+    msg = msg.trimEnd();
+    msg += `\n\n🚚 *Delivery Person:*\n`;
     msg += `  👤 *${boyName}*\n  📞 *${boyPhone || 'N/A'}*\n\n`;
 
     msg += `📝 *Note:* Please send invoice bill (${fileFormat}) to ${email}.`;

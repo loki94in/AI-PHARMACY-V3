@@ -401,24 +401,20 @@ export class TokenRefreshScheduler {
               await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
             } catch (_) {}
           } else if (res.status === 401 || res.status === 403) {
-            console.log('[TokenRefreshScheduler] Heartbeat got 401/403 → launching on-demand browser session restore...');
-            const fresh = await this.executeRefresh();
-            ok = !!fresh;
-            if (!ok) errorMsg = this.lastError || 'Session restore after heartbeat auth failure failed';
+            console.log('[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.');
+            errorMsg = `Session expired (HTTP ${res.status})`;
+            try {
+              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+            } catch (_) {}
           } else {
-            // Soft failure (network blip / upstream 5xx): do NOT burn a Chrome
-            // launch on it. Next tick retries; real usage gets the reactive 401 path.
             errorMsg = `Heartbeat HTTP ${res.status}`;
           }
         } catch (probeErr: any) {
           errorMsg = probeErr?.message || 'Heartbeat probe error';
         }
       } else {
-        // Profile cookies exist but no stored token — legacy one-shot capture attempt.
-        console.log('[TokenRefreshScheduler] Token missing but profile present → on-demand browser capture...');
-        const fresh = await this.executeRefresh();
-        ok = !!fresh;
-        if (!ok) errorMsg = this.lastError || 'Browser token capture failed';
+        console.log('[TokenRefreshScheduler] No Pharmarack token configured. Standing down until manual user login.');
+        errorMsg = 'No Pharmarack token configured';
       }
     } catch (err: any) {
       console.error('[TokenRefreshScheduler] Heartbeat error:', err.message);

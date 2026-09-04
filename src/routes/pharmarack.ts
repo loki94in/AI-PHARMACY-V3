@@ -75,29 +75,12 @@ async function fetchPharmarack(url: string, options: any = {}): Promise<Response
   let response = await executeFetch(token);
 
   if ((response.status === 401 || response.status === 403) && token) {
-    if (options.nonBlockingOn401) {
-      console.log(`[Pharmarack Fetch] Search API returned ${response.status}. Triggering async background token refresh and returning immediately...`);
-      tokenRefreshScheduler.executeRefresh().catch(err => {
-        console.warn('[Pharmarack Fetch] Async token refresh error:', err?.message || err);
-      });
-      return response;
-    }
-    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Attempting silent background token refresh...`);
-    const freshToken = await tokenRefreshScheduler.executeRefresh();
-    if (freshToken) {
-      console.log(`[Pharmarack Fetch] Retrying API ${url} with fresh token...`);
-      response = await executeFetch(freshToken);
-    } else {
-      // P4 (API_OPTIMIZATION plan Phase 1.2): never blank the stored token on a
-      // failed silent refresh — the Chrome profile cookies may still be valid and
-      // the scheduler will retry on its next cycle. Mark stale for the UI instead.
-      console.log(`[Pharmarack Fetch] Silent background token refresh failed. Marking session status 'stale' (token preserved).`);
-      try {
-        const db = await dbManager.getConnection();
-        await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'stale')");
-      } catch (dbErr) {
-        console.error('Failed to mark session stale:', dbErr);
-      }
+    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Marking session status 'expired' (manual re-auth required).`);
+    try {
+      const db = await dbManager.getConnection();
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+    } catch (dbErr) {
+      console.error('Failed to mark session expired:', dbErr);
     }
   }
 
@@ -180,21 +163,8 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
     const settings = await getPharmarackSettings();
     let token = settings['pharmarack_session_token'] || '';
 
-    // If token is missing, attempt silent restore from browser profile if available
     if (!token) {
-      const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
-      const hasStoredProfile = fs.existsSync(mainProfilePath) && fs.readdirSync(mainProfilePath).length > 0;
-      if (hasStoredProfile) {
-        console.log('[Pharmarack Search] No token stored but browser profile found. Attempting silent token restore...');
-        const freshToken = await tokenRefreshScheduler.executeRefresh().catch(() => null);
-        if (freshToken) {
-          token = freshToken;
-        }
-      }
-    }
-
-    if (!token) {
-      // If token is still missing, attempt offline catalog search before returning NEED_LOGIN
+      // Token missing: search offline catalog fallback or return need_login (no autonomous browser launch)
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
       if (offline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, offline);

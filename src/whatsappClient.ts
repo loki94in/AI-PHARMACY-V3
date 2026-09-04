@@ -44,6 +44,34 @@ export function hasSavedSession(): boolean {
   }
 }
 
+/**
+ * Checks whether the user had an active authenticated WhatsApp session in the last session
+ * and auto-reconnection is allowed.
+ * Gating Rule: If the user never connected or explicitly logged out / disconnected,
+ * the app must NEVER autonomously attempt connection or launch Chrome.
+ */
+export async function isWhatsAppAutoConnectAllowed(): Promise<boolean> {
+  if (await isWhatsAppExplicitlyDisabled()) return false;
+  if (!hasSavedSession()) return false;
+
+  try {
+    const db = await dbManager.getConnection();
+    const authRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
+    if (authRow) {
+      return authRow.value === 'true';
+    }
+    // Fallback for legacy installs: check if a valid connected phone number was recorded
+    const phoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_connected_number'");
+    if (phoneRow && phoneRow.value && String(phoneRow.value).trim().length >= 10) {
+      return true;
+    }
+  } catch (err) {
+    console.error('[WhatsApp] Failed to query session authentication status:', err);
+  }
+
+  return false;
+}
+
 /** Recursively removes a directory with file attribute resets to avoid EPERM on Windows */
 function safeRemoveDirectorySync(dirPath: string): void {
   if (!fs.existsSync(dirPath)) return;
@@ -351,12 +379,12 @@ export async function getWhatsAppStatus() {
  */
 export async function waitForWhatsAppReady(timeoutMs: number = 90_000): Promise<boolean> {
   if (await shouldRouteToBusiness()) return true;
+  if (await isWhatsAppExplicitlyDisabled()) return false;
+  if (!(await isWhatsAppAutoConnectAllowed())) return false;
   const deadline = Date.now() + timeoutMs;
   let lastKick = 0;
   while (Date.now() < deadline) {
     if (isReady && clientInstance) return true;
-    if (await isWhatsAppExplicitlyDisabled()) return false;
-    if (!hasSavedSession()) return false;
     const now = Date.now();
     // Re-kick a failed/silent init at most every 20s within our own budget —
     // never tight-loop Chrome launches.
@@ -649,10 +677,10 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
     }, 60_000);
     const clearInitWatchdog = () => clearTimeout(initWatchdog);
 
-    client.on('qr', (qr: string) => {
+    client.on('qr', async (qr: string) => {
       clearInitWatchdog();
-      // If user did not explicitly request QR scan and no valid saved session exists, stop immediately
-      if (!forceQr && !hasSavedSession()) {
+      // If user did not explicitly request QR scan and no authenticated saved session is allowed, stop immediately
+      if (!forceQr && !(await isWhatsAppAutoConnectAllowed())) {
         console.log('[WhatsApp] Unsolicited QR event suppressed. Stopping client until explicit user connection.');
         if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
         currentQr = null;
@@ -725,13 +753,23 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         eventService.broadcast('wa_status_changed', { status: 'ready', service: 'whatsapp' });
       } catch (_) {}
 
-      // Extract and save connected phone number to app_settings persistently
+      // Persist authenticated status and connected phone number to app_settings
       try {
+        const db = await dbManager.getConnection();
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [new Date().toISOString()]
+        );
+
         const infoNumber = (client as any)?.info?.wid?.user || (client as any)?.info?.wid?._serialized?.split('@')[0];
         if (infoNumber) {
           const cleanPhone = String(infoNumber).replace(/\D/g, '');
           console.log(`[WhatsApp Persist] Connected phone number detected: ${cleanPhone}`);
-          const db = await dbManager.getConnection();
 
           await db.run(
             `INSERT INTO app_settings (key, value) VALUES ('whatsapp_connected_number', ?)
@@ -758,7 +796,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           }
         }
       } catch (saveErr) {
-        console.warn('[WhatsApp Persist] Failed to save connected phone number to app_settings:', saveErr);
+        console.warn('[WhatsApp Persist] Failed to save connected state to app_settings:', saveErr);
       }
 
       // Trigger background queue worker with proper pacing and status tracking
@@ -804,12 +842,21 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       });
     });
 
-    client.on('auth_failure', (msg: string) => {
+    client.on('auth_failure', async (msg: string) => {
       initializing = false;
       isReady = false;
       activeClient = null;
       isSleeping = false;
       setLifecycleProgress('failed', 0, `Authentication failed: ${msg}`, msg);
+
+      try {
+        const db = await dbManager.getConnection();
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+           ON CONFLICT(key) DO UPDATE SET value = 'false'`
+        );
+        await db.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
+      } catch (_) {}
 
       eventService.broadcast('auth_failure', {
         message: `WhatsApp authentication failed: ${msg}. Please reconnect in Settings.`,
@@ -830,6 +877,15 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       isSleeping = false;
       setLifecycleProgress('disconnected', 0, 'WhatsApp signed out remotely');
       if (qrTimeout) clearTimeout(qrTimeout);
+
+      try {
+        const db = await dbManager.getConnection();
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+           ON CONFLICT(key) DO UPDATE SET value = 'false'`
+        );
+        await db.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
+      } catch (_) {}
 
       eventService.broadcast('wa_status_changed', {
         status: 'logged_out',
@@ -974,9 +1030,18 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
   });
 }
 
-/** Initialize the WhatsApp client and return it */
-export async function initClient(options: { forceQr?: boolean } = {}): Promise<WAClient | null> {
+/** Initialize the WhatsApp client and return it — STRICT MANUAL-INVOCATION CONTRACT:
+ * The app will NEVER try to connect or launch Chrome unless the user manually invokes it. */
+export async function initClient(options: { forceQr?: boolean; manual?: boolean } = {}): Promise<WAClient | null> {
   const forceQr = options.forceQr ?? false;
+  const isManual = options.manual ?? false;
+
+  // Strict manual invocation rule: app will NEVER autonomously connect or launch Chrome.
+  if (!forceQr && !isManual) {
+    console.log('[WhatsApp] Connection suppressed: App will never connect WhatsApp unless user manually invokes it.');
+    setLifecycleProgress('disconnected', 0, 'WhatsApp is disconnected. Click Connect to start.');
+    return null;
+  }
 
   if (clientInstance && isReady) {
     setLifecycleProgress('ready', 100, 'WhatsApp Ready');
@@ -990,30 +1055,22 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
 
   // If Chrome login window popup is currently active, defer background auto-init so they don't contend for profile locks
   if (isLoginWindowActive) {
-    console.log('[WhatsApp] Auto-init skipped: Chrome login window is currently active.');
+    console.log('[WhatsApp] Init skipped: Chrome login window is currently active.');
     return null;
   }
 
   // Check if WhatsApp is disabled in settings
   if (!forceQr && (await isWhatsAppExplicitlyDisabled())) {
-    console.log('[WhatsApp] Auto-init skipped: WhatsApp is disabled in Settings.');
+    console.log('[WhatsApp] Init skipped: WhatsApp is disabled in Settings.');
     return null;
   }
 
   // Failure backoff: if a previous init attempt failed recently, suppress automatic retries during the cooldown
-  if (forceQr) {
+  if (forceQr || isManual) {
     lastInitFailureAt = 0; // Explicit user connection resets cooldown
   } else if (lastInitFailureAt > 0 && (Date.now() - lastInitFailureAt) < INIT_FAILURE_COOLDOWN_MS) {
     const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1000);
-    console.log(`[WhatsApp] Auto-init deferred (${remainingSec}s cooldown remaining after previous failure).`);
-    return null;
-  }
-
-  // Unless user explicitly requested connection (forceQr=true) OR an existing saved session exists on disk,
-  // do NOT launch Puppeteer / Chrome to generate unsolicited QR codes.
-  if (!forceQr && !hasSavedSession()) {
-    console.log('[WhatsApp] Auto-init skipped: No saved session on disk. Standing down until explicit user connection.');
-    setLifecycleProgress('disconnected', 0, 'No saved WhatsApp session. Click Connect to scan QR.');
+    console.log(`[WhatsApp] Init deferred (${remainingSec}s cooldown remaining after previous failure).`);
     return null;
   }
 
@@ -1081,28 +1138,10 @@ export async function initClient(options: { forceQr?: boolean } = {}): Promise<W
 }
 
 /**
- * Shared pre-warm entry point: returns current readiness or initiates concurrency-safe warm-up.
+ * Shared pre-warm entry point: returns current readiness (never launches Chrome autonomously).
  */
 export async function prewarmWhatsApp(): Promise<WhatsAppReadinessState> {
   markWhatsAppActivity();
-  if (isReady && clientInstance) {
-    return getWhatsAppReadiness();
-  }
-  if (await isWhatsAppExplicitlyDisabled()) {
-    return getWhatsAppReadiness();
-  }
-  if (!hasSavedSession()) {
-    return getWhatsAppReadiness();
-  }
-
-  // Trigger background client initialization if not already underway, but return
-  // immediately so HTTP callers (POS prewarm, messaging prewarm) do not time out.
-  if (!initPromise && !initializing) {
-    void initClient().catch(err => {
-      console.error('[WhatsApp] Background pre-warm failed (non-fatal):', err?.message);
-    });
-  }
-
   return getWhatsAppReadiness();
 }
 
@@ -1172,16 +1211,16 @@ export async function forceReconnect(): Promise<void> {
 
   try {
     const db = await dbManager.getConnection();
+    await db.run(
+      `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+       ON CONFLICT(key) DO UPDATE SET value = 'false'`
+    );
+    await db.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
     await db.run("DELETE FROM ignored_whatsapp_numbers WHERE reason IN ('group', 'broadcast')");
     console.log('[WhatsApp] Cleared auto-ignored group and broadcast chats from database.');
   } catch (err) {
     console.error('[WhatsApp] Failed to clear auto-ignored chats from database (non-fatal):', err);
   }
-
-  await new Promise(r => setTimeout(r, 1500));
-  initClient().catch(err => {
-    console.error('[WhatsApp] Re-initialization after reconnect failed (non-fatal):', err.message);
-  });
 }
 
 /**
@@ -1198,7 +1237,7 @@ export async function reconnectClient(): Promise<void> {
     await new Promise(r => setTimeout(r, 600));
   }
   try {
-    await initClient();
+    await initClient({ forceQr: true });
   } catch (err: any) {
     console.error('[WhatsApp] Non-destructive re-initialization failed (session preserved):', err?.message);
     eventService.broadcast('wa_status_changed', {
@@ -1305,16 +1344,7 @@ export async function sendMessage(
 
     const useBusiness = await shouldRouteToBusiness();
     if (!useBusiness && (!isReady || !clientInstance)) {
-      if (!hasSavedSession()) {
-        throw new Error('WhatsApp is not connected. Please connect WhatsApp in Learning or Settings before sending messages.');
-      }
-      try {
-        console.log('[WhatsApp Client] Client not ready on sendMessage call. Initializing saved session...');
-        await initClient();
-      } catch (initErr) {
-        console.error('[WhatsApp Client] Auto-initialization failed during send:', initErr);
-        throw new Error('WhatsApp session is not connected. Please scan the QR code in Settings or click "Open Live Chrome Window" to log in.');
-      }
+      throw new Error('WhatsApp is not connected. Please connect WhatsApp manually in Settings before sending messages.');
     }
 
     try {

@@ -51,36 +51,24 @@ export const ConnectedDevicesFooterBar = memo(function ConnectedDevicesFooterBar
   useEffect(() => {
     fetchDevicesStatus();
     fetchWhatsAppStatus();
-    // P1 "events, not timers": slow fallback refresh ONLY while the tab is
-    // visible; WA status also updates instantly via SSE push.
+
+    // P1 "events, not timers": updates driven by SSE push, focus, and visibility change — zero background polling timers
     const handleSse = () => fetchWhatsAppStatus();
     window.addEventListener('sse-wa-status-changed', handleSse);
-    let devInterval: ReturnType<typeof setInterval> | null = null;
-    let waInterval: ReturnType<typeof setInterval> | null = null;
-    const startTimers = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (!devInterval) devInterval = setInterval(fetchDevicesStatus, 120000);
-      if (!waInterval) waInterval = setInterval(fetchWhatsAppStatus, 520000);
-    };
-    const stopTimers = () => {
-      if (devInterval) { clearInterval(devInterval); devInterval = null; }
-      if (waInterval) { clearInterval(waInterval); waInterval = null; }
-    };
+
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchDevicesStatus();
         fetchWhatsAppStatus();
-        startTimers();
-      } else {
-        stopTimers();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
-    startTimers();
+    window.addEventListener('focus', handleVisibility);
+
     return () => {
       window.removeEventListener('sse-wa-status-changed', handleSse);
       document.removeEventListener('visibilitychange', handleVisibility);
-      stopTimers();
+      window.removeEventListener('focus', handleVisibility);
     };
   }, [fetchDevicesStatus, fetchWhatsAppStatus]);
 
