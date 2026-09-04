@@ -1,8 +1,9 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 
-export const RETURN_WINDOW_DAYS = 14;
-export const RETURN_WINDOW_MS = RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+export const DEFAULT_RETURN_WINDOW_DAYS = 15;
+export const RETURN_WINDOW_DAYS = 15;
+export const RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 export interface ReturnStatusInfo {
   orderId: number;
@@ -19,11 +20,34 @@ export interface ReturnStatusInfo {
 
 export class ReturnWindowService {
   /**
-   * Calculates the return window deadline given a delivered timestamp
+   * Fetches the configured return window duration from app_settings (default 15 days).
    */
-  calculateReturnWindowUntil(deliveredAt: string | Date): string {
+  async getConfiguredReturnWindowDays(storeIdOrDb?: any, customDb?: any): Promise<number> {
+    try {
+      let db: any;
+      if (customDb) {
+        db = customDb;
+      } else if (storeIdOrDb && typeof storeIdOrDb.get === 'function') {
+        db = storeIdOrDb;
+      } else {
+        db = await dbManager.getConnection();
+      }
+      const row = await db.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
+      if (row && row.value) {
+        const val = parseInt(row.value, 10);
+        if (!isNaN(val) && val > 0) return val;
+      }
+    } catch (_) {}
+    return DEFAULT_RETURN_WINDOW_DAYS;
+  }
+
+  /**
+   * Calculates the return window deadline given a delivered timestamp and optional days
+   */
+  calculateReturnWindowUntil(deliveredAt: string | Date, windowDays?: number): string {
     const deliveredDate = new Date(deliveredAt);
-    const deadlineMs = deliveredDate.getTime() + RETURN_WINDOW_MS;
+    const days = windowDays !== undefined && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
+    const deadlineMs = deliveredDate.getTime() + (days * 24 * 60 * 60 * 1000);
     return new Date(deadlineMs).toISOString();
   }
 
@@ -102,7 +126,8 @@ export class ReturnWindowService {
   async markDelivered(orderId: number, deliveredAtDate?: Date, dbInstance?: any): Promise<ReturnStatusInfo> {
     const db = dbInstance || (await dbManager.getConnection());
     const deliveredAt = (deliveredAtDate || new Date()).toISOString();
-    const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt);
+    const windowDays = await this.getConfiguredReturnWindowDays(db);
+    const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
 
     await db.run(
       `UPDATE special_orders
@@ -119,7 +144,7 @@ export class ReturnWindowService {
     await db.run(
       `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
        VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
-      [orderId, `Order delivered. 14-day return window open until ${returnWindowUntil}`]
+      [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
     );
 
     try {

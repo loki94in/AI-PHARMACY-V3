@@ -2,7 +2,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 53;
+const CURRENT_SCHEMA_VERSION = 54;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -170,6 +170,132 @@ export async function ensureMedicinesFts(db: any): Promise<'ok' | 'repaired' | '
   await db.exec(FTS_TRIGGER_SQL);
   await backfillFts(db, true);
   return state === 'broken' ? 'repaired' : 'ok';
+}
+
+/**
+ * Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
+ */
+async function ensureOrderTimingSchema(db: any) {
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pharmacy_holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
+      holiday_date TEXT NOT NULL,
+      holiday_name TEXT DEFAULT NULL,
+      name TEXT DEFAULT NULL,
+      is_closed INTEGER DEFAULT 1,
+      custom_window_start TEXT DEFAULT NULL,
+      custom_window_end TEXT DEFAULT NULL,
+      open_time TEXT DEFAULT NULL,
+      close_time TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(store_id, holiday_date)
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pharmacy_holidays_date ON pharmacy_holidays(store_id, holiday_date)');
+
+  try {
+    const phCols = await db.all('PRAGMA table_info(pharmacy_holidays)');
+    const phNames = new Set(phCols.map((c: any) => c.name));
+    if (phCols.length > 0 && !phNames.has('holiday_name')) {
+      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN holiday_name TEXT DEFAULT NULL');
+      await db.run('UPDATE pharmacy_holidays SET holiday_name = name WHERE holiday_name IS NULL');
+    }
+    if (phCols.length > 0 && !phNames.has('custom_window_start')) {
+      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_start TEXT DEFAULT NULL');
+    }
+    if (phCols.length > 0 && !phNames.has('custom_window_end')) {
+      await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_end TEXT DEFAULT NULL');
+    }
+  } catch (_) {}
+
+  try {
+    const spCols = await db.all('PRAGMA table_info(special_orders)');
+    const spNames = new Set(spCols.map((c: any) => c.name));
+    if (spCols.length > 0 && !spNames.has('scheduled_processing_at')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN scheduled_processing_at DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('estimated_delivery_start')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN estimated_delivery_start DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('estimated_delivery_end')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN estimated_delivery_end DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('cutoff_at')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN cutoff_at DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('pharmacy_timezone')) {
+      await db.run("ALTER TABLE special_orders ADD COLUMN pharmacy_timezone TEXT DEFAULT 'Asia/Kolkata'");
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_status')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_status TEXT DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_reason')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_reason TEXT DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_version')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_version INTEGER DEFAULT 1');
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_calculated_at')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_calculated_at DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_overridden_by')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_overridden_by TEXT DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('schedule_overridden_at')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN schedule_overridden_at DATETIME DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('pos_sale_invoice_id')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN pos_sale_invoice_id INTEGER DEFAULT NULL');
+    }
+  } catch (_) {}
+
+  try {
+    const refCols = await db.all('PRAGMA table_info(patient_refills)');
+    const refNames = new Set(refCols.map((c: any) => c.name));
+    if (refCols.length > 0 && !refNames.has('paused_at')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN paused_at DATETIME DEFAULT NULL');
+    }
+    if (refCols.length > 0 && !refNames.has('pause_reason')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN pause_reason TEXT DEFAULT NULL');
+    }
+    if (refCols.length > 0 && !refNames.has('resume_at')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN resume_at DATETIME DEFAULT NULL');
+    }
+    if (refCols.length > 0 && !refNames.has('pause_duration_seconds')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN pause_duration_seconds INTEGER DEFAULT 0');
+    }
+    if (refCols.length > 0 && !refNames.has('refill_schedule_version')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN refill_schedule_version INTEGER DEFAULT 1');
+    }
+  } catch (_) {}
+
+  const defaultTimingSettings: [string, string][] = [
+    ['pharmacy_cutoff_time', '23:00'],
+    ['order_cutoff_time', '23:00'],
+    ['delivery_window_start', '19:00'],
+    ['delivery_start_time', '19:00'],
+    ['delivery_window_end', '21:00'],
+    ['delivery_end_time', '21:00'],
+    ['sunday_orders_enabled', 'false'],
+    ['operates_sunday', 'false'],
+    ['sunday_delivery', 'false'],
+    ['sunday_window_start', '10:00'],
+    ['sunday_window_end', '14:00'],
+    ['holiday_delivery_enabled', 'false'],
+    ['holiday_delivery', 'false'],
+    ['holiday_handling', 'next_available_day'],
+    ['is_24_hours', 'false'],
+    ['pharmacy_timezone', 'Asia/Kolkata'],
+    ['return_window_days', '15'],
+    ['return_window_mode', 'calendar_days'],
+    ['refill_pause_recalculation_enabled', 'true'],
+    ['refill_pause_affects_date', 'true']
+  ];
+  for (const [k, v] of defaultTimingSettings) {
+    await db.run('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', [k, v]);
+  }
 }
 
 /**
@@ -631,6 +757,7 @@ export async function ensureSchema(dbPath: string) {
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)');
 
+      await ensureOrderTimingSchema(db);
       await ensureMedicinesFts(db);
       return;
     }
@@ -1256,7 +1383,8 @@ export async function ensureSchema(dbPath: string) {
       return_override_at DATETIME DEFAULT NULL,
       sync_id TEXT DEFAULT NULL,
       sync_status TEXT DEFAULT 'synced',
-      last_synced_at DATETIME DEFAULT NULL
+      last_synced_at DATETIME DEFAULT NULL,
+      pos_sale_invoice_id INTEGER DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -3306,6 +3434,9 @@ export async function ensureSchema(dbPath: string) {
       await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
     }
   } catch (_) {}
+
+  // Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
+  await ensureOrderTimingSchema(db);
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

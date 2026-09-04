@@ -284,6 +284,8 @@ interface PosPrefill {
   quantity?: number | string;
   qty?: number | string;
   refillIds?: number[];
+  onlineOrderId?: number | string;
+  orderId?: number | string;
 }
 
 interface PosLocationState {
@@ -1068,6 +1070,8 @@ const POS = () => {
   const [finalizingStagedSale, setFinalizingStagedSale] = useState<{ id: number } | null>(null);
   // ponytail: stores refill IDs from CRM prefill; cleared after bill save (fulfill call)
   const pendingRefillIdsRef = useRef<number[]>([]);
+  // Online/Website order ID for linking POS sale to online order fulfilment
+  const pendingOnlineOrderIdRef = useRef<number | null>(null);
   const pendingDirectSaveRef = useRef<boolean>(false);
   const [doctor, setDoctor] = useState(() => editSaleFromState?.doctor_name || initialActiveTab.doctor || '');
   const [isDoctorDropdownOpen, setIsDoctorDropdownOpen] = useState(false);
@@ -1267,6 +1271,9 @@ const POS = () => {
       // ponytail: capture refillIds so we can fulfill after successful bill save
       if (Array.isArray(prefill.refillIds) && prefill.refillIds.length > 0) {
         pendingRefillIdsRef.current = prefill.refillIds.map(Number).filter(Boolean);
+      }
+      if (prefill.onlineOrderId || prefill.orderId) {
+        pendingOnlineOrderIdRef.current = Number(prefill.onlineOrderId || prefill.orderId);
       }
       if (name) {
         const parsed = parseSalutationAndName(name);
@@ -3062,6 +3069,7 @@ const POS = () => {
     setActiveRefillId(null);
     setRefillDays(30);
     pendingRefillIdsRef.current = [];
+    pendingOnlineOrderIdRef.current = null;
     setSearchTerm('');
     setSearchResults([]);
     updateCart([makeEmptyCartRow()]);
@@ -3374,9 +3382,11 @@ const POS = () => {
         refillDays: refillDays,
         refillId: activeRefillId || undefined,
         refill_ids: pendingRefillIdsRef.current.length > 0 ? [...pendingRefillIdsRef.current] : undefined,
+        online_order_id: pendingOnlineOrderIdRef.current || undefined,
         editingInvoiceId: editingInvoiceId || undefined
       };
       writeRef(pendingRefillIdsRef, []);
+      writeRef(pendingOnlineOrderIdRef, null);
 
       // Verification Layer Check: Pre-save validation
       try {
@@ -3504,6 +3514,7 @@ const POS = () => {
       setActiveRefillId(null);
       setRefillDays(30);
       pendingRefillIdsRef.current = [];
+      pendingOnlineOrderIdRef.current = null;
       setSearchTerm('');
       setSearchResults([]);
       updateCart([makeEmptyCartRow()]);

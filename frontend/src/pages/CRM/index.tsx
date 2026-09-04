@@ -1100,6 +1100,7 @@ const RefillsSection: React.FC = () => {
                 const diffDays = Math.ceil((dueDate.getTime() - new Date().getTime()) / 86400000);
                 const isLead = !isOverdue && diffDays <= 6 && diffDays >= 0;
                 const medsCount = patient.medicines?.length || 0;
+                const allPaused = medsCount > 0 && patient.medicines.every(m => m.is_active === 0 || m.status === 'paused');
 
                 return (
                   <div
@@ -1112,7 +1113,9 @@ const RefillsSection: React.FC = () => {
                     <div className="flex items-center gap-2.5 min-w-0 pr-2">
                       <div
                         className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 border ${
-                          isOverdue
+                          allPaused
+                            ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                            : isOverdue
                             ? 'bg-red-500/15 text-red-400 border-red-500/30'
                             : isLead
                             ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
@@ -1139,10 +1142,10 @@ const RefillsSection: React.FC = () => {
                     <div className="text-right shrink-0">
                       <div
                         className={`text-[10px] font-bold ${
-                          isOverdue ? 'text-red-400' : isLead ? 'text-amber-400' : 'text-emerald-400'
+                          allPaused ? 'text-amber-400' : isOverdue ? 'text-red-400' : isLead ? 'text-amber-400' : 'text-emerald-400'
                         }`}
                       >
-                        {isOverdue ? `Overdue ${Math.abs(diffDays)}d` : isLead ? `Due in ${diffDays}d` : formatDate(patient.next_refill_date)}
+                        {allPaused ? '⏸️ Paused' : isOverdue ? `Overdue ${Math.abs(diffDays)}d` : isLead ? `Due in ${diffDays}d` : formatDate(patient.next_refill_date)}
                       </div>
                       <div className="text-[9px] text-muted mt-0.5 flex items-center justify-end gap-1">
                         {patient.reminder_status === 'SENT' ? (

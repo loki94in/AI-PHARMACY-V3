@@ -1074,6 +1074,85 @@ router.post('/delivery-config', async (req, res) => {
   }
 });
 
+// ─── Pharmacy Holidays Management (Schema v54) ──────────────────────────────
+router.get('/holidays', async (req, res) => {
+  try {
+    const storeId = parseInt(String(req.query.store_id || '1'), 10) || 1;
+    const db = await dbManager.getConnection();
+    const rows = await db.all(
+      `SELECT * FROM pharmacy_holidays WHERE store_id = ? OR store_id = 1 ORDER BY holiday_date ASC`,
+      [storeId]
+    );
+    const holidays = (rows || []).map((r: any) => ({
+      ...r,
+      holiday_name: r.holiday_name || r.name || 'Holiday',
+      name: r.name || r.holiday_name || 'Holiday',
+      custom_window_start: r.custom_window_start || r.open_time || null,
+      custom_window_end: r.custom_window_end || r.close_time || null
+    }));
+    res.json({ success: true, holidays });
+  } catch (error: any) {
+    console.error('Fetch holidays error:', error);
+    res.status(500).json({ error: 'Failed to fetch holidays' });
+  }
+});
+
+router.post('/holidays', async (req, res) => {
+  try {
+    const {
+      holiday_date,
+      holiday_name,
+      name,
+      is_closed = 1,
+      open_time = null,
+      close_time = null,
+      custom_window_start = null,
+      custom_window_end = null,
+      store_id = 1
+    } = req.body;
+    const finalName = (holiday_name || name || '').trim();
+    if (!holiday_date || !finalName) {
+      return res.status(400).json({ error: 'holiday_date and name are required' });
+    }
+    const winStart = custom_window_start || open_time || null;
+    const winEnd = custom_window_end || close_time || null;
+    const isClosedVal = is_closed === false || is_closed === 0 || is_closed === '0' || is_closed === 'false' ? 0 : 1;
+
+    const db = await dbManager.getConnection();
+    const result = await db.run(
+      `INSERT INTO pharmacy_holidays (store_id, holiday_date, name, holiday_name, is_closed, open_time, close_time, custom_window_start, custom_window_end, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(store_id, holiday_date) DO UPDATE SET
+         name = excluded.name,
+         holiday_name = excluded.holiday_name,
+         is_closed = excluded.is_closed,
+         open_time = excluded.open_time,
+         close_time = excluded.close_time,
+         custom_window_start = excluded.custom_window_start,
+         custom_window_end = excluded.custom_window_end,
+         updated_at = CURRENT_TIMESTAMP`,
+      [store_id, holiday_date, finalName, finalName, isClosedVal, winStart, winEnd, winStart, winEnd]
+    );
+    res.json({ success: true, id: result.lastID, message: 'Holiday saved successfully' });
+  } catch (error: any) {
+    console.error('Save holiday error:', error);
+    res.status(500).json({ error: 'Failed to save holiday: ' + error.message });
+  }
+});
+
+router.delete('/holidays/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid holiday ID' });
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM pharmacy_holidays WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Holiday removed successfully' });
+  } catch (error: any) {
+    console.error('Delete holiday error:', error);
+    res.status(500).json({ error: 'Failed to delete holiday' });
+  }
+});
+
 // Get a setting value
 // Catch-all — must stay last so it doesn't shadow the more specific GET routes above
 // (e.g. /registered-devices, /storage-locations), which Express would never reach otherwise.

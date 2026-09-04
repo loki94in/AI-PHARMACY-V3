@@ -168,6 +168,34 @@ export default function LiveCart() {
     }
   };
 
+  const openOrderInPOS = (order: any) => {
+    navigate('/pos', {
+      state: {
+        prefill: {
+          onlineOrderId: order.id,
+          orderId: order.id,
+          patientName: order.requester || '',
+          patientPhone: order.phone || '',
+          customerName: order.requester || '',
+          customerPhone: order.phone || '',
+          customerId: order.customer_id || undefined,
+          notes: `Website Order #${order.id}`,
+          medicines: (order.items || []).map((it: any) => ({
+            medicine_id: it.medicine_id || it.actual_medicine_id,
+            medicineName: it.actual_medicine_name || it.medicine_name || it.product_name,
+            name: it.actual_medicine_name || it.medicine_name || it.product_name,
+            quantity: it.confirmed_qty ?? it.requested_qty ?? 1,
+            qty: it.confirmed_qty ?? it.requested_qty ?? 1,
+            sell_price: it.confirmed_price ?? it.mrp ?? 0,
+            mrp: it.confirmed_price ?? it.mrp ?? 0,
+            batch_no: it.actual_batch_no || it.batch_no || '',
+            inventory_id: it.inventory_id
+          }))
+        }
+      }
+    });
+  };
+
   const getItemStatusColor = (status: string) => {
     if (status === 'CONFIRMED') return 'text-green-600 bg-green-50 border-green-200';
     if (status === 'REPLACED') return 'text-sky-600 bg-sky-50 border-sky-200';
@@ -289,10 +317,18 @@ export default function LiveCart() {
                 )}
 
                 {/* Payment confirmed badge */}
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-600 border border-green-200">
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                   <CreditCard size={10} />
                   Payment Confirmed
                 </span>
+
+                {/* Delivery ETA badge */}
+                {(order.estimated_delivery_start || order.delivery_window_formatted) && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                    <Clock size={10} />
+                    <span>ETA: {order.delivery_window_formatted || (order.estimated_delivery_start ? new Date(order.estimated_delivery_start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }) : 'Scheduled')}</span>
+                  </span>
+                )}
 
                 {/* Item resolution status */}
                 {pending > 0 ? (
@@ -551,6 +587,14 @@ export default function LiveCart() {
                         <span>Cancel Order</span>
                       </button>
                     )}
+                    <button
+                      onClick={() => openOrderInPOS(order)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors"
+                      title="Load order items into POS for immediate billing"
+                    >
+                      <ShoppingCart size={12} />
+                      <span>Bill in POS</span>
+                    </button>
                     <button
                       onClick={() => finalizeOrder(order.id)}
                       disabled={!resolved || finalizingOrder === order.id}

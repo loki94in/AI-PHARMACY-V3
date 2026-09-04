@@ -12,6 +12,7 @@ import { getConfiguredPharmacyName } from '../services/storeSettingsService.js';
 import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
+import { orderScheduleService } from '../services/orderScheduleService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -657,6 +658,7 @@ router.get('/panel', async (req, res) => {
 // Toggle pause/resume on a refill record
 router.post('/:id/toggle-pause', async (req, res) => {
   const { id } = req.params;
+  const pauseReason = (req.body?.reason || 'Paused by pharmacist/customer').trim();
   let db;
   try {
     db = await dbManager.getConnection();
@@ -666,11 +668,20 @@ router.post('/:id/toggle-pause', async (req, res) => {
     }
 
     const newIsActive = (refill.is_active === 0) ? 1 : 0;
+    let recalculatedNextDate: string | null = refill.next_refill_date;
 
     if (newIsActive === 0) {
+      // Pause refill: record paused_at and pause_reason
       await db.run(
-        `UPDATE patient_refills SET is_active = 0, is_ready = 0, hold_for_stock = 0 WHERE id = ?`,
-        [id]
+        `UPDATE patient_refills 
+         SET is_active = 0, 
+             status = 'paused', 
+             is_ready = 0, 
+             hold_for_stock = 0,
+             paused_at = CURRENT_TIMESTAMP,
+             pause_reason = ?
+         WHERE id = ?`,
+        [pauseReason, id]
       );
       await db.run(
         `UPDATE automation_notifications SET lifecycle_status = 'skipped' 
@@ -678,18 +689,78 @@ router.post('/:id/toggle-pause', async (req, res) => {
         [String(id)]
       );
     } else {
+      // Resume refill: recalculate next_refill_date based on paused duration
+      const now = new Date();
+      let pauseDurationSeconds = 0;
+      if (refill.paused_at) {
+        const pausedAtMs = new Date(refill.paused_at).getTime();
+        const pauseMs = Math.max(0, now.getTime() - pausedAtMs);
+        pauseDurationSeconds = Math.floor(pauseMs / 1000);
+
+        if (refill.next_refill_date) {
+          const originalDate = new Date(refill.next_refill_date);
+          let targetDate = new Date(originalDate.getTime() + pauseMs);
+          
+          // If the shifted date is already in the past, schedule from now + interval
+          if (targetDate.getTime() < now.getTime()) {
+            targetDate = new Date();
+            targetDate.setDate(targetDate.getDate() + (refill.refill_interval_days || 30));
+          }
+
+          // Adjust for closed Sunday or holiday
+          const timingConfig = await orderScheduleService.getTimingConfig(db, refill.store_id || 1);
+          let advanceCount = 0;
+          while (advanceCount < 14) {
+            const ymd = orderScheduleService.formatDateYMD(targetDate);
+            const isSun = targetDate.getDay() === 0;
+            const holiday = await db.get(
+              'SELECT is_closed FROM pharmacy_holidays WHERE (store_id = ? OR store_id = 1) AND holiday_date = ?',
+              [refill.store_id || 1, ymd]
+            );
+
+            if (isSun && !timingConfig.operatesSunday) {
+              targetDate.setDate(targetDate.getDate() + 1);
+              advanceCount++;
+              continue;
+            }
+            if (holiday && holiday.is_closed === 1) {
+              targetDate.setDate(targetDate.getDate() + 1);
+              advanceCount++;
+              continue;
+            }
+            break;
+          }
+
+          recalculatedNextDate = targetDate.toISOString().slice(0, 19).replace('T', ' ');
+        }
+      }
+
       await db.run(
-        'UPDATE patient_refills SET is_active = 1 WHERE id = ?',
-        [id]
+        `UPDATE patient_refills 
+         SET is_active = 1,
+             status = 'pending',
+             resume_at = CURRENT_TIMESTAMP,
+             next_refill_date = COALESCE(?, next_refill_date),
+             pause_duration_seconds = COALESCE(pause_duration_seconds, 0) + ?,
+             refill_schedule_version = COALESCE(refill_schedule_version, 1) + 1,
+             paused_at = NULL,
+             pause_reason = NULL
+         WHERE id = ?`,
+        [recalculatedNextDate, pauseDurationSeconds, id]
       );
     }
 
     // Re-run check to recalculate ready state or staged notifications
     await checkAllRefills(db);
 
+    try {
+      eventService.broadcast('refill_updated', { at: Date.now(), refillId: id, is_active: newIsActive });
+    } catch (_) {}
+
     res.json({
       success: true,
       is_active: newIsActive,
+      next_refill_date: recalculatedNextDate,
       message: `Refill schedule ${newIsActive === 0 ? 'paused' : 'resumed'} successfully`
     });
   } catch (err: any) {

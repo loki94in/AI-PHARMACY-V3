@@ -7,6 +7,7 @@ import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
+import { orderScheduleService } from '../services/orderScheduleService.js';
 
 const router = express.Router();
 
@@ -179,6 +180,13 @@ router.post('/orders', async (req, res) => {
       } catch (_) {}
     }
 
+    const schedule = await orderScheduleService.calculateOrderSchedule({
+      storeId: targetStoreId,
+      orderCreatedAt: todayStr,
+      orderType: orderType,
+      dbInstance: db
+    });
+
     const createdOrders: Array<{ id: number; product: string; qty: number; payment_qr_id?: string | null }> = [];
 
     await db.run('BEGIN TRANSACTION');
@@ -238,8 +246,10 @@ router.post('/orders', async (req, res) => {
             advance_payment, notes, customer_order_source, prescription_url, product_image_url,
             delivery_status, return_status, payment_status, pharmacy_verification_status,
             payment_qr_id, order_type, total_amount,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version, schedule_calculated_at,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             customerId,
@@ -255,7 +265,16 @@ router.post('/orders', async (req, res) => {
             initialVerificationStatus,
             allocatedQr?.id || null,
             orderType,
-            totalOrderAmount
+            totalOrderAmount,
+            schedule.scheduled_processing_at,
+            schedule.estimated_delivery_start,
+            schedule.estimated_delivery_end,
+            schedule.cutoff_at,
+            schedule.pharmacy_timezone,
+            schedule.schedule_status,
+            schedule.schedule_reason,
+            schedule.schedule_version,
+            schedule.schedule_calculated_at
           ]
         );
 
@@ -296,7 +315,7 @@ router.post('/orders', async (req, res) => {
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Order placed online (${orderType}) for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty})`]
+          [orderId, `Order placed online (${orderType}) for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty}) - Estimated: ${schedule.formatted_window}`]
         );
       }
 
@@ -313,7 +332,7 @@ router.post('/orders', async (req, res) => {
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
 
-      let confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!\n\nOrder Items:\n${itemsSummary}\nTotal Amount: ₹${totalOrderAmount.toFixed(2)}`;
+      let confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!\n\nOrder Items:\n${itemsSummary}\nTotal Amount: ₹${totalOrderAmount.toFixed(2)}\n\n🚚 *Estimated Delivery:* ${schedule.formatted_window}${schedule.schedule_reason ? `\nℹ️ *Note:* ${schedule.schedule_reason}` : ''}`;
 
       if (allocatedQr) {
         const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalOrderAmount, createdOrders[0]?.id || 1);
@@ -357,7 +376,22 @@ router.post('/orders', async (req, res) => {
       total_amount: totalOrderAmount,
       payment_method,
       payment_qr: paymentQrResponse,
-      customer: { name: cleanName, phone: cleanPhone }
+      customer: { name: cleanName, phone: cleanPhone },
+      timing: {
+        sameDay: schedule.is_same_day,
+        scheduledProcessingAt: schedule.scheduled_processing_at,
+        estimatedDeliveryStart: schedule.estimated_delivery_start,
+        estimatedDeliveryEnd: schedule.estimated_delivery_end,
+        cutoffAt: schedule.cutoff_at,
+        timezone: schedule.pharmacy_timezone,
+        status: schedule.schedule_status,
+        reason: schedule.schedule_reason,
+        formattedWindow: schedule.formatted_window
+      },
+      returnPolicy: {
+        eligible: true,
+        windowDays: 15
+      }
     });
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Order placement error:', err);

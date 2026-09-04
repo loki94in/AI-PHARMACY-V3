@@ -10,6 +10,8 @@ import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js
 import { storeContextService } from '../services/storeContextService.js';
 import { catalogImageService } from '../services/catalogImageService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
+import { orderScheduleService } from '../services/orderScheduleService.js';
+import { returnWindowService } from '../services/returnWindowService.js';
 
 const router = express.Router();
 
@@ -745,6 +747,10 @@ router.get('/customer/refills', async (req, res) => {
         pr.quantity_needed,
         pr.last_refill_date,
         pr.next_refill_date,
+        pr.status,
+        pr.paused_at,
+        pr.pause_reason,
+        pr.resume_at,
         pr.store_id,
         s.name as store_name
       FROM patient_refills pr
@@ -898,6 +904,10 @@ router.post('/customer/refill-order', async (req, res) => {
       }
     }
 
+    // Calculate fulfilment schedule via OrderScheduleService & fetch return window
+    const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(new Date(), targetStoreId);
+    const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
+
     // 2. Insert items into special_orders (tagged with customer_order_source = 'website')
     const createdOrders: Array<{ id: number; product: string; qty: number; price: number; payment_qr_id?: string | null }> = [];
     const modeLabel = isDelivery ? 'Home Delivery' : 'In-Store Pickup';
@@ -932,8 +942,10 @@ router.post('/customer/refill-order', async (req, res) => {
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, delivery_status, return_status,
             payment_status, pharmacy_verification_status, payment_qr_id, order_type, total_amount,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             custId,
@@ -946,7 +958,16 @@ router.post('/customer/refill-order', async (req, res) => {
             deliveryStatus,
             allocatedQr?.id || null,
             orderType,
-            totalAmount
+            totalAmount,
+            calculatedSchedule.scheduledProcessingAt,
+            calculatedSchedule.estimatedDeliveryStart,
+            calculatedSchedule.estimatedDeliveryEnd,
+            calculatedSchedule.cutoffAt,
+            calculatedSchedule.timezone,
+            calculatedSchedule.scheduleStatus,
+            calculatedSchedule.scheduleReason,
+            calculatedSchedule.scheduleVersion,
+            calculatedSchedule.calculatedAt
           ]
         );
 
@@ -957,7 +978,7 @@ router.post('/customer/refill-order', async (req, res) => {
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
+          [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method} (ETA: ${calculatedSchedule.estimatedDeliveryWindowFormatted})`]
         );
       }
 
@@ -986,9 +1007,17 @@ router.post('/customer/refill-order', async (req, res) => {
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
 
+      const deliveryTimingBlock = isDelivery
+        ? `\n🕒 *Estimated Delivery Window:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}`
+        : `\n🕒 *Estimated Ready Time:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}`;
+      const scheduleReasonBlock = calculatedSchedule.scheduleReason
+        ? `\nℹ️ *Delivery Note:* ${calculatedSchedule.scheduleReason}`
+        : '';
+      const returnNoteBlock = `\n🔄 *Return Policy:* ${returnWindowDays}-day return window available on eligible delivered medicines.`;
+
       let confirmMsg = isDelivery
-        ? `*Online Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for ordering at *${storeName}*.\n\n*Ordered Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n🚚 *Mode:* Home Delivery\n📍 *Address:* ${cleanAddress || 'As per records'}${storePhone}\n\n*Our team is packaging your order and will alert you upon dispatch!*`
-        : `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${storePhone}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+        ? `*Online Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for ordering at *${storeName}*.\n\n*Ordered Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n🚚 *Mode:* Home Delivery${deliveryTimingBlock}${scheduleReasonBlock}\n📍 *Address:* ${cleanAddress || 'As per records'}${storePhone}${returnNoteBlock}\n\n*Our team is packaging your order and will alert you upon dispatch!*`
+        : `*Refill Order Received (${orderIdsStr})*\n\nHello ${cleanName},\nThank you for placing your refill order at *${storeName}*.\n\n*Selected Medicines:*\n${itemsSummary}\n\n💵 *Total:* ₹${totalAmount.toFixed(2)} (${payment_method})\n📍 *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}\n\n*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
 
       if (allocatedQr) {
         const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
@@ -1039,7 +1068,12 @@ router.post('/customer/refill-order', async (req, res) => {
       total_amount: totalAmount,
       payment_method,
       payment_qr: paymentQrResponse,
-      customer: { name: cleanName, phone: cleanPhone }
+      customer: { name: cleanName, phone: cleanPhone },
+      timing: calculatedSchedule,
+      returnPolicy: {
+        windowDays: returnWindowDays,
+        message: `${returnWindowDays}-day return window on eligible items upon delivery`
+      }
     });
   } catch (err: any) {
     console.error('[CustomerPortal] Refill order error:', err);
@@ -1395,6 +1429,74 @@ router.get('/standalone-catalog', (req, res) => {
   res.status(404).send('Live catalog website file not found');
 });
 
+// ─── Customer Bills for Portal Dashboard (spec §12, §13) ─────────────────────
+// GET /api/customer-portal/customer/bills
+router.get('/customer/bills', async (req, res) => {
+  try {
+    const customerId = parseInt((req.query.customer_id as string) || '0', 10);
+    const phone = ((req.query.phone as string) || '').trim().replace(/\D/g, '');
+    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 200);
+
+    const db = await dbManager.getConnection();
+    let resolvedCustomerId = customerId;
+    if (!resolvedCustomerId && phone) {
+      const digits10 = phone.slice(-10);
+      const cust = await db.get(
+        `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+        [phone, `%${digits10}`]
+      );
+      if (cust) resolvedCustomerId = cust.id;
+    }
+
+    if (!resolvedCustomerId) {
+      return res.json({ success: true, count: 0, bills: [] });
+    }
+
+    const invoices = await db.all(
+      `SELECT
+         si.id,
+         si.invoice_no as invoice_number,
+         COALESCE(si.date, si.business_date, si.created_at) as created_at,
+         COALESCE(si.total_amount, si.grand_total, 0) as total_amount,
+         si.online_order_id,
+         si.payment_medium,
+         COALESCE(st.name, 'Main Branch') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+         AND (si.status IS NULL OR si.status != 'cancelled')
+       ORDER BY si.id DESC
+       LIMIT ?`,
+      [resolvedCustomerId, limit]
+    ).catch(() => []);
+
+    const bills = await Promise.all(invoices.map(async (inv: any) => {
+      const items = await db.all(
+        `SELECT
+           sit.id,
+           COALESCE(m.name, sit.medicine_name, 'Medicine') as medicine_name,
+           sit.quantity,
+           COALESCE(sit.unit_price, sit.sell_price, sit.mrp, 0) as unit_price,
+           COALESCE(sit.mrp, 0) as mrp
+         FROM sale_items sit
+         LEFT JOIN medicines m ON m.id = sit.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+        [inv.id]
+      ).catch(() => []);
+      return {
+        ...inv,
+        items
+      };
+    }));
+
+    res.json({ success: true, count: bills.length, bills });
+  } catch (err: any) {
+    console.error('[CustomerPortal] customer/bills error:', err);
+    res.status(500).json({ error: 'Failed to fetch customer bills' });
+  }
+});
+
 // ─── Customer Purchase History (spec §12, §13) ───────────────────────────────
 // GET /api/customer-portal/history
 // Returns completed POS sales for the authenticated customer.
@@ -1573,6 +1675,10 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
       });
     }
 
+    // Calculate fulfilment schedule via OrderScheduleService & fetch return window
+    const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(new Date(), targetStoreId);
+    const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
+
     // Create new special_order + online_order_items for each refill item
     const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, '') : '';
     const cleanName = formatCustomerName(customer.name);
@@ -1581,18 +1687,32 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
     await db.run('BEGIN TRANSACTION');
     try {
       for (const item of refillItems) {
+        const itemTotal = (item.qty * (item.price || item.mrp || 0));
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date,
             notified, advance_payment, notes, customer_order_source,
             payment_status, pharmacy_verification_status, delivery_status, return_status,
-            created_at, updated_at
+            total_amount, scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', CURRENT_TIMESTAMP, 0, 0,
-            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none',
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId, resolvedCustomerId, item.product_name, cleanName, cleanPhone,
             item.qty,
-            `[Refill from Invoice #${invoiceId}]`
+            `[Refill from Invoice #${invoiceId}]`,
+            itemTotal,
+            calculatedSchedule.scheduledProcessingAt,
+            calculatedSchedule.estimatedDeliveryStart,
+            calculatedSchedule.estimatedDeliveryEnd,
+            calculatedSchedule.cutoffAt,
+            calculatedSchedule.timezone,
+            calculatedSchedule.scheduleStatus,
+            calculatedSchedule.scheduleReason,
+            calculatedSchedule.scheduleVersion,
+            calculatedSchedule.calculatedAt
           ]
         );
         const orderId = Number(result.lastID);
@@ -1607,7 +1727,7 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
         await db.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-          [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: ₹${item.mrp}`]
+          [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: ₹${item.mrp}. Estimated Delivery: ${calculatedSchedule.estimatedDeliveryWindowFormatted}`]
         );
       }
       await db.run('COMMIT');
@@ -1623,7 +1743,12 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
       message: `Refill order created for ${createdOrders.length} item(s)`,
       source_invoice_id: invoiceId,
       orders: createdOrders,
-      unavailable_items: unavailableItems
+      unavailable_items: unavailableItems,
+      timing: calculatedSchedule,
+      returnPolicy: {
+        return_window_days: returnWindowDays,
+        policy_summary: `Medicines eligible for return up to ${returnWindowDays} days after delivery/sale`
+      }
     });
   } catch (err: any) {
     console.error('[CustomerPortal] Refill error:', err);

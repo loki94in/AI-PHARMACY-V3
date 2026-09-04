@@ -399,6 +399,8 @@ interface SalePayload {
   paymentMedium?: string;
   items: SaleBillItem[];
   invoice_no?: string;
+  online_order_id?: number | null;
+  [key: string]: unknown;
 }
 
 interface PurchasePayload {

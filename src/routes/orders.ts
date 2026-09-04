@@ -12,6 +12,7 @@ import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
+import { orderScheduleService } from '../services/orderScheduleService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -98,6 +99,9 @@ router.post('/batch', async (req, res) => {
     const todayStr = new Date().toISOString();
     const insertedOrders: Array<{ id: number; product: string; qty: number }> = [];
 
+    // Calculate fulfilment schedule via OrderScheduleService
+    const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(new Date(), targetStoreId);
+
     await db.run('BEGIN TRANSACTION');
     try {
       for (let i = 0; i < items.length; i++) {
@@ -114,8 +118,11 @@ router.post('/batch', async (req, res) => {
         const result = await db.run(
           `INSERT INTO special_orders (
             store_id, product, requester, phone, qty, priority, status, date, notified,
-            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             targetStoreId,
             medName,
@@ -131,7 +138,16 @@ router.post('/batch', async (req, res) => {
             item.mrp !== undefined ? item.mrp : (item.pharmarack_mrp !== undefined ? item.pharmarack_mrp : null),
             item.mapped ? 1 : (item.pharmarack_mapped ? 1 : 0),
             item.scheme || item.pharmarack_scheme || null,
-            itemAdv
+            itemAdv,
+            calculatedSchedule.scheduledProcessingAt,
+            calculatedSchedule.estimatedDeliveryStart,
+            calculatedSchedule.estimatedDeliveryEnd,
+            calculatedSchedule.cutoffAt,
+            calculatedSchedule.timezone,
+            calculatedSchedule.scheduleStatus,
+            calculatedSchedule.scheduleReason,
+            calculatedSchedule.scheduleVersion,
+            calculatedSchedule.calculatedAt
           ]
         );
 
@@ -245,6 +261,9 @@ router.post('/', async (req, res) => {
     const todayStr = new Date().toISOString();
     const medName = reqProduct.trim();
 
+    // Calculate fulfilment schedule via OrderScheduleService
+    const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(new Date(), targetStoreId);
+
     // notified tracks whether the ARRIVAL notification has been sent (on Mark Ready).
     // It starts as 0 so marking the order Ready will trigger the arrival WhatsApp.
     const initialNotified = 0;
@@ -253,8 +272,11 @@ router.post('/', async (req, res) => {
       `INSERT INTO special_orders (
         store_id, product, requester, phone, qty, priority, status, date, notified,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
-        customer_order_source, prescription_url, product_image_url, notes, notification_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        customer_order_source, prescription_url, product_image_url, notes, notification_count,
+        scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+        cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+        schedule_calculated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         targetStoreId,
         medName,
@@ -274,7 +296,16 @@ router.post('/', async (req, res) => {
         customer_order_source,
         prescription_url || null,
         product_image_url || null,
-        notes || null
+        notes || null,
+        calculatedSchedule.scheduledProcessingAt,
+        calculatedSchedule.estimatedDeliveryStart,
+        calculatedSchedule.estimatedDeliveryEnd,
+        calculatedSchedule.cutoffAt,
+        calculatedSchedule.timezone,
+        calculatedSchedule.scheduleStatus,
+        calculatedSchedule.scheduleReason,
+        calculatedSchedule.scheduleVersion,
+        calculatedSchedule.calculatedAt
       ]
     );
     
@@ -837,6 +868,41 @@ router.get('/:id/return-status', async (req, res) => {
   } catch (err: any) {
     console.error('Get return status error:', err);
     res.status(500).json({ error: 'Failed to evaluate return status' });
+  }
+});
+
+// POST /api/orders/:id/delivery-override — Human staff override for estimated delivery window
+router.post('/:id/delivery-override', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    const {
+      estimated_delivery_start,
+      estimated_delivery_end,
+      reason = 'Manual customer accommodation',
+      override_by = 'Staff'
+    } = req.body;
+
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+    if (!estimated_delivery_start || !estimated_delivery_end) {
+      return res.status(400).json({ error: 'estimated_delivery_start and estimated_delivery_end are required' });
+    }
+
+    const updated = await orderScheduleService.overrideOrderSchedule(orderId, {
+      estimatedDeliveryStart: estimated_delivery_start,
+      estimatedDeliveryEnd: estimated_delivery_end,
+      reason,
+      overrideBy: override_by
+    });
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    broadcastOrdersChanged();
+    res.json({ success: true, message: 'Delivery schedule overridden successfully', order: updated });
+  } catch (err: any) {
+    console.error('Delivery override error:', err);
+    res.status(500).json({ error: 'Failed to override delivery schedule: ' + (err.message || 'Unknown error') });
   }
 });
 

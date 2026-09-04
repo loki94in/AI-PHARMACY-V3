@@ -5,7 +5,7 @@ import {
   ArrowRight, RefreshCw, ShoppingCart, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
-  CreditCard, ExternalLink, Copy
+  CreditCard, ExternalLink, Copy, RotateCcw
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -39,6 +39,10 @@ interface RefillItem {
   next_refill_date?: string;
   store_id?: number;
   store_name?: string;
+  status?: string;
+  paused_at?: string;
+  pause_reason?: string;
+  resume_at?: string;
 }
 
 interface PastBill {
@@ -151,6 +155,8 @@ export default function CustomerPortal() {
     store_name: string;
     orders: any[];
     message: string;
+    timing?: any;
+    returnPolicy?: any;
   } | null>(null);
 
   // ─── Change PIN States ─────────────────────────────────────────────────────
@@ -419,7 +425,9 @@ export default function CustomerPortal() {
         setOrderSuccess({
           store_name: res.store_name,
           orders: res.orders,
-          message: res.message
+          message: res.message,
+          timing: (res as any)?.timing,
+          returnPolicy: (res as any)?.returnPolicy
         });
         setIsCartModalOpen(false);
         setSelectedItems({});
@@ -477,7 +485,9 @@ export default function CustomerPortal() {
         setOrderSuccess({
           store_name: activeStore?.name || 'Pharmacy',
           orders: res.orders,
-          message: res.message
+          message: res.message,
+          timing: (res as any)?.timing,
+          returnPolicy: (res as any)?.returnPolicy
         });
       }
     } catch (err: any) {
@@ -526,6 +536,33 @@ export default function CustomerPortal() {
               <span>Payment Mode:</span>
               <span className="font-semibold text-text">{paymentMethod === 'UPI' ? 'Paid via UPI' : 'Pay at Counter'}</span>
             </div>
+
+            {orderSuccess.timing?.estimatedDeliveryWindowFormatted && (
+              <div className="pt-2 border-t border-border space-y-1">
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span className="flex items-center gap-1 font-semibold text-text">
+                    <Clock className="w-3.5 h-3.5 text-primary" />
+                    <span>Estimated Fulfilment:</span>
+                  </span>
+                  <span className="font-bold text-primary">{orderSuccess.timing.estimatedDeliveryWindowFormatted}</span>
+                </div>
+                {orderSuccess.timing.scheduleReason && (
+                  <p className="text-[11px] text-amber-500 font-medium bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg">
+                    ℹ️ {orderSuccess.timing.scheduleReason}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {orderSuccess.returnPolicy?.message && (
+              <div className="pt-2 border-t border-border flex items-center justify-between text-xs text-muted">
+                <span className="flex items-center gap-1">
+                  <RotateCcw className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Return Policy:</span>
+                </span>
+                <span className="text-[11px] font-semibold text-emerald-600">{orderSuccess.returnPolicy.message}</span>
+              </div>
+            )}
           </div>
 
           <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-600 flex items-center gap-2">
@@ -927,9 +964,21 @@ export default function CustomerPortal() {
                             {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                           </div>
                           <div>
-                            <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
+                              {r.status === 'paused' && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 font-bold">
+                                  Paused
+                                </span>
+                              )}
+                            </div>
                             <span className="text-xs text-muted">
                               {r.generic_name ? `${r.generic_name} • ` : ''}₹{price.toFixed(2)} / pack
+                              {r.next_refill_date && (
+                                <span className="ml-1.5 text-[11px] text-primary font-medium">
+                                  • Next Refill: {new Date(r.next_refill_date).toLocaleDateString()}
+                                </span>
+                              )}
                             </span>
                           </div>
                         </div>

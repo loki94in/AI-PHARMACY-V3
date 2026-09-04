@@ -18,6 +18,7 @@ import { getAppDataDir } from '../config/index.js';
 import { applySaleDelta, getReorderWindowMonths, computeReorderSuggestion } from '../services/medicineSalesMetricsService.js';
 import { cleanupStagedRefillNotifications } from '../services/refillService.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
+import { returnWindowService } from '../services/returnWindowService.js';
 
 const router = express.Router();
 
@@ -216,7 +217,8 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: verification.message, layer: verification.layer });
     }
 
-    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId, prescription_image } = req.body;
+    const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = 'CASH', paymentStatus = 'PAID', sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId, prescription_image, online_order_id, order_id } = req.body;
+    const resolvedOnlineOrderId = online_order_id ? parseInt(String(online_order_id), 10) : (order_id ? parseInt(String(order_id), 10) : null);
 
     // Strict validation: check items parameters to prevent null values
     if (!Array.isArray(items) || items.length === 0) {
@@ -326,12 +328,56 @@ router.post('/', async (req, res) => {
     }
 
     const result = await db.run(
-      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [invoice_no, customerId, total, tax, totalCgst, totalSgst, 0, paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal, resolvedDoctorId, roff]
+      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff, online_order_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [invoice_no, customerId, total, tax, totalCgst, totalSgst, 0, paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal, resolvedDoctorId, roff, resolvedOnlineOrderId || null]
     );
     const invoiceId = result.lastID;
     if (!invoiceId) {
       throw new Error('Failed to retrieve inserted invoice ID.');
+    }
+
+    // Connect POS sale to online order (spec §19, §12)
+    if (resolvedOnlineOrderId) {
+      try {
+        const returnDays = await returnWindowService.getConfiguredReturnWindowDays(undefined, db);
+        const deliveredAt = new Date().toISOString();
+        const returnWindowUntil = returnWindowService.calculateReturnWindowUntil(deliveredAt, returnDays);
+
+        await db.run(
+          `UPDATE special_orders
+           SET status = 'Delivered',
+               delivery_status = 'delivered',
+               delivered_at = ?,
+               return_window_until = ?,
+               pos_sale_invoice_id = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [deliveredAt, returnWindowUntil, invoiceId, resolvedOnlineOrderId]
+        );
+
+        // Update reservations
+        await db.run(
+          `UPDATE inventory_reservations SET status = 'SOLD', released_at = CURRENT_TIMESTAMP
+           WHERE order_id = ? AND status = 'ACTIVE'`,
+          [resolvedOnlineOrderId]
+        );
+
+        // Mark staged sale completed if present
+        await db.run(
+          `UPDATE staged_sales SET status = 'completed'
+           WHERE cart_json LIKE ?`,
+          [`%"online_order_id":${resolvedOnlineOrderId}%`]
+        );
+
+        // Tracking event
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'pos_sale_completed', ?, 'POS', CURRENT_TIMESTAMP)`,
+          [resolvedOnlineOrderId, `Fulfilled via POS sale invoice #${invoice_no} (15-day return window active until ${returnWindowUntil})`]
+        );
+      } catch (ordErr) {
+        console.warn('[Sales] Failed to link online order:', resolvedOnlineOrderId, ordErr);
+      }
     }
 
     if (prescription_image && typeof prescription_image === 'string') {

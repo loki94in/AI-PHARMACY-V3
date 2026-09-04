@@ -50,6 +50,11 @@ export default function WebsiteOrders() {
   const [overrideUser, setOverrideUser] = useState('Pharmacist Admin');
   const [submittingOverride, setSubmittingOverride] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<number | null>(null);
+  const [deliveryOverrideOrder, setDeliveryOverrideOrder] = useState<any | null>(null);
+  const [overrideDeliveryStart, setOverrideDeliveryStart] = useState('');
+  const [overrideDeliveryEnd, setOverrideDeliveryEnd] = useState('');
+  const [overrideDeliveryReason, setOverrideDeliveryReason] = useState('');
+  const [submittingDeliveryOverride, setSubmittingDeliveryOverride] = useState(false);
 
   // Fetch website orders
   const fetchOrders = useCallback(async (silent = false) => {
@@ -127,9 +132,24 @@ export default function WebsiteOrders() {
     navigate('/pos', {
       state: {
         prefill: {
+          onlineOrderId: order.id,
+          orderId: order.id,
+          patientName: order.requester || '',
+          patientPhone: order.phone || '',
           customerName: order.requester || '',
           customerPhone: order.phone || '',
+          customerId: order.customer_id || undefined,
           notes: `Website Order #${order.id}`,
+          medicines: [
+            {
+              medicine_name: order.medicine_name || order.product,
+              name: order.medicine_name || order.product,
+              quantity: order.qty || 1,
+              qty: order.qty || 1,
+              sell_price: order.pharmarack_rate || order.advance_payment || 0,
+              mrp: order.pharmarack_rate || order.advance_payment || 0
+            }
+          ],
           items: [
             {
               medicine_name: order.medicine_name || order.product,
@@ -164,6 +184,68 @@ export default function WebsiteOrders() {
     } finally {
       setSubmittingOverride(false);
     }
+  };
+
+  const handleOpenDeliveryOverride = (order: any) => {
+    setDeliveryOverrideOrder(order);
+    const now = new Date();
+    const s = order.estimated_delivery_start
+      ? new Date(order.estimated_delivery_start).toISOString().slice(0, 16)
+      : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 19, 0).toISOString().slice(0, 16);
+    const e = order.estimated_delivery_end
+      ? new Date(order.estimated_delivery_end).toISOString().slice(0, 16)
+      : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0).toISOString().slice(0, 16);
+    setOverrideDeliveryStart(s);
+    setOverrideDeliveryEnd(e);
+    setOverrideDeliveryReason(order.schedule_reason || '');
+  };
+
+  const handleSaveDeliveryOverride = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deliveryOverrideOrder) return;
+    if (!overrideDeliveryStart || !overrideDeliveryEnd) {
+      toastEvent.trigger('Please specify both start and end times', 'error');
+      return;
+    }
+    setSubmittingDeliveryOverride(true);
+    try {
+      await apiClient.post(`/orders/${deliveryOverrideOrder.id}/delivery-override`, {
+        estimated_delivery_start: new Date(overrideDeliveryStart).toISOString(),
+        estimated_delivery_end: new Date(overrideDeliveryEnd).toISOString(),
+        reason: overrideDeliveryReason.trim() || 'Manual staff accommodation',
+        override_by: 'Staff'
+      });
+      toastEvent.trigger(`Delivery schedule updated for Order #${deliveryOverrideOrder.id}`, 'success');
+      setDeliveryOverrideOrder(null);
+      fetchOrders(true);
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to update schedule', 'error');
+    } finally {
+      setSubmittingDeliveryOverride(false);
+    }
+  };
+
+  const formatDeliveryEta = (start: string | null, end: string | null) => {
+    if (!start && !end) return null;
+    try {
+      const s = start ? new Date(start) : null;
+      const e = end ? new Date(end) : null;
+      if (!s) return null;
+      const dateStr = s.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const startTime = s.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+      const endTime = e ? e.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }) : '';
+      return `${dateStr}, ${startTime}${endTime ? ` – ${endTime}` : ''}`;
+    } catch {
+      return `${start} - ${end}`;
+    }
+  };
+
+  const getTimelineStep = (order: any): number => {
+    if (order.delivery_status === 'delivered' || order.status === 'Fulfilled') return 5;
+    if (order.status === 'Ready' || order.status === 'ORDER_READY_FOR_PICKUP' || order.delivery_status === 'dispatched') return 4;
+    if (order.status === 'Preparing' || order.delivery_status === 'preparing') return 3;
+    if (order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') return 2;
+    return 1;
   };
 
   // KPI Calculations
@@ -225,7 +307,7 @@ export default function WebsiteOrders() {
               </span>
             </div>
             <p className="text-xs text-muted">
-              Prescriptions, website customer orders, 14-day return windows, and fulfillment dispatch.
+              Prescriptions, website customer orders, 15-day return windows, and fulfillment dispatch.
             </p>
           </div>
         </div>
@@ -298,7 +380,7 @@ export default function WebsiteOrders() {
           className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${statusFilter === 'returns' ? 'bg-rose-500/10 border-rose-500/40 shadow-sm' : 'bg-bg border-border hover:bg-bg2'}`}
         >
           <div className="flex items-center justify-between text-rose-500">
-            <span className="text-[10px] font-bold uppercase tracking-wider">14-Day Returns</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">15-Day Returns</span>
             <RotateCcw size={14} />
           </div>
           <div className="text-xl font-black text-rose-500 mt-1">{metrics.returns}</div>
@@ -449,6 +531,69 @@ export default function WebsiteOrders() {
                     )}
                   </div>
 
+                  {/* 5-Step Order Fulfilment Timeline */}
+                  <div className="p-2.5 rounded-xl bg-bg border border-border/60 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] font-bold text-muted">
+                      <span>Order Progress</span>
+                      <span className="text-primary font-black">
+                        {getTimelineStep(order) === 5 ? 'Delivered' : getTimelineStep(order) === 4 ? 'Ready / Dispatched' : getTimelineStep(order) === 3 ? 'Preparing' : getTimelineStep(order) === 2 ? 'Payment Confirmed' : 'Order Placed'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1 items-center">
+                      {['Placed', 'Confirmed', 'Preparing', 'Ready', 'Delivered'].map((label, idx) => {
+                        const stepNum = idx + 1;
+                        const currentStep = getTimelineStep(order);
+                        const isDone = currentStep >= stepNum;
+                        const isCurrent = currentStep === stepNum;
+                        return (
+                          <div key={label} className="flex flex-col items-center">
+                            <div className={`w-full h-1.5 rounded-full mb-1 transition-all ${
+                              isDone ? 'bg-primary' : 'bg-bg3'
+                            }`} />
+                            <span className={`text-[8px] truncate font-bold text-center ${
+                              isCurrent ? 'text-primary font-black' : isDone ? 'text-text' : 'text-muted/60'
+                            }`}>
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Fulfilment ETA Window & Cutoff Shift Badge */}
+                  <div className="p-2.5 rounded-xl bg-bg border border-border/80 space-y-1 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold text-text text-[11px]">
+                        <Clock size={12} className="text-primary" />
+                        <span>Estimated Delivery:</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeliveryOverride(order)}
+                        className="text-[10px] text-primary hover:underline font-bold cursor-pointer"
+                      >
+                        Adjust ETA
+                      </button>
+                    </div>
+
+                    <div className="font-bold text-text text-xs">
+                      {formatDeliveryEta(order.estimated_delivery_start, order.estimated_delivery_end) || 'Standard daily window (7:00 PM – 9:00 PM)'}
+                    </div>
+
+                    {order.schedule_reason && (
+                      <div className="text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        <span>ℹ️ {order.schedule_reason}</span>
+                      </div>
+                    )}
+
+                    {order.schedule_overridden_by && (
+                      <div className="text-[9px] text-purple-400 font-medium">
+                        ⚡ Manually adjusted by {order.schedule_overridden_by}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Medicine Item Details */}
                   <div className="p-2.5 rounded-xl bg-bg border border-border/60 space-y-1 text-xs">
                     <div className="font-bold text-text truncate">
@@ -474,12 +619,12 @@ export default function WebsiteOrders() {
                     </button>
                   )}
 
-                  {/* 14-Day Return Window Widget */}
+                  {/* 15-Day Return Window Widget */}
                   {order.delivery_status === 'delivered' && (
                     <div className="p-2.5 rounded-xl bg-bg border border-border/80 space-y-1.5">
                       <div className="flex items-center justify-between text-[10px] font-bold">
                         <span className="flex items-center gap-1 text-muted">
-                          <RotateCcw size={11} /> 14-Day Return Window:
+                          <RotateCcw size={11} /> 15-Day Return Window:
                         </span>
                         {isEligibleForReturn && (
                           <span className="text-emerald-500 font-black">{remainingDays} days remaining</span>
@@ -497,7 +642,7 @@ export default function WebsiteOrders() {
                         <div className="w-full h-1.5 bg-bg3 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-emerald-500 transition-all duration-500"
-                            style={{ width: `${Math.max(5, (remainingDays / 14) * 100)}%` }}
+                            style={{ width: `${Math.max(5, (remainingDays / 15) * 100)}%` }}
                           />
                         </div>
                       )}
@@ -716,6 +861,82 @@ export default function WebsiteOrders() {
                   className="px-5 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold shadow-md hover:bg-amber-700 disabled:opacity-50"
                 >
                   {submittingOverride ? 'Saving...' : 'Approve Override'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Staff Delivery ETA Override Modal */}
+      {deliveryOverrideOrder && (
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-sm p-4">
+          <div className="bg-bg border border-border w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl text-left">
+            <div className="flex justify-between items-center border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Clock size={18} className="text-primary" />
+                <h3 className="font-bold text-sm text-text">Adjust Delivery Window</h3>
+              </div>
+              <button
+                onClick={() => setDeliveryOverrideOrder(null)}
+                className="p-1 rounded-lg hover:bg-bg3 text-muted hover:text-text cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted">
+              Manually reschedule the estimated delivery window for Order #{deliveryOverrideOrder.id} ({deliveryOverrideOrder.requester || 'Customer'}).
+            </p>
+
+            <form onSubmit={handleSaveDeliveryOverride} className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-text">Delivery Window Start *</label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={overrideDeliveryStart}
+                  onChange={(e) => setOverrideDeliveryStart(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 text-xs bg-bg2 border border-border rounded-xl text-text focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-text">Delivery Window End *</label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={overrideDeliveryEnd}
+                  onChange={(e) => setOverrideDeliveryEnd(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 text-xs bg-bg2 border border-border rounded-xl text-text focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-text">Reason for Adjustment / Note</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Customer requested late delivery after 8:30 PM"
+                  value={overrideDeliveryReason}
+                  onChange={(e) => setOverrideDeliveryReason(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 text-xs bg-bg2 border border-border rounded-xl text-text focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-between border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryOverrideOrder(null)}
+                  className="px-4 py-2 rounded-xl bg-bg3 text-muted hover:text-text text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingDeliveryOverride}
+                  className="px-5 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-md hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {submittingDeliveryOverride ? 'Updating...' : 'Save New Window'}
                 </button>
               </div>
             </form>
