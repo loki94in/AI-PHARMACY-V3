@@ -621,10 +621,16 @@ router.get('/staging/conflicts', async (_req, res) => {
     const db = await openStagingDb();
     const rows = await db.all(`
       SELECT c.id, c.module_type, c.raw_imported_data, c.matching_record_id, c.conflict_reason, c.status,
-             m.name as existing_medicine_name, i.batch_no as existing_batch_no, i.quantity as existing_quantity
+             COALESCE(m_sim.name, m.name) as existing_medicine_name,
+             COALESCE(m_sim.manufacturer, m.manufacturer) as existing_manufacturer,
+             COALESCE(m_sim.mrp, m.mrp) as existing_mrp,
+             i.batch_no as existing_batch_no, i.quantity as existing_quantity,
+             ci.image_path as existing_image_path
       FROM migration_conflicts c
-      LEFT JOIN inventory_master i ON c.matching_record_id = i.id
+      LEFT JOIN inventory_master i ON c.matching_record_id = i.id AND c.module_type = 'inventory'
       LEFT JOIN medicines m ON i.medicine_id = m.id
+      LEFT JOIN medicines m_sim ON c.matching_record_id = m_sim.id AND c.module_type = 'medicine_similarity'
+      LEFT JOIN catalog_images ci ON ci.medicine_id = COALESCE(m_sim.id, m.id) AND ci.is_active = 1
       WHERE c.status = 'pending'
       ORDER BY c.id ASC
       LIMIT 500
@@ -644,7 +650,7 @@ router.post('/staging/resolve', async (req, res) => {
   if (!fs.existsSync(STAGING_DB_PATH)) {
     return res.status(400).json({ error: 'No staging database found' });
   }
-  const allowed = ['merge', 'overwrite', 'skip'];
+  const allowed = ['merge', 'overwrite', 'skip', 'keep_new'];
   if (!allowed.includes(resolution)) {
     return res.status(400).json({ error: `resolution must be one of: ${allowed.join(', ')}` });
   }
@@ -655,6 +661,28 @@ router.post('/staging/resolve', async (req, res) => {
     if (!conflict) {
       await db.close();
       return res.status(404).json({ error: 'Conflict not found or already resolved' });
+    }
+
+    if (conflict.module_type === 'medicine_similarity') {
+      let rawData: any = {};
+      try { rawData = JSON.parse(conflict.raw_imported_data); } catch (_) {}
+      const stagedMedId = rawData.staged_medicine_id;
+      const masterMedId = conflict.matching_record_id;
+
+      if (resolution === 'merge') {
+        if (stagedMedId && masterMedId) {
+          await db.run('UPDATE inventory_master SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]);
+          await db.run('UPDATE sale_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('UPDATE purchase_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('UPDATE return_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('DELETE FROM medicines WHERE id = ?', [stagedMedId]);
+        }
+        await db.run('UPDATE migration_conflicts SET status = ? WHERE id = ?', ['resolved_merge', conflictId]);
+      } else {
+        await db.run('UPDATE migration_conflicts SET status = ? WHERE id = ?', ['resolved_keep_new', conflictId]);
+      }
+      await db.close();
+      return res.json({ success: true, message: `Similarity conflict ${conflictId} resolved as ${resolution}` });
     }
 
     const rawRow = JSON.parse(conflict.raw_imported_data);
@@ -697,6 +725,46 @@ router.post('/staging/resolve', async (req, res) => {
     res.json({ success: true, message: `Conflict ${conflictId} resolved as ${resolution}` });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/staging/resolve-all-similar', async (req, res) => {
+  const minScore = typeof req.body?.minScore === 'number' ? req.body.minScore : 85;
+  if (!fs.existsSync(STAGING_DB_PATH)) {
+    return res.status(400).json({ error: 'No staging database found' });
+  }
+  try {
+    const db = await openStagingDb();
+    const conflicts = await db.all(
+      `SELECT * FROM migration_conflicts WHERE module_type = 'medicine_similarity' AND status = 'pending'`
+    );
+    let resolvedCount = 0;
+    for (const c of conflicts) {
+      let rawData: any = {};
+      try { rawData = JSON.parse(c.raw_imported_data); } catch (_) {}
+      const score = rawData.similarity_score || 0;
+      if (score >= minScore) {
+        const stagedMedId = rawData.staged_medicine_id;
+        const masterMedId = c.matching_record_id;
+        if (stagedMedId && masterMedId) {
+          await db.run('UPDATE inventory_master SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]);
+          await db.run('UPDATE sale_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('UPDATE purchase_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('UPDATE return_items SET medicine_id = ? WHERE medicine_id = ?', [masterMedId, stagedMedId]).catch(() => {});
+          await db.run('DELETE FROM medicines WHERE id = ?', [stagedMedId]);
+        }
+        await db.run('UPDATE migration_conflicts SET status = ? WHERE id = ?', ['resolved_merge', c.id]);
+        resolvedCount++;
+      }
+    }
+    await db.close();
+    res.json({
+      success: true,
+      resolvedCount,
+      message: `Successfully merged ${resolvedCount} high-confidence medicine(s) (≥${minScore}%) into Master Catalog.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

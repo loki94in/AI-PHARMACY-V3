@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Loader2, ArrowRight, CheckCircle, AlertTriangle, AlertCircle, RefreshCw, Database, XCircle } from 'lucide-react';
+import { Loader2, ArrowRight, CheckCircle, AlertTriangle, AlertCircle, RefreshCw, Database, XCircle, Sparkles } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ModuleSection } from './ModuleSection';
 import { api } from '../../../services/api';
+import { toastEvent } from '../../../services/events';
 import { invalidateAfterStockWrite } from '../../../utils/cacheInvalidation';
 import { toDateInputValue } from '../../../utils/date';
 import { useModalEscape } from '../../../services/keyboardShortcuts';
@@ -38,6 +39,9 @@ interface StagingConflict {
   module_type: string;
   conflict_reason: string;
   existing_medicine_name?: string;
+  existing_manufacturer?: string;
+  existing_mrp?: number;
+  existing_image_path?: string;
   existing_batch_no?: string;
   existing_quantity?: number;
   raw_imported_data: string;
@@ -293,6 +297,40 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       setErrorMessage(e.response?.data?.error || e.message || 'Failed to resolve conflict');
     } finally {
       setResolvingConflictId(null);
+    }
+  };
+
+  const [resolvingAllSimilar, setResolvingAllSimilar] = useState(false);
+
+  const similarityConflicts = useMemo(() => {
+    return stagingConflicts.filter(c => c.module_type === 'medicine_similarity');
+  }, [stagingConflicts]);
+
+  const batchConflicts = useMemo(() => {
+    return stagingConflicts.filter(c => c.module_type !== 'medicine_similarity');
+  }, [stagingConflicts]);
+
+  const highConfidenceCount = useMemo(() => {
+    return similarityConflicts.filter(c => {
+      let raw: any = {};
+      try { raw = JSON.parse(c.raw_imported_data); } catch (_) {}
+      return (raw.similarity_score || 0) >= 85;
+    }).length;
+  }, [similarityConflicts]);
+
+  const handleResolveAllSimilar = async () => {
+    setResolvingAllSimilar(true);
+    try {
+      const res = await api.resolveAllSimilarConflicts(85);
+      if (res.success) {
+        toastEvent.trigger(res.message, 'success');
+        await loadStagingData();
+      }
+    } catch (err) {
+      const e = err as LocalApiError;
+      setErrorMessage(e.response?.data?.error || e.message || 'Failed to auto-merge similar medicines');
+    } finally {
+      setResolvingAllSimilar(false);
     }
   };
 
@@ -666,9 +704,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     )}
 
                     {summary.conflicts > 0 && (
-                      <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center gap-2">
+                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm flex items-center gap-2">
                         <AlertCircle size={16} />
-                        {summary.conflicts} duplicate batch conflict(s) need resolution before commit.
+                        <span>
+                          {similarityConflicts.length > 0 && `${similarityConflicts.length} similar product match(es)`}
+                          {similarityConflicts.length > 0 && batchConflicts.length > 0 && ' and '}
+                          {batchConflicts.length > 0 && `${batchConflicts.length} duplicate batch conflict(s)`}
+                          {' need review/action.'}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -685,13 +728,117 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   />
                 </div>
 
-                {stagingConflicts.length > 0 && (
+                {/* Similar Product Name Matches */}
+                {similarityConflicts.length > 0 && (
+                  <div className="border border-glass-border rounded-xl overflow-hidden bg-bg3/20 shadow-sm">
+                    <div className="px-4 py-3 bg-bg3/60 border-b border-glass-border flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles size={16} className="text-amber-400" />
+                        <span className="text-sm font-semibold text-text">
+                          Similar Product Matches ({similarityConflicts.length})
+                        </span>
+                        <span className="text-xs text-muted">
+                          Merge into Master Catalog to inherit images and eliminate duplicates
+                        </span>
+                      </div>
+                      {highConfidenceCount > 0 && (
+                        <button
+                          type="button"
+                          disabled={resolvingAllSimilar}
+                          onClick={handleResolveAllSimilar}
+                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                          title="Merge all items with ≥85% similarity score"
+                        >
+                          <Sparkles size={12} />
+                          <span>{resolvingAllSimilar ? 'Merging...' : `Merge All High-Confidence (${highConfidenceCount})`}</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="divide-y divide-glass-border/30 max-h-64 overflow-y-auto p-2 space-y-2">
+                      {similarityConflicts.map(c => {
+                        let raw: any = {};
+                        try { raw = JSON.parse(c.raw_imported_data); } catch (_) {}
+                        const score = raw.similarity_score || 0;
+                        const isHigh = score >= 85;
+                        const imgUrl = c.existing_image_path;
+
+                        return (
+                          <div key={c.id} className="p-3 rounded-lg bg-bg2 border border-glass-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm">
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              {imgUrl ? (
+                                <img
+                                  src={imgUrl}
+                                  alt={c.existing_medicine_name || 'Medicine'}
+                                  className="w-12 h-12 object-contain rounded-md border border-glass-border bg-bg3 p-0.5 shrink-0"
+                                  onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-md border border-glass-border bg-bg3 flex items-center justify-center text-muted shrink-0 text-xs">
+                                  💊
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-bg3 text-muted font-mono font-medium">Imported</span>
+                                  <span className="font-semibold text-text truncate">{raw.imported_medicine_name || 'Imported item'}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-1 text-xs text-muted flex-wrap">
+                                  <span className="text-sky font-semibold">➔ Master:</span>
+                                  <span className="font-medium text-text truncate">{c.existing_medicine_name || raw.suggested_name}</span>
+                                  {(c.existing_manufacturer || raw.suggested_manufacturer) && (
+                                    <span className="text-muted truncate">({c.existing_manufacturer || raw.suggested_manufacturer})</span>
+                                  )}
+                                  {(c.existing_mrp || raw.suggested_mrp) && (
+                                    <span className="text-muted shrink-0 font-mono">₹{c.existing_mrp || raw.suggested_mrp}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
+                                  isHigh
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                }`}
+                              >
+                                {score}% Match
+                              </span>
+                              <button
+                                type="button"
+                                disabled={resolvingConflictId === c.id}
+                                onClick={() => handleResolveConflict(c.id, 'merge')}
+                                className="px-2.5 py-1 rounded-md text-xs font-bold bg-primary hover:bg-primary/80 text-white shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                                title="Link this imported medicine to the Master Catalog and share its verified image"
+                              >
+                                Merge into Master
+                              </button>
+                              <button
+                                type="button"
+                                disabled={resolvingConflictId === c.id}
+                                onClick={() => handleResolveConflict(c.id, 'keep_new')}
+                                className="px-2 py-1 rounded-md text-xs border border-glass-border hover:bg-bg3 text-muted hover:text-text transition-all disabled:opacity-50 cursor-pointer"
+                                title="Keep as a separate new medicine in catalog"
+                              >
+                                Keep as New
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Batch Conflicts */}
+                {batchConflicts.length > 0 && (
                   <div className="border border-glass-border rounded-xl overflow-hidden">
                     <div className="px-4 py-2 bg-bg3/60 border-b border-glass-border text-sm font-medium text-text">
-                      Batch Conflicts ({stagingConflicts.length})
+                      Batch Conflicts ({batchConflicts.length})
                     </div>
                     <div className="divide-y divide-glass-border/30 max-h-48 overflow-y-auto">
-                      {stagingConflicts.map(c => {
+                      {batchConflicts.map(c => {
                         let imported: LocalImportedRow = {};
                         try { imported = JSON.parse(c.raw_imported_data); } catch (_) {}
                         return (

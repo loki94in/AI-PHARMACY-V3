@@ -38,8 +38,17 @@ interface PriceRow {
   margin: number; // profit margin % over rate
 }
 
-const buildInitialRows = (items: BillItemForPriceConfig[]): PriceRow[] =>
-  items.map(item => {
+const buildInitialRows = (items: BillItemForPriceConfig[]): PriceRow[] => {
+  const seenMeds = new Set<number>();
+  const uniqueItems: BillItemForPriceConfig[] = [];
+  for (const it of items) {
+    const medId = Number(it.medicine_id || it.id || 0);
+    if (medId > 0 && seenMeds.has(medId)) continue;
+    if (medId > 0) seenMeds.add(medId);
+    uniqueItems.push(it);
+  }
+
+  return uniqueItems.map(item => {
     const medId = Number(item.medicine_id || item.id || 0);
     const medName = item.medicine_name || item.name || 'Unknown Item';
     const rateVal = Math.max(0, Number(item.rate || 0));
@@ -69,6 +78,7 @@ const buildInitialRows = (items: BillItemForPriceConfig[]): PriceRow[] =>
       margin
     };
   });
+};
 
 export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps> = ({
   isOpen,

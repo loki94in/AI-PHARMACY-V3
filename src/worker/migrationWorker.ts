@@ -22,6 +22,7 @@ import { isValidCustomerName, isValidDoctorName, isValidDistributorName } from '
 import { sanitizeDoctorName } from '../utils/doctorUtils.js';
 import { ensureMigrationAuditTable, flushMigrationAudits, queueMigrationAudit, clearMigrationAudit, saveMigrationAuditSummary, getMigrationAuditSummary } from '../utils/migrationAudit.js';
 import { config, getAppDataDir } from '../config/index.js';
+import { MedicineSimilarityMatcher, MasterMedicineRecord } from '../utils/medicineSimilarityMatcher.js';
 
 // PostgreSQL COPY parser
 import { parseCopyHeader, parseCopyDataRow, isCopyEndMarker, isPgDump } from './parsers/pgCopyParser.js';
@@ -1414,6 +1415,43 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
   migrationStatus.message = 'Streaming CSV rows into staging database...';
   resetDistributorLookupCache();
 
+  // Initialize medicine similarity matcher with existing Master Catalog medicines
+  const initialMasterMeds = await db.all<MasterMedicineRecord[]>(
+    'SELECT id, name, manufacturer, mrp FROM medicines'
+  );
+  const similarityMatcher = new MedicineSimilarityMatcher(initialMasterMeds);
+
+  const recordMedicineSimilarityConflict = async (rawName: string, stagedMedId: number) => {
+    try {
+      const bestMatch = similarityMatcher.findBestMatch(rawName, 70);
+      if (bestMatch && bestMatch.score < 100 && bestMatch.id !== stagedMedId) {
+        const existingConflict = await db.get(
+          'SELECT id FROM migration_conflicts WHERE module_type = ? AND matching_record_id = ?',
+          ['medicine_similarity', bestMatch.id]
+        );
+        if (!existingConflict) {
+          const rawConflictData = {
+            imported_medicine_name: rawName,
+            staged_medicine_id: stagedMedId,
+            suggested_medicine_id: bestMatch.id,
+            suggested_name: bestMatch.name,
+            suggested_manufacturer: bestMatch.manufacturer,
+            suggested_mrp: bestMatch.mrp,
+            similarity_score: bestMatch.score,
+            similarity_reason: bestMatch.reason,
+          };
+          await db.run(
+            `INSERT INTO migration_conflicts (module_type, raw_imported_data, matching_record_id, conflict_reason)
+             VALUES (?, ?, ?, ?)`,
+            ['medicine_similarity', JSON.stringify(rawConflictData), bestMatch.id, `${bestMatch.score}% match with Master: ${bestMatch.name}`]
+          );
+        }
+      }
+    } catch (simErr) {
+      console.warn('[MigrationWorker] Similarity check error:', simErr);
+    }
+  };
+
   const processCsvImportRow = async (row: any) => {
           // Yield every 200 rows to keep event loop free and update progress/message
           if (insertCount % 200 === 0) {
@@ -1536,6 +1574,7 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
               const placeholdersStr = ['?', ...medVals.map(() => '?')].join(', ');
               const result = await db.run(`INSERT INTO medicines (${colsStr}) VALUES (${placeholdersStr})`, [medName, ...medVals]);
               med = { id: result.lastID };
+              await recordMedicineSimilarityConflict(medName, med.id);
             } else {
               if (medUpdates.length > 0) {
                 await db.run(`UPDATE medicines SET ${medUpdates.join(', ')} WHERE id = ?`, [...medVals, med.id]);
@@ -1737,6 +1776,7 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
             if (!med) {
               const result = await db.run('INSERT INTO medicines (name) VALUES (?)', [medName]);
               med = { id: result.lastID };
+              await recordMedicineSimilarityConflict(medName, med.id);
             }
 
             let inv: { id: number } | undefined;
@@ -1872,6 +1912,7 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
             if (!med) {
               const result = await db.run('INSERT INTO medicines (name) VALUES (?)', [medName]);
               med = { id: result.lastID };
+              await recordMedicineSimilarityConflict(medName, med.id);
             }
 
             const qtyKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'quantity');
@@ -1993,6 +2034,7 @@ async function parseAndImportCSV(csvPath: string, targetDbPath: string, dataType
             if (!med) {
               const result = await db.run('INSERT INTO medicines (name) VALUES (?)', [medName]);
               med = { id: result.lastID };
+              await recordMedicineSimilarityConflict(medName, med.id);
             }
 
             const qtyKey = Object.keys(mapping || {}).find(k => mapping?.[k] === 'quantity' || mapping?.[k] === 'return_quantity');

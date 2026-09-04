@@ -131,11 +131,12 @@ export class CatalogImageService {
    * Extract primary dosage form from text
    */
   public extractDosageForm(text: string): string | null {
-    const upper = (text || '').toUpperCase();
+    if (!text) return null;
+    const upper = text.replace(/[-_.]/g, ' ').toUpperCase();
     for (const form of DOSAGE_FORMS) {
       const regex = new RegExp(`\\b${form}\\b`, 'i');
       if (regex.test(upper)) {
-        if (form.startsWith('TAB')) return 'TABLET';
+        if (form.startsWith('TAB') || form === 'DT') return 'TABLET';
         if (form.startsWith('CAP')) return 'CAPSULE';
         if (form.startsWith('SYP') || form.startsWith('SYRUP') || form.startsWith('SUSP')) return 'SYRUP';
         if (form.startsWith('INJ') || form === 'IV' || form === 'IM') return 'INJECTION';
@@ -149,11 +150,11 @@ export class CatalogImageService {
   }
 
   /**
-   * Extract strength from text (e.g. "20 MG", "500MG", "0.5 ML")
+   * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML")
    */
   public extractStrength(text: string): string | null {
     if (!text) return null;
-    const match = text.match(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
+    const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
     return match ? match[0].toUpperCase().replace(/\s+/g, '') : null;
   }
 
@@ -183,20 +184,28 @@ export class CatalogImageService {
     name: string;
     manufacturer?: string | null;
     ocrText?: string | null;
+    imagePath?: string | null;
   }): MatchScoreResult {
     const medBrand = this.extractCoreBrand(medicine.name);
     const candUpper = (candidate.name || '').toUpperCase();
+    const pathUpper = (candidate.imagePath || '').replace(/[-_.]/g, ' ').toUpperCase();
     const ocrUpper = (candidate.ocrText || '').toUpperCase();
 
     // 1. Brand Match (35%) — Strict boundary/whole-word check (Section 11)
     let brandMatch = false;
     let brandScore = 0;
     if (medBrand) {
-      const candWords = candUpper.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 2);
-      const exactWordMatch = candWords.some(w => w === medBrand || (medBrand.length >= 5 && w.startsWith(medBrand) && w.length <= medBrand.length + 2));
-      const wordBoundaryMatch = new RegExp(`\\b${medBrand}\\b`, 'i').test(candUpper);
+      const normMedBrand = medBrand.replace(/[-_]/g, ' ').trim();
+      const cleanCandStr = (candUpper + ' ' + pathUpper).replace(/[-_]/g, ' ');
+      const candWords = cleanCandStr.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 2);
 
-      if (exactWordMatch || wordBoundaryMatch) {
+      const exactWordMatch = candWords.some(w => w === medBrand || w === normMedBrand || (medBrand.length >= 5 && w.startsWith(medBrand)));
+      const wordBoundaryMatch = new RegExp(`\\b${normMedBrand}\\b`, 'i').test(cleanCandStr);
+
+      const subWords = normMedBrand.split(' ').filter(w => w.length >= 2 && !/^\d+$/.test(w));
+      const subWordMatch = subWords.length > 0 && subWords.every(sw => new RegExp(`\\b${sw}\\b`, 'i').test(cleanCandStr));
+
+      if (exactWordMatch || wordBoundaryMatch || subWordMatch) {
         brandMatch = true;
         brandScore = 35;
       }
@@ -223,9 +232,9 @@ export class CatalogImageService {
       companyScore = 15;
     }
 
-    // 3. Strength Match (20%)
-    const medStr = this.extractStrength(medicine.strength || medicine.name);
-    const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.ocrText || '');
+    // 3. Strength Match (20%) & Conflict Penalty
+    const medStr = this.extractStrength(medicine.strength || '') || this.extractStrength(medicine.name);
+    const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.imagePath || '') || this.extractStrength(candidate.ocrText || '');
     let strengthMatch = false;
     let strengthConflict = false;
     let strengthScore = 10; // neutral if neither specifies
@@ -235,28 +244,34 @@ export class CatalogImageService {
         strengthMatch = true;
         strengthScore = 20;
       } else {
-        // Explicit dosage conflict (e.g. 10MG vs 20MG) -> severe penalty
+        // Explicit dosage conflict (e.g. 10MG vs 20MG, 5MG vs 10MG, 20GM vs 200GM) -> strict failure
         strengthConflict = true;
-        strengthScore = -30;
+        strengthScore = -40;
       }
     } else if (medStr && !candStr) {
       strengthScore = 10;
     }
 
-    // 4. Dosage Form Match (15%)
-    const medForm = this.extractDosageForm(medicine.packaging || medicine.name);
-    const candForm = this.extractDosageForm(candidate.name) || this.extractDosageForm(candidate.ocrText || '');
+    // 4. Dosage Form Match (15%) & Conflict Penalty
+    // ALWAYS check medicine.name first (most informative), fallback to packaging
+    const medForm = this.extractDosageForm(medicine.name) || this.extractDosageForm(medicine.packaging || '');
+    const candNameForm = this.extractDosageForm(candidate.name);
+    const candPathForm = this.extractDosageForm(candidate.imagePath || '');
+    const candForm = candNameForm || candPathForm || this.extractDosageForm(candidate.ocrText || '');
     let dosageFormMatch = false;
     let dosageFormConflict = false;
     let dosageFormScore = 8; // neutral
 
-    if (medForm && candForm) {
-      if (medForm === candForm) {
+    if (medForm) {
+      if (candNameForm && candNameForm !== medForm) {
+        dosageFormConflict = true;
+        dosageFormScore = -40;
+      } else if (candPathForm && candPathForm !== medForm) {
+        dosageFormConflict = true;
+        dosageFormScore = -40;
+      } else if (candForm === medForm) {
         dosageFormMatch = true;
         dosageFormScore = 15;
-      } else {
-        dosageFormConflict = true;
-        dosageFormScore = -25;
       }
     }
 
@@ -293,25 +308,20 @@ export class CatalogImageService {
     // Aggregate Score
     let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore;
 
-    // Hard fail rules
-    if (!brandMatch) {
-      totalScore = Math.min(totalScore, 35);
-    }
-    if (strengthConflict || dosageFormConflict) {
-      totalScore = Math.min(totalScore, 40);
-    }
-
-    totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
-
-    // Categorization (Calibrated per Section 10 & 34 of PRODUCT IMAGE MISSING.MD)
+    // Strict Hard Fail Rules
     let verificationStatus: 'HIGH_CONFIDENCE' | 'PENDING_REVIEW' | 'REJECTED' = 'PENDING_REVIEW';
-    if (totalScore >= 80 && brandMatch && !strengthConflict && !dosageFormConflict) {
+    if (!brandMatch || strengthConflict || dosageFormConflict) {
+      totalScore = Math.min(totalScore, 30);
+      verificationStatus = 'REJECTED';
+    } else if (totalScore >= 80) {
       verificationStatus = 'HIGH_CONFIDENCE';
-    } else if (totalScore < 45 || strengthConflict || dosageFormConflict || !brandMatch) {
+    } else if (totalScore < 45) {
       verificationStatus = 'REJECTED';
     } else {
       verificationStatus = 'PENDING_REVIEW';
     }
+
+    totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
 
     // Reason synthesis
     const reasons: string[] = [];
@@ -2640,8 +2650,9 @@ export class CatalogImageService {
 
   /**
    * Filename-based auto-match engine.
-   * Scans uploads/products/ directory, parses filenames, fuzzy-matches to medicines DB,
-   * and silently inserts into catalog_images.
+   * Scans both frontend/public/products and uploads/products directories,
+   * matches filenames to medicines using brand index & strict multi-signal scoring,
+   * and inserts into catalog_images.
    * Idempotent — skips files already linked by image_path.
    */
   public async scanAndAutoMatchLocalImages(): Promise<{
@@ -2650,165 +2661,376 @@ export class CatalogImageService {
     unmatched: number;
     skipped: number;
   }> {
-    const uploadsDir = path.join(process.cwd(), 'uploads', 'products');
     const db = await dbManager.getConnection();
+    const publicDir = path.join(process.cwd(), 'frontend', 'public', 'products');
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'products');
 
-    if (!fs.existsSync(uploadsDir)) {
+    const fileEntries: Array<{ filename: string; relPath: string }> = [];
+
+    if (fs.existsSync(publicDir)) {
+      const publicFiles = fs.readdirSync(publicDir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+      for (const f of publicFiles) {
+        fileEntries.push({ filename: f, relPath: `/products/${f}` });
+      }
+    }
+
+    if (fs.existsSync(uploadsDir)) {
+      const uploadFiles = fs.readdirSync(uploadsDir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+      for (const f of uploadFiles) {
+        fileEntries.push({ filename: f, relPath: `uploads/products/${f}` });
+      }
+    }
+
+    if (fileEntries.length === 0) {
       return { matched: 0, pending_review: 0, unmatched: 0, skipped: 0 };
     }
 
-    const allFiles = fs.readdirSync(uploadsDir).filter(f =>
-      /\.(jpg|jpeg|png|webp)$/i.test(f)
+    // Pre-load existing catalog_images paths to maintain idempotency
+    const existing = await db.all<{ image_path: string }[]>('SELECT image_path FROM catalog_images');
+    const existingSet = new Set(existing.map(r => r.image_path));
+
+    // Pre-load all medicines and index by core brand in memory
+    const allMeds = await db.all<any[]>('SELECT id, name, manufacturer, strength, packaging FROM medicines');
+    const brandMap = new Map<string, any[]>();
+    for (const med of allMeds) {
+      const brand = this.extractCoreBrand(med.name);
+      if (brand) {
+        const key = brand.toUpperCase();
+        if (!brandMap.has(key)) brandMap.set(key, []);
+        brandMap.get(key)!.push(med);
+      }
+    }
+
+    // Check which medicines already have an active image
+    const activeMedsRows = await db.all<{ medicine_id: number }[]>(
+      'SELECT DISTINCT medicine_id FROM catalog_images WHERE is_active = 1'
     );
+    const activeMedsSet = new Set(activeMedsRows.map(r => r.medicine_id));
 
     let matched = 0, pending_review = 0, unmatched = 0, skipped = 0;
+    const now = new Date().toISOString();
 
-    for (const filename of allFiles) {
-      const relPath = `uploads/products/${filename}`;
+    for (const entry of fileEntries) {
+      if (existingSet.has(entry.relPath)) {
+        skipped++;
+        continue;
+      }
 
-      // Idempotency: skip if already in catalog_images
-      const existing = await db.get(
-        'SELECT id FROM catalog_images WHERE image_path = ?',
-        [relPath]
-      );
-      if (existing) { skipped++; continue; }
+      const filename = entry.filename;
+      const relPath = entry.relPath;
 
       // --- Parse filename ---
       let cleanName = filename
-        .replace(/\.(jpg|jpeg|png|webp)$/i, '')      // strip extension
-        .replace(/-candidate-\d+$/i, '')              // strip -candidate-{timestamp}
-        .replace(/-(front|back|side|box|tablet|combined)$/i, '') // strip angle suffix
-        .replace(/-/g, ' ')                           // hyphens → spaces
+        .replace(/\.(jpg|jpeg|png|webp)$/i, '')
+        .replace(/-candidate-\d+$/i, '')
+        .replace(/-(front|back|side|box|tablet|combo|combined)$/i, '')
+        .replace(/-/g, ' ')
         .trim();
 
-      // Detect image_type from suffix before stripping
-      const angleMatch = filename.match(/-(front|back|side|box|tablet|combined)\.(jpg|jpeg|png|webp)$/i);
-      const imageType = angleMatch ? angleMatch[1].toLowerCase() : 'combined';
+      const angleMatch = filename.match(/-(front|back|side|box|tablet|combo|combined)\.(jpg|jpeg|png|webp)$/i);
+      const imageType = angleMatch ? (angleMatch[1].toLowerCase() === 'combo' ? 'combined' : angleMatch[1].toLowerCase()) : 'combined';
 
-      // Extract manufacturer hint: typically the last major segment before timestamp
-      // e.g. "geminor-m-1-500-mg-tablet-10-macleods-pharmaceuticals-candidate-1788441188108"
-      // → manufacturer candidates are words at the tail: "macleods pharmaceuticals"
-      const parts = cleanName.split(' ');
-      // Heuristic: last 2–3 words that look like a company name (capitalized, no digits)
-      const mfrWords: string[] = [];
-      for (let i = parts.length - 1; i >= 0 && mfrWords.length < 3; i--) {
-        if (/^[a-zA-Z]{3,}$/i.test(parts[i])) {
-          mfrWords.unshift(parts[i]);
-        } else {
-          break;
-        }
-      }
-      const manufacturerHint = mfrWords.join(' ');
-      // Product name: everything except the manufacturer tail words
-      const productNameWords = mfrWords.length > 0
-        ? parts.slice(0, parts.length - mfrWords.length)
-        : parts;
-      const productSearchName = productNameWords.join(' ');
-
-      // --- Fuzzy match against medicines ---
-      const candidates = await db.all<any>(
-        `SELECT id, name, manufacturer, strength, packaging, mrp, category
-         FROM medicines
-         WHERE name LIKE ? OR name LIKE ?
-         LIMIT 10`,
-        [`${productSearchName.slice(0, 15)}%`, `%${productSearchName.slice(0, 10)}%`]
-      );
+      const fileBrand = this.extractCoreBrand(cleanName);
+      const candidates = fileBrand ? (brandMap.get(fileBrand.toUpperCase()) || []) : [];
 
       let bestId: number | null = null;
       let bestScore = 0;
       let bestMed: any = null;
+      let bestResult: MatchScoreResult | null = null;
 
       for (const med of candidates) {
         const result = this.computeConfidence(med, {
           name: cleanName,
-          manufacturer: manufacturerHint || null,
+          manufacturer: med.manufacturer,
+          imagePath: relPath
         });
         if (result.confidenceScore > bestScore) {
           bestScore = result.confidenceScore;
           bestId = med.id;
           bestMed = med;
+          bestResult = result;
         }
       }
 
-      const imagePath = relPath;
-      const now = new Date().toISOString();
+      const hasActivePrimary = bestId ? activeMedsSet.has(bestId) : false;
+      const isPrimary = !hasActivePrimary && (imageType === 'combined' || imageType === 'front') ? 1 : 0;
 
-      if (bestScore >= 85 && bestId) {
-        // HIGH_CONFIDENCE — silent auto-approve, make active
-        // Deactivate any existing active image of same type for this medicine
-        await db.run(
-          `UPDATE catalog_images SET is_active = 0
-           WHERE medicine_id = ? AND image_type = ? AND is_active = 1`,
-          [bestId, imageType]
-        );
+      if (
+        bestScore >= 80 &&
+        bestId &&
+        bestResult &&
+        !bestResult.signals.strengthConflict &&
+        !bestResult.signals.dosageFormConflict &&
+        bestResult.signals.brandMatch
+      ) {
+        // Clean high-confidence match
         await db.run(
           `INSERT INTO catalog_images
-             (medicine_id, product_name, company_name, image_path, image_source,
-              confidence_score, matching_method, verification_status, is_active,
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
               image_type, is_primary, match_source, match_confidence,
               verified_by, verified_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', 1,
-                   ?, ?, 'filename_auto', ?, 'auto_match', ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', ?, 1,
+                   ?, ?, 'filename_auto', ?, 'system_scanner', ?, ?, ?)`,
           [
             bestId,
             bestMed?.name || cleanName,
-            bestMed?.manufacturer || manufacturerHint || null,
-            imagePath,
+            bestMed?.manufacturer || null,
+            relPath,
+            relPath,
             bestScore,
+            bestResult.reason,
             imageType,
-            imageType === 'combined' ? 1 : 0,
+            isPrimary,
             bestScore,
             now, now, now
           ]
         );
+        existingSet.add(relPath);
+        activeMedsSet.add(bestId);
         matched++;
-      } else if (bestScore >= 60 && bestId) {
-        // PENDING_REVIEW — needs human confirmation
+      } else if (
+        bestScore >= 50 &&
+        bestId &&
+        bestResult &&
+        !bestResult.signals.strengthConflict &&
+        !bestResult.signals.dosageFormConflict
+      ) {
+        // Pending human confirmation
         await db.run(
           `INSERT INTO catalog_images
-             (medicine_id, product_name, company_name, image_path, image_source,
-              confidence_score, matching_method, verification_status, is_active,
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
               image_type, is_primary, match_source, match_confidence,
               created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', 0,
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', ?, 0,
                    ?, 0, 'filename_auto', ?, ?, ?)`,
           [
             bestId,
             bestMed?.name || cleanName,
-            bestMed?.manufacturer || manufacturerHint || null,
-            imagePath,
+            bestMed?.manufacturer || null,
+            relPath,
+            relPath,
             bestScore,
+            bestResult.reason,
             imageType,
             bestScore,
             now, now
           ]
         );
+        existingSet.add(relPath);
         pending_review++;
       } else {
-        // UNMATCHED — no confident medicine match; store with product_name from filename
-        await db.run(
-          `INSERT INTO catalog_images
-             (medicine_id, product_name, company_name, image_path, image_source,
-              confidence_score, matching_method, verification_status, is_active,
-              image_type, is_primary, match_source, match_confidence,
-              created_at, updated_at)
-           VALUES (NULL, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', 0,
-                   ?, 0, 'filename_unmatched', ?, ?, ?)`,
-          [
-            cleanName,
-            manufacturerHint || null,
-            imagePath,
-            bestScore,
-            imageType,
-            bestScore,
-            now, now
-          ]
-        );
+        // Unmatched or has conflicts -> save as REJECTED if bestId exists so conflict is audited
+        if (bestId) {
+          await db.run(
+            `INSERT INTO catalog_images
+               (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+                confidence_score, matching_method, verification_status, verification_reason, is_active,
+                image_type, is_primary, match_source, match_confidence,
+                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'REJECTED', ?, 0,
+                     ?, 0, 'filename_unmatched', ?, ?, ?)`,
+            [
+              bestId,
+              cleanName,
+              bestMed?.manufacturer || null,
+              relPath,
+              relPath,
+              bestScore,
+              bestResult?.reason || 'Unmatched or conflict detected',
+              imageType,
+              bestScore,
+              now, now
+            ]
+          );
+        }
+        existingSet.add(relPath);
         unmatched++;
       }
     }
 
     return { matched, pending_review, unmatched, skipped };
+  }
+
+  /**
+   * Clean stale and rejected catalog images.
+   * Purges rejected/incorrect records, orphaned database entries, and broken image paths
+   * while keeping verified active images safe.
+   */
+  public async cleanStaleAndRejectedImages(options?: {
+    purgeRejected?: boolean;
+    purgeMissingFiles?: boolean;
+    purgeOrphans?: boolean;
+  }): Promise<{
+    purged_rejected: number;
+    purged_missing_files: number;
+    purged_orphans: number;
+    total_remaining: number;
+    active_verified: number;
+  }> {
+    const purgeRejected = options?.purgeRejected ?? true;
+    const purgeMissingFiles = options?.purgeMissingFiles ?? true;
+    const purgeOrphans = options?.purgeOrphans ?? true;
+
+    const db = await dbManager.getConnection();
+    let purged_rejected = 0;
+    let purged_missing_files = 0;
+    let purged_orphans = 0;
+
+    // 1. Purge Rejected/Incorrect records
+    if (purgeRejected) {
+      const res = await db.run(
+        `DELETE FROM catalog_images WHERE verification_status IN ('REJECTED', 'INCORRECT')`
+      );
+      purged_rejected = res.changes || 0;
+    }
+
+    // 2. Purge orphans (medicine_id is null or no longer exists in medicines)
+    if (purgeOrphans) {
+      const res = await db.run(
+        `DELETE FROM catalog_images WHERE medicine_id IS NULL OR medicine_id NOT IN (SELECT id FROM medicines)`
+      );
+      purged_orphans = res.changes || 0;
+    }
+
+    // 3. Purge missing local files (records pointing to non-existent local image files)
+    if (purgeMissingFiles) {
+      const images = await db.all<{ id: number; image_path: string }[]>(
+        `SELECT id, image_path FROM catalog_images WHERE image_path IS NOT NULL AND image_path NOT LIKE 'http%'`
+      );
+      const toDeleteIds: number[] = [];
+      const cwd = process.cwd();
+      const publicDir = path.resolve(cwd, 'frontend/public');
+      const uploadsDir = path.resolve(cwd, 'uploads');
+
+      for (const img of images) {
+        const cleanPath = img.image_path.replace(/^[\/\\]/, '');
+        const p1 = path.join(publicDir, cleanPath);
+        const p2 = path.join(cwd, cleanPath);
+        const p3 = path.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ''));
+        if (!fs.existsSync(p1) && !fs.existsSync(p2) && !fs.existsSync(p3)) {
+          toDeleteIds.push(img.id);
+        }
+      }
+
+      if (toDeleteIds.length > 0) {
+        for (let i = 0; i < toDeleteIds.length; i += 500) {
+          const chunk = toDeleteIds.slice(i, i + 500);
+          const placeholders = chunk.map(() => '?').join(',');
+          await db.run(`DELETE FROM catalog_images WHERE id IN (${placeholders})`, chunk);
+        }
+        purged_missing_files = toDeleteIds.length;
+      }
+    }
+
+    const counts = await db.get<{ total: number; active: number }>(
+      `SELECT COUNT(*) as total, SUM(CASE WHEN is_active = 1 AND verification_status IN ('HIGH_CONFIDENCE', 'APPROVED', 'CORRECT') THEN 1 ELSE 0 END) as active FROM catalog_images`
+    );
+
+    return {
+      purged_rejected,
+      purged_missing_files,
+      purged_orphans,
+      total_remaining: counts?.total || 0,
+      active_verified: counts?.active || 0,
+    };
+  }
+
+  /**
+   * Audit all catalog images against medicines using the strict validation engine.
+   * Deactivates and marks as REJECTED any records with dosage form conflicts,
+   * strength conflicts, or brand mismatches so they immediately stop displaying on wrong products.
+   */
+  public async auditAndDeactivateMismatchedImages(): Promise<{
+    total_audited: number;
+    dosage_form_conflicts: number;
+    strength_conflicts: number;
+    brand_mismatches: number;
+    total_deactivated: number;
+    remaining_active: number;
+  }> {
+    const db = await dbManager.getConnection();
+    const rows = await db.all<any[]>(
+      `SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, ci.verification_status, ci.is_active,
+              m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 1`
+    );
+
+    let dosage_form_conflicts = 0;
+    let strength_conflicts = 0;
+    let brand_mismatches = 0;
+    const toDeactivate: Array<{ id: number; reason: string }> = [];
+
+    for (const r of rows) {
+      const match = this.computeConfidence(
+        {
+          name: r.med_name,
+          manufacturer: r.med_mfg || r.company_name,
+          strength: r.med_strength,
+          packaging: r.med_packaging
+        },
+        {
+          name: r.product_name,
+          manufacturer: r.company_name || r.med_mfg,
+          imagePath: r.image_path
+        }
+      );
+
+      if (match.signals.dosageFormConflict) {
+        dosage_form_conflicts++;
+        toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+      } else if (match.signals.strengthConflict) {
+        strength_conflicts++;
+        toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+      } else if (!match.signals.brandMatch) {
+        brand_mismatches++;
+        toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+      }
+    }
+
+    if (toDeactivate.length > 0) {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const item of toDeactivate) {
+          await db.run(
+            `UPDATE catalog_images
+             SET is_active = 0,
+                 is_primary = 0,
+                 verification_status = 'REJECTED',
+                 confidence_score = 30,
+                 verification_reason = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [item.reason, item.id]
+          );
+        }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK');
+        throw err;
+      }
+
+      eventService.broadcast('catalog_image_updated', {
+        action: 'audit_deactivation_completed',
+        deactivated: toDeactivate.length
+      });
+    }
+
+    const remainingRow = await db.get<{ count: number }>(
+      `SELECT COUNT(*) as count FROM catalog_images WHERE is_active = 1`
+    );
+
+    return {
+      total_audited: rows.length,
+      dosage_form_conflicts,
+      strength_conflicts,
+      brand_mismatches,
+      total_deactivated: toDeactivate.length,
+      remaining_active: remainingRow?.count || 0
+    };
   }
 }
 

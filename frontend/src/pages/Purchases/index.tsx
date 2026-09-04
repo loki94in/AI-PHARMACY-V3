@@ -1909,16 +1909,21 @@ const Purchases: React.FC = () => {
     item.medicine_id = medicine.id;
     item.medicine_name = medicine.name;
     item.manufacturer = medicine.manufacturer;
-    item.mrp = medicine.mrp;
-    item.rate = medicine.rate;
-    item.gstTouched = false; // fresh selection → history GST may prefill again
+    // Manual bill: keep qty, batch, expiry, rate, mrp clean for fresh entry
+    item.qty = '';
+    item.free_qty = '';
+    item.batch_no = '';
+    item.expiry_date = '';
+    item.rate = '';
+    item.mrp = '';
+    item.gstTouched = false; // fresh selection → uses product catalog GST
     item.cgst_per = (medicine.cgst_per !== undefined && medicine.cgst_per !== null && medicine.cgst_per !== 0) ? medicine.cgst_per : 6;
     item.sgst_per = (medicine.sgst_per !== undefined && medicine.sgst_per !== null && medicine.sgst_per !== 0) ? medicine.sgst_per : 6;
     item.stock_qty = medicine.stock_qty || 0;
     item.loose_qty = medicine.loose_qty || 0;
     item.scheme_paid = medicine.scheme_paid;
     item.scheme_free = medicine.scheme_free;
-    item.amount = calculateItemAmount(item);
+    item.amount = 0;
 
     // Apply immediately so the UI feels instant
     setItems(newItems);
@@ -1934,34 +1939,10 @@ const Purchases: React.FC = () => {
       api.createMedicineAlias(item.original_name, medicine.id).catch(e => console.error('Failed to create alias:', e));
     }
 
-    // One-shot history load for this medicine+distributor (cached module-level).
-    // Feeds batch suggestions, same-batch autofill and hover intel; here it also
-    // patches EMPTY fields from the newest historical line (preferring the
-    // selected distributor) — same contract as the previous /last-purchase call.
+    // One-shot history load for this medicine+distributor warms the cache for batch suggestions
+    // and price intel hover tooltip without auto-overwriting manual fields.
     loadMedicineHistory(medicine.id, medicine.name, selectedDistributor || undefined)
-      .then(rows => {
-        const newest = pickNewestHistoryRow(rows, distributors.find(d => d.id === selectedDistributor)?.name);
-        if (!newest) return;
-        setItems(prev => {
-          const updated = [...prev];
-          const target = updated[index];
-          // Guard: bail if the row was changed since we fired the request
-          if (!target || target.medicine_id !== medicine.id) return prev;
-          if (!target.batch_no && newest.batch_no) target.batch_no = newest.batch_no;
-          if (!target.expiry_date && newest.expiry_date) target.expiry_date = formatExpiryToMMYY(newest.expiry_date);
-          if ((!target.rate || Number(target.rate) === 0) && Number(newest.rate) > 0) target.rate = newest.rate;
-          if ((!target.mrp || Number(target.mrp) === 0) && Number(newest.mrp) > 0) target.mrp = newest.mrp;
-          if (!target.gstTouched) {
-            if (newest.cgst_per !== null && Number(newest.cgst_per) > 0) target.cgst_per = Number(newest.cgst_per);
-            if (newest.sgst_per !== null && Number(newest.sgst_per) > 0) target.sgst_per = Number(newest.sgst_per);
-          }
-          target.amount = calculateItemAmount(target);
-          return updated;
-        });
-      })
-      .catch(() => {
-        // No history available — fields already set from catalog
-      });
+      .catch(() => {});
   };
 
   const calculateItemAmount = (item: BillItem): number => {
@@ -1975,7 +1956,7 @@ const Purchases: React.FC = () => {
 
     const baseAmount = qty * rate;
     const discountAmount = cd_rs + additional_discount + (baseAmount * cd_per / 100);
-    const taxableAmount = baseAmount - discountAmount;
+    const taxableAmount = Math.max(0, baseAmount - discountAmount);
     const cgstAmount = taxableAmount * cgst_per / 100;
     const sgstAmount = taxableAmount * sgst_per / 100;
     return taxableAmount + cgstAmount + sgstAmount;
@@ -2242,8 +2223,9 @@ const Purchases: React.FC = () => {
   }, [location.state, distributors, navigate, location.pathname, emailSource?.date]);
 
   const updateItem = (index: number, field: keyof BillItem, value: unknown) => {
-    const newItems = [...items];
+    const newItems = items.map((it, i) => (i === index ? { ...it } : it));
     const item = newItems[index];
+    if (!item) return;
 
     if (field === 'batch_no') {
       (item as Record<string, unknown>)[field] = value;
@@ -2338,7 +2320,7 @@ const Purchases: React.FC = () => {
 
       const baseAmount = qty * rate;
       const discountAmount = cd_rs + additional_discount + (baseAmount * cd_per / 100);
-      const taxableAmount = baseAmount - discountAmount;
+      const taxableAmount = Math.max(0, baseAmount - discountAmount);
       const cgstAmount = taxableAmount * cgst_per / 100;
       const sgstAmount = taxableAmount * sgst_per / 100;
 

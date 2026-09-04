@@ -5278,30 +5278,50 @@ const POS = () => {
                               return <div className="font-mono text-sm font-bold text-muted">-</div>;
                             }
                             const compactInventory = getCompactInventoryCache();
-                            const batchMatch = compactInventory.find(b => 
-                              (item.inventory_id && (b.inventory_id === item.inventory_id || b.id === item.inventory_id)) ||
-                              (item.batch && b.batch_no === item.batch && (b.medicine_id === item.medicine_id || !item.medicine_id))
-                            );
                             const packSize = Number(item.packSize || 1);
                             
+                            // 1. Aggregate across all active batches for this medicine
+                            const medMatches = compactInventory.filter(b => 
+                              (item.medicine_id && b.medicine_id === item.medicine_id) ||
+                              ((b.name || '').toLowerCase().trim() === (item.name || item.medicine_name || '').toLowerCase().trim())
+                            );
+
                             let remainingStock: number | string = 'N/A';
                             let remainingLoose = 0;
                             let hasBatchOrMed = false;
+                            let thisBatchUnits = 0;
 
-                            if (batchMatch) {
+                            if (medMatches.length > 0) {
                               hasBatchOrMed = true;
-                              const batchStock = batchMatch.stock_qty !== undefined ? batchMatch.stock_qty : (batchMatch.quantity || 0);
-                              const batchLoose = batchMatch.loose_quantity || 0;
-                              const batchTotalUnits = (batchStock * packSize) + batchLoose;
-                              
-                              const cartUnitsForBatch = cart.reduce((sum, c) => {
-                                if (!c.isEmptyRow && (c.inventory_id === item.inventory_id || (c.batch === item.batch && c.medicine_id === item.medicine_id))) {
-                                  return sum + ((c.qty ?? c.quantity ?? 0) * packSize) + (c.looseQty ?? c.loose_qty ?? 0);
+                              let totalMedicineUnits = 0;
+                              medMatches.forEach(b => {
+                                const bStock = b.stock_qty !== undefined ? b.stock_qty : (b.quantity || 0);
+                                const bLoose = b.loose_quantity || 0;
+                                totalMedicineUnits += (bStock * packSize) + bLoose;
+                              });
+
+                              const currentBatch = medMatches.find(b =>
+                                (item.inventory_id && (b.inventory_id === item.inventory_id || b.id === item.inventory_id)) ||
+                                (item.batch && b.batch_no === item.batch)
+                              );
+                              if (currentBatch) {
+                                const cbStock = currentBatch.stock_qty !== undefined ? currentBatch.stock_qty : (currentBatch.quantity || 0);
+                                const cbLoose = currentBatch.loose_quantity || 0;
+                                thisBatchUnits = (cbStock * packSize) + cbLoose;
+                              }
+
+                              const cartUnitsForMed = cart.reduce((sum, c) => {
+                                if (!c.isEmptyRow) {
+                                  const isSame = (item.medicine_id && c.medicine_id === item.medicine_id) ||
+                                    ((c.name || c.medicine_name || '').toLowerCase().trim() === (item.name || item.medicine_name || '').toLowerCase().trim());
+                                  if (isSame) {
+                                    return sum + ((c.qty ?? c.quantity ?? 0) * packSize) + (c.looseQty ?? c.loose_qty ?? 0);
+                                  }
                                 }
                                 return sum;
                               }, 0);
 
-                              const remainingUnits = Math.max(0, batchTotalUnits - cartUnitsForBatch);
+                              const remainingUnits = Math.max(0, totalMedicineUnits - cartUnitsForMed);
                               remainingStock = Math.floor(remainingUnits / packSize);
                               remainingLoose = remainingUnits % packSize;
                             } else if (item.availableStock !== undefined) {
@@ -5315,10 +5335,12 @@ const POS = () => {
 
                               remainingStock = Math.floor(remainingUnits / packSize);
                               remainingLoose = remainingUnits % packSize;
+                              thisBatchUnits = totalUnits;
                             }
 
                             const isFullStockInCart = typeof remainingStock === 'number' && remainingStock <= 0 && remainingLoose <= 0 && hasBatchOrMed;
                             const isTrueOutOfStock = typeof remainingStock === 'number' && remainingStock <= 0 && remainingLoose <= 0 && !hasBatchOrMed;
+                            const thisBatchRemainingStrips = Math.max(0, Math.floor(thisBatchUnits / packSize));
 
                             return (
                               <div 
@@ -5326,8 +5348,8 @@ const POS = () => {
                                   isTrueOutOfStock
                                     ? 'Out of stock in pharmacy'
                                     : isFullStockInCart
-                                    ? '100% of batch stock allocated to this bill (0 remaining on shelf)'
-                                    : `Remaining batch stock on shelf after this sale: ${remainingStock} strip(s), ${remainingLoose} loose`
+                                    ? '100% of medicine stock allocated to this bill (0 remaining on shelf)'
+                                    : `Total active stock in store: ${remainingStock} strip(s), ${remainingLoose} loose across all batches (Current batch [${item.batch || 'Active'}]: ${thisBatchRemainingStrips} strips)`
                                 }
                                 className={`text-sm select-none font-bold font-mono px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${
                                   isTrueOutOfStock
@@ -5340,7 +5362,7 @@ const POS = () => {
                                 }`}>
                                 <span>{remainingStock} / {remainingLoose}</span>
                                 {isFullStockInCart && (
-                                  <span className="text-xs uppercase font-bold text-amber-400 ml-0.5" title="100% of batch stock allocated to this bill">(All In Cart)</span>
+                                  <span className="text-xs uppercase font-bold text-amber-400 ml-0.5" title="100% of total medicine stock allocated to this bill">(All In Cart)</span>
                                 )}
                               </div>
                             );

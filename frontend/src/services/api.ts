@@ -205,10 +205,11 @@ export const peekWhatsAppQueueStatusCache = (maxAgeMs = 2500): WhatsAppQueueStat
   return waQueueStatusCache && Date.now() - waQueueStatusCache.at < maxAgeMs ? waQueueStatusCache.data : null;
 };
 
+let compactInventoryLoaded = false;
 let compactInventoryFetchPromise: Promise<CompactInventoryItem[]> | null = null;
 
 export const ensureCompactInventoryReady = async (): Promise<CompactInventoryItem[]> => {
-  if (compactInventoryCache && compactInventoryCache.length > 0) {
+  if (compactInventoryLoaded && compactInventoryCache !== null) {
     return compactInventoryCache;
   }
   if (compactInventoryFetchPromise) {
@@ -217,7 +218,7 @@ export const ensureCompactInventoryReady = async (): Promise<CompactInventoryIte
   compactInventoryFetchPromise = api.getCompactInventory()
     .catch((err) => {
       console.warn('[API] ensureCompactInventoryReady auto-recovery failed:', err);
-      return getCompactInventoryCache();
+      return compactInventoryCache || [];
     })
     .finally(() => {
       compactInventoryFetchPromise = null;
@@ -299,6 +300,7 @@ function buildPrecomputedInventoryIndex(items: CompactInventoryItem[]): Precompu
     const loose = Number(item.loose_quantity ?? item.loose_qty ?? 0);
     const hasInventory = !!(item.inventory_id || item.id) && (stock > 0 || loose > 0);
     const expired = isExpiredDateFast(item.expiry_date);
+
     index[i] = {
       nameLower,
       itemCodeLower,
@@ -316,47 +318,36 @@ function buildPrecomputedInventoryIndex(items: CompactInventoryItem[]): Precompu
 }
 
 export const getCompactInventoryIndex = (): PrecomputedInventoryIndex[] => {
-  if (compactInventoryIndex.length > 0) return compactInventoryIndex;
-  if (compactInventoryCache && compactInventoryCache.length > 0) {
+  return compactInventoryIndex;
+};
+
+export const getCompactInventoryCache = (): CompactInventoryItem[] => {
+  if (compactInventoryCache !== null) {
+    return compactInventoryCache;
+  }
+  if (typeof window !== 'undefined' && window.__INVENTORY__ && Array.isArray(window.__INVENTORY__)) {
+    compactInventoryCache = window.__INVENTORY__ as CompactInventoryItem[];
     compactInventoryIndex = buildPrecomputedInventoryIndex(compactInventoryCache);
-    return compactInventoryIndex;
+    compactInventoryLoaded = true;
+    return compactInventoryCache;
   }
   return [];
 };
 
-export const getCompactInventoryCache = (): CompactInventoryItem[] => {
-  if (compactInventoryCache && compactInventoryCache.length > 0) {
-    // If cache is > 15 minutes old (e.g. after long idle return), trigger a silent background refresh
-    if (typeof window !== 'undefined' && !compactInventoryFetchPromise && Date.now() - lastCompactInventoryFetchTime > 15 * 60 * 1000) {
-      void ensureCompactInventoryReady();
-    }
-    return compactInventoryCache;
-  }
-  if (typeof window !== 'undefined' && window.__INVENTORY__ && (window.__INVENTORY__ as CompactInventoryItem[]).length > 0) {
-    compactInventoryCache = window.__INVENTORY__ as CompactInventoryItem[];
-    compactInventoryIndex = buildPrecomputedInventoryIndex(compactInventoryCache);
-    return compactInventoryCache;
-  }
-  // If cache is empty and running in browser, kick off silent background recovery
-  if (typeof window !== 'undefined' && !compactInventoryFetchPromise) {
-    void ensureCompactInventoryReady();
-  }
-  return compactInventoryCache || [];
-};
-
-export const isCompactInventoryCacheReady = (): boolean => compactInventoryCache !== null && compactInventoryCache.length > 0;
+export const isCompactInventoryCacheReady = (): boolean => compactInventoryLoaded && compactInventoryCache !== null;
 
 export const setCompactInventoryCache = (
   data: CompactInventoryItem[],
   options?: { persist?: boolean }
 ) => {
-  compactInventoryCache = data;
+  compactInventoryCache = Array.isArray(data) ? data : [];
+  compactInventoryLoaded = true;
   lastCompactInventoryFetchTime = Date.now();
-  compactInventoryIndex = buildPrecomputedInventoryIndex(data);
+  compactInventoryIndex = buildPrecomputedInventoryIndex(compactInventoryCache);
   if (typeof window !== 'undefined') {
     if (options?.persist !== false) {
       try {
-        sessionStorage.setItem(COMPACT_INVENTORY_SESSION_KEY, JSON.stringify(data));
+        sessionStorage.setItem(COMPACT_INVENTORY_SESSION_KEY, JSON.stringify(compactInventoryCache));
       } catch {
         // ponytail: sessionStorage may be unavailable
       }
@@ -368,6 +359,7 @@ export const setCompactInventoryCache = (
 
 export const invalidateCompactInventoryCache = (): void => {
   compactInventoryCache = null;
+  compactInventoryLoaded = false;
   compactInventoryIndex = [];
   lastCompactInventoryFetchTime = 0;
   if (typeof window !== 'undefined') {
@@ -1125,6 +1117,7 @@ export const api = {
   saveTemplate: (name: string, moduleType: string, mappings: Record<string, unknown>) => apiClient.post('/migration/templates', { name, moduleType, mappings }).then(r => r.data),
   getStagingConflicts: () => apiClient.get('/migration/staging/conflicts', { timeout: 60000 }).then(r => r.data),
   resolveStagingConflict: (conflictId: number, resolution: string) => apiClient.post('/migration/staging/resolve', { conflictId, resolution }, { timeout: 60000 }).then(r => r.data),
+  resolveAllSimilarConflicts: (minScore: number = 85) => apiClient.post<{ success: boolean; resolvedCount: number; message: string }>('/migration/staging/resolve-all-similar', { minScore }, { timeout: 60000 }).then(r => r.data),
   getSnapshots: () => apiClient.get('/migration/snapshots').then(r => r.data),
   restoreSnapshot: (snapshotId: number) => apiClient.post('/migration/snapshots/restore', { snapshotId }, { timeout: 300000 }).then(r => r.data),
 
@@ -1805,6 +1798,27 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; scanned: number; repaired: number; failed: number }>('/catalog/images/repair-missing', { limit }).then(res => res.data),
   scanLocalImages: () =>
     apiClient.post<{ success: boolean; message: string; matched: number; pending_review: number; unmatched: number; skipped: number }>('/catalog/images/scan-local').then(res => res.data),
+  cleanupCatalogImages: (options?: { purgeRejected?: boolean; purgeMissingFiles?: boolean; purgeOrphans?: boolean }) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      purged_rejected: number;
+      purged_missing_files: number;
+      purged_orphans: number;
+      total_remaining: number;
+      active_verified: number;
+    }>('/catalog/images/cleanup', options).then(res => res.data),
+  auditFixCatalogImages: () =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      total_audited: number;
+      dosage_form_conflicts: number;
+      strength_conflicts: number;
+      brand_mismatches: number;
+      total_deactivated: number;
+      remaining_active: number;
+    }>('/catalog/images/audit-fix').then(res => res.data),
   
   // Dedicated Image Correction & Verification System
   getCorrectionQueue: (params?: { category?: string; search?: string; status?: string; page?: number; limit?: number }) =>

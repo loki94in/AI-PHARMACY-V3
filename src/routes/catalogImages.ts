@@ -364,6 +364,45 @@ router.post('/scan-local', async (req, res) => {
 });
 
 /**
+ * POST /api/catalog/images/cleanup — Purge stale, rejected, and missing image files
+ */
+router.post('/cleanup', async (req, res) => {
+  try {
+    const { purgeRejected, purgeMissingFiles, purgeOrphans } = req.body || {};
+    const result = await catalogImageService.cleanStaleAndRejectedImages({
+      purgeRejected,
+      purgeMissingFiles,
+      purgeOrphans
+    });
+    res.json({
+      success: true,
+      message: `Image cleanup complete: purged ${result.purged_rejected} rejected, ${result.purged_missing_files} missing files, ${result.purged_orphans} orphans. Active verified remaining: ${result.active_verified}.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error cleaning up images:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to clean up images' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/audit-fix — Re-audit all images and deactivate form/strength/brand mismatches
+ */
+router.post('/audit-fix', async (req, res) => {
+  try {
+    const result = await catalogImageService.auditAndDeactivateMismatchedImages();
+    res.json({
+      success: true,
+      message: `Audit & cleanup complete: evaluated ${result.total_audited} images. Deactivated ${result.total_deactivated} wrong images (${result.dosage_form_conflicts} form conflicts, ${result.strength_conflicts} strength conflicts, ${result.brand_mismatches} brand mismatches). ${result.remaining_active} verified good images remain active.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error auditing & deactivating mismatches:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to audit and fix mismatches' });
+  }
+});
+
+/**
  * POST /api/catalog/images/repair-missing — Re-check & auto-repair missing catalog images (Section 18 & 34)
  */
 router.post('/repair-missing', async (req, res) => {

@@ -174,6 +174,8 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
   const [autoApproving, setAutoApproving] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [auditFixing, setAuditFixing] = useState(false);
 
   // View mode: 'grid' = split-pane workspace, 'review' = WhatsApp flashcard one-by-one flow
   const [viewMode, setViewMode] = useState<'grid' | 'review'>('grid');
@@ -493,6 +495,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
         if (selectedMedicine) fetchMedicineGallery(selectedMedicine.medicine_id);
         loadMedicines();
         setIncorrectModalItem(null);
+        setCustomIncorrectNote('');
 
         // If user picked NEED_BACKSIDE, automatically launch candidate search for back angle
         if (incorrectReasonCode === 'NEED_BACKSIDE' || res.action === 'search_candidate') {
@@ -662,6 +665,38 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       toastEvent.trigger('Scan failed: ' + err.message, 'error');
     } finally {
       setScanning(false);
+    }
+  };
+
+  const handleCleanupImages = async () => {
+    setCleaning(true);
+    try {
+      const res = await api.cleanupCatalogImages();
+      if (res.success) {
+        toastEvent.trigger(res.message, 'success');
+        loadCounts();
+        loadMedicines();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Cleanup failed: ' + (err as any)?.message, 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const handleAuditFixImages = async () => {
+    setAuditFixing(true);
+    try {
+      const res = await api.auditFixCatalogImages();
+      if (res.success) {
+        toastEvent.trigger(res.message, 'success');
+        loadCounts();
+        loadMedicines();
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Audit & fix failed: ' + (err as any)?.message, 'error');
+    } finally {
+      setAuditFixing(false);
     }
   };
 
@@ -872,6 +907,30 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
           >
             <Download size={13} className={scanning ? 'animate-spin' : ''} />
             <span>{scanning ? 'Scanning...' : 'Auto-Match All'}</span>
+          </button>
+
+          {/* Fix Wrong Images */}
+          <button
+            id="catalog-audit-fix-btn"
+            onClick={handleAuditFixImages}
+            disabled={auditFixing}
+            className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl text-xs font-bold text-amber-400 flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Scan active images for form, strength, and brand conflicts and deactivate wrong matches"
+          >
+            <AlertTriangle size={13} className={auditFixing ? 'animate-spin' : ''} />
+            <span>{auditFixing ? 'Fixing...' : 'Fix Wrong Images'}</span>
+          </button>
+
+          {/* Clean Stale */}
+          <button
+            id="catalog-clean-stale-btn"
+            onClick={handleCleanupImages}
+            disabled={cleaning}
+            className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-xl text-xs font-bold text-rose-400 flex items-center gap-1.5 transition-all cursor-pointer"
+            title="Purge rejected, orphaned, and missing image files"
+          >
+            <Trash2 size={13} className={cleaning ? 'animate-spin' : ''} />
+            <span>{cleaning ? 'Cleaning...' : 'Clean Stale Images'}</span>
           </button>
 
           {/* Review Mode toggle */}
@@ -1120,6 +1179,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                         onClick={() => {
                           setIncorrectModalItem(item);
                           setIncorrectReasonCode('NEED_BACKSIDE');
+                          setCustomIncorrectNote('');
                         }}
                         className="w-full py-2 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                       >
@@ -1465,6 +1525,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                       onClick={() => {
                         setIncorrectModalItem(slotMap.combined || selectedMedicine);
                         setIncorrectReasonCode('NEED_BACKSIDE');
+                        setCustomIncorrectNote('');
                       }}
                       className="px-3.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-400 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                       title="Mark image incorrect and schedule smart candidate redownload"
@@ -2123,6 +2184,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                   setLightboxOpen(false);
                   setIncorrectModalItem(slotMap[lightboxActiveSlot] || selectedMedicine);
                   setIncorrectReasonCode('NEED_BACKSIDE');
+                  setCustomIncorrectNote('');
                 }}
                 className="px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-400 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
               >
@@ -2159,30 +2221,56 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
               Select the reason why this image requires correction. The AI pipeline will blacklist bad candidates and automatically search for the requested angle.
             </p>
 
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {REASON_OPTIONS.map(opt => (
-                <label
-                  key={opt.code}
-                  className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-xs cursor-pointer transition-colors ${
-                    incorrectReasonCode === opt.code
-                      ? 'border-primary bg-primary/10 text-text font-bold'
-                      : 'border-border bg-bg text-muted hover:text-text'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="reason_code"
-                    value={opt.code}
-                    checked={incorrectReasonCode === opt.code}
-                    onChange={() => setIncorrectReasonCode(opt.code)}
-                    className="accent-primary mt-0.5"
-                  />
-                  <div>
-                    <span className="text-text block font-semibold">{opt.title}</span>
-                    <span className="text-[11px] text-muted block font-normal">{opt.subtitle}</span>
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {REASON_OPTIONS.map(opt => {
+                const isSelected = incorrectReasonCode === opt.code;
+                return (
+                  <div
+                    key={opt.code}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setIncorrectReasonCode(opt.code)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setIncorrectReasonCode(opt.code);
+                      }
+                    }}
+                    className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer select-none transition-all ${
+                      isSelected
+                        ? 'border-primary bg-primary/10 text-text font-bold shadow-xs ring-1 ring-primary/30'
+                        : 'border-border bg-bg text-muted hover:text-text hover:bg-bg3/60'
+                    }`}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary text-white'
+                            : 'border-border bg-bg2'
+                        }`}
+                      >
+                        {isSelected && <Check size={10} className="stroke-[3]" />}
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`block ${isSelected ? 'text-text font-bold' : 'text-text font-semibold'}`}>
+                          {opt.title}
+                        </span>
+                        {opt.badge && (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border shrink-0 ${opt.badgeColor}`}>
+                            {opt.badge}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-muted block font-normal mt-0.5 leading-relaxed">
+                        {opt.subtitle}
+                      </span>
+                    </div>
                   </div>
-                </label>
-              ))}
+                );
+              })}
             </div>
 
             {incorrectReasonCode === 'CUSTOM' && (
@@ -2200,7 +2288,10 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
 
             <div className="pt-2 flex justify-end gap-2">
               <button
-                onClick={() => setIncorrectModalItem(null)}
+                onClick={() => {
+                  setIncorrectModalItem(null);
+                  setCustomIncorrectNote('');
+                }}
                 className="px-4 py-2 rounded-xl bg-bg border border-border text-muted hover:text-text text-xs font-semibold cursor-pointer"
               >
                 Cancel
