@@ -14,7 +14,7 @@ import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { useModalEscape } from '../../services/keyboardShortcuts';
-import { PortalAccountsManager } from '../../components/PortalAccountsManager';
+const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
 let cachedRefillsData: RefillPatient[] = [];
@@ -6029,7 +6029,11 @@ const CRM: React.FC = () => {
         {activeTab === 'refills' && <RefillsSection />}
         {activeTab === 'special_orders' && <SpecialOrdersSection />}
         {activeTab === 'credit' && <CustomerCreditSection />}
-        {activeTab === 'portal_logins' && <PortalAccountsManager />}
+        {activeTab === 'portal_logins' && (
+          <React.Suspense fallback={<div className="p-8 text-center text-muted">Loading Portal Accounts...</div>}>
+            <PortalAccountsManager />
+          </React.Suspense>
+        )}
         {activeTab === 'messages' && <DistributorMessagesSection />}
         {activeTab === 'whatsapp' && <WhatsAppSection />}
       </div>

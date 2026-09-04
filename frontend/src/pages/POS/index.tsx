@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
 import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText } from 'lucide-react';
-import AICamera from '../../components/AICamera';
+const AICamera = lazy(() => import('../../components/AICamera'));
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
   getCompactInventoryIndex, type SpecialOrder, type CompactInventoryItem } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
@@ -5586,10 +5586,12 @@ const POS = () => {
       </div>
 
       {showCamera && (
-        <AICamera 
-          onClose={() => setShowCamera(false)} 
-          onScanResult={handleScanResult} 
-        />
+        <Suspense fallback={null}>
+          <AICamera 
+            onClose={() => setShowCamera(false)} 
+            onScanResult={handleScanResult} 
+          />
+        </Suspense>
       )}
 
       {zoomedImage && createPortal(

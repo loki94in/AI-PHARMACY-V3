@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { dbManager } from '../src/database/connection.js';
 import { whatsappQueueWorker } from '../src/services/whatsappQueueWorker.js';
 

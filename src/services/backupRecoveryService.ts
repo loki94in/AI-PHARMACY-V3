@@ -383,24 +383,26 @@ export class BackupRecoveryService {
         return false;
       }
 
-      // Send document via API directly to support offline/independent bot instances
-      const form = new URLSearchParams();
-      // Since it's a file stream upload, axios can post multipart/form-data
-      // Let's use form-data manually to avoid importing form-data package
-      const fileStream = fs.createReadStream(filePath);
-      
-      // Let's build Axios multipart request
-      const { default: FormData } = await import('form-data');
+      // Send document via Telegram Bot API using native Node 18+ FormData, Blob, and fetch
+      const fileBuffer = fs.readFileSync(filePath);
       const formData = new FormData();
       formData.append('chat_id', chatId);
-      formData.append('document', fileStream, filename);
+      formData.append('document', new Blob([fileBuffer]), filename);
       formData.append('caption', `AI Pharmacy OS daily backup archive: ${filename}`);
 
-      const response = await axios.post(`https://api.telegram.org/bot${token}/sendDocument`, formData, {
-        headers: formData.getHeaders()
+      const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: 'POST',
+        body: formData
       });
 
-      return response.status === 200 && response.data.ok;
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error('[Backup] Telegram document dispatch failed:', response.status, errorText);
+        return false;
+      }
+
+      const resData: any = await response.json().catch(() => ({}));
+      return resData?.ok === true;
     } catch (err: any) {
       console.error('[Backup] Telegram document dispatch failed:', err.response?.data || err.message);
       return false;

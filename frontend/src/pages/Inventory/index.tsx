@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
@@ -286,6 +286,29 @@ const Inventory = () => {
     () => api.getOrders().then(data => Array.isArray(data) ? data.filter(o => o.status === 'Pending' || o.status === 'Ordered') : []),
     { enabled: isPageVisible }
   );
+
+  // Pre-index pending special orders to prevent expensive array filtering on every virtual row scroll frame
+  const pendingSpecialOrdersLookup = useMemo(() => {
+    if (!specialOrders.length) return null;
+    const directMap = new Map<string, SpecialOrder>();
+    const list: Array<{ lower: string; order: SpecialOrder }> = [];
+    for (const o of specialOrders) {
+      if (!o.product) continue;
+      const lower = o.product.toLowerCase().trim();
+      directMap.set(lower, o);
+      list.push({ lower, order: o });
+    }
+    return {
+      findMatch: (itemName: string): SpecialOrder | null => {
+        const lower = (itemName || '').toLowerCase().trim();
+        if (!lower) return null;
+        const exact = directMap.get(lower);
+        if (exact) return exact;
+        const partial = list.find(item => item.lower === lower || lower.includes(item.lower));
+        return partial ? partial.order : null;
+      }
+    };
+  }, [specialOrders]);
 
   // Debounced column filter states for server search
   const [debouncedFilters, setDebouncedFilters] = useState({
@@ -664,12 +687,8 @@ const Inventory = () => {
               rowVirtualizer.getVirtualItems().map(virtualRow => {
                 const item = items[virtualRow.index];
                 if (!item) return null;
-                const pendingMatches = specialOrders.filter(o => {
-                  const itemName = (item.name || '').toLowerCase().trim();
-                  const prodName = (o.product || '').toLowerCase().trim();
-                  return prodName === itemName || itemName.includes(prodName);
-                });
-                const hasPending = pendingMatches.length > 0;
+                const matchedOrder = pendingSpecialOrdersLookup?.findMatch(item.name || item.medicine_name || '');
+                const hasPending = !!matchedOrder;
                 const stockQty = item.stock_quantity || 0;
                 const stockBadge =
                   stockQty <= 0
@@ -694,7 +713,7 @@ const Inventory = () => {
                       <span className="truncate text-text">{item.name || item.medicine_name || item.batch_number || 'Unnamed Item'}</span>
                       {hasPending && (
                         <span className="inline-flex items-center gap-1 bg-amber/10 border border-amber/30 text-amber px-1.5 py-0.5 rounded-md text-xs font-bold shrink-0">
-                          ⚠ {pendingMatches[0].qty} req
+                          ⚠ {matchedOrder?.qty} req
                         </span>
                       )}
                     </td>

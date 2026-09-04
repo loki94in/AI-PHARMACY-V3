@@ -68,7 +68,7 @@ export default defineConfig({
           if (normalized.includes('/node_modules/lucide-react/')) {
             return 'vendor-icons';
           }
-          if (/\/node_modules\/(axios|clsx|tailwind-merge)\//.test(normalized)) {
+          if (/\/node_modules\/axios\//.test(normalized)) {
             return 'vendor-utils';
           }
           // Agentation feedback/devtools widget is mounted unconditionally at the app root

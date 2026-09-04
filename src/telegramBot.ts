@@ -312,9 +312,7 @@ class TelegramBotService {
 
         this.bot?.sendMessage(chatId, `🧾 Generating ${paymentMedium} bill from your cart...`);
 
-        // Make internal API call to generate bill
-        const fetchModule = await import('node-fetch');
-        const fetch = fetchModule.default || fetchModule;
+        // Make internal API call to generate bill using native Node 18+ fetch
         const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/telegram-prescription/bill/generate`, {
           method: 'POST',
           headers: {

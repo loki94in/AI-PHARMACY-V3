@@ -1095,16 +1095,14 @@ export async function prewarmWhatsApp(): Promise<WhatsAppReadinessState> {
     return getWhatsAppReadiness();
   }
 
-  if (initPromise) {
-    try {
-      await initPromise;
-    } catch (_) {}
-    return getWhatsAppReadiness();
+  // Trigger background client initialization if not already underway, but return
+  // immediately so HTTP callers (POS prewarm, messaging prewarm) do not time out.
+  if (!initPromise && !initializing) {
+    void initClient().catch(err => {
+      console.error('[WhatsApp] Background pre-warm failed (non-fatal):', err?.message);
+    });
   }
 
-  try {
-    await initClient();
-  } catch (_) {}
   return getWhatsAppReadiness();
 }
 
