@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { sendMessage } from '../whatsappClient.js';
-import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage } from '../services/storeSettingsService.js';
+import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage, buildMultiOrderNotificationMessage, type MultiOrderItemArrival } from '../services/storeSettingsService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 import { eventService } from '../services/eventService.js';
@@ -466,6 +466,122 @@ router.post('/:id/notify-arrival', async (req, res) => {
   } catch (err: any) {
     console.error('Notify arrival error:', err);
     res.status(500).json({ error: 'Failed to queue WhatsApp message: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// Trigger consolidated WhatsApp Arrival / Status Notification for multiple special orders of the same customer
+router.post('/batch-notify-arrival', async (req, res) => {
+  const { order_ids, items, custom_message, lang: reqLang } = req.body;
+  if (!Array.isArray(order_ids) || order_ids.length === 0) {
+    return res.status(400).json({ error: 'order_ids array is required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    await initOrdersTable(db);
+
+    const placeholders = order_ids.map(() => '?').join(',');
+    const orders = await db.all(`SELECT * FROM special_orders WHERE id IN (${placeholders})`, order_ids);
+    if (orders.length === 0) {
+      return res.status(404).json({ error: 'No matching orders found' });
+    }
+
+    const firstPhone = String(orders[0].phone || '').replace(/\D/g, '');
+    if (!firstPhone) {
+      return res.status(400).json({ error: 'Customer phone number is missing' });
+    }
+
+    const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
+    const custRow = await db.get('SELECT language FROM customers WHERE phone = ? LIMIT 1', [firstPhone]);
+    const lang = reqLang || orders[0].language || custRow?.language || 'en';
+    const requesterName = orders[0].requester || 'Customer';
+
+    // Map item statuses from req.body.items or default to 'arrived'
+    const itemMap = new Map<number, { status: 'arrived' | 'delayed'; delayReason?: string; expectedDate?: string }>();
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        if (it && it.order_id) {
+          itemMap.set(Number(it.order_id), {
+            status: it.status === 'delayed' ? 'delayed' : 'arrived',
+            delayReason: it.delay_reason,
+            expectedDate: it.expected_date
+          });
+        }
+      }
+    }
+
+    const multiOrderItems: MultiOrderItemArrival[] = [];
+    const arrivedOrderIds: number[] = [];
+
+    for (const ord of orders) {
+      const itInfo = itemMap.get(Number(ord.id)) || { status: 'arrived' };
+      multiOrderItems.push({
+        productName: ord.product,
+        qty: ord.qty || 1,
+        status: itInfo.status,
+        delayReason: itInfo.delayReason,
+        expectedDate: itInfo.expectedDate
+      });
+
+      if (itInfo.status === 'arrived') {
+        arrivedOrderIds.push(Number(ord.id));
+      }
+    }
+
+    // Compose message or use custom preview
+    const msg = custom_message && String(custom_message).trim().length > 0
+      ? String(custom_message).trim()
+      : await buildMultiOrderNotificationMessage(requesterName, multiOrderItems, db, lang);
+
+    // Queue exactly ONE WhatsApp message
+    await whatsappQueueWorker.enqueue(
+      formattedPhone,
+      msg,
+      'special_order',
+      requesterName,
+      undefined,
+      undefined,
+      undefined,
+      { skipDedupe: true }
+    );
+
+    void whatsappQueueWorker.forceNext().catch(() => {});
+
+    // Update orders in SQLite
+    for (const ord of orders) {
+      const itInfo = itemMap.get(Number(ord.id)) || { status: 'arrived' };
+      const newCount = Number(ord.notification_count || 0) + 1;
+      if (itInfo.status === 'arrived') {
+        await db.run(
+          `UPDATE special_orders SET status = 'Ready', notified = 1, notification_count = ? WHERE id = ?`,
+          [newCount, ord.id]
+        );
+      } else {
+        const delayNote = itInfo.delayReason ? `Delayed: ${itInfo.delayReason}` : (ord.notes || '');
+        await db.run(
+          `UPDATE special_orders SET notes = ?, notification_count = ? WHERE id = ?`,
+          [delayNote, newCount, ord.id]
+        );
+      }
+    }
+
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['special_order_multi_arrived', requesterName, formattedPhone, msg, 'queued', order_ids.join(',')]
+    ).catch(() => {});
+
+    broadcastOrdersChanged();
+    res.json({
+      success: true,
+      whatsapp_queued: true,
+      arrived_count: arrivedOrderIds.length,
+      total_count: orders.length,
+      message: `Consolidated notification queued for ${requesterName} (${arrivedOrderIds.length} arrived, ${orders.length - arrivedOrderIds.length} delayed)`
+    });
+  } catch (err: any) {
+    console.error('Batch notify arrival error:', err);
+    res.status(500).json({ error: 'Failed to queue consolidated notification: ' + (err.message || 'Unknown error') });
   }
 });
 

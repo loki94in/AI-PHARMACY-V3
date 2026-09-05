@@ -312,13 +312,25 @@ router.get('/messages', async (req, res) => {
 router.get('/distributor-reminders/today', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
-    const [startSetting, endSetting, afternoonEnabledSetting, afternoonTimeSetting, dispatchEnabledSetting] = await Promise.all([
+    const [startSetting, endSetting, afternoonEnabledSetting, afternoonTimeSetting, dispatchEnabledSetting, pausedDatesRow] = await Promise.all([
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'"),
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'"),
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_time'"),
-      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'")
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'")
     ]);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    let isTodayPaused = false;
+    if (pausedDatesRow?.value) {
+      try {
+        const dates = JSON.parse(pausedDatesRow.value);
+        if (Array.isArray(dates) && dates.includes(todayStr)) {
+          isTodayPaused = true;
+        }
+      } catch (_) {}
+    }
 
     const reminders = await syncTodayActiveDistributors();
     res.json({
@@ -326,6 +338,7 @@ router.get('/distributor-reminders/today', async (_req, res) => {
       window_start: startSetting?.value || '12:30',
       window_end: endSetting?.value || '13:00',
       auto_dispatch_enabled: dispatchEnabledSetting?.value === 'true',
+      is_today_paused: isTodayPaused,
       afternoon_enabled: afternoonEnabledSetting?.value === 'true',
       afternoon_time: afternoonTimeSetting?.value || '14:00',
       is_recent_fallback: false,

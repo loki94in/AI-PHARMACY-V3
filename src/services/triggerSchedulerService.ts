@@ -113,7 +113,11 @@ class TriggerSchedulerService {
 
       // 10. Patient Chronic Refill Evaluator
       trigger_refills_enabled: 'true',
-      trigger_refills_check_time: '09:00'
+      trigger_refills_check_time: '09:00',
+
+      // 11. Pharmarack Cart Daily Auto-Send Cutoff
+      trigger_pharmarack_cart_send_enabled: 'true',
+      trigger_pharmarack_cart_send_time: '11:00'
     };
 
     rows.forEach((r: { key: string; value: string }) => {
@@ -391,6 +395,31 @@ class TriggerSchedulerService {
         const { orderFulfillmentService } = await import('./orderFulfillmentService.js');
         orderFulfillmentService.stop();
       } catch (_) {}
+    }
+
+    // ----------------------------------------------------
+    // Trigger 11: Pharmarack Cart Daily Auto-Send Cutoff
+    // ----------------------------------------------------
+    if (cfg.trigger_pharmarack_cart_send_enabled !== 'false') {
+      const timeStr = cfg.trigger_pharmarack_cart_send_time || '11:00';
+      const cronExpr = this.timeToCron(timeStr);
+      try {
+        const task = cron.schedule(cronExpr, () => {
+          void runHeavyJob('pharmarack_daily_dispatch', async () => {
+            try {
+              console.log(`[Trigger: Pharmarack Cart] Running scheduled daily batch dispatch at ${timeStr}...`);
+              const { tryDailySend } = await import('./pharmarackDailyDispatchService.js');
+              await tryDailySend();
+            } catch (err) {
+              console.error('[Trigger: Pharmarack Cart] Dispatch failed:', err);
+            }
+          });
+        });
+        this.scheduledTasks.set('pharmarack_cart_dispatch', task);
+        console.log(`[TriggerScheduler] Registered 'Pharmarack Cart Daily Auto-Send' -> Schedule: ${timeStr} (${cronExpr})`);
+      } catch (err) {
+        console.error('[TriggerScheduler] Failed to schedule Pharmarack Cart Daily Auto-Send:', err);
+      }
     }
 
     this.isInitialized = true;

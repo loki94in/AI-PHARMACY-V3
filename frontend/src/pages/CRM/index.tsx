@@ -13,6 +13,7 @@ import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
+import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalModal';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
@@ -3774,6 +3775,11 @@ const SpecialOrdersSection: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [arrivalModalData, setArrivalModalData] = useState<{
+    customerName: string;
+    customerPhone: string;
+    orders: Array<{ id: number; product: string; qty: number; status?: string }>;
+  } | null>(null);
 
   // Date Filters
   const [dateFrom, setDateFrom] = useState(getNDaysAgoString(15));
@@ -3940,6 +3946,30 @@ const SpecialOrdersSection: React.FC = () => {
   }, [loadOrders]);
 
   const handleNotifyArrival = async (order: SpecialOrderItem) => {
+    // If customer has multiple active requests, open consolidated arrival preview modal
+    const cleanPhone = (order.phone || '').trim();
+    const cleanName = (order.requester || '').trim();
+    const relatedActive = orders.filter(o => {
+      if (o.status === 'Fulfilled' || o.status === 'Cancelled') return false;
+      const oPhone = (o.phone || '').trim();
+      const oName = (o.requester || '').trim();
+      return (cleanPhone && oPhone === cleanPhone) || (cleanName && oName === cleanName);
+    });
+
+    if (relatedActive.length > 1) {
+      setArrivalModalData({
+        customerName: order.requester || 'Customer',
+        customerPhone: order.phone || '',
+        orders: relatedActive.map(o => ({
+          id: o.id,
+          product: o.product,
+          qty: o.qty,
+          status: o.status
+        }))
+      });
+      return;
+    }
+
     if (notifyingId === order.id) return;
     setNotifyingId(order.id);
     try {
@@ -4776,6 +4806,29 @@ const SpecialOrdersSection: React.FC = () => {
                   </div>
 
                   <div className="flex items-center gap-2 text-muted text-xs">
+                    {group.activeOrders.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setArrivalModalData({
+                            customerName: group.requester,
+                            customerPhone: group.phone,
+                            orders: group.activeOrders.map(o => ({
+                              id: o.id,
+                              product: o.product,
+                              qty: o.qty,
+                              status: o.status
+                            }))
+                          });
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                        title="Send 1 consolidated WhatsApp arrival/delay message for all medicines"
+                      >
+                        <MessageCircle size={12} />
+                        <span>Notify Arrival ({group.activeOrders.length})</span>
+                      </button>
+                    )}
                     <span className="text-[11px] font-medium">
                       {isExpanded ? 'Collapse' : `Expand (${group.orders.length})`}
                     </span>
@@ -5226,6 +5279,21 @@ const SpecialOrdersSection: React.FC = () => {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Consolidated Arrival & Delay Preview Modal */}
+      {arrivalModalData && (
+        <SpecialOrderArrivalModal
+          isOpen={!!arrivalModalData}
+          onClose={() => setArrivalModalData(null)}
+          customerName={arrivalModalData.customerName}
+          customerPhone={arrivalModalData.customerPhone}
+          orders={arrivalModalData.orders}
+          onSuccess={() => {
+            whatsappQueueEvent.triggerUpdated();
+            loadOrders();
+          }}
+        />
       )}
     </div>
   );

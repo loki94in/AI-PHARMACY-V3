@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled } from '../whatsappClient.js';
+import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } from '../whatsappClient.js';
 
 export interface QueueItem {
   id: number;
@@ -519,7 +519,24 @@ class WhatsAppQueueWorker {
         const useBusiness = await shouldRouteToBusiness();
         let status = await getWhatsAppStatus();
 
-        // If client is not ready, leave items safely pending in queue without launching Chrome
+        // If client is not ready, try waking if sleeping or auto-connect allowed (with 60s cooldown)
+        if (!useBusiness && !status.isReady) {
+          if (status.sleeping) {
+            console.log('[WhatsAppQueueWorker] WhatsApp is sleeping, waking client to process queue item...');
+            await ensureWhatsAppReady(30_000).catch(() => {});
+            status = await getWhatsAppStatus();
+          } else if (await isWhatsAppAutoConnectAllowed()) {
+            const now = Date.now();
+            if (now - this.lastAutoInitAttempt > 60_000) {
+              this.lastAutoInitAttempt = now;
+              console.log('[WhatsAppQueueWorker] WhatsApp not ready but saved session exists, attempting wake...');
+              await ensureWhatsAppReady(30_000).catch(() => {});
+              status = await getWhatsAppStatus();
+            }
+          }
+        }
+
+        // If client is still not ready, leave items safely pending in queue without launching Chrome
         if (!useBusiness && !status.isReady) {
           const logNow = Date.now();
           if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 600000) {

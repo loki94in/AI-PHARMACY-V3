@@ -48,7 +48,8 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   CreditCard,
-  Calendar
+  Calendar,
+  ShoppingCart
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -2704,6 +2705,10 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
     // 10. Patient Chronic Refill Evaluator
     triggerRefillsEnabled: rawSettings.trigger_refills_enabled !== 'false',
     triggerRefillsCheckTime: rawSettings.trigger_refills_check_time || '09:00',
+
+    // 11. Pharmarack Cart Auto-Send Cutoff
+    triggerPharmarackCartSendEnabled: rawSettings.trigger_pharmarack_cart_send_enabled !== 'false',
+    triggerPharmarackCartSendTime: rawSettings.trigger_pharmarack_cart_send_time || '11:00',
   });
 
   const [saving, setSaving] = useState(false);
@@ -2739,6 +2744,8 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
         trigger_doctor_report_time: formData.triggerDoctorReportTime,
         trigger_refills_enabled: formData.triggerRefillsEnabled ? 'true' : 'false',
         trigger_refills_check_time: formData.triggerRefillsCheckTime,
+        trigger_pharmarack_cart_send_enabled: formData.triggerPharmarackCartSendEnabled ? 'true' : 'false',
+        trigger_pharmarack_cart_send_time: formData.triggerPharmarackCartSendTime,
       };
 
       await api.saveSettings(payload);
@@ -3143,6 +3150,35 @@ function TriggerSchedulesTab({ rawSettings, refetchSettings }: { rawSettings: Re
               type="time"
               value={formData.triggerRefillsCheckTime}
               onChange={(e) => setFormData({ ...formData, triggerRefillsCheckTime: e.target.value })}
+              className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+
+        {/* Trigger 11: Pharmarack Cart Daily Auto-Send Cutoff */}
+        <div className="p-4 rounded-2xl bg-bg3/30 border border-border space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShoppingCart size={16} className="text-emerald-400" />
+              <span className="text-xs font-bold text-text">Pharmarack Cart Auto-Send Cutoff</span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.triggerPharmarackCartSendEnabled}
+                onChange={(e) => setFormData({ ...formData, triggerPharmarackCartSendEnabled: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-bg3 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-zinc-100 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-100 after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
+          </div>
+          <p className="text-[11px] text-muted">Daily deadline when today's Pharmarack cart orders automatically batch-dispatch to suppliers & delivery boys.</p>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-semibold text-text whitespace-nowrap">Cutoff Time:</label>
+            <input
+              type="time"
+              value={formData.triggerPharmarackCartSendTime}
+              onChange={(e) => setFormData({ ...formData, triggerPharmarackCartSendTime: e.target.value })}
               className="px-2.5 py-1 text-xs bg-bg border border-border rounded-lg text-text focus:outline-none focus:border-primary"
             />
           </div>

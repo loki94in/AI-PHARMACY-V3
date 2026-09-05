@@ -714,8 +714,25 @@ server.on('error', (err: any) => {
           }
         }, 8000);
 
-        // WhatsApp client: Strict manual-connection contract — the app will NEVER auto-start
-        // or connect WhatsApp at boot. User must manually click Connect in Settings/Learning.
+        // WhatsApp client: Boot session check (Once only, no browser spam)
+        // Checks if an authenticated WhatsApp session exists on disk. If not configured or never connected,
+        // it auto-stops immediately without launching Chrome or spamming checks.
+        setTimeout(async () => {
+          if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') return;
+          try {
+            const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
+            if (await isWhatsAppAutoConnectAllowed()) {
+              console.log('[Boot:Phase4] Saved WhatsApp session found — performing 1-time boot session restore...');
+              initClient({ isBoot: true }).catch(err => {
+                console.warn('[Boot:Phase4] 1-time boot WhatsApp restore note (will not retry):', err?.message || err);
+              });
+            } else {
+              console.log('[Boot:Phase4] No saved WhatsApp session or disconnected — auto-stopping WhatsApp at boot. Connect manually in UI.');
+            }
+          } catch (err) {
+            console.warn('[Boot:Phase4] WhatsApp boot check error:', err);
+          }
+        }, 12_000);
 
         // Startup live-cart warm-up: resolves startupSyncCoordinator from real data at boot
         // instead of waiting for the first UI visit to GET /api/pharmarack/cart.

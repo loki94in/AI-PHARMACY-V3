@@ -1442,6 +1442,59 @@ function computeLevenshteinSim(s1: string, s2: string): number {
   return 1 - distance / maxLen;
 }
 
+// Token-level & space-tolerant Levenshtein similarity for medicine search
+function computeTokenLevenshteinSim(query: string, target: string): number {
+  if (!query || !target) return 0;
+  const qClean = query.toLowerCase().trim();
+  const tClean = target.toLowerCase().trim();
+  if (qClean === tClean) return 1.0;
+
+  // Space-stripped comparison (handles missed/extra spaces like "pantodsr" vs "panto dsr")
+  const qNoSpace = qClean.replace(/[\s\-_.\/]/g, '');
+  const tNoSpace = tClean.replace(/[\s\-_.\/]/g, '');
+  if (tNoSpace.startsWith(qNoSpace)) return 0.95;
+  if (tNoSpace.includes(qNoSpace)) return 0.88;
+
+  const qTokens = qClean.split(/[\s\-_.\/]+/).filter(Boolean);
+  const tTokens = tClean.split(/[\s\-_.\/]+/).filter(Boolean);
+  if (qTokens.length === 0 || tTokens.length === 0) return 0;
+
+  // Score each query token against the best matching target token
+  let totalScore = 0;
+  for (const qTok of qTokens) {
+    let bestTokSim = 0;
+    for (const tTok of tTokens) {
+      if (tTok === qTok) {
+        bestTokSim = 1.0;
+        break;
+      }
+      if (tTok.startsWith(qTok) || qTok.startsWith(tTok)) {
+        bestTokSim = Math.max(bestTokSim, 0.85);
+        continue;
+      }
+      const maxL = Math.max(qTok.length, tTok.length);
+      if (maxL > 0) {
+        const m = Array.from({ length: qTok.length + 1 }, (_, i) => [i]);
+        for (let j = 1; j <= tTok.length; j++) m[0][j] = j;
+        for (let i = 1; i <= qTok.length; i++) {
+          for (let j = 1; j <= tTok.length; j++) {
+            const cost = qTok[i - 1] === tTok[j - 1] ? 0 : 1;
+            m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + cost);
+          }
+        }
+        const dist = m[qTok.length][tTok.length];
+        const sim = 1 - dist / maxL;
+        if (sim > bestTokSim) bestTokSim = sim;
+      }
+    }
+    totalScore += bestTokSim;
+  }
+
+  const avgTokenScore = totalScore / qTokens.length;
+  const wholeSim = computeLevenshteinSim(qClean, tClean);
+  return Math.max(avgTokenScore, wholeSim);
+}
+
 // Search medicine in inventory by Name, Batch, or MRP (with space-insensitivity, word number conversion, and fuzzy matching)
 router.get('/search-medicine', async (req, res) => {
   const query = req.query.q as string;
@@ -1694,44 +1747,83 @@ router.get('/search-medicine', async (req, res) => {
         }
       }
 
-      // Fuzzy Levenshtein Fallback (Typo Tolerance)
+      // Fuzzy Levenshtein Fallback (Typo & Space Tolerance)
       if (rows.length === 0 && cleanQuery.length >= 3) {
         const normQuery = cleanQuery.toLowerCase()
           .replace(/\bsix[\s-]*fifty\b/g, '650')
-          .replace(/\bfive[\s-]*hundred\b/g, '500')
-          .replace(/[\s\-_.\/]/g, '');
+          .replace(/\bfive[\s-]*hundred\b/g, '500');
 
-        const allAvailableMeds = await db.all(`
-          SELECT 
-            m.id AS medicine_id, 
-            m.name AS medicine_name, 
-            m.api_reference,
-            m.item_code AS item_code,
-            m.manufacturer AS manufacturer,
-            im.id AS inventory_id, 
-            im.batch_no, 
-            im.expiry_date AS expiry_date, 
-            im.quantity AS quantity, 
-            im.loose_quantity AS loose_quantity,
-            COALESCE(im.mrp, m.mrp, 0) AS mrp, 
-            m.sell_price,
-            im.unit_price, 
-            COALESCE(im.cost_price, 0) AS cost_price,
-            m.cgst_per, 
-            m.sgst_per, 
-            m.igst_per, 
-            m.hsn_code,
-            0 AS is_out_of_stock
-          FROM inventory_master im
-          JOIN medicines m ON im.medicine_id = m.id
-          WHERE im.quantity > 0
-          LIMIT 300
-        `);
+        let candidateMeds: any[] = [];
+        const prefix2 = cleanQuery.slice(0, 2);
+        if (prefix2.length >= 2) {
+          candidateMeds = await db.all(`
+            SELECT 
+              m.id AS medicine_id, 
+              m.name AS medicine_name, 
+              m.api_reference,
+              m.item_code AS item_code,
+              m.manufacturer AS manufacturer,
+              im.id AS inventory_id, 
+              im.batch_no, 
+              im.expiry_date AS expiry_date, 
+              im.quantity AS quantity, 
+              im.loose_quantity AS loose_quantity,
+              COALESCE(im.mrp, m.mrp, 0) AS mrp, 
+              m.sell_price,
+              im.unit_price, 
+              COALESCE(im.cost_price, 0) AS cost_price,
+              m.cgst_per, 
+              m.sgst_per, 
+              m.igst_per, 
+              m.hsn_code,
+              0 AS is_out_of_stock
+            FROM inventory_master im
+            JOIN medicines m ON im.medicine_id = m.id
+            WHERE m.name LIKE ? AND im.quantity > 0
+            LIMIT 250
+          `, [`${prefix2}%`]);
+        }
 
-        const fuzzyMatches = allAvailableMeds.map(item => {
-          const sim = computeLevenshteinSim(normQuery, item.medicine_name);
-          return { ...item, sim };
-        }).filter(item => item.sim >= 0.50).sort((a, b) => b.sim - a.sim);
+        if (candidateMeds.length < 50) {
+          const generalMeds = await db.all(`
+            SELECT 
+              m.id AS medicine_id, 
+              m.name AS medicine_name, 
+              m.api_reference,
+              m.item_code AS item_code,
+              m.manufacturer AS manufacturer,
+              im.id AS inventory_id, 
+              im.batch_no, 
+              im.expiry_date AS expiry_date, 
+              im.quantity AS quantity, 
+              im.loose_quantity AS loose_quantity,
+              COALESCE(im.mrp, m.mrp, 0) AS mrp, 
+              m.sell_price,
+              im.unit_price, 
+              COALESCE(im.cost_price, 0) AS cost_price,
+              m.cgst_per, 
+              m.sgst_per, 
+              m.igst_per, 
+              m.hsn_code,
+              0 AS is_out_of_stock
+            FROM inventory_master im
+            JOIN medicines m ON im.medicine_id = m.id
+            WHERE im.quantity > 0
+            ORDER BY im.id DESC
+            LIMIT 500
+          `);
+          const existingIds = new Set(candidateMeds.map(c => c.inventory_id));
+          for (const gm of generalMeds) {
+            if (!existingIds.has(gm.inventory_id)) {
+              candidateMeds.push(gm);
+            }
+          }
+        }
+
+        const fuzzyMatches = candidateMeds.map(item => {
+          const sim = computeTokenLevenshteinSim(normQuery, item.medicine_name);
+          return { ...item, sim, is_fuzzy_match: true };
+        }).filter(item => item.sim >= 0.65).sort((a, b) => b.sim - a.sim);
 
         for (const match of fuzzyMatches) {
           if (rows.length >= 20) break;

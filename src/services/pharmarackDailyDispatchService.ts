@@ -78,10 +78,28 @@ export async function getOrInitWindow(db: any): Promise<number> {
 }
 
 export async function isNowInSendWindow(db: any): Promise<boolean> {
-  const baseMinute = await getOrInitWindow(db);
+  const pausedRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'");
+  if (pausedRow?.value) {
+    try {
+      const paused = JSON.parse(pausedRow.value);
+      if (Array.isArray(paused) && paused.includes(todayIST())) {
+        return false;
+      }
+    } catch (_) {}
+  }
+
+  const enabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_pharmarack_cart_send_enabled'");
+  if (enabledRow?.value === 'false') return false;
+
+  const timeRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_pharmarack_cart_send_time'");
+  const sendTime = timeRow?.value || '11:00';
+  const [targetH, targetM] = sendTime.split(':').map(Number);
+  const targetHour = isNaN(targetH) ? 11 : targetH;
+  const targetMinute = isNaN(targetM) ? 0 : targetM;
+
   const { hour, minute } = nowIST();
-  if (hour !== BAND_START_HOUR) return false;
-  return minute >= baseMinute && minute < baseMinute + BAND_WINDOW_MINUTES;
+  if (hour !== targetHour) return false;
+  return minute >= targetMinute && minute < targetMinute + BAND_WINDOW_MINUTES;
 }
 
 export async function hasSentTodaysBatch(db: any): Promise<boolean> {
@@ -415,6 +433,36 @@ export async function tryDailySend(): Promise<void> {
       await setSetting(db, 'pharmarack_batch_last_sent_date', today);
       console.log('[PharmarackBatch] No orders today. Marking sent (no-op).');
       return;
+    }
+
+    // Check for missing distributor phone numbers and alert store owner if needed
+    try {
+      const missingDistributors: Array<{ name: string; itemsCount?: number }> = [];
+      const checkedNames = new Set<string>();
+      for (const ord of orders) {
+        const dName = (ord.store_name || '').trim();
+        if (!dName || checkedNames.has(dName.toLowerCase())) continue;
+        checkedNames.add(dName.toLowerCase());
+
+        const contact = await resolveDistributorContact(db, dName);
+        const p = (contact.distributor_phone || '').replace(/\D/g, '').slice(-10);
+        if (!p || p.length !== 10) {
+          let itemsCount = 0;
+          try {
+            const parsed = typeof ord.items_json === 'string' ? JSON.parse(ord.items_json) : ord.items_json;
+            itemsCount = Array.isArray(parsed) ? parsed.length : 0;
+          } catch (_) {}
+          missingDistributors.push({ name: dName, itemsCount });
+        }
+      }
+
+      if (missingDistributors.length > 0) {
+        const { notificationService } = await import('./notificationService.js');
+        await notificationService.sendMissingDistributorPhonesAdminAlert(missingDistributors);
+        console.log(`[PharmarackBatch] Alerted owner about ${missingDistributors.length} distributor(s) with missing phone numbers.`);
+      }
+    } catch (missingErr) {
+      console.warn('[PharmarackBatch] Failed checking missing distributor phones:', missingErr);
     }
 
     await sendBatchToDeliveryBoys(db, orders, false);

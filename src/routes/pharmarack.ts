@@ -966,6 +966,18 @@ async function loadLiveCartCore(): Promise<{ distributors: any[]; totalItems: nu
     }
   }
 
+  // Always sort distributors and items in alphabetical order
+  distributors.forEach((dist: any) => {
+    if (Array.isArray(dist.items)) {
+      dist.items.sort((a: any, b: any) =>
+        String(a.productName || '').localeCompare(String(b.productName || ''), undefined, { sensitivity: 'base' })
+      );
+    }
+  });
+  distributors.sort((a: any, b: any) =>
+    String(a.storeName || '').localeCompare(String(b.storeName || ''), undefined, { sensitivity: 'base' })
+  );
+
   const totalItems = distributors.reduce((s: number, d: any) => s + d.items.length, 0);
   return { distributors, totalItems };
 }

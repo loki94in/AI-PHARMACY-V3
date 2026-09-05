@@ -73,6 +73,7 @@ const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
 
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { StoreSelector } from './StoreSelector';
+import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -885,6 +886,156 @@ const LiveHeaderClock = () => {
     </div>
   );
 };
+
+// ──────────────────────────────────────────────
+// Live Cart Countdown Pill Button
+// ──────────────────────────────────────────────
+const LiveCartCountdownPill: React.FC = memo(() => {
+  const [cartCount, setCartCount] = useState<number>(0);
+  const [cutoffTime, setCutoffTime] = useState<string>('11:00');
+  const [pausedDates, setPausedDates] = useState<string[]>([]);
+  const [isSentToday, setIsSentToday] = useState<boolean>(false);
+  const [missingPhoneCount, setMissingPhoneCount] = useState<number>(0);
+  const [nowTime, setNowTime] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const loadCartData = useCallback(async () => {
+    try {
+      // 1. Fetch live cart summary
+      const cartRes = await apiClient.get('/pharmarack/live-cart-summary').catch(() => null);
+      if (cartRes?.data?.success) {
+        setCartCount(cartRes.data.totalItems || 0);
+        const dists = cartRes.data.distributors || [];
+        let missing = 0;
+        for (const d of dists) {
+          const rawP = d.phone || '';
+          const cleanP = String(rawP).replace(/\D/g, '').slice(-10);
+          if (!cleanP || cleanP.length !== 10) {
+            missing++;
+          }
+        }
+        setMissingPhoneCount(missing);
+      }
+
+      // 2. Fetch dispatch schedule (paused dates)
+      const schedRes = await apiClient.get('/pharmarack/dispatch-schedule').catch(() => null);
+      if (schedRes?.data?.success && Array.isArray(schedRes.data.pausedDates)) {
+        setPausedDates(schedRes.data.pausedDates);
+      } else {
+        try {
+          const stored = localStorage.getItem('pharmarack_paused_dispatch_dates');
+          if (stored) setPausedDates(JSON.parse(stored));
+        } catch (_) {}
+      }
+
+      // 3. Fetch app settings for cutoff time and sent date
+      const settingsRes = await apiClient.get('/settings').catch(() => null);
+      if (settingsRes?.data) {
+        if (settingsRes.data.trigger_pharmarack_cart_send_time) {
+          setCutoffTime(settingsRes.data.trigger_pharmarack_cart_send_time);
+        }
+        if (settingsRes.data.pharmarack_batch_last_sent_date) {
+          const now = new Date();
+          const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+          const todayIso = ist.toISOString().split('T')[0];
+          setIsSentToday(settingsRes.data.pharmarack_batch_last_sent_date === todayIso);
+        }
+      }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    loadCartData();
+    window.addEventListener('refresh-pharmarack-cart', loadCartData);
+    window.addEventListener('pharmarack-session-updated', loadCartData);
+    window.addEventListener('sse-pharmarack-refreshed', loadCartData);
+    window.addEventListener('focus', loadCartData);
+    return () => {
+      window.removeEventListener('refresh-pharmarack-cart', loadCartData);
+      window.removeEventListener('pharmarack-session-updated', loadCartData);
+      window.removeEventListener('sse-pharmarack-refreshed', loadCartData);
+      window.removeEventListener('focus', loadCartData);
+    };
+  }, [loadCartData]);
+
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    return ist.toISOString().split('T')[0];
+  }, [nowTime]);
+
+  const isTodayPaused = pausedDates.includes(todayStr);
+
+  const countdownInfo = useMemo(() => {
+    if (isTodayPaused) {
+      return { status: 'PAUSED' as const, label: '⏸️ Paused' };
+    }
+    if (isSentToday) {
+      return { status: 'SENT' as const, label: '✅ Sent' };
+    }
+    const [hStr, mStr] = (cutoffTime || '11:00').split(':');
+    const targetH = parseInt(hStr, 10) || 11;
+    const targetM = parseInt(mStr, 10) || 0;
+
+    const targetDate = new Date(nowTime);
+    targetDate.setHours(targetH, targetM, 0, 0);
+
+    const diffMs = targetDate.getTime() - nowTime.getTime();
+    if (diffMs <= 0) {
+      return { status: 'CUTOFF' as const, label: '⏱️ Cutoff' };
+    }
+
+    const totalSec = Math.floor(diffMs / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    const timeStr = `${mins}m ${String(secs).padStart(2, '0')}s`;
+
+    if (mins < 10) {
+      return { status: 'WARNING' as const, label: `⚠️ ${timeStr}` };
+    }
+    return { status: 'COUNTING' as const, label: timeStr };
+  }, [cutoffTime, nowTime, isTodayPaused, isSentToday]);
+
+  let pillCls = 'bg-glass-bg border-glass-border text-emerald-400 hover:bg-bg3/60';
+  if (countdownInfo.status === 'WARNING') {
+    pillCls = 'bg-amber-500/15 border-amber-500/40 text-amber-400 hover:bg-amber-500/25 animate-pulse';
+  } else if (countdownInfo.status === 'PAUSED') {
+    pillCls = 'bg-bg3/60 border-glass-border text-amber-400 hover:bg-bg3';
+  } else if (countdownInfo.status === 'SENT') {
+    pillCls = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20';
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => liveCartAddEvent.triggerOpen()}
+      onMouseEnter={() => api.warmupPharmarackSession()}
+      className={`px-3 py-1.5 rounded-xl border transition-all duration-200 flex items-center gap-2 text-xs font-bold cursor-pointer select-none shrink-0 ${pillCls}`}
+      title={`Live Cart (${cartCount} items) — ${countdownInfo.label}${missingPhoneCount > 0 ? ` (${missingPhoneCount} missing phone numbers)` : ''}`}
+      aria-label="Live Cart"
+    >
+      <div className="relative flex items-center">
+        <ShoppingCart size={15} className="shrink-0" />
+        {cartCount > 0 && (
+          <span className="absolute -top-1.5 -right-2 px-1 min-w-[14px] h-3.5 rounded-full text-[9px] bg-primary text-white font-mono font-black flex items-center justify-center leading-none shadow-xs">
+            {cartCount}
+          </span>
+        )}
+      </div>
+      <span className="font-mono text-xs font-black whitespace-nowrap">{countdownInfo.label}</span>
+      {missingPhoneCount > 0 && (
+        <span className="px-1 py-0.2 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
+          ⚠️ {missingPhoneCount}
+        </span>
+      )}
+    </button>
+  );
+});
+LiveCartCountdownPill.displayName = 'LiveCartCountdownPill';
 
 // ──────────────────────────────────────────────
 // Topbar
@@ -1969,53 +2120,23 @@ const Topbar = memo(({
             </div>
           )}
 
-          {/* Pharmarack Live Cart Connection Status */}
-          <Link
-            to="/pharmarack-cart"
-            className={`
-              hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-glass-border hover:bg-bg3/60 transition-all cursor-pointer text-xs font-semibold uppercase tracking-wider
-              ${servicesStatus?.pharmarack?.isRefreshing
-                ? 'text-amber-400'
-                : servicesStatus?.pharmarack?.connected
-                  ? 'text-emerald-400'
-                  : 'text-rose-400'}
-            `}
-            title={servicesStatus?.pharmarack?.connected ? "Pharmarack Live Cart Online" : "Pharmarack Session Expired - Click to Re-authenticate"}
-          >
-            <ShoppingCart size={13} className={servicesStatus?.pharmarack?.isRefreshing ? "animate-spin" : ""} />
-            <span>
-              {servicesStatus?.pharmarack?.isRefreshing
-                ? 'Refreshing'
-                : servicesStatus?.pharmarack?.connected
-                  ? 'Live Cart'
-                  : 'Re-auth'}
-            </span>
-          </Link>
-
-
-          {/* Quick Order Shortcut Button */}
-          <button
-            onClick={() => quickOrderEvent.triggerOpen()}
-            onMouseEnter={() => api.warmupPharmarackSession()}
-            className="p-2 rounded-xl transition-all duration-200 flex items-center justify-center border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer relative"
-            title="Quick Special Request (Alt+O)"
-            aria-label="Quick special request"
-          >
-            <ClipboardPlus size={18} />
-          </button>
 
           {/* Store Switcher */}
           <StoreSelector />
 
-          {/* Live Cart Shortcut Button */}
+          {/* Live Cart Integrated Countdown Pill Button */}
+          <LiveCartCountdownPill />
+
+          {/* Quick Special Request Shortcut Button */}
           <button
-            onClick={() => liveCartAddEvent.triggerOpen()}
+            onClick={() => quickOrderEvent.triggerOpen()}
             onMouseEnter={() => api.warmupPharmarackSession()}
-            className="p-2 rounded-xl transition-all duration-200 flex items-center justify-center border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer relative"
-            title="Live Cart Add (Alt+L)"
-            aria-label="Live cart"
+            className="px-2.5 py-1.5 rounded-xl transition-all duration-200 flex items-center gap-1.5 border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer text-xs font-bold shrink-0"
+            title="Quick Special Request (Alt+O)"
+            aria-label="Quick special request"
           >
-            <ShoppingCart size={18} />
+            <Zap size={14} className="text-amber-400 shrink-0" />
+            <span className="hidden md:inline">Quick Request</span>
           </button>
 
           {/* Single Shared WhatsApp Status Indicator & Automation Hub Launchpad */}
@@ -2147,6 +2268,11 @@ const QuickAssistSidebar = memo(({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenOrderIds, setOptimisticHiddenOrderIds] = useState<Set<number>>(new Set());
+  const [arrivalModalGroup, setArrivalModalGroup] = useState<{
+    requester: string;
+    phone?: string;
+    items: Array<{ id: number; product: string; qty: number }>;
+  } | null>(null);
 
   // Expand / collapse state for grouped patients (collapsed by default)
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
@@ -2239,6 +2365,12 @@ const QuickAssistSidebar = memo(({
     newStatus: string,
     opts?: { navigateToPos?: boolean; resend?: boolean }
   ) => {
+    // If marking ready on multiple items, open the arrival preview modal so user can review arrived vs delayed and send 1 consolidated WhatsApp
+    if (newStatus === 'Ready' && group.items.length > 1) {
+      setArrivalModalGroup(group);
+      return;
+    }
+
     const itemIds = group.items.map(i => i.id);
 
     setProcessingOrderIds(prev => {
@@ -3470,6 +3602,21 @@ const QuickAssistSidebar = memo(({
             </div>
           )}
         </div>
+        {arrivalModalGroup && (
+          <SpecialOrderArrivalModal
+            isOpen={!!arrivalModalGroup}
+            onClose={() => setArrivalModalGroup(null)}
+            customerName={arrivalModalGroup.requester}
+            customerPhone={arrivalModalGroup.phone || ''}
+            orders={arrivalModalGroup.items}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ['orders'] });
+              specialOrdersEvent.triggerUpdated();
+              window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+              onActionComplete();
+            }}
+          />
+        )}
       </div>
     );
   });

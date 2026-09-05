@@ -629,11 +629,12 @@ export async function checkAndSendAutoReminders() {
 
   try {
     const db = await dbManager.getConnection();
-    const [globalAuto, triggerSetting, startSetting, endSetting] = await Promise.all([
+    const [globalAuto, triggerSetting, startSetting, endSetting, pausedDatesRow] = await Promise.all([
       db.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'"),
       db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
-      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'")
+      db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'"),
+      db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'")
     ]);
 
     const isGlobalEnabled = !globalAuto || globalAuto.value === 'true';
@@ -643,6 +644,18 @@ export async function checkAndSendAutoReminders() {
     if (!isGlobalEnabled || !isTriggerEnabled) {
       isWorkerRunning = false;
       return;
+    }
+
+    // Check if today is paused in Cart order calendar
+    const todayStr = getTodayDateString();
+    if (pausedDatesRow?.value) {
+      try {
+        const pausedDates = JSON.parse(pausedDatesRow.value);
+        if (Array.isArray(pausedDates) && pausedDates.includes(todayStr)) {
+          isWorkerRunning = false;
+          return;
+        }
+      } catch (_) {}
     }
 
     const now = new Date();
@@ -667,7 +680,6 @@ export async function checkAndSendAutoReminders() {
       return;
     }
 
-    const todayStr = getTodayDateString();
     await syncTodayActiveDistributors();
     await allocateDynamicReminderTimes(db, todayStr);
 

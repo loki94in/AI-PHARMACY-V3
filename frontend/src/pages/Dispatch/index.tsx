@@ -169,6 +169,7 @@ const Dispatch = () => {
   // Distributor Dispatch Reminders state
   const [distributorReminders, setDistributorReminders] = useState<LocalReminderRow[]>([]);
   const [autoDispatchEnabled, setAutoDispatchEnabled] = useState(true);
+  const [isTodayPaused, setIsTodayPaused] = useState(false);
   const [distributorSearch, setDistributorSearch] = useState('');
   const [distributorTodayOnly, setDistributorTodayOnly] = useState<boolean>(true);
   const [sendingReminderId, setSendingReminderId] = useState<number | null>(null);
@@ -347,6 +348,9 @@ const Dispatch = () => {
         setRecentDate(res.recent_date || null);
         if (res.auto_dispatch_enabled !== undefined) {
           setAutoDispatchEnabled(res.auto_dispatch_enabled);
+        }
+        if ((res as any).is_today_paused !== undefined) {
+          setIsTodayPaused(!!(res as any).is_today_paused);
         }
         if (res.window_start && res.window_end) {
           setWindowSchedule({ start: res.window_start, end: res.window_end });
@@ -825,6 +829,49 @@ const Dispatch = () => {
                 </div>
                 <div className="mt-1 text-xs text-muted">
                   Automatic reminder dispatches are paused. Enable "Distributor Dispatch Reminders" in Settings to activate the live auto-send schedule.
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        if (isTodayPaused) {
+          return (
+            <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                <Bell size={18} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-text">Distributor collection window</span>
+                  <span className="text-sm font-mono font-bold whitespace-nowrap text-amber-400">
+                    ⏸️ Cart Orders Paused for Today
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted">
+                  Today's cart order schedule is paused in the Cart calendar. Dispatch countdown and auto-reminders are paused.
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        const activeDistributorOrdersCount = distributorReminders.filter(r => r.has_order_today !== false).length;
+        if (activeDistributorOrdersCount === 0) {
+          return (
+            <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-bg3/80 text-muted border border-border">
+                <Bell size={18} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-text">Distributor collection window</span>
+                  <span className="text-sm font-mono font-bold whitespace-nowrap text-muted">
+                    No Orders Placed Today
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted">
+                  No active distributor orders found for today. The reminder window is on standby.
                 </div>
               </div>
             </div>

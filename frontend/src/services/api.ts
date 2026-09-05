@@ -1374,8 +1374,13 @@ export const api = {
   updateOrder: (id: number, data: Partial<SpecialOrder>) => apiClient.put<{ success: boolean; message: string; whatsapp_queued?: boolean }>(`/orders/${id}`, data).then(res => res.data),
   updateOrderStatus: (id: number, status: string) => apiClient.post(`/orders/${id}/status`, { status }).then(res => res.data),
   deleteOrder: (id: number) => apiClient.delete(`/orders/${id}`).then(res => res.data),
-  getUncollectedAlerts: () => apiClient.get<SpecialOrder[]>('/orders/uncollected-alerts').then(res => res.data),
   notifySpecialOrderArrival: (id: number) => apiClient.post(`/orders/${id}/notify-arrival`).then(res => res.data),
+  batchNotifySpecialOrderArrival: (data: {
+    order_ids: number[];
+    items?: Array<{ order_id: number; status: 'arrived' | 'delayed'; delay_reason?: string; expected_date?: string }>;
+    custom_message?: string;
+    lang?: string;
+  }) => apiClient.post('/orders/batch-notify-arrival', data).then(res => res.data),
   resendSpecialOrderBooking: (id: number) => apiClient.post(`/orders/${id}/resend-booking`).then(res => res.data),
   fulfillSpecialOrder: (id: number, data?: { invoiceNo?: string; grandTotal?: number }) =>
     apiClient.post(`/orders/${id}/fulfill`, data || {}).then(res => res.data),

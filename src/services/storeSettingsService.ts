@@ -294,5 +294,76 @@ export async function buildOrderReadyNotificationMessage(
   return msg;
 }
 
+export interface MultiOrderItemArrival {
+  productName: string;
+  qty: number | string;
+  status: 'arrived' | 'delayed';
+  delayReason?: string;
+  expectedDate?: string;
+}
+
+/**
+ * Formats a consolidated customer notification message for multiple special orders
+ * clearly distinguishing arrived/ready medicines from delayed items.
+ */
+export async function buildMultiOrderNotificationMessage(
+  requesterName: string,
+  items: MultiOrderItemArrival[],
+  dbInstance?: any,
+  lang: string = 'en'
+): Promise<string> {
+  const storeName = await getStoreMedicalName(dbInstance);
+  const storePhone = await getStorePhone(dbInstance);
+  const name = formatCustomerName(requesterName);
+  const phone = storePhone ? storePhone.trim() : '';
+
+  const arrivedItems = items.filter(i => i.status === 'arrived');
+  const delayedItems = items.filter(i => i.status === 'delayed');
+
+  if (lang === 'hi') {
+    let msg = `नमस्ते ${name}, 👋\n\n`;
+    if (arrivedItems.length > 0 && delayedItems.length === 0) {
+      msg += `खुशखबरी! 🎉 आपकी मांगी गई दवाइयां ${storeName} पर लेने के लिए तैयार हैं:\n\n`;
+      msg += `📦 तैयार दवाइयां:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
+      msg += `\n\n📍 कृपया अपनी सुविधानुसार हमारी दुकान पर आकर अपनी दवाइयां प्राप्त करें।`;
+    } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
+      msg += `आपके ऑर्डर का अपडेट (${storeName}):\n\n`;
+      msg += `✅ तैयार दवाइयां (दुकान से प्राप्त करें):\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
+      msg += `\n\n⏳ आने में थोड़ा समय (आते ही सूचित करेंगे):\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (अपेक्षित: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
+      msg += `\n\n📍 तैयार दवाइयां आप दुकान से कभी भी ले सकते हैं। बाकी दवाइयां पहुंचते ही हम तुरंत सूचित करेंगे!`;
+    } else {
+      msg += `आपके ऑर्डर का अपडेट (${storeName}):\n\n`;
+      msg += `⏳ निम्नलिखित दवाइयों में थोड़ा समय लग रहा है:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (अपेक्षित: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
+      msg += `\n\nहम जल्द से जल्द व्यवस्था कर रहे हैं और आते ही तुरंत सूचित करेंगे।`;
+    }
+
+    if (phone) msg += `\n\n📞 सहायता के लिए कॉल करें: ${phone}`;
+    msg += `\n\n${storeName} को चुनने के लिए धन्यवाद!`;
+    return msg;
+  }
+
+  // Default English (also covers other locales cleanly)
+  let msg = `Hi ${name}, 👋\n\n`;
+  if (arrivedItems.length > 0 && delayedItems.length === 0) {
+    msg += `Great news! 🎉 Your requested medicines are now ready for pickup at ${storeName}:\n\n`;
+    msg += `📦 Ready for Pickup:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
+    msg += `\n\n📍 Please visit our store at your convenience to collect your medicines.`;
+  } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
+    msg += `Order status update from ${storeName}:\n\n`;
+    msg += `✅ Ready for Pickup:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
+    msg += `\n\n⏳ Slightly Delayed / In Transit:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (Exp: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
+    msg += `\n\n📍 You can collect the ready medicines anytime. We will notify you as soon as the rest arrive!`;
+  } else {
+    msg += `Order status update from ${storeName}:\n\n`;
+    msg += `⏳ The following medicines are slightly delayed:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (Exp: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
+    msg += `\n\nWe are actively arranging them and will notify you immediately once received.`;
+  }
+
+  if (phone) msg += `\n\n📞 For questions or home delivery, call: ${phone}`;
+  msg += `\n\nThank you for choosing ${storeName}!`;
+  return msg;
+}
+
+
 
 

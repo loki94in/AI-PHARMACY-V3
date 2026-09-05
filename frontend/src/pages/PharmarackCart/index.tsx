@@ -172,8 +172,18 @@ const loadPersistedCartCache = (): { distributors: Distributor[]; priceHistory: 
     if (raw) {
       const parsed: PersistedCartCache = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.distributors)) {
+        const sorted = [...parsed.distributors]
+          .map(d => ({
+            ...d,
+            items: [...(d.items || [])].sort((a, b) =>
+              (a.productName || '').localeCompare(b.productName || '', undefined, { sensitivity: 'base' })
+            )
+          }))
+          .sort((a, b) =>
+            (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
+          );
         return {
-          distributors: parsed.distributors,
+          distributors: sorted,
           priceHistory: (parsed.priceHistory && typeof parsed.priceHistory === 'object') ? parsed.priceHistory : {}
         };
       }
@@ -245,7 +255,9 @@ const mergeItemIntoDistributors = (
       deliveryPersons: [],
       items: [lineItem]
     };
-    return [newDist, ...prev];
+    return [newDist, ...prev].sort((a, b) =>
+      (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
+    );
   }
 
   const dist = prev[storeIdx];
@@ -270,6 +282,11 @@ const mergeItemIntoDistributors = (
     updatedItems = [lineItem, ...dist.items];
   }
 
+  // Sort items alphabetically
+  updatedItems.sort((a, b) =>
+    (a.productName || '').localeCompare(b.productName || '', undefined, { sensitivity: 'base' })
+  );
+
   const newLineTotal = updatedItems.reduce((s, it) => s + (it.amount || 0), 0);
   const updatedDist: Distributor = {
     ...dist,
@@ -279,7 +296,9 @@ const mergeItemIntoDistributors = (
 
   const next = [...prev];
   next[storeIdx] = updatedDist;
-  return next;
+  return next.sort((a, b) =>
+    (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
+  );
 };
 
 const initialPersistedCache = loadPersistedCartCache();
@@ -1245,12 +1264,25 @@ export default function PharmarackCart() {
   }, [distributors, customDistributorPhones, savedDistributorsList, distributorMappings, sentWaStatusMap, userCheckOverrides, latestSentMap]);
 
   const filteredDistributorList = React.useMemo(() => {
-    if (distributorFilterTab === 'unsent' || distributorFilterTab === 'active') return unsentCartDistributors;
-    if (distributorFilterTab === 'sent' || distributorFilterTab === 'success') return sentCartDistributors;
-    if (distributorFilterTab === 'failed') return failedDistributors;
-    if (distributorFilterTab === 'unmapped') return unmappedDistributors;
-    if (distributorFilterTab === 'all') return activeCartDistributors;
-    return unsentCartDistributors;
+    let list: Distributor[] = [];
+    if (distributorFilterTab === 'unsent' || distributorFilterTab === 'active') list = unsentCartDistributors;
+    else if (distributorFilterTab === 'sent' || distributorFilterTab === 'success') list = sentCartDistributors;
+    else if (distributorFilterTab === 'failed') list = failedDistributors;
+    else if (distributorFilterTab === 'unmapped') list = unmappedDistributors;
+    else if (distributorFilterTab === 'all') list = activeCartDistributors;
+    else list = unsentCartDistributors;
+
+    // Always guarantee distributors and their items are rendered in alphabetical order
+    return [...list]
+      .map(dist => ({
+        ...dist,
+        items: [...(dist.items || [])].sort((a, b) =>
+          (a.productName || '').localeCompare(b.productName || '', undefined, { sensitivity: 'base' })
+        )
+      }))
+      .sort((a, b) =>
+        (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
+      );
   }, [distributorFilterTab, unsentCartDistributors, sentCartDistributors, failedDistributors, unmappedDistributors, activeCartDistributors]);
 
   // Aggregate all previous-ordered items (yesterday/past) from the current cart for the reorder banner.
@@ -2088,7 +2120,7 @@ export default function PharmarackCart() {
       }
     }
 
-    return normalizedIncoming.map(dist => {
+    const merged = normalizedIncoming.map(dist => {
       const mergedItems = dist.items.map(incItem => {
         const key = getItemCheckKey(dist.storeId, incItem);
         const existing = currentItemMap.get(key);
@@ -2107,11 +2139,19 @@ export default function PharmarackCart() {
         return incItem;
       });
 
+      const sortedItems = [...mergedItems].sort((a, b) =>
+        (a.productName || '').localeCompare(b.productName || '', undefined, { sensitivity: 'base' })
+      );
+
       return {
         ...dist,
-        items: mergedItems
+        items: sortedItems
       };
     });
+
+    return merged.sort((a, b) =>
+      (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
+    );
   };
 
   const cartSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2804,7 +2844,7 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {sentOrders.map((order) => (
+                  {sentOrders.slice().sort((a, b) => (a.store_name || '').localeCompare(b.store_name || '', undefined, { sensitivity: 'base' })).map((order) => (
                     <div key={order.id} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
                       <div>
                         <div className="flex items-center justify-between pb-2 border-b border-glass-border/30">
@@ -2818,7 +2858,7 @@ export default function PharmarackCart() {
 
                         {/* Items List */}
                         <div className="space-y-2 mt-3">
-                          {Array.isArray(order.items) && order.items.map((item, idx: number) => {
+                          {Array.isArray(order.items) && [...order.items].sort((a, b) => (a.productName || a.product || a.name || '').localeCompare(b.productName || b.product || b.name || '', undefined, { sensitivity: 'base' })).map((item, idx: number) => {
                             const medName = item.productName || item.product || item.name;
                             const itemQty = item.qty || item.quantity || 1;
 
@@ -3368,6 +3408,48 @@ export default function PharmarackCart() {
                   {/* ── Scrollable Distributor Cards Panel ── */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-5 min-h-0 custom-scrollbar">
 
+                    {/* ── Missing Distributor Phone Alert Banner ── */}
+                    {unmappedDistributors.length > 0 && (
+                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 font-black text-xs">
+                            ⚠️
+                          </div>
+                          <div className="min-w-0 text-xs">
+                            <span className="font-extrabold text-amber-400 block">
+                              {unmappedDistributors.length} {unmappedDistributors.length === 1 ? 'distributor' : 'distributors'} missing WhatsApp number
+                            </span>
+                            <span className="text-muted text-[11px] block truncate">
+                              Click numbered badges below [{unmappedDistributors.map((_, i) => i + 1).join(', ')}] to add phones before auto-send cutoff.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {unmappedDistributors.slice(0, 3).map((d, i) => (
+                            <button
+                              key={d.storeId}
+                              onClick={() => handleOpenEditModal(d)}
+                              className="px-2.5 py-1 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
+                              title={`Add phone for ${d.storeName}`}
+                            >
+                              <span className="w-4 h-4 rounded-full bg-amber-500 text-bg text-[10px] font-black flex items-center justify-center">
+                                {i + 1}
+                              </span>
+                              <span>{d.storeName.length > 12 ? d.storeName.slice(0, 10) + '…' : d.storeName}</span>
+                            </button>
+                          ))}
+                          {unmappedDistributors.length > 3 && (
+                            <button
+                              onClick={() => setDistributorFilterTab('unmapped')}
+                              className="px-2 py-1 rounded text-[11px] font-bold bg-bg2 text-muted border border-border hover:text-text cursor-pointer"
+                            >
+                              +{unmappedDistributors.length - 3} more
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* ── Top KPI Stat Cards ── */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2 shrink-0">
                       <div className="p-3 rounded-2xl bg-bg2/40 border border-glass-border/60 shadow-xs flex items-center gap-3">
@@ -3611,19 +3693,30 @@ export default function PharmarackCart() {
                               {/* Phone Badge & Contact Search/Edit trigger */}
                               {(() => {
                                 const activePhone = getDistributorPhoneNumber(dist);
+                                const isMapped = isValidPhoneNumber(activePhone.replace(/\D/g, ''));
+                                const missingIdx = !isMapped ? unmappedDistributors.findIndex(d => d.storeId === dist.storeId) : -1;
 
                                 return (
                                   <button
                                     type="button"
                                     onClick={() => handleOpenEditModal(dist)}
-                                    className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-md border transition-all active:scale-95 cursor-pointer ${activePhone
+                                    className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-md border transition-all active:scale-95 cursor-pointer ${activePhone && isMapped
                                       ? 'bg-bg2 text-text border-border hover:bg-bg3'
                                       : 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30 font-extrabold shadow-sm'
                                       }`}
-                                    title={activePhone ? 'Edit WhatsApp phone number' : 'Missing WhatsApp number — click to enter and auto-send'}
+                                    title={activePhone && isMapped ? 'Edit WhatsApp phone number' : 'Missing WhatsApp number — click to enter and auto-send'}
                                   >
-                                    <Phone size={12} className={activePhone ? '' : 'text-amber-400'} />
-                                    <span>{activePhone || '⚠️ Missing Phone — Click to Add'}</span>
+                                    {missingIdx !== -1 && (
+                                      <span className="w-4 h-4 rounded-full bg-amber-500 text-bg text-[10px] font-black flex items-center justify-center shrink-0">
+                                        {missingIdx + 1}
+                                      </span>
+                                    )}
+                                    <Phone size={12} className={activePhone && isMapped ? '' : 'text-amber-400'} />
+                                    <span>
+                                      {activePhone && isMapped
+                                        ? activePhone
+                                        : `[${missingIdx !== -1 ? missingIdx + 1 : '!'}] Missing Phone — Click to Add`}
+                                    </span>
                                     <Edit2 size={11} className="opacity-70" />
                                   </button>
                                 );

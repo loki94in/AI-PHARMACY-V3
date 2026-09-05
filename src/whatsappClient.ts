@@ -390,7 +390,7 @@ export async function waitForWhatsAppReady(timeoutMs: number = 90_000): Promise<
     // never tight-loop Chrome launches.
     if (!initializing && !initPromise && now - lastKick > 20_000) {
       lastKick = now;
-      initClient().catch(() => {});
+      initClient({ manual: true }).catch(() => {});
     }
     await new Promise(r => setTimeout(r, 1_000));
   }
@@ -679,9 +679,9 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
     client.on('qr', async (qr: string) => {
       clearInitWatchdog();
-      // If user did not explicitly request QR scan and no authenticated saved session is allowed, stop immediately
-      if (!forceQr && !(await isWhatsAppAutoConnectAllowed())) {
-        console.log('[WhatsApp] Unsolicited QR event suppressed. Stopping client until explicit user connection.');
+      // If user did not explicitly request QR scan (forceQr: false), stop immediately — never leave Chrome open for unsolicited QR
+      if (!forceQr) {
+        console.log('[WhatsApp] Unsolicited QR event suppressed. Stopping client until explicit user connection in UI.');
         if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
         currentQr = null;
         initializing = false;
@@ -691,7 +691,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         setLifecycleProgress('disconnected', 0, 'WhatsApp requires QR scan (standby)');
         // Settle the init promise — otherwise every caller (sendMessage, boot auto-init,
         // Settings connect) awaits a promise that never resolves and WA stays dead until restart.
-        reject(new Error('WhatsApp connection requires a manual QR scan (no saved session). Connect from Settings or the Learning page.'));
+        reject(new Error('WhatsApp session expired or requires QR scan. Connect manually from Settings.'));
         return;
       }
 
@@ -1030,14 +1030,17 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
   });
 }
 
-/** Initialize the WhatsApp client and return it — STRICT MANUAL-INVOCATION CONTRACT:
- * The app will NEVER try to connect or launch Chrome unless the user manually invokes it. */
-export async function initClient(options: { forceQr?: boolean; manual?: boolean } = {}): Promise<WAClient | null> {
+/** Initialize the WhatsApp client and return it — Boot check + manual invocation contract:
+ * The app only connects at boot IF a valid authenticated session exists; otherwise it NEVER
+ * auto-launches Chrome unless the user manually invokes it or wakes on demand. */
+export async function initClient(options: { forceQr?: boolean; manual?: boolean; isBoot?: boolean } = {}): Promise<WAClient | null> {
   const forceQr = options.forceQr ?? false;
   const isManual = options.manual ?? false;
+  const isBoot = options.isBoot ?? false;
 
-  // Strict manual invocation rule: app will NEVER autonomously connect or launch Chrome.
-  if (!forceQr && !isManual) {
+  // Strict manual/boot gating: app will NEVER autonomously connect or launch Chrome unless
+  // user manually connects, is running the 1-time boot check, or has an authenticated saved session.
+  if (!forceQr && !isManual && !isBoot && !(await isWhatsAppAutoConnectAllowed())) {
     console.log('[WhatsApp] Connection suppressed: App will never connect WhatsApp unless user manually invokes it.');
     setLifecycleProgress('disconnected', 0, 'WhatsApp is disconnected. Click Connect to start.');
     return null;
@@ -1344,7 +1347,15 @@ export async function sendMessage(
 
     const useBusiness = await shouldRouteToBusiness();
     if (!useBusiness && (!isReady || !clientInstance)) {
-      throw new Error('WhatsApp is not connected. Please connect WhatsApp manually in Settings before sending messages.');
+      if (isSleeping || (await isWhatsAppAutoConnectAllowed())) {
+        console.log('[WhatsApp] sendMessage: WhatsApp is sleeping or reconnecting, ensuring client is ready...');
+        const ready = await ensureWhatsAppReady(30_000);
+        if (!ready || !clientInstance) {
+          throw new Error('WhatsApp is disconnected. Please connect WhatsApp in Settings before sending messages.');
+        }
+      } else {
+        throw new Error('WhatsApp is not connected. Please connect WhatsApp manually in Settings before sending messages.');
+      }
     }
 
     try {
