@@ -351,8 +351,13 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
     return;
   }
 
+  // Guard: skip entirely if WhatsApp was never configured / explicitly logged out
   try {
-    const { ensureWhatsAppReady } = await import('../whatsappClient.js');
+    const { ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } = await import('../whatsappClient.js');
+    if (!(await isWhatsAppAutoConnectAllowed())) {
+      console.log('[PharmarackBatch] WhatsApp not configured \u2014 skipping batch dispatch send.');
+      return;
+    }
     await ensureWhatsAppReady(30000);
   } catch (_) {}
 

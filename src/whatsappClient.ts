@@ -49,6 +49,12 @@ export function hasSavedSession(): boolean {
  * and auto-reconnection is allowed.
  * Gating Rule: If the user never connected or explicitly logged out / disconnected,
  * the app must NEVER autonomously attempt connection or launch Chrome.
+ *
+ * Strict requirement (ponytail): BOTH conditions must be true:
+ *   1. A valid session folder exists on disk (hasSavedSession)
+ *   2. whatsapp_session_authenticated = 'true' is explicitly stored in app_settings
+ * The legacy phone-number fallback is intentionally removed — it caused Chrome to
+ * spawn on boot for installs where WhatsApp was previously paired but later disconnected.
  */
 export async function isWhatsAppAutoConnectAllowed(): Promise<boolean> {
   if (await isWhatsAppExplicitlyDisabled()) return false;
@@ -57,14 +63,8 @@ export async function isWhatsAppAutoConnectAllowed(): Promise<boolean> {
   try {
     const db = await dbManager.getConnection();
     const authRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
-    if (authRow) {
-      return authRow.value === 'true';
-    }
-    // Fallback for legacy installs: check if a valid connected phone number was recorded
-    const phoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_connected_number'");
-    if (phoneRow && phoneRow.value && String(phoneRow.value).trim().length >= 10) {
-      return true;
-    }
+    // Must be an explicit 'true' — missing key or 'false' both block auto-connect
+    return authRow?.value === 'true';
   } catch (err) {
     console.error('[WhatsApp] Failed to query session authentication status:', err);
   }

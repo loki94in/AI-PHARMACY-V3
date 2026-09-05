@@ -412,10 +412,9 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             isErrorMessage: true
           });
         } else if (Array.isArray(prData)) {
-          const hasMapped = prData.some((item: LocalPharmarackSearchItem) => item.mapped);
-          if (prData.length === 0 || !hasMapped) {
+          if (prData.length === 0) {
             if (query.length >= 3 && query !== lastToastedQueryRef.current) {
-              toastEvent.trigger('No mapped distributor has product', 'info');
+              toastEvent.trigger('No matching distributor product found', 'info');
               lastToastedQueryRef.current = query;
             }
           }

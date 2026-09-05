@@ -1027,10 +1027,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         const mergedList: SuggestionMedicine[] = [];
 
         if (prData && !(prData as LocalPrSearchFallback).isError && Array.isArray(prData) && prData.length > 0) {
-          const hasMapped = prData.some((item: LocalPharmarackSearchItem) => item.mapped);
-          if (prData.length === 0 || !hasMapped) {
+          if (prData.length === 0) {
             if (cleanQuery.length >= 3 && cleanQuery !== lastToastedQueryRef.current) {
-              toastEvent.trigger('No mapped distributor has product', 'info');
+              toastEvent.trigger('No matching distributor product found', 'info');
               lastToastedQueryRef.current = cleanQuery;
             }
           }

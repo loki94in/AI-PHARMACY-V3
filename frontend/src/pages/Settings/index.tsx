@@ -49,7 +49,8 @@ import {
   ArrowUpFromLine,
   CreditCard,
   Calendar,
-  ShoppingCart
+  ShoppingCart,
+  Layers
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -1664,6 +1665,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [pharmarackRefreshing, setPharmarackRefreshing] = useState(false);
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
+  const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
 
   // 3-UPI QR Code System & Delivery Feature Flag (§13, §15)
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
@@ -1702,7 +1704,9 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
           message: res.message
         });
       }
-    } catch (_) {}
+    } catch (err) {
+      console.error('Failed to fetch WhatsApp status:', err);
+    }
   }, [isVisible]);
 
   useEffect(() => {
@@ -1746,6 +1750,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setPharmarackPass(rawSettings.pharmarack_password || '');
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
+    setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
     toastEvent.trigger('Integration credentials reset to saved parameters', 'info');
   };
 
@@ -1768,7 +1773,8 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
         pharmarack_password: pharmarackPass,
         pharmarack_mode: 'Live',
         pharmarack_reorder_window_months: reorderWindowMonths,
-        whatsapp_idle_sleep_min: waIdleSleepMin
+        whatsapp_idle_sleep_min: waIdleSleepMin,
+        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false'
       };
 
       await apiClient.post('/settings/save', payload);
@@ -1785,6 +1791,17 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
       toastEvent.trigger('Failed to save integration settings: ' + e.message, 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleCombineSearch = async (val: boolean) => {
+    setCombinePharmarackSearch(val);
+    try {
+      await apiClient.post('/settings', { key: 'combine_pharmarack_pharmacy_search', value: val ? 'true' : 'false' });
+      toastEvent.trigger(`Combine Pharmarack & Pharmacy search ${val ? 'enabled' : 'disabled'}`, 'success');
+      refetchSettings();
+    } catch {
+      toastEvent.trigger('Failed to update setting', 'error');
     }
   };
 
@@ -2134,6 +2151,30 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
           <p className="text-[11px] text-muted mt-1">
             How far back sales/purchase history is weighed for restock suggestions and the &quot;Ordered Recently&quot; list in the Reorder Hub. Changing this recomputes suggestions in the background.
           </p>
+        </div>
+
+        {/* Combine Pharmarack & Local Pharmacy Search Toggle */}
+        <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-text flex items-center gap-1.5">
+              <Layers size={14} className="text-primary" /> Combine Pharmarack &amp; Local Pharmacy Search
+            </span>
+            <p className="text-[11px] text-muted max-w-xl">
+              When Pharmarack is offline, disconnected, or has no results, automatically search your local pharmacy purchase history and inventory. Displays each distributor&apos;s specific PTR, MRP, packaging, and stock in the exact same card dropdown.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="combinePharmarackSearchToggle"
+              checked={combinePharmarackSearch}
+              onChange={(e) => handleToggleCombineSearch(e.target.checked)}
+              className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+            />
+            <label htmlFor="combinePharmarackSearchToggle" className="text-xs font-semibold text-text cursor-pointer">
+              {combinePharmarackSearch ? 'Enabled' : 'Disabled'}
+            </label>
+          </div>
         </div>
       </div>
 

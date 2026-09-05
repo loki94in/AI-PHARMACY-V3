@@ -724,8 +724,14 @@ export async function checkAndSendAutoReminders() {
       console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
 
       // Ensure WhatsApp client is ready (wake from idle sleep if needed) before dispatching
+      // Guard: skip entirely if WhatsApp was never configured / explicitly logged out
       try {
-        const { ensureWhatsAppReady } = await import('../whatsappClient.js');
+        const { ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } = await import('../whatsappClient.js');
+        if (!(await isWhatsAppAutoConnectAllowed())) {
+          console.log('[DistributorReminderWorker] WhatsApp not configured — skipping reminder dispatch.');
+          isWorkerRunning = false;
+          return;
+        }
         const isReady = await ensureWhatsAppReady(30000);
         if (!isReady) {
           console.warn('[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.');
@@ -813,8 +819,13 @@ export async function checkAndSendAfternoonDeliveryBoyReminder() {
     }
 
     console.log(`[DistributorReminderWorker] Triggering scheduled afternoon Delivery Boy consolidated dispatch at ${targetTime}...`);
+    // Guard: skip entirely if WhatsApp was never configured / explicitly logged out
     try {
-      const { ensureWhatsAppReady } = await import('../whatsappClient.js');
+      const { ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } = await import('../whatsappClient.js');
+      if (!(await isWhatsAppAutoConnectAllowed())) {
+        console.log('[DistributorReminderWorker] WhatsApp not configured — skipping afternoon delivery boy dispatch.');
+        return;
+      }
       await ensureWhatsAppReady(30000);
     } catch (_) {}
 

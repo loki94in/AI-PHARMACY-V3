@@ -493,6 +493,13 @@ class WhatsAppQueueWorker {
       if (await isWhatsAppExplicitlyDisabled()) {
         return false;
       }
+      // Gate: if WhatsApp was never connected or was explicitly logged out, skip all
+      // processing to prevent unnecessary DB queries, reconnect attempts, and API calls.
+      // ponytail: zero-work early return — no Chrome, no wake-up, no queue scan.
+      const routingToBusiness = await shouldRouteToBusiness();
+      if (!routingToBusiness && !(await isWhatsAppAutoConnectAllowed())) {
+        return false;
+      }
       await this.loadPacingConfig();
       const db = await dbManager.getConnection();
 

@@ -33,7 +33,7 @@ function findChromePath() {
 
 async function getPharmarackSettings() {
   const db = await dbManager.getConnection();
-  const rows = await db.all("SELECT key, value FROM app_settings WHERE key LIKE 'pharmarack_%'");
+  const rows = await db.all("SELECT key, value FROM app_settings WHERE key LIKE 'pharmarack_%' OR key = 'combine_pharmarack_pharmacy_search'");
   const settings: Record<string, string> = {};
   rows.forEach(r => {
     settings[r.key] = r.value;
@@ -115,33 +115,165 @@ function cleanSearchQuery(query: string): { cleaned: string; detectedForms: stri
   return { cleaned: cleaned.replace(/\s+/g, ' ').trim(), detectedForms };
 }
 
-// Search offline distributor catalog fallback helper
+// Search offline distributor catalog & local pharmacy purchase history fallback helper
 async function searchOfflineCatalogFallback(q: string, storeId?: number | null, isMapped?: boolean) {
   try {
-    const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
-    const combined = [...offlineResults.mapped, ...offlineResults.nonMapped];
-    
-    let filtered = combined;
-    if (storeId !== null && storeId !== undefined && !isNaN(storeId)) {
-      filtered = combined.filter(p => p.storeId === storeId && (isMapped === undefined || p.isMapped === isMapped));
+    const results: any[] = [];
+    const seenKeys = new Set<string>();
+
+    // 1. Check local distributor catalog cache (synced Pharmarack products)
+    try {
+      const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
+      const combined = [...offlineResults.mapped, ...offlineResults.nonMapped];
+      
+      let filtered = combined;
+      if (storeId !== null && storeId !== undefined && !isNaN(storeId)) {
+        filtered = combined.filter(p => p.storeId === storeId && (isMapped === undefined || p.isMapped === isMapped));
+      }
+      
+      for (const p of filtered) {
+        const key = `${(p.name || '').toLowerCase()}|${p.storeId}|${p.distributorPrice}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          results.push({
+            name: p.name,
+            shortName: p.name,
+            fullName: p.name,
+            packaging: p.packaging || '',
+            distributor: p.distributor || 'Distributor',
+            rate: p.distributorPrice !== null && p.distributorPrice !== undefined ? Number(p.distributorPrice) : null,
+            mrp: p.mrp !== null && p.mrp !== undefined ? Number(p.mrp) : null,
+            mapped: p.isMapped,
+            stock: p.availability || 'High',
+            scheme: '',
+            productId: p.storeId ? (p.storeId * 100000 + 1) : 1,
+            productCode: '',
+            company: p.manufacturer || '',
+            storeId: p.storeId || 1
+          });
+        }
+      }
+    } catch (_) {}
+
+    // 2. Query local pharmacy purchase history & local medicines
+    const db = await dbManager.getConnection();
+    const settings = await getPharmarackSettings();
+    const isCombineEnabled = settings['combine_pharmarack_pharmacy_search'] !== 'false';
+
+    if (isCombineEnabled) {
+      try {
+        const qClean = q.trim();
+        const tokens = qClean.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+        if (tokens.length > 0) {
+          const likeClauses = tokens.map(() => 'm.name LIKE ?').join(' AND ');
+          const likeParams = tokens.map(t => `%${t}%`);
+
+          let storeFilterSql = '';
+          const extraParams: any[] = [];
+          if (storeId !== null && storeId !== undefined && !isNaN(storeId)) {
+            storeFilterSql = ' AND d.id = ?';
+            extraParams.push(storeId);
+          }
+
+          // Fetch distinct purchase records by medicine and distributor with exact PTR (cost_price) and MRP
+          const localPurchases = await db.all(`
+            SELECT 
+              m.id as medicineId,
+              m.name as medicineName,
+              COALESCE(m.packaging, m.pack_size, '') as packaging,
+              COALESCE(m.manufacturer, m.marketed_by, '') as company,
+              d.id as distributorId,
+              d.name as distributorName,
+              pi.cost_price as rate,
+              pi.mrp as mrp,
+              pi.scheme_per as scheme,
+              (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock,
+              MAX(p.date) as lastPurchaseDate,
+              CASE WHEN dlp.distributor_id IS NOT NULL THEN 1 ELSE 0 END as isMappedProfile
+            FROM purchase_items pi
+            JOIN purchases p ON pi.purchase_id = p.id
+            JOIN distributors d ON p.distributor_id = d.id
+            JOIN medicines m ON pi.medicine_id = m.id
+            LEFT JOIN distributor_learning_profiles dlp ON d.id = dlp.distributor_id
+            WHERE (${likeClauses})${storeFilterSql}
+            GROUP BY m.id, d.id, pi.cost_price, pi.mrp
+            ORDER BY lastPurchaseDate DESC
+            LIMIT 30
+          `, [...likeParams, ...extraParams]).catch(() => []);
+
+          for (const lp of localPurchases) {
+            const key = `${(lp.medicineName || '').toLowerCase()}|${lp.distributorId}|${lp.rate}`;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              const mappedStatus = isMapped !== undefined ? isMapped : (lp.isMappedProfile === 1);
+              const stockDisplay = lp.currentStock > 0 ? (lp.currentStock >= 10 ? 'High' : String(lp.currentStock)) : 'Low';
+              
+              results.push({
+                name: lp.medicineName,
+                shortName: lp.medicineName,
+                fullName: lp.medicineName,
+                packaging: lp.packaging || '',
+                distributor: lp.distributorName || 'Local Distributor',
+                rate: lp.rate !== null && lp.rate !== undefined ? Number(lp.rate) : null,
+                mrp: lp.mrp !== null && lp.mrp !== undefined ? Number(lp.mrp) : null,
+                mapped: mappedStatus,
+                stock: stockDisplay,
+                scheme: lp.scheme ? `${lp.scheme}%` : '',
+                productId: lp.medicineId || 1,
+                productCode: String(lp.medicineId || ''),
+                company: lp.company || '',
+                storeId: lp.distributorId || 1,
+                isLocalPharmacy: true
+              });
+            }
+          }
+
+          // Fallback: If no purchase history found for this medicine, query medicines directly
+          if (results.length === 0) {
+            const baseMedicines = await db.all(`
+              SELECT 
+                m.id as medicineId,
+                m.name as medicineName,
+                COALESCE(m.packaging, m.pack_size, '') as packaging,
+                COALESCE(m.manufacturer, m.marketed_by, '') as company,
+                m.mrp as mrp,
+                (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock
+              FROM medicines m
+              WHERE (${likeClauses})
+              LIMIT 15
+            `, likeParams).catch(() => []);
+
+            const defaultDistributor = await db.get("SELECT id, name FROM distributors ORDER BY id ASC LIMIT 1").catch(() => null);
+
+            for (const bm of baseMedicines) {
+              const key = `${(bm.medicineName || '').toLowerCase()}|${defaultDistributor?.id || 1}|${bm.mrp}`;
+              if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                results.push({
+                  name: bm.medicineName,
+                  shortName: bm.medicineName,
+                  fullName: bm.medicineName,
+                  packaging: bm.packaging || '',
+                  distributor: defaultDistributor?.name || 'Local Pharmacy',
+                  rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
+                  mrp: bm.mrp ? Number(bm.mrp) : null,
+                  mapped: true,
+                  stock: bm.currentStock > 0 ? (bm.currentStock >= 10 ? 'High' : String(bm.currentStock)) : 'Low',
+                  scheme: '',
+                  productId: bm.medicineId || 1,
+                  productCode: String(bm.medicineId || ''),
+                  company: bm.company || '',
+                  storeId: defaultDistributor?.id || 1,
+                  isLocalPharmacy: true
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {}
     }
-    
-    return filtered.map(p => ({
-      name: p.name,
-      shortName: p.name,
-      fullName: p.name,
-      packaging: p.packaging || '',
-      distributor: p.distributor || '',
-      rate: p.distributorPrice,
-      mrp: p.mrp,
-      mapped: p.isMapped,
-      stock: p.availability || 'High',
-      scheme: '',
-      productId: 0,
-      productCode: '',
-      company: p.manufacturer || '',
-      storeId: p.storeId
-    }));
+
+    return results;
   } catch (e) {
     return [];
   }
@@ -158,9 +290,10 @@ type PharmarackSearchOutcome =
 // revalidation. Caching behavior is unchanged: only non-empty results stored.
 async function performPharmarackSearch(qRaw: string, storeId: number | null, isMapped: boolean): Promise<PharmarackSearchOutcome> {
   const hasStoreFilter = storeId !== null && !isNaN(storeId);
+  let settings: Record<string, string> = {};
   try {
     activityTracker.recordActivity();
-    const settings = await getPharmarackSettings();
+    settings = await getPharmarackSettings();
     let token = settings['pharmarack_session_token'] || '';
 
     if (!token) {
@@ -169,6 +302,9 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
       if (offline.length > 0) {
         searchCache.set(qRaw, storeId, isMapped, offline);
         return { status: 'ok', items: offline };
+      }
+      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+        return { status: 'ok', items: [] };
       }
       return { status: 'need_login' };
     }
@@ -273,6 +409,10 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
         return { status: 'ok', items: offline };
       }
     } catch (_) {}
+
+    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+      return { status: 'ok', items: [] };
+    }
 
     return { status: 'connection_error' };
   }
@@ -1037,6 +1177,13 @@ router.post('/cart/add', async (req, res) => {
     const token = settings['pharmarack_session_token'] || '';
 
     if (!token) {
+      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+        return res.json({
+          success: true,
+          offline: true,
+          message: 'Item saved to distributor cart (offline mode). Sync will occur when connected.'
+        });
+      }
       return res.status(401).json({ error: 'Need to login to Pharmarack to add items to cart', code: 'NEED_LOGIN' });
     }
 
@@ -1279,6 +1426,13 @@ router.post('/cart/add', async (req, res) => {
       eventService.broadcast('pharmarack_cart_changed', { action: 'add', at: Date.now() });
       return res.json({ success: true, message: 'Successfully added to Pharmarack cart!', mode: 'Live' });
     } else {
+      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+        return res.json({
+          success: true,
+          offline: true,
+          message: 'Item saved to distributor cart (offline mode).'
+        });
+      }
       return res.status(503).json({ error: 'Failed to add items to actual Pharmarack cart', details: lastError });
     }
   } catch (err: any) {
