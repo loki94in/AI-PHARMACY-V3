@@ -1,10 +1,13 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { getAppDataDir } from '../config/index.js';
 import { dbManager } from '../database/connection.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
-import { getStoreMedicalName } from '../services/storeSettingsService.js';
+import { getStoreMedicalName, getStorePhone } from '../services/storeSettingsService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
@@ -1034,6 +1037,173 @@ router.post('/orders/:orderId/return-request', async (req, res) => {
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Return request error:', err);
     res.status(500).json({ error: 'Failed to submit return request' });
+  }
+});
+
+// ─── Direct Prescription / Medicine Photo Request to Pharmacy WhatsApp ──────
+// POST /api/website/prescription-request
+// Allows customers to upload a prescription slip or medicine photo when searching or ordering,
+// saves an order record in special_orders (visible in Website Orders & Live Cart),
+// and redirects customer directly to the configured pharmacy WhatsApp phone number.
+router.post('/prescription-request', async (req, res) => {
+  try {
+    const {
+      customer_name,
+      customer_phone,
+      medicine_name,
+      notes,
+      image,
+      images,
+      store_id = 1
+    } = req.body;
+
+    if (!customer_name || !String(customer_name).trim()) {
+      return res.status(400).json({ error: 'Patient or customer name is required' });
+    }
+
+    const cleanPhone = customer_phone ? String(customer_phone).replace(/\D/g, '') : '';
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+    }
+
+    const cleanName = formatCustomerName(customer_name);
+    const targetStoreId = parseInt(String(store_id), 10) || 1;
+
+    // Collect all base64 image strings (supports both single `image` and array `images`)
+    let imageList: string[] = [];
+    if (Array.isArray(images) && images.length > 0) {
+      imageList = images.filter((img: any) => typeof img === 'string' && img.trim().length > 0);
+    } else if (image && typeof image === 'string' && image.trim().length > 0) {
+      imageList = [image.trim()];
+    }
+
+    const savedUrls: string[] = [];
+    if (imageList.length > 0) {
+      const uploadsDir = path.resolve(getAppDataDir(), 'uploads', 'prescriptions');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      for (let i = 0; i < imageList.length; i++) {
+        const rawImg = imageList[i];
+        const base64Str = rawImg.replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64Str, 'base64');
+        const safeName = `Rx_Web_${Date.now()}_${i + 1}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+        const fullPath = path.join(uploadsDir, safeName);
+        fs.writeFileSync(fullPath, buffer);
+        savedUrls.push(`/uploads/prescriptions/${safeName}`);
+      }
+    }
+
+    // Single URL or JSON array string for multiple URLs
+    let prescriptionUrl = '';
+    if (savedUrls.length === 1) {
+      prescriptionUrl = savedUrls[0];
+    } else if (savedUrls.length > 1) {
+      prescriptionUrl = JSON.stringify(savedUrls);
+    }
+
+    const db = await dbManager.getConnection();
+    const medRequested = (medicine_name || '').trim() || 'Prescription / Medicine Inquiry';
+    const notesText = (notes || '').trim();
+
+    // Insert order record into special_orders
+    const result = await db.run(
+      `INSERT INTO special_orders (
+        store_id, requester, phone, medicine_name, product, qty, notes,
+        status, customer_order_source, source, prescription_url, total_amount, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        targetStoreId,
+        cleanName,
+        cleanPhone,
+        medRequested,
+        medRequested,
+        notesText || 'Requested via Website Prescription / Photo Upload',
+        prescriptionUrl || null
+      ]
+    );
+
+    const orderId = result.lastID;
+
+    // Log tracking event
+    await db.run(
+      `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+      [orderId, `Customer uploaded ${savedUrls.length || 1} prescription/photo inquiry via website`]
+    ).catch(() => {});
+
+    // Resolve configured pharmacy name and phone number from store and app_settings
+    let pharmacyName = await getStoreMedicalName(db, targetStoreId);
+    let pharmacyPhone = await getStorePhone(db, targetStoreId);
+
+    // Dynamic fallback to app_settings if store row had blank contact
+    if (!pharmacyPhone || !pharmacyPhone.trim()) {
+      const settingRow = await db.get(
+        `SELECT value FROM app_settings 
+         WHERE key IN ('shop_phone', 'owner_whatsapp_number', 'store_phone', 'pharmacy_phone', 'phone') 
+           AND value IS NOT NULL AND TRIM(value) != '' 
+         LIMIT 1`
+      );
+      if (settingRow && settingRow.value) {
+        pharmacyPhone = settingRow.value.trim();
+      }
+    }
+
+    let cleanPharmacyPhone = (pharmacyPhone || '').replace(/\D/g, '');
+    if (cleanPharmacyPhone.length === 11 && cleanPharmacyPhone.startsWith('0')) {
+      cleanPharmacyPhone = cleanPharmacyPhone.slice(1);
+    }
+    const targetPhone = cleanPharmacyPhone.length === 10 ? `91${cleanPharmacyPhone}` : cleanPharmacyPhone;
+
+    // Public host URL for prescription image previews
+    const host = req.get('host') || 'localhost:5175';
+    const protocol = req.protocol || 'http';
+
+    // Formatted WhatsApp message for direct messaging
+    let waText = `Hello ${pharmacyName || 'Pharmacy'}! 🏥\n\n` +
+      `I want to order medicines using my prescription / photo:\n` +
+      `📋 *Order Ref:* #${orderId}\n` +
+      `👤 *Patient:* ${cleanName}\n` +
+      `📱 *Mobile:* ${cleanPhone}\n`;
+
+    if (medRequested && medRequested !== 'Prescription / Medicine Inquiry') {
+      waText += `💊 *Requested Item:* ${medRequested}\n`;
+    }
+    if (notesText) {
+      waText += `📝 *Notes:* ${notesText}\n`;
+    }
+
+    if (savedUrls.length === 1) {
+      waText += `📷 *Prescription Photo:* ${protocol}://${host}${savedUrls[0]}\n`;
+    } else if (savedUrls.length > 1) {
+      waText += `📷 *Prescription Photos (${savedUrls.length}):*\n`;
+      savedUrls.forEach((u, idx) => {
+        waText += `Page ${idx + 1}: ${protocol}://${host}${u}\n`;
+      });
+    }
+
+    waText += `\nPlease check counter availability and send me the price estimate and UPI payment QR code!`;
+
+    const waUrl = targetPhone
+      ? `https://wa.me/${targetPhone}?text=${encodeURIComponent(waText)}`
+      : `https://wa.me/?text=${encodeURIComponent(waText)}`;
+
+    // Broadcast update so pharmacy counter staff sees it live in Website Orders & Header
+    broadcastOrdersChanged();
+
+    res.status(201).json({
+      success: true,
+      message: 'Prescription request submitted successfully',
+      order_id: orderId,
+      prescription_url: prescriptionUrl,
+      prescription_urls: savedUrls,
+      whatsapp_url: waUrl,
+      pharmacy_phone: targetPhone,
+      pharmacy_name: pharmacyName || 'Pharmacy Counter'
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Prescription request error:', err);
+    res.status(500).json({ error: 'Failed to submit prescription request: ' + (err.message || 'Unknown error') });
   }
 });
 

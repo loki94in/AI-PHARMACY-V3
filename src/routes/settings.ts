@@ -88,6 +88,7 @@ router.post('/', async (req, res) => {
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
+      await db.run('UPDATE stores SET phone = ? WHERE id = 1 AND (phone IS NULL OR phone = "" OR phone = "918080888041")', [saveValue]).catch(() => {});
     }
 
     // Synchronize drug licence alias keys
@@ -137,6 +138,7 @@ router.post('/save-single', async (req, res) => {
       for (const pk of phoneKeys) {
         await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [pk, saveValue]);
       }
+      await db.run('UPDATE stores SET phone = ? WHERE id = 1 AND (phone IS NULL OR phone = "" OR phone = "918080888041")', [saveValue]).catch(() => {});
     }
 
     const licenceKeys = ['drug_license', 'shop_licence', 'license_number', 'dl_number', 'drug_licence_no'];

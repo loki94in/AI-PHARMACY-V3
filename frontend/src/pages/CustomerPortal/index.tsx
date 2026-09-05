@@ -5,11 +5,12 @@ import {
   ArrowRight, RefreshCw, ShoppingCart, ShoppingBag, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
-  CreditCard, ExternalLink, Copy, RotateCcw, Trash2
+  CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
 import { PublicCatalogView } from './PublicCatalogView';
+import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModal';
 
 interface CustomerSession {
   id: number;
@@ -77,6 +78,7 @@ export default function CustomerPortal() {
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'catalog' | 'portal'>('catalog');
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
+  const [isPortalRxModalOpen, setIsPortalRxModalOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
 
@@ -946,22 +948,33 @@ export default function CustomerPortal() {
                 <span>Select Collection Pharmacy Branch</span>
               </h2>
               <p className="text-xs text-muted">
-                Choose the branch where you would like to pick up your packaged refill
+                Choose the branch where you would like to pick up your packaged refill or submit prescriptions
               </p>
             </div>
 
-            <div className="sm:w-80">
-              <select
-                value={selectedStoreId}
-                onChange={e => setSelectedStoreId(parseInt(e.target.value, 10))}
-                className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm font-semibold text-text focus:outline-none focus:border-primary"
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setIsPortalRxModalOpen(true)}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
               >
-                {stores.map(st => (
-                  <option key={st.id} value={st.id}>
-                    Store #{st.id} - {st.name} {st.address ? `(${st.address})` : ''}
-                  </option>
-                ))}
-              </select>
+                <Camera className="w-3.5 h-3.5" />
+                <span>Upload Prescription / Photos</span>
+              </button>
+
+              <div className="sm:w-72">
+                <select
+                  value={selectedStoreId}
+                  onChange={e => setSelectedStoreId(parseInt(e.target.value, 10))}
+                  className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm font-semibold text-text focus:outline-none focus:border-primary"
+                >
+                  {stores.map(st => (
+                    <option key={st.id} value={st.id}>
+                      Store #{st.id} - {st.name} {st.address ? `(${st.address})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -1815,6 +1828,17 @@ export default function CustomerPortal() {
           </div>
         </div>
       )}
+
+      {/* Direct Prescription / Medicine Photo Upload Modal */}
+      <PrescriptionUploadModal
+        isOpen={isPortalRxModalOpen}
+        onClose={() => setIsPortalRxModalOpen(false)}
+        prefillCustomerName={session?.name}
+        prefillCustomerPhone={session?.phone}
+        activeStore={activeStore}
+        stores={stores}
+        onSelectStoreId={setSelectedStoreId}
+      />
     </div>
   );
 }

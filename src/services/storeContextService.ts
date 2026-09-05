@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { dbManager } from '../database/connection.js';
+import { getStorePhone, getStoreMedicalName } from './storeSettingsService.js';
 
 export interface Store {
   id: number;
@@ -63,10 +64,23 @@ export class StoreContextService {
     const sql = includeInactive
       ? 'SELECT * FROM stores ORDER BY id ASC'
       : 'SELECT * FROM stores WHERE is_active = 1 ORDER BY id ASC';
-    const rows = await db.all(sql).catch(() => []);
+    const rows: Store[] = await db.all(sql).catch(() => []);
     if (rows.length === 0) {
       // Fallback default store if table is empty
-      return [{ id: 1, name: 'Main Store', code: 'STORE-A', is_central: 1, is_active: 1 }];
+      const defaultPhone = await getStorePhone(db, 1);
+      const defaultName = await getStoreMedicalName(db, 1);
+      return [{ id: 1, name: defaultName || 'Main Store', code: 'STORE-A', phone: defaultPhone, is_central: 1, is_active: 1 }];
+    }
+    for (const r of rows) {
+      if (!r.phone || !r.phone.trim()) {
+        r.phone = await getStorePhone(db, r.id);
+      }
+      if (!r.name || r.name === 'Main Store') {
+        const configuredName = await getStoreMedicalName(db, r.id);
+        if (configuredName && configuredName !== 'AI PHARMACY') {
+          r.name = configuredName;
+        }
+      }
     }
     return rows;
   }
@@ -77,7 +91,17 @@ export class StoreContextService {
   async getStoreById(storeId: number, dbInstance?: any): Promise<Store | null> {
     const db = dbInstance || (await dbManager.getConnection());
     const row = await db.get('SELECT * FROM stores WHERE id = ?', [storeId]);
-    return row || null;
+    if (!row) return null;
+    if (!row.phone || !row.phone.trim()) {
+      row.phone = await getStorePhone(db, row.id);
+    }
+    if (!row.name || row.name === 'Main Store') {
+      const configuredName = await getStoreMedicalName(db, row.id);
+      if (configuredName && configuredName !== 'AI PHARMACY') {
+        row.name = configuredName;
+      }
+    }
+    return row;
   }
 
   /**

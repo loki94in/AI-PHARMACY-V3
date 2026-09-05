@@ -1732,6 +1732,25 @@ export const api = {
     }>('/customer-portal/customer/refill-order', data, { headers: data.idempotency_key ? { 'idempotency-key': data.idempotency_key } : undefined }).then(res => res.data),
   changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
+  submitPrescriptionRequest: (data: {
+    customer_name: string;
+    customer_phone: string;
+    medicine_name?: string;
+    notes?: string;
+    image?: string;
+    images?: string[];
+    store_id?: number;
+  }) =>
+    apiClient.post<{
+      success: boolean;
+      message: string;
+      order_id: number;
+      prescription_url: string;
+      prescription_urls?: string[];
+      whatsapp_url: string;
+      pharmacy_phone: string;
+      pharmacy_name: string;
+    }>('/website/prescription-request', data).then(res => res.data),
   getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number }) =>
     apiClient.get<{
       success: boolean;

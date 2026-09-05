@@ -45,6 +45,22 @@ export default function WebsiteOrders() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'ready' | 'delivered' | 'returns'>('all');
   const [selectedPrescription, setSelectedPrescription] = useState<string | null>(null);
+  const [prescriptionPhotoIndex, setPrescriptionPhotoIndex] = useState(0);
+
+  const parsePrescriptionUrls = (val: string | null | undefined): string[] => {
+    if (!val) return [];
+    const trimmed = String(val).trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.map(s => String(s).trim()).filter(Boolean);
+      } catch (_) {}
+    }
+    if (trimmed.includes(',')) {
+      return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return [trimmed];
+  };
   const [overrideModalOrder, setOverrideModalOrder] = useState<any | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideUser, setOverrideUser] = useState('Pharmacist Admin');
@@ -468,11 +484,14 @@ export default function WebsiteOrders() {
                             {order.payment_qr_id}
                           </span>
                         )}
-                        {order.prescription_url && (
-                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center gap-0.5">
-                            <FileImage size={10} /> Rx Attached
-                          </span>
-                        )}
+                        {order.prescription_url && (() => {
+                          const count = parsePrescriptionUrls(order.prescription_url).length;
+                          return (
+                            <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center gap-0.5">
+                              <FileImage size={10} /> {count > 1 ? `${count} Rx Photos` : 'Rx Attached'}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="text-[11px] text-muted flex items-center gap-1 mt-0.5">
                         <Calendar size={11} />
@@ -672,16 +691,22 @@ export default function WebsiteOrders() {
                   )}
 
                   {/* Prescription Preview Button */}
-                  {order.prescription_url && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPrescription(order.prescription_url)}
-                      className="w-full py-1.5 px-3 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-xs font-bold text-text flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                    >
-                      <Eye size={13} className="text-primary" />
-                      <span>View Doctor's Prescription</span>
-                    </button>
-                  )}
+                  {order.prescription_url && (() => {
+                    const count = parsePrescriptionUrls(order.prescription_url).length;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPrescription(order.prescription_url);
+                          setPrescriptionPhotoIndex(0);
+                        }}
+                        className="w-full py-1.5 px-3 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-xs font-bold text-text flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Eye size={13} className="text-primary" />
+                        <span>View Doctor's Prescription {count > 1 ? `(${count} Photos)` : ''}</span>
+                      </button>
+                    );
+                  })()}
 
                   {/* 15-Day Return Window Widget */}
                   {order.delivery_status === 'delivered' && (
@@ -822,49 +847,110 @@ export default function WebsiteOrders() {
       </div>
 
       {/* Prescription Zoom Lightbox Modal */}
-      {selectedPrescription && (
-        <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
-          <div className="bg-bg border border-border w-full max-w-2xl rounded-3xl p-5 space-y-4 shadow-2xl relative">
-            <div className="flex justify-between items-center border-b border-border pb-3">
-              <div className="flex items-center gap-2">
-                <FileImage size={18} className="text-primary" />
-                <h3 className="font-bold text-sm text-text">Customer Prescription Verification</h3>
+      {selectedPrescription && (() => {
+        const photos = parsePrescriptionUrls(selectedPrescription);
+        const currentPhoto = photos[prescriptionPhotoIndex] || photos[0] || '';
+        return (
+          <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-bg3/80 backdrop-blur-md p-4">
+            <div className="bg-bg border border-border w-full max-w-2xl rounded-3xl p-5 space-y-4 shadow-2xl relative">
+              <div className="flex justify-between items-center border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <FileImage size={18} className="text-primary" />
+                  <h3 className="font-bold text-sm text-text">
+                    Customer Prescription Verification
+                    {photos.length > 1 && (
+                      <span className="ml-2 text-xs text-muted font-normal">
+                        (Photo {prescriptionPhotoIndex + 1} of {photos.length})
+                      </span>
+                    )}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setSelectedPrescription(null)}
+                  className="p-1 rounded-lg hover:bg-bg3 text-muted hover:text-text cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
               </div>
-              <button
-                onClick={() => setSelectedPrescription(null)}
-                className="p-1 rounded-lg hover:bg-bg3 text-muted hover:text-text cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
 
-            <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-bg/40 rounded-2xl p-2">
-              <img
-                src={selectedPrescription}
-                alt="Doctor's Prescription"
-                className="max-w-full max-h-[65vh] object-contain rounded-xl shadow-md"
-              />
-            </div>
+              {/* Main Image Preview with Previous/Next Controls */}
+              <div className="relative max-h-[65vh] overflow-hidden flex items-center justify-center bg-bg3/20 rounded-2xl p-2 group">
+                <img
+                  src={currentPhoto}
+                  alt={`Doctor's Prescription - Page ${prescriptionPhotoIndex + 1}`}
+                  className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-md"
+                />
 
-            <div className="flex justify-end gap-2 border-t border-border pt-3">
-              <a
-                href={selectedPrescription}
-                target="_blank"
-                rel="noreferrer"
-                className="px-4 py-2 bg-bg3 text-text hover:bg-bg3/80 text-xs font-bold rounded-xl flex items-center gap-1.5"
-              >
-                <ExternalLink size={13} /> Open Full Size
-              </a>
-              <button
-                onClick={() => setSelectedPrescription(null)}
-                className="px-5 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-md hover:bg-primary/90"
-              >
-                Done
-              </button>
+                {photos.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={prescriptionPhotoIndex === 0}
+                      onClick={() => setPrescriptionPhotoIndex(p => Math.max(0, p - 1))}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
+                    >
+                      ←
+                    </button>
+                    <button
+                      type="button"
+                      disabled={prescriptionPhotoIndex === photos.length - 1}
+                      onClick={() => setPrescriptionPhotoIndex(p => Math.min(photos.length - 1, p + 1))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-bg2/90 border border-border shadow-lg flex items-center justify-center text-text disabled:opacity-30 hover:scale-105 transition-all cursor-pointer"
+                    >
+                      →
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Thumbnail Strip if Multiple Photos */}
+              {photos.length > 1 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {photos.map((url, idx) => (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => setPrescriptionPhotoIndex(idx)}
+                      className={`relative w-16 h-14 rounded-lg overflow-hidden border-2 transition-all shrink-0 cursor-pointer ${
+                        prescriptionPhotoIndex === idx
+                          ? 'border-primary shadow-sm ring-1 ring-primary'
+                          : 'border-border opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      <img src={url} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
+                      <span className="absolute bottom-0 right-0 px-1 text-[9px] bg-bg/90 text-text font-bold rounded-tl">
+                        {idx + 1}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex justify-between items-center border-t border-border pt-3">
+                <div className="text-xs text-muted">
+                  {photos.length > 1 ? `${photos.length} photos uploaded` : '1 photo attached'}
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={currentPhoto}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 bg-bg3 text-text hover:bg-bg3/80 text-xs font-bold rounded-xl flex items-center gap-1.5"
+                  >
+                    <ExternalLink size={13} /> Open Full Size
+                  </a>
+                  <button
+                    onClick={() => setSelectedPrescription(null)}
+                    className="px-5 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-md hover:bg-primary/90"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Return Override Authorization Modal */}
       {overrideModalOrder && (

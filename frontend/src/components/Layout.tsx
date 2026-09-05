@@ -386,25 +386,8 @@ const Sidebar = memo(({
           </nav>
         </div>
 
-        {/* Sidebar Bottom Footer: Log Out & Exit App */}
-        <div className="p-3 mx-2 border-t border-glass-border/60 shrink-0 flex flex-col gap-1">
-          <button
-            onClick={() => {
-              try {
-                localStorage.removeItem('user_session');
-                sessionStorage.clear();
-              } catch (_) {}
-              toastEvent.trigger('Logged out of AI PHARMACY OS', 'info');
-              setTimeout(() => {
-                window.location.reload();
-              }, 300);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-muted hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
-            title="Log Out of System"
-          >
-            <LogOut size={16} />
-            <span>Log Out</span>
-          </button>
+        {/* Sidebar Bottom Footer: Exit App */}
+        <div className="p-3 mx-2 border-t border-glass-border/60 shrink-0">
           <ExitAppButton />
         </div>
 

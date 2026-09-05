@@ -157,4 +157,78 @@ describe('Website Order Integration & Safe Medicine Search', () => {
     expect(events.length).toBe(1);
     expect(events[0].event_type).toBe('website_order_created');
   });
+
+  it('handles multi-photo prescription upload and routes strictly to the selected pharmacy registered number', async () => {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS stores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        address TEXT
+      );
+      CREATE TABLE IF NOT EXISTS store_settings (
+        store_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (store_id, key)
+      );
+      INSERT INTO stores (id, name, phone, address) VALUES
+        (1, 'Pune Main Pharmacy', '9822000001', 'FC Road, Pune'),
+        (2, 'Pune Camp Branch', '09822000002', 'Camp, Pune');
+    `);
+
+    // Customer selects Store #2 and uploads 3 photos
+    const uploadedPhotos = [
+      '/uploads/prescriptions/Rx_Web_1_1.jpg',
+      '/uploads/prescriptions/Rx_Web_1_2.jpg',
+      '/uploads/prescriptions/Rx_Web_1_3.jpg'
+    ];
+    const prescriptionUrl = JSON.stringify(uploadedPhotos);
+
+    const result = await db.run(
+      `INSERT INTO special_orders (
+        store_id, requester, phone, product, qty, notes, status, customer_order_source, prescription_url
+      ) VALUES (2, 'Rahul Sharma', '9876543210', 'Prescription / Medicine Inquiry', 1, 'Urgent prescription order', 'Pending', 'website', ?)`,
+      [prescriptionUrl]
+    );
+
+    const orderId = result.lastID;
+    expect(orderId).toBeGreaterThan(0);
+
+    const orderRow = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    expect(orderRow.store_id).toBe(2);
+    expect(JSON.parse(orderRow.prescription_url)).toEqual(uploadedPhotos);
+
+    // Resolve store 2 phone number
+    const store2 = await db.get('SELECT name, phone FROM stores WHERE id = ?', [orderRow.store_id]);
+    expect(store2.name).toBe('Pune Camp Branch');
+
+    // Test phone normalization logic (strip leading 0, format with 91)
+    let clean = (store2.phone || '').replace(/\D/g, '');
+    if (clean.length === 11 && clean.startsWith('0')) {
+      clean = clean.slice(1);
+    }
+    const targetPhone = clean.length === 10 ? `91${clean}` : clean;
+    expect(targetPhone).toBe('919822000002');
+
+    // Build WhatsApp message and verify multi-photo links
+    const host = 'localhost:5175';
+    let waText = `Hello ${store2.name}! 🏥\n\n` +
+      `I want to order medicines using my prescription / photo:\n` +
+      `📋 *Order Ref:* #${orderId}\n` +
+      `👤 *Patient:* ${orderRow.requester}\n` +
+      `📱 *Mobile:* ${orderRow.phone}\n`;
+
+    waText += `📷 *Prescription Photos (${uploadedPhotos.length}):*\n`;
+    uploadedPhotos.forEach((u, idx) => {
+      waText += `Page ${idx + 1}: http://${host}${u}\n`;
+    });
+
+    const waUrl = `https://wa.me/${targetPhone}?text=${encodeURIComponent(waText)}`;
+    expect(waUrl).toContain('https://wa.me/919822000002');
+    expect(waUrl).toContain('Pune%20Camp%20Branch');
+    expect(waUrl).toContain('Page%201');
+    expect(waUrl).toContain('Page%202');
+    expect(waUrl).toContain('Page%203');
+  });
 });

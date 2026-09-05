@@ -6,6 +6,7 @@ import {
   Eye, Camera, Layers, X, Sparkles, Trash2
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModal';
 
 interface CatalogMedicine {
   id?: number;
@@ -67,6 +68,8 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   const [selectedAngleMap, setSelectedAngleMap] = useState<Record<string, string>>({});
   const [quickViewMed, setQuickViewMed] = useState<CatalogMedicine | null>(null);
   const [modalActiveImage, setModalActiveImage] = useState<string | null>(null);
+  const [isPrescriptionModalOpen, setIsPrescriptionModalOpen] = useState(false);
+  const [prescriptionPrefill, setPrescriptionPrefill] = useState('');
 
   // Debounce search input
   useEffect(() => {
@@ -151,25 +154,39 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
           </p>
         </div>
 
-        {/* Branch Selector */}
-        <div className="w-full md:w-72 space-y-1 shrink-0">
-          <label htmlFor="pickup-branch-select" className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
-            <MapPin className="w-3.5 h-3.5 text-primary" />
-            <span>Pickup Branch</span>
-          </label>
-          <select
-            id="pickup-branch-select"
-            aria-label="Pickup Branch"
-            value={activeStoreId}
-            onChange={e => onChangeStore(parseInt(e.target.value, 10))}
-            className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-text focus:outline-none focus:border-primary"
+        {/* Actions & Branch Selector */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 w-full md:w-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setPrescriptionPrefill(debouncedSearch || '');
+              setIsPrescriptionModalOpen(true);
+            }}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
           >
-            {stores.map(st => (
-              <option key={st.id} value={st.id}>
-                {st.name} {st.address ? `(${st.address})` : ''}
-              </option>
-            ))}
-          </select>
+            <Camera className="w-4 h-4" />
+            <span>Upload Prescription / Photo</span>
+          </button>
+
+          <div className="w-full sm:w-64 space-y-1 shrink-0">
+            <label htmlFor="pickup-branch-select" className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
+              <MapPin className="w-3.5 h-3.5 text-primary" />
+              <span>Pickup Branch</span>
+            </label>
+            <select
+              id="pickup-branch-select"
+              aria-label="Pickup Branch"
+              value={activeStoreId}
+              onChange={e => onChangeStore(parseInt(e.target.value, 10))}
+              className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-text focus:outline-none focus:border-primary"
+            >
+              {stores.map(st => (
+                <option key={st.id} value={st.id}>
+                  {st.name} {st.address ? `(${st.address})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -254,10 +271,29 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
           <span>Searching live inventory & verified medicine photos...</span>
         </div>
       ) : medicines.length === 0 ? (
-        <div className="py-16 text-center text-muted bg-bg2 border border-dashed border-border rounded-2xl p-6 space-y-2">
-          <Pill className="w-8 h-8 mx-auto text-muted/60" />
-          <p className="text-sm font-semibold text-text">No medicines found matching your criteria</p>
-          <p className="text-xs">Try selecting a different clinical category or clearing your search query.</p>
+        <div className="py-12 px-6 text-center bg-bg2 border border-dashed border-primary/40 rounded-3xl p-8 space-y-4 max-w-xl mx-auto shadow-sm">
+          <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+            <Camera className="w-7 h-7" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-base font-bold text-text">
+              {debouncedSearch ? `Couldn't find "${debouncedSearch}"?` : 'Looking for a specific medicine?'}
+            </p>
+            <p className="text-xs text-muted max-w-md mx-auto leading-relaxed">
+              Don't worry! If your medicine isn't in our online catalog, take a quick photo of your prescription slip or medicine box. Our pharmacist will check counter availability and reply directly on WhatsApp with your price estimate and payment QR code.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setPrescriptionPrefill(debouncedSearch || '');
+              setIsPrescriptionModalOpen(true);
+            }}
+            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all inline-flex items-center gap-2 cursor-pointer"
+          >
+            <Camera className="w-4 h-4" />
+            <span>Upload Prescription / Medicine Photo</span>
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -810,6 +846,16 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Direct Prescription / Medicine Photo Upload Modal */}
+      <PrescriptionUploadModal
+        isOpen={isPrescriptionModalOpen}
+        onClose={() => setIsPrescriptionModalOpen(false)}
+        prefillMedicineName={prescriptionPrefill}
+        activeStore={activeStore}
+        stores={stores}
+        onSelectStoreId={onChangeStore}
+      />
     </div>
   );
 };

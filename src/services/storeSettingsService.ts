@@ -110,6 +110,23 @@ export async function getStorePhone(dbInstance?: any, storeId?: number): Promise
       if (storeRow && storeRow.phone && storeRow.phone.trim()) {
         return storeRow.phone.trim();
       }
+
+      // Check branch-specific phone from store_settings
+      const storeSettingRow = await db.get(
+        `SELECT value FROM store_settings 
+         WHERE store_id = ? AND key IN ('phone', 'store_phone', 'whatsapp_number', 'shop_phone', 'contact_number')
+           AND value IS NOT NULL AND TRIM(value) != ''
+         ORDER BY CASE key
+           WHEN 'phone' THEN 1
+           WHEN 'store_phone' THEN 2
+           WHEN 'whatsapp_number' THEN 3
+           ELSE 4 END
+         LIMIT 1`,
+        [storeId]
+      ).catch(() => null);
+      if (storeSettingRow && storeSettingRow.value && storeSettingRow.value.trim()) {
+        return storeSettingRow.value.trim();
+      }
     }
 
     const row = await db.get(
