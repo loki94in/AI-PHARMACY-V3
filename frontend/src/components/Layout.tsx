@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -62,12 +62,15 @@ import {
 import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, automationHubEvent, whatsappReadinessEvent } from '../services/events';
 import type { ToastEventDetail } from '../services/events';
 import type { WhatsAppReadinessState } from '../types/api';
-import { QuickOrderModal } from './QuickOrderModal';
-import { LiveCartAddModal } from './LiveCartAddModal';
-import { WhatsAppQueuePopover } from './WhatsAppQueuePopover';
-import AutomationHubPopover, { prefetchAutomationHub } from './AutomationHubPopover';
-import { StagedReviewModal } from './StagedReviewModal';
-import { MobileConnectionModal } from './MobileConnectionModal';
+// Lazy-loaded modals & popovers — prevents bundling heavy components into the main shell
+const QuickOrderModal = lazy(() => import('./QuickOrderModal').then(m => ({ default: m.QuickOrderModal })));
+const LiveCartAddModal = lazy(() => import('./LiveCartAddModal').then(m => ({ default: m.LiveCartAddModal })));
+const WhatsAppQueuePopover = lazy(() => import('./WhatsAppQueuePopover').then(m => ({ default: m.WhatsAppQueuePopover })));
+const AutomationHubPopover = lazy(() => import('./AutomationHubPopover'));
+const StagedReviewModal = lazy(() => import('./StagedReviewModal').then(m => ({ default: m.StagedReviewModal })));
+const MobileConnectionModal = lazy(() => import('./MobileConnectionModal').then(m => ({ default: m.MobileConnectionModal })));
+const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
+
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { StoreSelector } from './StoreSelector';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
@@ -75,7 +78,6 @@ import type { SpecialOrder, Refill, AutomationNotification } from '../services/a
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { pageImports } from '../lib/pageImports';
-import BackupCenterModal from './BackupCenterModal';
 import { useFetchMode } from '../hooks/useFetchMode';
 import { useGlobalSseInvalidation } from '../hooks/useGlobalSseInvalidation';
 
@@ -2058,7 +2060,7 @@ const Topbar = memo(({
               <button
                 type="button"
                 onClick={onOpenAutomationHub}
-                onMouseEnter={() => { prefetchAutomationHub(); }}
+                onMouseEnter={() => { import('./AutomationHubPopover').then(m => m.prefetchAutomationHub?.()).catch(() => {}); }}
                 className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer group ${statusBtnCls}`}
                 aria-label="WhatsApp Status & Automation Hub"
                 title={`WhatsApp: ${statusLabel} — Click to open Automation Hub`}
@@ -4006,55 +4008,69 @@ export const Layout = ({
 
         {/* Global Modals */}
         {showQuickOrder && (
-          <QuickOrderModal onClose={() => setShowQuickOrder(false)} />
+          <Suspense fallback={null}>
+            <QuickOrderModal onClose={() => setShowQuickOrder(false)} />
+          </Suspense>
         )}
         {showLiveCartAdd && (
-          <LiveCartAddModal
-            initialSearch={liveCartAddSearch}
-            initialQty={liveCartAddQty}
-            sourceOrderId={liveCartAddSourceOrderId}
-            sourceRefillId={liveCartAddSourceRefillId}
-            onClose={() => {
-              setShowLiveCartAdd(false);
-              setLiveCartAddSearch(undefined);
-              setLiveCartAddQty(undefined);
-              setLiveCartAddSourceOrderId(undefined);
-              setLiveCartAddSourceRefillId(undefined);
-            }}
-          />
+          <Suspense fallback={null}>
+            <LiveCartAddModal
+              initialSearch={liveCartAddSearch}
+              initialQty={liveCartAddQty}
+              sourceOrderId={liveCartAddSourceOrderId}
+              sourceRefillId={liveCartAddSourceRefillId}
+              onClose={() => {
+                setShowLiveCartAdd(false);
+                setLiveCartAddSearch(undefined);
+                setLiveCartAddQty(undefined);
+                setLiveCartAddSourceOrderId(undefined);
+                setLiveCartAddSourceRefillId(undefined);
+              }}
+            />
+          </Suspense>
         )}
 
         {showStagedReview && (
-          <StagedReviewModal
-            onClose={() => setShowStagedReview(false)}
-            onActionComplete={() => fetchStagedCounts(true)}
-          />
+          <Suspense fallback={null}>
+            <StagedReviewModal
+              onClose={() => setShowStagedReview(false)}
+              onActionComplete={() => fetchStagedCounts(true)}
+            />
+          </Suspense>
         )}
 
         {showConnectModal && (
-          <MobileConnectionModal
-            onClose={() => setShowConnectModal(false)}
-          />
+          <Suspense fallback={null}>
+            <MobileConnectionModal
+              onClose={() => setShowConnectModal(false)}
+            />
+          </Suspense>
         )}
 
         {showWaQueuePopover && (
-          <WhatsAppQueuePopover
-            onClose={() => setShowWaQueuePopover(false)}
-          />
+          <Suspense fallback={null}>
+            <WhatsAppQueuePopover
+              onClose={() => setShowWaQueuePopover(false)}
+            />
+          </Suspense>
         )}
 
         {showAutomationHub && (
-          <AutomationHubPopover
-            onClose={handleAutomationHubClose}
-          />
+          <Suspense fallback={null}>
+            <AutomationHubPopover
+              onClose={handleAutomationHubClose}
+            />
+          </Suspense>
         )}
 
         {showBackupModal && (
-          <BackupCenterModal
-            isOpen={showBackupModal}
-            onClose={() => setShowBackupModal(false)}
-            isStartupMode={isBackupStartupMode}
-          />
+          <Suspense fallback={null}>
+            <BackupCenterModal
+              isOpen={showBackupModal}
+              onClose={() => setShowBackupModal(false)}
+              isStartupMode={isBackupStartupMode}
+            />
+          </Suspense>
         )}
 
         {/* Subtle background glow */}

@@ -105,52 +105,6 @@ const pageRoutes: KeepAliveRoute[] = [
 function App() {
 
   useEffect(() => {
-    // Prefetch page chunks in the background during idle moments to make page transitions instant.
-    // Scheduled via requestIdleCallback to avoid blocking the main thread or causing setTimeout violation warnings.
-    const pageKeys = Object.keys(pageImports);
-    let cancelled = false;
-    let idleHandle: any = null;
-
-    const scheduleIdle = (fn: () => void) => {
-      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-        return (window as any).requestIdleCallback(fn, { timeout: 3000 });
-      }
-      return setTimeout(fn, 200);
-    };
-
-    const cancelIdle = (id: any) => {
-      if (typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
-        (window as any).cancelIdleCallback(id);
-      } else {
-        clearTimeout(id);
-      }
-    };
-
-    const timer = setTimeout(() => {
-      let idx = 0;
-      const processNext = () => {
-        if (cancelled || idx >= pageKeys.length) return;
-        const key = pageKeys[idx++];
-        Promise.resolve()
-          .then(() => pageImports[key]())
-          .catch(() => {})
-          .finally(() => {
-            if (!cancelled) {
-              idleHandle = scheduleIdle(processNext);
-            }
-          });
-      };
-      idleHandle = scheduleIdle(processNext);
-    }, 2500);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      if (idleHandle) cancelIdle(idleHandle);
-    };
-  }, []);
-
-  useEffect(() => {
     // Idle warm-mount (root AGENTS.md SPA contract): progressively pre-mount
     // high-traffic pages HIDDEN so their first switch behaves like POS (which
     // mounts at boot as the landing page). Each step fires only while the user
@@ -207,10 +161,13 @@ function App() {
     };
   }, []);
 
-  // Global browser autofill & accessibility observer: guarantees strictly unique id, name, and label association across all form fields
+  // Global browser autofill & accessibility observer: guarantees strictly unique id, name, and label association across all form fields.
+  // Batched via requestAnimationFrame to eliminate layout thrashing and synchronous main-thread blocking during renders.
   useEffect(() => {
     let fieldCount = 0;
     const seenIds = new Set<string>();
+    let pendingNodes: Node[] = [];
+    let rafId: number | null = null;
 
     const processElement = (el: Element) => {
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
@@ -259,22 +216,42 @@ function App() {
       }
     };
 
-    document.querySelectorAll('input, textarea, select, label').forEach(processElement);
+    const flushPending = () => {
+      rafId = null;
+      const nodesToProcess = pendingNodes;
+      pendingNodes = [];
+      for (const node of nodesToProcess) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node as Element;
+          processElement(el);
+          el.querySelectorAll?.('input, textarea, select, label').forEach(processElement);
+        }
+      }
+    };
+
+    const initRaf = requestAnimationFrame(() => {
+      document.querySelectorAll('input, textarea, select, label').forEach(processElement);
+    });
 
     const observer = new MutationObserver((mutations) => {
+      let hasAdded = false;
       for (const m of mutations) {
-        m.addedNodes.forEach(node => {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            const el = node as Element;
-            processElement(el);
-            el.querySelectorAll?.('input, textarea, select, label').forEach(processElement);
-          }
-        });
+        for (let i = 0; i < m.addedNodes.length; i++) {
+          pendingNodes.push(m.addedNodes[i]);
+          hasAdded = true;
+        }
+      }
+      if (hasAdded && rafId === null) {
+        rafId = requestAnimationFrame(flushPending);
       }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      cancelAnimationFrame(initRaf);
+      observer.disconnect();
+    };
   }, []);
 
   return (

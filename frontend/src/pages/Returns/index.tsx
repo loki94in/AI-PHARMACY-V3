@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { RotateCcw, Plus, Trash2, Search, FileText, Camera, X, Loader2, Edit, Wand2, ChevronDown, ChevronUp, Building2, Layers } from 'lucide-react';
-import AICamera from '../../components/AICamera';
+const AICamera = lazy(() => import('../../components/AICamera'));
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
@@ -2402,10 +2402,12 @@ const Returns: React.FC = () => {
         </div>
       )}
       {showCamera && (
-        <AICamera 
-          onClose={() => { setShowCamera(false); setCameraTargetIndex(null); }}
-          onScanResult={handleCameraScanResult}
-        />
+        <Suspense fallback={null}>
+          <AICamera 
+            onClose={() => { setShowCamera(false); setCameraTargetIndex(null); }}
+            onScanResult={handleCameraScanResult}
+          />
+        </Suspense>
       )}
     </div>
   );

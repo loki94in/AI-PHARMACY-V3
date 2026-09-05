@@ -2271,6 +2271,8 @@ var init_tokenRefreshScheduler = __esm({
       refreshPromise = null;
       heartbeatInFlight = false;
       lastHeartbeatAt = null;
+      isRunning = false;
+      hasRunBootProbe = false;
       /**
        * Invoke cb once the first boot refresh attempt settles (success, failure or skip).
        * Used to chain the startup live-cart warm-up onto a fresh token without racing
@@ -2344,9 +2346,13 @@ var init_tokenRefreshScheduler = __esm({
           }
         } catch (_) {
         }
-        if (this.timeoutId) return;
+        if (this.isRunning || this.timeoutId) return;
+        this.isRunning = true;
         console.log("[TokenRefreshScheduler] Starting REST session heartbeat scheduler (browser only on demand)...");
-        this.runSessionHeartbeat("boot");
+        if (!this.hasRunBootProbe) {
+          this.hasRunBootProbe = true;
+          this.runSessionHeartbeat("boot");
+        }
         this.scheduleNextRun();
       }
       async scheduleNextRun() {
@@ -2375,6 +2381,7 @@ var init_tokenRefreshScheduler = __esm({
         }, delayMs);
       }
       stop() {
+        this.isRunning = false;
         if (this.timeoutId) {
           clearTimeout(this.timeoutId);
           this.timeoutId = null;
@@ -2504,10 +2511,12 @@ var init_tokenRefreshScheduler = __esm({
                 } catch (_) {
                 }
               } else if (res.status === 401 || res.status === 403) {
-                console.log("[TokenRefreshScheduler] Heartbeat got 401/403 \u2192 launching on-demand browser session restore...");
-                const fresh = await this.executeRefresh();
-                ok = !!fresh;
-                if (!ok) errorMsg = this.lastError || "Session restore after heartbeat auth failure failed";
+                console.log("[TokenRefreshScheduler] Heartbeat got 401/403: session expired. Standing by for manual user re-auth.");
+                errorMsg = `Session expired (HTTP ${res.status})`;
+                try {
+                  await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+                } catch (_) {
+                }
               } else {
                 errorMsg = `Heartbeat HTTP ${res.status}`;
               }
@@ -2515,10 +2524,8 @@ var init_tokenRefreshScheduler = __esm({
               errorMsg = probeErr?.message || "Heartbeat probe error";
             }
           } else {
-            console.log("[TokenRefreshScheduler] Token missing but profile present \u2192 on-demand browser capture...");
-            const fresh = await this.executeRefresh();
-            ok = !!fresh;
-            if (!ok) errorMsg = this.lastError || "Browser token capture failed";
+            console.log("[TokenRefreshScheduler] No Pharmarack token configured. Standing down until manual user login.");
+            errorMsg = "No Pharmarack token configured";
           }
         } catch (err) {
           console.error("[TokenRefreshScheduler] Heartbeat error:", err.message);
@@ -8004,9 +8011,7 @@ Welcome back!`,
               return;
             }
             this.bot?.sendMessage(chatId, `\u{1F9FE} Generating ${paymentMedium} bill from your cart...`);
-            const fetchModule = await import("node-fetch");
-            const fetch2 = fetchModule.default || fetchModule;
-            const response = await fetch2(`http://localhost:${process.env.PORT || 3e3}/api/telegram-prescription/bill/generate`, {
+            const response = await fetch(`http://localhost:${process.env.PORT || 3e3}/api/telegram-prescription/bill/generate`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json"
@@ -8197,8 +8202,8 @@ ${importDetails}`;
                 "\u274C Failed to download image. Please try again."
               );
             });
-          }).catch((sendError) => {
-            console.error("Error sending processing message:", sendError);
+          }).catch((sendError2) => {
+            console.error("Error sending processing message:", sendError2);
           });
         });
       }
@@ -8439,13 +8444,9 @@ async function purgeMedicinesFts(db2) {
   }
 }
 async function ftsIndexIsPopulated(db2) {
-  const sample = await db2.get("SELECT name FROM medicines WHERE name IS NOT NULL AND name != '' LIMIT 1");
-  if (!sample) return true;
-  const token = String(sample.name).replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toLowerCase();
-  if (token.length < 3) return true;
   try {
-    const hit = await db2.get("SELECT rowid FROM medicines_fts WHERE medicines_fts MATCH ? LIMIT 1", [`"${token}"`]);
-    return !!hit;
+    const row = await db2.get("SELECT 1 AS hit FROM medicines_fts_docsize LIMIT 1");
+    return !!row?.hit;
   } catch (_) {
     return false;
   }
@@ -8501,77 +8502,205 @@ async function ensureMedicinesFts(db2) {
   await backfillFts(db2, true);
   return state === "broken" ? "repaired" : "ok";
 }
-async function ensureSchema(dbPath) {
-  const db2 = await dbManager.getConnection();
-  await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
-  await db2.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+async function ensureOrderTimingSchema(db2) {
+  await db2.run(`
+    CREATE TABLE IF NOT EXISTS pharmacy_holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
+      holiday_date TEXT NOT NULL,
+      holiday_name TEXT DEFAULT NULL,
+      name TEXT DEFAULT NULL,
+      is_closed INTEGER DEFAULT 1,
+      custom_window_start TEXT DEFAULT NULL,
+      custom_window_end TEXT DEFAULT NULL,
+      open_time TEXT DEFAULT NULL,
+      close_time TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(store_id, holiday_date)
+    )
+  `);
+  await db2.run("CREATE INDEX IF NOT EXISTS idx_pharmacy_holidays_date ON pharmacy_holidays(store_id, holiday_date)");
   try {
-    const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
-    const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
-    const tableCheck = await db2.get("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name IN ('inventory_master', 'purchase_items', 'sale_items', 'distributors')");
-    if (versionRow && parseInt(versionRow.value, 10) >= CURRENT_SCHEMA_VERSION && tableCheck && tableCheck.c >= 4) {
-      if (!migrationRow || !migrationRow.version) {
-        await db2.run("INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
-      }
-      console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} already applied, skipping DDL (fast boot).`);
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_created ON dispatch_orders(created_at DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_date ON special_orders(date DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_return_items_medicine_id ON return_items(medicine_id)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_purchase_items_med_batch ON purchase_items(medicine_id, batch_no)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_purchase_items_history_lookup ON purchase_items(medicine_id, purchase_id, cost_price, mrp, batch_no)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_id_date_dist ON purchases(id, distributor_id, date DESC)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicine_aliases_lookup ON medicine_aliases(alias_name, medicine_id)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_name_nocase ON medicines(name COLLATE NOCASE)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicine_aliases_nocase ON medicine_aliases(alias_name COLLATE NOCASE)");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_report_day ON sales_invoices(COALESCE(date(business_date), date(date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))))");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_report_day ON purchases(COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))))");
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name)");
-      try {
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id)");
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id)");
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id)");
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id)");
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id)");
-        await db2.run("CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status)");
-      } catch (_) {
-      }
-      try {
-        const pushCols = await db2.all("PRAGMA table_info(push_tokens)");
-        const pushNames = new Set(pushCols.map((c) => c.name));
-        if (pushCols.length > 0 && !pushNames.has("device_uuid")) {
-          await db2.run("ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT");
+    const phCols = await db2.all("PRAGMA table_info(pharmacy_holidays)");
+    const phNames = new Set(phCols.map((c) => c.name));
+    if (phCols.length > 0 && !phNames.has("holiday_name")) {
+      await db2.run("ALTER TABLE pharmacy_holidays ADD COLUMN holiday_name TEXT DEFAULT NULL");
+      await db2.run("UPDATE pharmacy_holidays SET holiday_name = name WHERE holiday_name IS NULL");
+    }
+    if (phCols.length > 0 && !phNames.has("custom_window_start")) {
+      await db2.run("ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_start TEXT DEFAULT NULL");
+    }
+    if (phCols.length > 0 && !phNames.has("custom_window_end")) {
+      await db2.run("ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_end TEXT DEFAULT NULL");
+    }
+  } catch (_) {
+  }
+  try {
+    const spCols = await db2.all("PRAGMA table_info(special_orders)");
+    const spNames = new Set(spCols.map((c) => c.name));
+    if (spCols.length > 0 && !spNames.has("scheduled_processing_at")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN scheduled_processing_at DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("estimated_delivery_start")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN estimated_delivery_start DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("estimated_delivery_end")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN estimated_delivery_end DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("cutoff_at")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN cutoff_at DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("pharmacy_timezone")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN pharmacy_timezone TEXT DEFAULT 'Asia/Kolkata'");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_status")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_status TEXT DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_reason")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_reason TEXT DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_version")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_version INTEGER DEFAULT 1");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_calculated_at")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_calculated_at DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_overridden_by")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_overridden_by TEXT DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("schedule_overridden_at")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN schedule_overridden_at DATETIME DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("pos_sale_invoice_id")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN pos_sale_invoice_id INTEGER DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("payment_screenshot_path")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN payment_screenshot_path TEXT DEFAULT NULL");
+    }
+    if (spCols.length > 0 && !spNames.has("screenshot_amount")) {
+      await db2.run("ALTER TABLE special_orders ADD COLUMN screenshot_amount REAL DEFAULT NULL");
+    }
+  } catch (_) {
+  }
+  try {
+    const refCols = await db2.all("PRAGMA table_info(patient_refills)");
+    const refNames = new Set(refCols.map((c) => c.name));
+    if (refCols.length > 0 && !refNames.has("paused_at")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN paused_at DATETIME DEFAULT NULL");
+    }
+    if (refCols.length > 0 && !refNames.has("pause_reason")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN pause_reason TEXT DEFAULT NULL");
+    }
+    if (refCols.length > 0 && !refNames.has("resume_at")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN resume_at DATETIME DEFAULT NULL");
+    }
+    if (refCols.length > 0 && !refNames.has("pause_duration_seconds")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN pause_duration_seconds INTEGER DEFAULT 0");
+    }
+    if (refCols.length > 0 && !refNames.has("refill_schedule_version")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN refill_schedule_version INTEGER DEFAULT 1");
+    }
+  } catch (_) {
+  }
+  const defaultTimingSettings = [
+    ["pharmacy_cutoff_time", "23:00"],
+    ["order_cutoff_time", "23:00"],
+    ["delivery_window_start", "19:00"],
+    ["delivery_start_time", "19:00"],
+    ["delivery_window_end", "21:00"],
+    ["delivery_end_time", "21:00"],
+    ["sunday_orders_enabled", "false"],
+    ["operates_sunday", "false"],
+    ["sunday_delivery", "false"],
+    ["sunday_window_start", "10:00"],
+    ["sunday_window_end", "14:00"],
+    ["holiday_delivery_enabled", "false"],
+    ["holiday_delivery", "false"],
+    ["holiday_handling", "next_available_day"],
+    ["is_24_hours", "false"],
+    ["pharmacy_timezone", "Asia/Kolkata"],
+    ["return_window_days", "15"],
+    ["return_window_mode", "calendar_days"],
+    ["refill_pause_recalculation_enabled", "true"],
+    ["refill_pause_affects_date", "true"]
+  ];
+  for (const [k, v] of defaultTimingSettings) {
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", [k, v]);
+  }
+}
+async function ensureSchema(dbPath) {
+  dbManager.isBooting = true;
+  try {
+    const db2 = await dbManager.getConnection();
+    await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
+    await db2.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+    try {
+      const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
+      const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
+      const tableCheck = await db2.get("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name IN ('inventory_master', 'purchase_items', 'sale_items', 'distributors')");
+      if (versionRow && parseInt(versionRow.value, 10) >= CURRENT_SCHEMA_VERSION && tableCheck && tableCheck.c >= 4) {
+        if (!migrationRow || !migrationRow.version) {
+          await db2.run("INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
         }
-        if (pushCols.length > 0 && !pushNames.has("is_blocked")) {
-          await db2.run("ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0");
+        console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} already applied, skipping DDL (fast boot).`);
+        await db2.exec(`
+          CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+          CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
+          CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
+          CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
+          CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+          CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
+          CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
+          CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity);
+          CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type);
+          CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active);
+          CREATE INDEX IF NOT EXISTS idx_dispatch_orders_created ON dispatch_orders(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_date ON special_orders(date DESC);
+          CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id);
+          CREATE INDEX IF NOT EXISTS idx_return_items_medicine_id ON return_items(medicine_id);
+          CREATE INDEX IF NOT EXISTS idx_purchase_items_med_batch ON purchase_items(medicine_id, batch_no);
+          CREATE INDEX IF NOT EXISTS idx_purchase_items_history_lookup ON purchase_items(medicine_id, purchase_id, cost_price, mrp, batch_no);
+          CREATE INDEX IF NOT EXISTS idx_purchases_id_date_dist ON purchases(id, distributor_id, date DESC);
+          CREATE INDEX IF NOT EXISTS idx_medicine_aliases_lookup ON medicine_aliases(alias_name, medicine_id);
+          CREATE INDEX IF NOT EXISTS idx_medicines_name_nocase ON medicines(name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_medicine_aliases_nocase ON medicine_aliases(alias_name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_sales_report_day ON sales_invoices(COALESCE(date(business_date), date(date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))));
+          CREATE INDEX IF NOT EXISTS idx_purchases_report_day ON purchases(COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))));
+          CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id);
+          CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id);
+          CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id);
+          CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id);
+          CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
+          CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
+        `);
+        try {
+          const pushCols = await db2.all("PRAGMA table_info(push_tokens)");
+          const pushNames = new Set(pushCols.map((c) => c.name));
+          if (pushCols.length > 0 && !pushNames.has("device_uuid")) {
+            await db2.run("ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT");
+          }
+          if (pushCols.length > 0 && !pushNames.has("is_blocked")) {
+            await db2.run("ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0");
+          }
+        } catch (_) {
         }
-      } catch (_) {
-      }
-      try {
-        const stagedCols = await db2.all("PRAGMA table_info(staged_sales)");
-        const stagedNames = new Set(stagedCols.map((c) => c.name));
-        if (stagedCols.length > 0 && !stagedNames.has("device_uuid")) {
-          await db2.run("ALTER TABLE staged_sales ADD COLUMN device_uuid TEXT");
+        try {
+          const stagedCols = await db2.all("PRAGMA table_info(staged_sales)");
+          const stagedNames = new Set(stagedCols.map((c) => c.name));
+          if (stagedCols.length > 0 && !stagedNames.has("device_uuid")) {
+            await db2.run("ALTER TABLE staged_sales ADD COLUMN device_uuid TEXT");
+          }
+          if (stagedCols.length > 0 && !stagedNames.has("sold_from_device")) {
+            await db2.run("ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT");
+          }
+        } catch (_) {
         }
-        if (stagedCols.length > 0 && !stagedNames.has("sold_from_device")) {
-          await db2.run("ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT");
-        }
-      } catch (_) {
-      }
-      await db2.run(`
+        await db2.run(`
         CREATE TABLE IF NOT EXISTS medicine_sales_metrics (
           medicine_id INTEGER PRIMARY KEY,
           sales_2d_qty REAL DEFAULT 0,
@@ -8585,35 +8714,369 @@ async function ensureSchema(dbPath) {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      try {
-        const msmCols = await db2.all("PRAGMA table_info(medicine_sales_metrics)");
-        const msmNames = new Set(msmCols.map((c) => c.name));
-        if (msmCols.length > 0 && !msmNames.has("last_purchase_date")) {
-          await db2.run("ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT");
+        try {
+          const msmCols = await db2.all("PRAGMA table_info(medicine_sales_metrics)");
+          const msmNames = new Set(msmCols.map((c) => c.name));
+          if (msmCols.length > 0 && !msmNames.has("last_purchase_date")) {
+            await db2.run("ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT");
+          }
+        } catch (_) {
         }
-      } catch (_) {
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS catalog_images (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          medicine_id INTEGER NOT NULL,
+          company_name TEXT,
+          product_name TEXT NOT NULL,
+          image_path TEXT NOT NULL,
+          thumbnail_path TEXT,
+          image_source TEXT DEFAULT 'pharmeasy',
+          source_url TEXT,
+          image_hash TEXT,
+          confidence_score REAL DEFAULT 0,
+          matching_method TEXT DEFAULT 'ai_multi_signal',
+          verification_status TEXT DEFAULT 'PENDING_REVIEW',
+          verification_reason TEXT,
+          ocr_text TEXT,
+          ocr_confidence REAL,
+          is_active INTEGER DEFAULT 0,
+          retry_count INTEGER DEFAULT 0,
+          replaced_from_image_id INTEGER,
+          previous_image_url TEXT,
+          next_review_at DATETIME,
+          skip_reason TEXT,
+          locked_by TEXT,
+          locked_at DATETIME,
+          verification_version INTEGER DEFAULT 1,
+          verified_by TEXT,
+          verified_at DATETIME,
+          image_type TEXT DEFAULT 'combined',
+          is_primary INTEGER DEFAULT 0,
+          slot_number INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+        try {
+          const ciCols = await db2.all("PRAGMA table_info(catalog_images)");
+          const hasCol = (name) => ciCols.some((c) => c.name.toLowerCase() === name.toLowerCase());
+          if (!hasCol("previous_image_url")) await db2.run("ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT");
+          if (!hasCol("next_review_at")) await db2.run("ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME");
+          if (!hasCol("skip_reason")) await db2.run("ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT");
+          if (!hasCol("locked_by")) await db2.run("ALTER TABLE catalog_images ADD COLUMN locked_by TEXT");
+          if (!hasCol("locked_at")) await db2.run("ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME");
+          if (!hasCol("verification_version")) await db2.run("ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1");
+          if (!hasCol("image_type")) await db2.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
+          if (!hasCol("is_primary")) await db2.run("ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0");
+          if (!hasCol("slot_number")) await db2.run("ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1");
+          if (!hasCol("match_source")) await db2.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
+          if (!hasCol("match_confidence")) await db2.run("ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0");
+        } catch (_e) {
+        }
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS catalog_image_rejections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          medicine_id INTEGER NOT NULL,
+          rejected_image_url TEXT,
+          rejected_image_hash TEXT,
+          rejected_source TEXT,
+          reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS image_review_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_image_id INTEGER NOT NULL,
+          medicine_id INTEGER NOT NULL,
+          previous_status TEXT,
+          new_status TEXT NOT NULL,
+          previous_image_url TEXT,
+          new_image_url TEXT,
+          action TEXT NOT NULL,
+          reason TEXT,
+          performed_by TEXT DEFAULT 'admin',
+          performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          metadata TEXT,
+          FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS customer_portal_accounts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL UNIQUE,
+          login_id TEXT NOT NULL UNIQUE,
+          pin_hash TEXT NOT NULL,
+          pin_display TEXT,
+          preferred_store_id INTEGER DEFAULT 1,
+          status TEXT DEFAULT 'active',
+          last_login_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(customer_id) REFERENCES customers(id)
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS customer_portal_otps (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          login_id TEXT NOT NULL,
+          otp_code TEXT NOT NULL,
+          expires_at DATETIME NOT NULL,
+          is_used INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS online_order_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER NOT NULL,
+          medicine_id INTEGER,
+          product_name TEXT NOT NULL,
+          product_name_snapshot TEXT,
+          actual_medicine_id INTEGER,
+          actual_batch_id INTEGER,
+          requested_qty INTEGER NOT NULL DEFAULT 1,
+          confirmed_qty INTEGER,
+          mrp REAL,
+          price_snapshot REAL,
+          sell_price REAL,
+          discount REAL DEFAULT 0,
+          final_price REAL,
+          subtotal REAL DEFAULT 0,
+          item_status TEXT DEFAULT 'PENDING',
+          replacement_reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(order_id) REFERENCES special_orders(id),
+          FOREIGN KEY(medicine_id) REFERENCES medicines(id),
+          FOREIGN KEY(actual_medicine_id) REFERENCES medicines(id),
+          FOREIGN KEY(actual_batch_id) REFERENCES inventory_master(id)
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_ooi_order_id ON online_order_items(order_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_ooi_medicine_id ON online_order_items(medicine_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_ooi_status ON online_order_items(item_status)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS inventory_reservations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          inventory_id INTEGER NOT NULL,
+          order_id INTEGER NOT NULL,
+          order_item_id INTEGER,
+          reserved_qty INTEGER NOT NULL,
+          status TEXT DEFAULT 'ACTIVE',
+          reserved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          released_at DATETIME,
+          FOREIGN KEY(inventory_id) REFERENCES inventory_master(id),
+          FOREIGN KEY(order_id) REFERENCES special_orders(id),
+          FOREIGN KEY(order_item_id) REFERENCES online_order_items(id)
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_inv_res_inventory ON inventory_reservations(inventory_id, status)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_inv_res_order ON inventory_reservations(order_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_payment ON special_orders(payment_status, pharmacy_verification_status)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_sales_invoices_online_order ON sales_invoices(online_order_id)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS catalog_correction_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER,
+          order_item_id INTEGER,
+          changed_by TEXT NOT NULL,
+          old_medicine_id INTEGER,
+          new_medicine_id INTEGER,
+          old_batch_id INTEGER,
+          new_batch_id INTEGER,
+          change_type TEXT NOT NULL,
+          reason TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS pricing_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
+          target_id INTEGER,       -- medicine_id or store_id if applicable
+          category_name TEXT,     -- category if rule_type = 'CATEGORY'
+          margin_percent REAL DEFAULT 0,
+          discount_percent REAL DEFAULT 0,
+          custom_selling_price REAL,
+          min_margin_percent REAL,
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS product_channel_visibility (
+          medicine_id INTEGER PRIMARY KEY,
+          is_pos_visible INTEGER DEFAULT 1,
+          is_website_visible INTEGER DEFAULT 1,
+          is_whatsapp_visible INTEGER DEFAULT 1,
+          is_portal_visible INTEGER DEFAULT 1,
+          featured_rank INTEGER DEFAULT 0,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+        )
+      `);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)");
+        await db2.run(`
+        CREATE TABLE IF NOT EXISTS customer_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL,
+          phone TEXT NOT NULL,
+          session_token TEXT NOT NULL UNIQUE,
+          channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
+          device_info TEXT,
+          ip_address TEXT,
+          logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          logged_out_at DATETIME,
+          duration_seconds INTEGER DEFAULT 0,
+          is_active INTEGER DEFAULT 1,
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        )
+      `);
+        try {
+          const sessCols = await db2.all("PRAGMA table_info(customer_sessions)");
+          const sessNames = new Set(sessCols.map((c) => c.name));
+          if (sessCols.length > 0 && !sessNames.has("logged_in_at")) {
+            await db2.run("ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+          }
+          if (sessCols.length > 0 && !sessNames.has("logged_out_at")) {
+            await db2.run("ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME");
+          }
+          if (sessCols.length > 0 && !sessNames.has("duration_seconds")) {
+            await db2.run("ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0");
+          }
+          if (sessCols.length > 0 && !sessNames.has("is_active")) {
+            await db2.run("ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1");
+          }
+        } catch (_) {
+        }
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)");
+        try {
+          const accCols = await db2.all("PRAGMA table_info(customer_portal_accounts)");
+          const accNames = new Set(accCols.map((c) => c.name));
+          if (accCols.length > 0 && !accNames.has("total_login_count")) {
+            await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0");
+          }
+          if (accCols.length > 0 && !accNames.has("total_time_spent_seconds")) {
+            await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0");
+          }
+          if (accCols.length > 0 && !accNames.has("last_logout_at")) {
+            await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME");
+          }
+        } catch (_) {
+        }
+        try {
+          const medCols2 = await db2.all("PRAGMA table_info(medicines)");
+          const medNames = new Set(medCols2.map((c) => c.name));
+          if (medCols2.length > 0 && !medNames.has("canonical_name")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN canonical_name TEXT");
+          }
+          if (medCols2.length > 0 && !medNames.has("normalized_name")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN normalized_name TEXT");
+          }
+          if (medCols2.length > 0 && !medNames.has("product_code")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN product_code TEXT");
+          }
+          if (medCols2.length > 0 && !medNames.has("status")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN status TEXT DEFAULT 'ACTIVE'");
+          }
+          if (medCols2.length > 0 && !medNames.has("dosage_form")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN dosage_form TEXT");
+          }
+          if (medCols2.length > 0 && !medNames.has("pack_size")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN pack_size TEXT");
+          }
+          if (medCols2.length > 0 && !medNames.has("barcode")) {
+            await db2.run("ALTER TABLE medicines ADD COLUMN barcode TEXT");
+          }
+          const needsMedBackfill = await db2.get("SELECT 1 FROM medicines WHERE product_code IS NULL OR canonical_name IS NULL OR normalized_name IS NULL LIMIT 1");
+          if (needsMedBackfill) {
+            await db2.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
+            await db2.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
+            await db2.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
+          }
+        } catch (_) {
+        }
+        try {
+          const orderCols = await db2.all("PRAGMA table_info(special_orders)");
+          const orderNames = new Set(orderCols.map((c) => c.name));
+          if (orderCols.length > 0 && !orderNames.has("payment_qr_id")) {
+            await db2.run("ALTER TABLE special_orders ADD COLUMN payment_qr_id TEXT");
+          }
+          if (orderCols.length > 0 && !orderNames.has("order_type")) {
+            await db2.run("ALTER TABLE special_orders ADD COLUMN order_type TEXT DEFAULT 'PICKUP'");
+          }
+          if (orderCols.length > 0 && !orderNames.has("total_amount")) {
+            await db2.run("ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0");
+          }
+        } catch (_) {
+        }
+        try {
+          const ooiCols = await db2.all("PRAGMA table_info(online_order_items)");
+          const ooiNames = new Set(ooiCols.map((c) => c.name));
+          if (ooiCols.length > 0 && !ooiNames.has("product_name_snapshot")) {
+            await db2.run("ALTER TABLE online_order_items ADD COLUMN product_name_snapshot TEXT");
+            await db2.run("UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL");
+          }
+          if (ooiCols.length > 0 && !ooiNames.has("price_snapshot")) {
+            await db2.run("ALTER TABLE online_order_items ADD COLUMN price_snapshot REAL");
+            await db2.run("UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL");
+          }
+          if (ooiCols.length > 0 && !ooiNames.has("subtotal")) {
+            await db2.run("ALTER TABLE online_order_items ADD COLUMN subtotal REAL DEFAULT 0");
+            await db2.run("UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL");
+          }
+        } catch (_) {
+        }
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_normalized_name ON medicines(normalized_name)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_product_code ON medicines(product_code)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)");
+        await ensureOrderTimingSchema(db2);
+        await ensureMedicinesFts(db2);
+        return;
       }
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)");
-      await ensureMedicinesFts(db2);
-      return;
+    } catch (_) {
     }
-  } catch (_) {
-  }
-  console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
-  try {
-    const tableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='catalog_jobs'");
-    if (tableSql && /CHECK\s*\(\s*status\s+IN/i.test(tableSql.sql)) {
-      console.log("Removing strict CHECK constraint from catalog_jobs...");
-      await db2.run("DROP TABLE IF EXISTS catalog_jobs");
+    console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
+    try {
+      const tableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='catalog_jobs'");
+      if (tableSql && /CHECK\s*\(\s*status\s+IN/i.test(tableSql.sql)) {
+        console.log("Removing strict CHECK constraint from catalog_jobs...");
+        await db2.run("DROP TABLE IF EXISTS catalog_jobs");
+      }
+    } catch (err) {
+      console.warn("Failed removing CHECK constraint:", err);
     }
-  } catch (err) {
-    console.warn("Failed removing CHECK constraint:", err);
-  }
-  try {
-    const remTableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='distributor_dispatch_reminders'");
-    if (remTableSql && /CHECK\s*\(\s*status\s+IN/i.test(remTableSql.sql)) {
-      console.log("Removing strict CHECK constraint from distributor_dispatch_reminders...");
-      await db2.exec(`
+    try {
+      const remTableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='distributor_dispatch_reminders'");
+      if (remTableSql && /CHECK\s*\(\s*status\s+IN/i.test(remTableSql.sql)) {
+        console.log("Removing strict CHECK constraint from distributor_dispatch_reminders...");
+        await db2.exec(`
         CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           distributor_id INTEGER,
@@ -8636,17 +9099,17 @@ async function ensureSchema(dbPath) {
         CREATE INDEX IF NOT EXISTS idx_distributor_dispatch_reminders_date ON distributor_dispatch_reminders (date);
         CREATE INDEX IF NOT EXISTS idx_distributor_dispatch_reminders_distributor ON distributor_dispatch_reminders (distributor_id);
       `);
+      }
+    } catch (err) {
+      console.warn("Failed removing CHECK constraint from distributor_dispatch_reminders:", err);
     }
-  } catch (err) {
-    console.warn("Failed removing CHECK constraint from distributor_dispatch_reminders:", err);
-  }
-  try {
-    const spTableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='special_orders'");
-    if (spTableSql && /CHECK\s*\(\s*status\s+IN/i.test(spTableSql.sql)) {
-      console.log("Removing strict CHECK constraint from special_orders...");
-      const cols = await db2.all("PRAGMA table_info(special_orders)");
-      const colNames = cols.map((c) => c.name).join(", ");
-      await db2.exec(`
+    try {
+      const spTableSql = await db2.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='special_orders'");
+      if (spTableSql && /CHECK\s*\(\s*status\s+IN/i.test(spTableSql.sql)) {
+        console.log("Removing strict CHECK constraint from special_orders...");
+        const cols = await db2.all("PRAGMA table_info(special_orders)");
+        const colNames = cols.map((c) => c.name).join(", ");
+        await db2.exec(`
         DROP TABLE IF EXISTS special_orders_new;
         CREATE TABLE special_orders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8693,20 +9156,20 @@ async function ensureSchema(dbPath) {
           last_synced_at DATETIME DEFAULT NULL
         );
       `);
-      if (colNames) {
-        await db2.exec(`
+        if (colNames) {
+          await db2.exec(`
           INSERT INTO special_orders_new (${colNames}) SELECT ${colNames} FROM special_orders;
         `);
-      }
-      await db2.exec(`
+        }
+        await db2.exec(`
         DROP TABLE special_orders;
         ALTER TABLE special_orders_new RENAME TO special_orders;
       `);
+      }
+    } catch (err) {
+      console.warn("Failed removing CHECK constraint from special_orders:", err);
     }
-  } catch (err) {
-    console.warn("Failed removing CHECK constraint from special_orders:", err);
-  }
-  await db2.exec(`
+    await db2.exec(`
     CREATE TABLE IF NOT EXISTS stores (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -8744,6 +9207,13 @@ async function ensureSchema(dbPath) {
     CREATE TABLE IF NOT EXISTS medicines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      canonical_name TEXT,
+      normalized_name TEXT,
+      product_code TEXT,
+      status TEXT DEFAULT 'ACTIVE',
+      dosage_form TEXT,
+      pack_size TEXT,
+      barcode TEXT,
       api_reference TEXT,
       mrp REAL,
       hsn_code TEXT,
@@ -9194,6 +9664,9 @@ async function ensureSchema(dbPath) {
       prescription_url TEXT DEFAULT NULL,
       product_image_url TEXT DEFAULT NULL,
       delivery_status TEXT DEFAULT 'pending',
+      payment_qr_id TEXT DEFAULT NULL,
+      order_type TEXT DEFAULT 'PICKUP',
+      total_amount REAL DEFAULT 0,
       delivered_at DATETIME DEFAULT NULL,
       return_window_until DATETIME DEFAULT NULL,
       return_status TEXT DEFAULT 'none',
@@ -9202,7 +9675,10 @@ async function ensureSchema(dbPath) {
       return_override_at DATETIME DEFAULT NULL,
       sync_id TEXT DEFAULT NULL,
       sync_status TEXT DEFAULT 'synced',
-      last_synced_at DATETIME DEFAULT NULL
+      last_synced_at DATETIME DEFAULT NULL,
+      pos_sale_invoice_id INTEGER DEFAULT NULL,
+      payment_screenshot_path TEXT DEFAULT NULL,
+      screenshot_amount REAL DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (
@@ -9232,43 +9708,43 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_stock_metrics_low_stock ON precalculated_stock_metrics(low_stock_flag);
     CREATE INDEX IF NOT EXISTS idx_stock_metrics_heavy_sell ON precalculated_stock_metrics(heavy_sell_flag);
   `);
-  const profileCols = await db2.all("PRAGMA table_info(distributor_learning_profiles)").catch(() => []);
-  const existingProfileCols = new Set(profileCols.map((c) => c.name));
-  if (!existingProfileCols.has("layout_type")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_type TEXT").catch(() => {
-    });
-  }
-  if (!existingProfileCols.has("layout_patterns")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_patterns TEXT").catch(() => {
-    });
-  }
-  if (!existingProfileCols.has("field_positions")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN field_positions TEXT").catch(() => {
-    });
-  }
-  if (!existingProfileCols.has("missing_field_rules")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN missing_field_rules TEXT").catch(() => {
-    });
-  }
-  if (!existingProfileCols.has("success_count")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN success_count INTEGER DEFAULT 0").catch(() => {
-    });
-  }
-  if (!existingProfileCols.has("last_success_at")) {
-    await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN last_success_at DATETIME").catch(() => {
-    });
-  }
-  const medCols = await db2.all("PRAGMA table_info(medicines)").catch(() => []);
-  const existingMedCols = new Set(medCols.map((c) => c.name));
-  if (!existingMedCols.has("sell_price")) {
-    await db2.run("ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL").catch(() => {
-    });
-  }
-  if (!existingMedCols.has("allow_loose_sale")) {
-    await db2.run("ALTER TABLE medicines ADD COLUMN allow_loose_sale INTEGER DEFAULT 1").catch(() => {
-    });
-  }
-  await db2.run(`
+    const profileCols = await db2.all("PRAGMA table_info(distributor_learning_profiles)").catch(() => []);
+    const existingProfileCols = new Set(profileCols.map((c) => c.name));
+    if (!existingProfileCols.has("layout_type")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_type TEXT").catch(() => {
+      });
+    }
+    if (!existingProfileCols.has("layout_patterns")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_patterns TEXT").catch(() => {
+      });
+    }
+    if (!existingProfileCols.has("field_positions")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN field_positions TEXT").catch(() => {
+      });
+    }
+    if (!existingProfileCols.has("missing_field_rules")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN missing_field_rules TEXT").catch(() => {
+      });
+    }
+    if (!existingProfileCols.has("success_count")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN success_count INTEGER DEFAULT 0").catch(() => {
+      });
+    }
+    if (!existingProfileCols.has("last_success_at")) {
+      await db2.run("ALTER TABLE distributor_learning_profiles ADD COLUMN last_success_at DATETIME").catch(() => {
+      });
+    }
+    const medCols = await db2.all("PRAGMA table_info(medicines)").catch(() => []);
+    const existingMedCols = new Set(medCols.map((c) => c.name));
+    if (!existingMedCols.has("sell_price")) {
+      await db2.run("ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL").catch(() => {
+      });
+    }
+    if (!existingMedCols.has("allow_loose_sale")) {
+      await db2.run("ALTER TABLE medicines ADD COLUMN allow_loose_sale INTEGER DEFAULT 1").catch(() => {
+      });
+    }
+    await db2.run(`
       UPDATE medicines 
       SET allow_loose_sale = 0 
       WHERE allow_loose_sale IS NULL
@@ -9300,8 +9776,8 @@ async function ensureSchema(dbPath) {
            )
          )
     `).catch(() => {
-  });
-  await db2.run(`
+    });
+    await db2.run(`
       UPDATE medicines 
       SET allow_loose_sale = 1 
       WHERE (allow_loose_sale IS NULL OR allow_loose_sale = 0)
@@ -9331,8 +9807,8 @@ async function ensureSchema(dbPath) {
           OR LOWER(COALESCE(name, '')) LIKE '%inj%'
         )
     `).catch(() => {
-  });
-  await db2.exec(`
+    });
+    await db2.exec(`
     CREATE TABLE IF NOT EXISTS distributor_historical_files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       distributor_id INTEGER,
@@ -9466,238 +9942,257 @@ async function ensureSchema(dbPath) {
     );
     CREATE INDEX IF NOT EXISTS idx_order_tracking_events_order ON order_tracking_events(order_id);
   `);
-  const alterStatements = [
-    ["action_logs", "metadata", "ALTER TABLE action_logs ADD COLUMN metadata TEXT"],
-    ["inventory_master", "unit_price", "ALTER TABLE inventory_master ADD COLUMN unit_price REAL DEFAULT 0"],
-    ["inventory_master", "cost_price", "ALTER TABLE inventory_master ADD COLUMN cost_price REAL DEFAULT 0"],
-    ["inventory_master", "reorder_level", "ALTER TABLE inventory_master ADD COLUMN reorder_level INTEGER DEFAULT 10"],
-    ["inventory_master", "max_stock_level", "ALTER TABLE inventory_master ADD COLUMN max_stock_level INTEGER DEFAULT NULL"],
-    ["inventory_master", "mrp", "ALTER TABLE inventory_master ADD COLUMN mrp REAL DEFAULT 0"],
-    ["inventory_master", "legacy_batch_id", "ALTER TABLE inventory_master ADD COLUMN legacy_batch_id TEXT"],
-    ["inventory_master", "loose_quantity", "ALTER TABLE inventory_master ADD COLUMN loose_quantity INTEGER DEFAULT 0"],
-    ["inventory_master", "is_active", "ALTER TABLE inventory_master ADD COLUMN is_active INTEGER DEFAULT 1"],
-    ["inventory_master", "created_at", "ALTER TABLE inventory_master ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
-    ["inventory_master", "expiry_month", "ALTER TABLE inventory_master ADD COLUMN expiry_month TEXT"],
-    ["medicines", "max_stock_level", "ALTER TABLE medicines ADD COLUMN max_stock_level INTEGER DEFAULT NULL"],
-    ["medicines", "mrp", "ALTER TABLE medicines ADD COLUMN mrp REAL DEFAULT 0"],
-    ["medicines", "hsn_code", "ALTER TABLE medicines ADD COLUMN hsn_code TEXT"],
-    ["medicines", "schedule_type", "ALTER TABLE medicines ADD COLUMN schedule_type TEXT DEFAULT 'None'"],
-    ["medicines", "manufacturer", "ALTER TABLE medicines ADD COLUMN manufacturer TEXT"],
-    ["medicines", "category", "ALTER TABLE medicines ADD COLUMN category TEXT"],
-    ["medicines", "marketed_by", "ALTER TABLE medicines ADD COLUMN marketed_by TEXT"],
-    ["medicines", "legacy_id", "ALTER TABLE medicines ADD COLUMN legacy_id TEXT"],
-    ["medicines", "packaging", "ALTER TABLE medicines ADD COLUMN packaging TEXT"],
-    ["medicines", "item_type", "ALTER TABLE medicines ADD COLUMN item_type TEXT"],
-    ["medicines", "rack", "ALTER TABLE medicines ADD COLUMN rack TEXT"],
-    ["medicines", "generic_name", "ALTER TABLE medicines ADD COLUMN generic_name TEXT"],
-    ["medicines", "strength", "ALTER TABLE medicines ADD COLUMN strength TEXT"],
-    ["medicines", "rate", "ALTER TABLE medicines ADD COLUMN rate REAL DEFAULT 0"],
-    ["medicines", "pack_unit", "ALTER TABLE medicines ADD COLUMN pack_unit TEXT"],
-    ["medicines", "cgst_per", "ALTER TABLE medicines ADD COLUMN cgst_per REAL DEFAULT 0"],
-    ["medicines", "sgst_per", "ALTER TABLE medicines ADD COLUMN sgst_per REAL DEFAULT 0"],
-    ["medicines", "igst_per", "ALTER TABLE medicines ADD COLUMN igst_per REAL DEFAULT 0"],
-    ["medicines", "item_code", "ALTER TABLE medicines ADD COLUMN item_code TEXT"],
-    ["medicines", "metadata", "ALTER TABLE medicines ADD COLUMN metadata TEXT"],
-    ["medicines", "sell_price", "ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL"],
-    ["purchases", "cgst_value", "ALTER TABLE purchases ADD COLUMN cgst_value REAL DEFAULT 0"],
-    ["purchases", "sgst_value", "ALTER TABLE purchases ADD COLUMN sgst_value REAL DEFAULT 0"],
-    ["purchases", "igst_value", "ALTER TABLE purchases ADD COLUMN igst_value REAL DEFAULT 0"],
-    ["purchases", "roff", "ALTER TABLE purchases ADD COLUMN roff REAL DEFAULT 0"],
-    ["purchases", "status", "ALTER TABLE purchases ADD COLUMN status TEXT DEFAULT 'PUBLISHED'"],
-    ["purchases", "legacy_id", "ALTER TABLE purchases ADD COLUMN legacy_id TEXT"],
-    ["purchases", "business_date", "ALTER TABLE purchases ADD COLUMN business_date DATETIME"],
-    ["purchases", "app_invoice_no", "ALTER TABLE purchases ADD COLUMN app_invoice_no TEXT"],
-    ["purchases", "cn_amount", "ALTER TABLE purchases ADD COLUMN cn_amount REAL DEFAULT 0"],
-    ["purchases", "cn_number", "ALTER TABLE purchases ADD COLUMN cn_number TEXT DEFAULT NULL"],
-    ["purchases", "original_amount", "ALTER TABLE purchases ADD COLUMN original_amount REAL DEFAULT NULL"],
-    ["special_orders", "lifecycle_status", "ALTER TABLE special_orders ADD COLUMN lifecycle_status TEXT DEFAULT 'CREATED'"],
-    ["special_orders", "last_checked_at", "ALTER TABLE special_orders ADD COLUMN last_checked_at DATETIME"],
-    ["sales_invoices", "doctor_id", "ALTER TABLE sales_invoices ADD COLUMN doctor_id INTEGER"],
-    ["sales_invoices", "payment_medium", "ALTER TABLE sales_invoices ADD COLUMN payment_medium TEXT"],
-    ["sales_invoices", "roff", "ALTER TABLE sales_invoices ADD COLUMN roff REAL DEFAULT 0"],
-    ["sales_invoices", "cgst_value", "ALTER TABLE sales_invoices ADD COLUMN cgst_value REAL DEFAULT 0"],
-    ["sales_invoices", "sgst_value", "ALTER TABLE sales_invoices ADD COLUMN sgst_value REAL DEFAULT 0"],
-    ["sales_invoices", "igst_value", "ALTER TABLE sales_invoices ADD COLUMN igst_value REAL DEFAULT 0"],
-    ["sales_invoices", "legacy_id", "ALTER TABLE sales_invoices ADD COLUMN legacy_id TEXT"],
-    ["sales_invoices", "business_date", "ALTER TABLE sales_invoices ADD COLUMN business_date DATETIME"],
-    ["sales_invoices", "discount", "ALTER TABLE sales_invoices ADD COLUMN discount REAL DEFAULT 0"],
-    ["sales_invoices", "subtotal", "ALTER TABLE sales_invoices ADD COLUMN subtotal REAL DEFAULT 0"],
-    ["sales_invoices", "payment_status", "ALTER TABLE sales_invoices ADD COLUMN payment_status TEXT DEFAULT 'PAID'"],
-    ["sales_invoices", "net_profit", "ALTER TABLE sales_invoices ADD COLUMN net_profit REAL DEFAULT 0"],
-    ["sales_invoices", "updated_at", "ALTER TABLE sales_invoices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
-    ["sale_items", "mrp", "ALTER TABLE sale_items ADD COLUMN mrp REAL"],
-    ["sale_items", "batch_no", "ALTER TABLE sale_items ADD COLUMN batch_no TEXT"],
-    ["sale_items", "cgst_value", "ALTER TABLE sale_items ADD COLUMN cgst_value REAL DEFAULT 0"],
-    ["sale_items", "sgst_value", "ALTER TABLE sale_items ADD COLUMN sgst_value REAL DEFAULT 0"],
-    ["sale_items", "discount_per", "ALTER TABLE sale_items ADD COLUMN discount_per REAL DEFAULT 0"],
-    ["sale_items", "legacy_id", "ALTER TABLE sale_items ADD COLUMN legacy_id TEXT"],
-    ["sale_items", "loose_qty", "ALTER TABLE sale_items ADD COLUMN loose_qty INTEGER DEFAULT 0"],
-    ["returns", "cgst_value", "ALTER TABLE returns ADD COLUMN cgst_value REAL DEFAULT 0"],
-    ["returns", "sgst_value", "ALTER TABLE returns ADD COLUMN sgst_value REAL DEFAULT 0"],
-    ["returns", "igst_value", "ALTER TABLE returns ADD COLUMN igst_value REAL DEFAULT 0"],
-    ["returns", "distributor_id", "ALTER TABLE returns ADD COLUMN distributor_id INTEGER"],
-    ["returns", "legacy_id", "ALTER TABLE returns ADD COLUMN legacy_id TEXT"],
-    ["returns", "reason", "ALTER TABLE returns ADD COLUMN reason TEXT"],
-    ["returns", "return_invoice_id", "ALTER TABLE returns ADD COLUMN return_invoice_id TEXT DEFAULT NULL"],
-    ["returns", "return_sub_type", "ALTER TABLE returns ADD COLUMN return_sub_type TEXT CHECK(return_sub_type IN ('expiry', 'good')) DEFAULT 'good'"],
-    ["returns", "return_date_time", "ALTER TABLE returns ADD COLUMN return_date_time DATETIME DEFAULT NULL"],
-    ["returns", "raw_return_type", "ALTER TABLE returns ADD COLUMN raw_return_type TEXT"],
-    ["distributors", "legacy_id", "ALTER TABLE distributors ADD COLUMN legacy_id TEXT"],
-    ["distributors", "gstin", "ALTER TABLE distributors ADD COLUMN gstin TEXT"],
-    ["distributors", "address", "ALTER TABLE distributors ADD COLUMN address TEXT"],
-    ["distributors", "city", "ALTER TABLE distributors ADD COLUMN city TEXT"],
-    ["distributors", "email", "ALTER TABLE distributors ADD COLUMN email TEXT"],
-    ["distributors", "dl_no", "ALTER TABLE distributors ADD COLUMN dl_no TEXT"],
-    ["distributors", "phone", "ALTER TABLE distributors ADD COLUMN phone TEXT"],
-    ["distributors", "state_code", "ALTER TABLE distributors ADD COLUMN state_code TEXT"],
-    ["distributors", "preferred_file_format", "ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL"],
-    ["distributors", "mapping_config", "ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL"],
-    ["distributor_dispatch_reminders", "scheduled_send_time", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL"],
-    ["doctors", "send_daily_summary", "ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0"],
-    ["customers", "legacy_id", "ALTER TABLE customers ADD COLUMN legacy_id TEXT"],
-    ["customers", "age", "ALTER TABLE customers ADD COLUMN age TEXT"],
-    ["customers", "gender", "ALTER TABLE customers ADD COLUMN gender TEXT"],
-    ["customers", "credit_enabled", "ALTER TABLE customers ADD COLUMN credit_enabled INTEGER DEFAULT 0"],
-    ["customers", "credit_balance", "ALTER TABLE customers ADD COLUMN credit_balance REAL DEFAULT 0"],
-    ["customers", "created_at", "ALTER TABLE customers ADD COLUMN created_at DATETIME"],
-    ["customers", "credit_due_date", "ALTER TABLE customers ADD COLUMN credit_due_date TEXT"],
-    ["customers", "language", "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
-    ["patient_refills", "hold_for_stock", "ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0"],
-    ["patient_refills", "is_active", "ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1"],
-    ["patient_refills", "is_ready", "ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0"],
-    ["patient_refills", "acknowledged", "ALTER TABLE patient_refills ADD COLUMN acknowledged INTEGER DEFAULT 0"],
-    ["patient_refills", "ordering_triggered", "ALTER TABLE patient_refills ADD COLUMN ordering_triggered INTEGER DEFAULT 0"],
-    ["patient_refills", "quick_bill_id", "ALTER TABLE patient_refills ADD COLUMN quick_bill_id INTEGER DEFAULT NULL"],
-    ["patient_refills", "stock_verified_override", "ALTER TABLE patient_refills ADD COLUMN stock_verified_override INTEGER DEFAULT 0"],
-    ["patient_refills", "customer_id", "ALTER TABLE patient_refills ADD COLUMN customer_id INTEGER DEFAULT NULL"],
-    ["patient_refills", "quantity_needed", "ALTER TABLE patient_refills ADD COLUMN quantity_needed INTEGER DEFAULT 3"],
-    ["patient_refills", "language", "ALTER TABLE patient_refills ADD COLUMN language TEXT DEFAULT 'en'"],
-    ["patient_refills", "reminder_status", "ALTER TABLE patient_refills ADD COLUMN reminder_status TEXT DEFAULT 'NOT_SENT'"],
-    ["patient_refills", "reminder_sent_at", "ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL"],
-    ["patient_refills", "reminder_job_id", "ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL"],
-    ["patient_refills", "reminder_occurrence_date", "ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL"],
-    ["special_orders", "customer_id", "ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL"],
-    ["special_orders", "date", "ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP"],
-    ["special_orders", "product", "ALTER TABLE special_orders ADD COLUMN product TEXT"],
-    ["special_orders", "medicine_name", "ALTER TABLE special_orders ADD COLUMN medicine_name TEXT"],
-    ["special_orders", "qty", "ALTER TABLE special_orders ADD COLUMN qty INTEGER DEFAULT 1"],
-    ["special_orders", "priority", "ALTER TABLE special_orders ADD COLUMN priority TEXT DEFAULT 'Normal'"],
-    ["special_orders", "notified", "ALTER TABLE special_orders ADD COLUMN notified INTEGER DEFAULT 0"],
-    ["special_orders", "pharmarack_mapped", "ALTER TABLE special_orders ADD COLUMN pharmarack_mapped INTEGER DEFAULT 0"],
-    ["special_orders", "pharmarack_distributor", "ALTER TABLE special_orders ADD COLUMN pharmarack_distributor TEXT"],
-    ["special_orders", "pharmarack_rate", "ALTER TABLE special_orders ADD COLUMN pharmarack_rate REAL"],
-    ["special_orders", "pharmarack_mrp", "ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL"],
-    ["special_orders", "pharmarack_scheme", "ALTER TABLE special_orders ADD COLUMN pharmarack_scheme TEXT"],
-    ["special_orders", "advance_payment", "ALTER TABLE special_orders ADD COLUMN advance_payment REAL DEFAULT 0.0"],
-    ["special_orders", "converted_to_refill_id", "ALTER TABLE special_orders ADD COLUMN converted_to_refill_id INTEGER DEFAULT NULL"],
-    ["special_orders", "source_refill_id", "ALTER TABLE special_orders ADD COLUMN source_refill_id INTEGER DEFAULT NULL"],
-    ["special_orders", "source", "ALTER TABLE special_orders ADD COLUMN source TEXT"],
-    ["special_orders", "cart_add_error", "ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL"],
-    ["special_orders", "notification_count", "ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0"],
-    ["held_bills", "invoice_no", "ALTER TABLE held_bills ADD COLUMN invoice_no TEXT"],
-    ["held_bills", "temp_label", "ALTER TABLE held_bills ADD COLUMN temp_label TEXT"],
-    ["held_bills", "patient_name", "ALTER TABLE held_bills ADD COLUMN patient_name TEXT"],
-    ["held_bills", "patient_phone", "ALTER TABLE held_bills ADD COLUMN patient_phone TEXT"],
-    ["held_bills", "doctor_name", "ALTER TABLE held_bills ADD COLUMN doctor_name TEXT"],
-    ["held_bills", "discount", "ALTER TABLE held_bills ADD COLUMN discount REAL DEFAULT 0"],
-    ["held_bills", "remarks", "ALTER TABLE held_bills ADD COLUMN remarks TEXT"],
-    ["held_bills", "cart_data", "ALTER TABLE held_bills ADD COLUMN cart_data TEXT"],
-    ["held_bills", "created_at", "ALTER TABLE held_bills ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
-    ["held_bills", "date", "ALTER TABLE held_bills ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP"],
-    ["held_bills", "customer_id", "ALTER TABLE held_bills ADD COLUMN customer_id INTEGER DEFAULT NULL"],
-    ["medicines", "enrichment_status", "ALTER TABLE medicines ADD COLUMN enrichment_status TEXT DEFAULT NULL"],
-    ["medicines", "enrichment_confidence", "ALTER TABLE medicines ADD COLUMN enrichment_confidence REAL DEFAULT NULL"],
-    ["medicines", "pack_size", "ALTER TABLE medicines ADD COLUMN pack_size INTEGER"],
-    ["medicines", "source", "ALTER TABLE medicines ADD COLUMN source TEXT DEFAULT 'manual'"],
-    ["medicines", "possible_duplicate_of", "ALTER TABLE medicines ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL"],
-    ["medicines", "therapeutic", "ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL"],
-    ["medicines", "sub_therapeutic", "ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL"],
-    ["medicines", "short_code", "ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL"],
-    ["medicines", "ucode", "ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL"],
-    ["medicines", "disable_auto_barcode", "ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0"],
-    ["medicines", "tb_medicine", "ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0"],
-    // stock_ledger's full definition (line ~1280) never applies on top of the earlier
-    // CREATE TABLE IF NOT EXISTS (line ~329) — these three columns were silently missing
-    // on every install, making every recordStockLedger() call throw (swallowed by its own catch).
-    ["stock_ledger", "loose_quantity", "ALTER TABLE stock_ledger ADD COLUMN loose_quantity INTEGER DEFAULT 0"],
-    ["stock_ledger", "transaction_id", "ALTER TABLE stock_ledger ADD COLUMN transaction_id TEXT"],
-    ["stock_ledger", "business_date", "ALTER TABLE stock_ledger ADD COLUMN business_date DATETIME"],
-    ["distributor_dispatch_reminders", "order_source", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN order_source TEXT DEFAULT 'pharmarack'"],
-    ["distributor_dispatch_reminders", "email_received_at", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN email_received_at DATETIME"],
-    // ponytail: source_type records where a staged purchase originated (e.g. 'email', 'telegram')
-    // without mixing that into the distributor identity field
-    ["staged_purchases", "source_type", "ALTER TABLE staged_purchases ADD COLUMN source_type TEXT DEFAULT NULL"],
-    ["refill_fulfillments", "cycle_due_date", "ALTER TABLE refill_fulfillments ADD COLUMN cycle_due_date TEXT"],
-    ["refill_fulfillments", "next_due_date", "ALTER TABLE refill_fulfillments ADD COLUMN next_due_date TEXT"],
-    ["refill_fulfillments", "fulfilled_via", "ALTER TABLE refill_fulfillments ADD COLUMN fulfilled_via TEXT"],
-    ["refill_fulfillments", "notes", "ALTER TABLE refill_fulfillments ADD COLUMN notes TEXT"],
-    // catalog_jobs: the base CREATE (id/file_path/status/created_at) predates the whole
-    // OCR pipeline — worker + routes read/write these 11 columns on EVERY upload/review,
-    // so fresh installs AND long-lived DBs crashed with "no such column" (bug found via
-    // catalogPipeline/duplicateCatalog suites, 2026-08-25). Mirrors the stock_ledger case.
-    ["catalog_jobs", "original_filename", "ALTER TABLE catalog_jobs ADD COLUMN original_filename TEXT"],
-    ["catalog_jobs", "extracted_data", "ALTER TABLE catalog_jobs ADD COLUMN extracted_data TEXT"],
-    ["catalog_jobs", "mapping_config", "ALTER TABLE catalog_jobs ADD COLUMN mapping_config TEXT"],
-    ["catalog_jobs", "data_filters", "ALTER TABLE catalog_jobs ADD COLUMN data_filters TEXT"],
-    ["catalog_jobs", "error_log", "ALTER TABLE catalog_jobs ADD COLUMN error_log TEXT"],
-    ["catalog_jobs", "progress", "ALTER TABLE catalog_jobs ADD COLUMN progress INTEGER DEFAULT 0"],
-    ["catalog_jobs", "total_count", "ALTER TABLE catalog_jobs ADD COLUMN total_count INTEGER DEFAULT 0"],
-    ["catalog_jobs", "processed_count", "ALTER TABLE catalog_jobs ADD COLUMN processed_count INTEGER DEFAULT 0"],
-    ["catalog_jobs", "new_count", "ALTER TABLE catalog_jobs ADD COLUMN new_count INTEGER DEFAULT 0"],
-    ["catalog_jobs", "existing_count", "ALTER TABLE catalog_jobs ADD COLUMN existing_count INTEGER DEFAULT 0"],
-    ["catalog_jobs", "duplicate_count", "ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0"],
-    ["catalog_jobs", "matched_previous_job_id", "ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL"],
-    ["catalog_jobs", "newly_detected_columns", "ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT"],
-    // Multi-Store & Website Order Foundation (Schema v47)
-    ["special_orders", "store_id", "ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["special_orders", "customer_order_source", "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
-    ["special_orders", "prescription_url", "ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL"],
-    ["special_orders", "product_image_url", "ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL"],
-    ["special_orders", "delivery_status", "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
-    ["special_orders", "delivered_at", "ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL"],
-    ["special_orders", "return_window_until", "ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL"],
-    ["special_orders", "return_status", "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
-    ["special_orders", "return_override_reason", "ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL"],
-    ["special_orders", "return_override_by", "ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL"],
-    ["special_orders", "return_override_at", "ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL"],
-    ["special_orders", "sync_id", "ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL"],
-    ["special_orders", "sync_status", "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
-    ["special_orders", "last_synced_at", "ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL"],
-    ["inventory_master", "store_id", "ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["purchases", "store_id", "ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["sales_invoices", "store_id", "ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["returns", "store_id", "ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["patient_refills", "store_id", "ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["dispatch_orders", "store_id", "ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["held_bills", "store_id", "ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["staged_sales", "store_id", "ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["staged_purchases", "store_id", "ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["whatsapp_send_queue", "store_id", "ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["distributor_dispatch_reminders", "store_id", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["pharmarack_distributor_mappings", "store_id", "ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1"],
-    ["delivery_boys", "store_id", "ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1"]
-  ];
-  for (const [table, col, stmt] of alterStatements) {
-    try {
-      const columns = await db2.all(`PRAGMA table_info(${table})`);
-      const exists = columns.some((c) => c.name.toLowerCase() === col.toLowerCase());
-      if (columns.length > 0 && !exists) {
-        await db2.run(stmt);
+    const alterStatements = [
+      ["action_logs", "metadata", "ALTER TABLE action_logs ADD COLUMN metadata TEXT"],
+      ["inventory_master", "unit_price", "ALTER TABLE inventory_master ADD COLUMN unit_price REAL DEFAULT 0"],
+      ["inventory_master", "cost_price", "ALTER TABLE inventory_master ADD COLUMN cost_price REAL DEFAULT 0"],
+      ["inventory_master", "reorder_level", "ALTER TABLE inventory_master ADD COLUMN reorder_level INTEGER DEFAULT 10"],
+      ["inventory_master", "max_stock_level", "ALTER TABLE inventory_master ADD COLUMN max_stock_level INTEGER DEFAULT NULL"],
+      ["inventory_master", "mrp", "ALTER TABLE inventory_master ADD COLUMN mrp REAL DEFAULT 0"],
+      ["inventory_master", "legacy_batch_id", "ALTER TABLE inventory_master ADD COLUMN legacy_batch_id TEXT"],
+      ["inventory_master", "loose_quantity", "ALTER TABLE inventory_master ADD COLUMN loose_quantity INTEGER DEFAULT 0"],
+      ["inventory_master", "is_active", "ALTER TABLE inventory_master ADD COLUMN is_active INTEGER DEFAULT 1"],
+      ["inventory_master", "created_at", "ALTER TABLE inventory_master ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
+      ["inventory_master", "expiry_month", "ALTER TABLE inventory_master ADD COLUMN expiry_month TEXT"],
+      ["medicines", "max_stock_level", "ALTER TABLE medicines ADD COLUMN max_stock_level INTEGER DEFAULT NULL"],
+      ["medicines", "mrp", "ALTER TABLE medicines ADD COLUMN mrp REAL DEFAULT 0"],
+      ["medicines", "hsn_code", "ALTER TABLE medicines ADD COLUMN hsn_code TEXT"],
+      ["medicines", "schedule_type", "ALTER TABLE medicines ADD COLUMN schedule_type TEXT DEFAULT 'None'"],
+      ["medicines", "manufacturer", "ALTER TABLE medicines ADD COLUMN manufacturer TEXT"],
+      ["medicines", "category", "ALTER TABLE medicines ADD COLUMN category TEXT"],
+      ["medicines", "marketed_by", "ALTER TABLE medicines ADD COLUMN marketed_by TEXT"],
+      ["medicines", "legacy_id", "ALTER TABLE medicines ADD COLUMN legacy_id TEXT"],
+      ["medicines", "packaging", "ALTER TABLE medicines ADD COLUMN packaging TEXT"],
+      ["medicines", "item_type", "ALTER TABLE medicines ADD COLUMN item_type TEXT"],
+      ["medicines", "rack", "ALTER TABLE medicines ADD COLUMN rack TEXT"],
+      ["medicines", "generic_name", "ALTER TABLE medicines ADD COLUMN generic_name TEXT"],
+      ["medicines", "strength", "ALTER TABLE medicines ADD COLUMN strength TEXT"],
+      ["medicines", "rate", "ALTER TABLE medicines ADD COLUMN rate REAL DEFAULT 0"],
+      ["medicines", "pack_unit", "ALTER TABLE medicines ADD COLUMN pack_unit TEXT"],
+      ["medicines", "cgst_per", "ALTER TABLE medicines ADD COLUMN cgst_per REAL DEFAULT 0"],
+      ["medicines", "sgst_per", "ALTER TABLE medicines ADD COLUMN sgst_per REAL DEFAULT 0"],
+      ["medicines", "igst_per", "ALTER TABLE medicines ADD COLUMN igst_per REAL DEFAULT 0"],
+      ["medicines", "item_code", "ALTER TABLE medicines ADD COLUMN item_code TEXT"],
+      ["medicines", "metadata", "ALTER TABLE medicines ADD COLUMN metadata TEXT"],
+      ["medicines", "sell_price", "ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL"],
+      ["purchases", "cgst_value", "ALTER TABLE purchases ADD COLUMN cgst_value REAL DEFAULT 0"],
+      ["purchases", "sgst_value", "ALTER TABLE purchases ADD COLUMN sgst_value REAL DEFAULT 0"],
+      ["purchases", "igst_value", "ALTER TABLE purchases ADD COLUMN igst_value REAL DEFAULT 0"],
+      ["purchases", "roff", "ALTER TABLE purchases ADD COLUMN roff REAL DEFAULT 0"],
+      ["purchases", "status", "ALTER TABLE purchases ADD COLUMN status TEXT DEFAULT 'PUBLISHED'"],
+      ["purchases", "legacy_id", "ALTER TABLE purchases ADD COLUMN legacy_id TEXT"],
+      ["purchases", "business_date", "ALTER TABLE purchases ADD COLUMN business_date DATETIME"],
+      ["purchases", "app_invoice_no", "ALTER TABLE purchases ADD COLUMN app_invoice_no TEXT"],
+      ["purchases", "cn_amount", "ALTER TABLE purchases ADD COLUMN cn_amount REAL DEFAULT 0"],
+      ["purchases", "cn_number", "ALTER TABLE purchases ADD COLUMN cn_number TEXT DEFAULT NULL"],
+      ["purchases", "original_amount", "ALTER TABLE purchases ADD COLUMN original_amount REAL DEFAULT NULL"],
+      ["special_orders", "lifecycle_status", "ALTER TABLE special_orders ADD COLUMN lifecycle_status TEXT DEFAULT 'CREATED'"],
+      ["special_orders", "last_checked_at", "ALTER TABLE special_orders ADD COLUMN last_checked_at DATETIME"],
+      ["sales_invoices", "doctor_id", "ALTER TABLE sales_invoices ADD COLUMN doctor_id INTEGER"],
+      ["sales_invoices", "payment_medium", "ALTER TABLE sales_invoices ADD COLUMN payment_medium TEXT"],
+      ["sales_invoices", "roff", "ALTER TABLE sales_invoices ADD COLUMN roff REAL DEFAULT 0"],
+      ["sales_invoices", "cgst_value", "ALTER TABLE sales_invoices ADD COLUMN cgst_value REAL DEFAULT 0"],
+      ["sales_invoices", "sgst_value", "ALTER TABLE sales_invoices ADD COLUMN sgst_value REAL DEFAULT 0"],
+      ["sales_invoices", "igst_value", "ALTER TABLE sales_invoices ADD COLUMN igst_value REAL DEFAULT 0"],
+      ["sales_invoices", "legacy_id", "ALTER TABLE sales_invoices ADD COLUMN legacy_id TEXT"],
+      ["sales_invoices", "business_date", "ALTER TABLE sales_invoices ADD COLUMN business_date DATETIME"],
+      ["sales_invoices", "discount", "ALTER TABLE sales_invoices ADD COLUMN discount REAL DEFAULT 0"],
+      ["sales_invoices", "subtotal", "ALTER TABLE sales_invoices ADD COLUMN subtotal REAL DEFAULT 0"],
+      ["sales_invoices", "payment_status", "ALTER TABLE sales_invoices ADD COLUMN payment_status TEXT DEFAULT 'PAID'"],
+      ["sales_invoices", "net_profit", "ALTER TABLE sales_invoices ADD COLUMN net_profit REAL DEFAULT 0"],
+      ["sales_invoices", "updated_at", "ALTER TABLE sales_invoices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
+      ["sale_items", "mrp", "ALTER TABLE sale_items ADD COLUMN mrp REAL"],
+      ["sale_items", "batch_no", "ALTER TABLE sale_items ADD COLUMN batch_no TEXT"],
+      ["sale_items", "cgst_value", "ALTER TABLE sale_items ADD COLUMN cgst_value REAL DEFAULT 0"],
+      ["sale_items", "sgst_value", "ALTER TABLE sale_items ADD COLUMN sgst_value REAL DEFAULT 0"],
+      ["sale_items", "discount_per", "ALTER TABLE sale_items ADD COLUMN discount_per REAL DEFAULT 0"],
+      ["sale_items", "legacy_id", "ALTER TABLE sale_items ADD COLUMN legacy_id TEXT"],
+      ["sale_items", "loose_qty", "ALTER TABLE sale_items ADD COLUMN loose_qty INTEGER DEFAULT 0"],
+      ["returns", "cgst_value", "ALTER TABLE returns ADD COLUMN cgst_value REAL DEFAULT 0"],
+      ["returns", "sgst_value", "ALTER TABLE returns ADD COLUMN sgst_value REAL DEFAULT 0"],
+      ["returns", "igst_value", "ALTER TABLE returns ADD COLUMN igst_value REAL DEFAULT 0"],
+      ["returns", "distributor_id", "ALTER TABLE returns ADD COLUMN distributor_id INTEGER"],
+      ["returns", "legacy_id", "ALTER TABLE returns ADD COLUMN legacy_id TEXT"],
+      ["returns", "reason", "ALTER TABLE returns ADD COLUMN reason TEXT"],
+      ["returns", "return_invoice_id", "ALTER TABLE returns ADD COLUMN return_invoice_id TEXT DEFAULT NULL"],
+      ["returns", "return_sub_type", "ALTER TABLE returns ADD COLUMN return_sub_type TEXT CHECK(return_sub_type IN ('expiry', 'good')) DEFAULT 'good'"],
+      ["returns", "return_date_time", "ALTER TABLE returns ADD COLUMN return_date_time DATETIME DEFAULT NULL"],
+      ["returns", "raw_return_type", "ALTER TABLE returns ADD COLUMN raw_return_type TEXT"],
+      ["distributors", "legacy_id", "ALTER TABLE distributors ADD COLUMN legacy_id TEXT"],
+      ["distributors", "gstin", "ALTER TABLE distributors ADD COLUMN gstin TEXT"],
+      ["distributors", "address", "ALTER TABLE distributors ADD COLUMN address TEXT"],
+      ["distributors", "city", "ALTER TABLE distributors ADD COLUMN city TEXT"],
+      ["distributors", "email", "ALTER TABLE distributors ADD COLUMN email TEXT"],
+      ["distributors", "dl_no", "ALTER TABLE distributors ADD COLUMN dl_no TEXT"],
+      ["distributors", "phone", "ALTER TABLE distributors ADD COLUMN phone TEXT"],
+      ["distributors", "state_code", "ALTER TABLE distributors ADD COLUMN state_code TEXT"],
+      ["distributors", "preferred_file_format", "ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL"],
+      ["distributors", "mapping_config", "ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL"],
+      ["distributor_dispatch_reminders", "scheduled_send_time", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL"],
+      ["doctors", "send_daily_summary", "ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0"],
+      ["customers", "legacy_id", "ALTER TABLE customers ADD COLUMN legacy_id TEXT"],
+      ["customers", "age", "ALTER TABLE customers ADD COLUMN age TEXT"],
+      ["customers", "gender", "ALTER TABLE customers ADD COLUMN gender TEXT"],
+      ["customers", "credit_enabled", "ALTER TABLE customers ADD COLUMN credit_enabled INTEGER DEFAULT 0"],
+      ["customers", "credit_balance", "ALTER TABLE customers ADD COLUMN credit_balance REAL DEFAULT 0"],
+      ["customers", "created_at", "ALTER TABLE customers ADD COLUMN created_at DATETIME"],
+      ["customers", "credit_due_date", "ALTER TABLE customers ADD COLUMN credit_due_date TEXT"],
+      ["customers", "language", "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
+      ["patient_refills", "hold_for_stock", "ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0"],
+      ["patient_refills", "is_active", "ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1"],
+      ["patient_refills", "is_ready", "ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0"],
+      ["patient_refills", "acknowledged", "ALTER TABLE patient_refills ADD COLUMN acknowledged INTEGER DEFAULT 0"],
+      ["patient_refills", "ordering_triggered", "ALTER TABLE patient_refills ADD COLUMN ordering_triggered INTEGER DEFAULT 0"],
+      ["patient_refills", "quick_bill_id", "ALTER TABLE patient_refills ADD COLUMN quick_bill_id INTEGER DEFAULT NULL"],
+      ["patient_refills", "stock_verified_override", "ALTER TABLE patient_refills ADD COLUMN stock_verified_override INTEGER DEFAULT 0"],
+      ["patient_refills", "customer_id", "ALTER TABLE patient_refills ADD COLUMN customer_id INTEGER DEFAULT NULL"],
+      ["patient_refills", "quantity_needed", "ALTER TABLE patient_refills ADD COLUMN quantity_needed INTEGER DEFAULT 3"],
+      ["patient_refills", "language", "ALTER TABLE patient_refills ADD COLUMN language TEXT DEFAULT 'en'"],
+      ["patient_refills", "reminder_status", "ALTER TABLE patient_refills ADD COLUMN reminder_status TEXT DEFAULT 'NOT_SENT'"],
+      ["patient_refills", "reminder_sent_at", "ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL"],
+      ["patient_refills", "reminder_job_id", "ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL"],
+      ["patient_refills", "reminder_occurrence_date", "ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL"],
+      ["special_orders", "customer_id", "ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL"],
+      ["special_orders", "date", "ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP"],
+      ["special_orders", "product", "ALTER TABLE special_orders ADD COLUMN product TEXT"],
+      ["special_orders", "medicine_name", "ALTER TABLE special_orders ADD COLUMN medicine_name TEXT"],
+      ["special_orders", "qty", "ALTER TABLE special_orders ADD COLUMN qty INTEGER DEFAULT 1"],
+      ["special_orders", "priority", "ALTER TABLE special_orders ADD COLUMN priority TEXT DEFAULT 'Normal'"],
+      ["special_orders", "notified", "ALTER TABLE special_orders ADD COLUMN notified INTEGER DEFAULT 0"],
+      ["special_orders", "pharmarack_mapped", "ALTER TABLE special_orders ADD COLUMN pharmarack_mapped INTEGER DEFAULT 0"],
+      ["special_orders", "pharmarack_distributor", "ALTER TABLE special_orders ADD COLUMN pharmarack_distributor TEXT"],
+      ["special_orders", "pharmarack_rate", "ALTER TABLE special_orders ADD COLUMN pharmarack_rate REAL"],
+      ["special_orders", "pharmarack_mrp", "ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL"],
+      ["special_orders", "pharmarack_scheme", "ALTER TABLE special_orders ADD COLUMN pharmarack_scheme TEXT"],
+      ["special_orders", "advance_payment", "ALTER TABLE special_orders ADD COLUMN advance_payment REAL DEFAULT 0.0"],
+      ["special_orders", "converted_to_refill_id", "ALTER TABLE special_orders ADD COLUMN converted_to_refill_id INTEGER DEFAULT NULL"],
+      ["special_orders", "source_refill_id", "ALTER TABLE special_orders ADD COLUMN source_refill_id INTEGER DEFAULT NULL"],
+      ["special_orders", "source", "ALTER TABLE special_orders ADD COLUMN source TEXT"],
+      ["special_orders", "cart_add_error", "ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL"],
+      ["special_orders", "notification_count", "ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0"],
+      ["held_bills", "invoice_no", "ALTER TABLE held_bills ADD COLUMN invoice_no TEXT"],
+      ["held_bills", "temp_label", "ALTER TABLE held_bills ADD COLUMN temp_label TEXT"],
+      ["held_bills", "patient_name", "ALTER TABLE held_bills ADD COLUMN patient_name TEXT"],
+      ["held_bills", "patient_phone", "ALTER TABLE held_bills ADD COLUMN patient_phone TEXT"],
+      ["held_bills", "doctor_name", "ALTER TABLE held_bills ADD COLUMN doctor_name TEXT"],
+      ["held_bills", "discount", "ALTER TABLE held_bills ADD COLUMN discount REAL DEFAULT 0"],
+      ["held_bills", "remarks", "ALTER TABLE held_bills ADD COLUMN remarks TEXT"],
+      ["held_bills", "cart_data", "ALTER TABLE held_bills ADD COLUMN cart_data TEXT"],
+      ["held_bills", "created_at", "ALTER TABLE held_bills ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"],
+      ["held_bills", "date", "ALTER TABLE held_bills ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP"],
+      ["held_bills", "customer_id", "ALTER TABLE held_bills ADD COLUMN customer_id INTEGER DEFAULT NULL"],
+      ["medicines", "enrichment_status", "ALTER TABLE medicines ADD COLUMN enrichment_status TEXT DEFAULT NULL"],
+      ["medicines", "enrichment_confidence", "ALTER TABLE medicines ADD COLUMN enrichment_confidence REAL DEFAULT NULL"],
+      ["medicines", "pack_size", "ALTER TABLE medicines ADD COLUMN pack_size INTEGER"],
+      ["medicines", "source", "ALTER TABLE medicines ADD COLUMN source TEXT DEFAULT 'manual'"],
+      ["medicines", "possible_duplicate_of", "ALTER TABLE medicines ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL"],
+      ["medicines", "therapeutic", "ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL"],
+      ["medicines", "sub_therapeutic", "ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL"],
+      ["medicines", "short_code", "ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL"],
+      ["medicines", "ucode", "ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL"],
+      ["medicines", "disable_auto_barcode", "ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0"],
+      ["medicines", "tb_medicine", "ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0"],
+      // stock_ledger's full definition (line ~1280) never applies on top of the earlier
+      // CREATE TABLE IF NOT EXISTS (line ~329) — these three columns were silently missing
+      // on every install, making every recordStockLedger() call throw (swallowed by its own catch).
+      ["stock_ledger", "loose_quantity", "ALTER TABLE stock_ledger ADD COLUMN loose_quantity INTEGER DEFAULT 0"],
+      ["stock_ledger", "transaction_id", "ALTER TABLE stock_ledger ADD COLUMN transaction_id TEXT"],
+      ["stock_ledger", "business_date", "ALTER TABLE stock_ledger ADD COLUMN business_date DATETIME"],
+      ["distributor_dispatch_reminders", "order_source", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN order_source TEXT DEFAULT 'pharmarack'"],
+      ["distributor_dispatch_reminders", "email_received_at", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN email_received_at DATETIME"],
+      // ponytail: source_type records where a staged purchase originated (e.g. 'email', 'telegram')
+      // without mixing that into the distributor identity field
+      ["staged_purchases", "source_type", "ALTER TABLE staged_purchases ADD COLUMN source_type TEXT DEFAULT NULL"],
+      ["refill_fulfillments", "cycle_due_date", "ALTER TABLE refill_fulfillments ADD COLUMN cycle_due_date TEXT"],
+      ["refill_fulfillments", "next_due_date", "ALTER TABLE refill_fulfillments ADD COLUMN next_due_date TEXT"],
+      ["refill_fulfillments", "fulfilled_via", "ALTER TABLE refill_fulfillments ADD COLUMN fulfilled_via TEXT"],
+      ["refill_fulfillments", "notes", "ALTER TABLE refill_fulfillments ADD COLUMN notes TEXT"],
+      // catalog_jobs: the base CREATE (id/file_path/status/created_at) predates the whole
+      // OCR pipeline — worker + routes read/write these 11 columns on EVERY upload/review,
+      // so fresh installs AND long-lived DBs crashed with "no such column" (bug found via
+      // catalogPipeline/duplicateCatalog suites, 2026-08-25). Mirrors the stock_ledger case.
+      ["catalog_jobs", "original_filename", "ALTER TABLE catalog_jobs ADD COLUMN original_filename TEXT"],
+      ["catalog_jobs", "extracted_data", "ALTER TABLE catalog_jobs ADD COLUMN extracted_data TEXT"],
+      ["catalog_jobs", "mapping_config", "ALTER TABLE catalog_jobs ADD COLUMN mapping_config TEXT"],
+      ["catalog_jobs", "data_filters", "ALTER TABLE catalog_jobs ADD COLUMN data_filters TEXT"],
+      ["catalog_jobs", "error_log", "ALTER TABLE catalog_jobs ADD COLUMN error_log TEXT"],
+      ["catalog_jobs", "progress", "ALTER TABLE catalog_jobs ADD COLUMN progress INTEGER DEFAULT 0"],
+      ["catalog_jobs", "total_count", "ALTER TABLE catalog_jobs ADD COLUMN total_count INTEGER DEFAULT 0"],
+      ["catalog_jobs", "processed_count", "ALTER TABLE catalog_jobs ADD COLUMN processed_count INTEGER DEFAULT 0"],
+      ["catalog_jobs", "new_count", "ALTER TABLE catalog_jobs ADD COLUMN new_count INTEGER DEFAULT 0"],
+      ["catalog_jobs", "existing_count", "ALTER TABLE catalog_jobs ADD COLUMN existing_count INTEGER DEFAULT 0"],
+      ["catalog_jobs", "duplicate_count", "ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0"],
+      ["catalog_jobs", "matched_previous_job_id", "ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL"],
+      ["catalog_jobs", "newly_detected_columns", "ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT"],
+      // Multi-Store & Website Order Foundation (Schema v47)
+      ["special_orders", "store_id", "ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["special_orders", "customer_order_source", "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
+      ["special_orders", "prescription_url", "ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL"],
+      ["special_orders", "product_image_url", "ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL"],
+      ["special_orders", "delivery_status", "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
+      ["special_orders", "delivered_at", "ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL"],
+      ["special_orders", "return_window_until", "ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL"],
+      ["special_orders", "return_status", "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
+      ["special_orders", "return_override_reason", "ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL"],
+      ["special_orders", "return_override_by", "ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL"],
+      ["special_orders", "return_override_at", "ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL"],
+      ["special_orders", "sync_id", "ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL"],
+      ["special_orders", "sync_status", "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
+      ["special_orders", "last_synced_at", "ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL"],
+      ["inventory_master", "store_id", "ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["purchases", "store_id", "ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["sales_invoices", "store_id", "ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["returns", "store_id", "ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["patient_refills", "store_id", "ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["dispatch_orders", "store_id", "ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["held_bills", "store_id", "ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["staged_sales", "store_id", "ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["staged_purchases", "store_id", "ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["whatsapp_send_queue", "store_id", "ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["distributor_dispatch_reminders", "store_id", "ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["pharmarack_distributor_mappings", "store_id", "ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1"],
+      ["delivery_boys", "store_id", "ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1"],
+      // Online Order Payment Lifecycle (Schema v49)
+      ["special_orders", "payment_status", "ALTER TABLE special_orders ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'"],
+      ["special_orders", "payment_reference", "ALTER TABLE special_orders ADD COLUMN payment_reference TEXT"],
+      ["special_orders", "payment_confirmed_at", "ALTER TABLE special_orders ADD COLUMN payment_confirmed_at DATETIME"],
+      ["special_orders", "payment_confirmed_by", "ALTER TABLE special_orders ADD COLUMN payment_confirmed_by TEXT"],
+      ["special_orders", "pharmacy_verification_status", "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
+      ["special_orders", "pharmacy_verified_by", "ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT"],
+      ["special_orders", "pharmacy_verified_at", "ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME"],
+      ["sales_invoices", "online_order_id", "ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER"],
+      // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
+      ["catalog_images", "previous_image_url", "ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT"],
+      ["catalog_images", "next_review_at", "ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME"],
+      ["catalog_images", "skip_reason", "ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT"],
+      ["catalog_images", "locked_by", "ALTER TABLE catalog_images ADD COLUMN locked_by TEXT"],
+      ["catalog_images", "locked_at", "ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME"],
+      ["catalog_images", "verification_version", "ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1"],
+      // Filename auto-match columns
+      ["catalog_images", "match_source", "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
+      ["catalog_images", "match_confidence", "ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0"]
+    ];
+    for (const [table, col, stmt] of alterStatements) {
+      try {
+        const columns = await db2.all(`PRAGMA table_info(${table})`);
+        const exists = columns.some((c) => c.name.toLowerCase() === col.toLowerCase());
+        if (columns.length > 0 && !exists) {
+          await db2.run(stmt);
+        }
+      } catch (_e) {
       }
-    } catch (_e) {
     }
-  }
-  try {
-    const invColsForExpiryMonth = await db2.all("PRAGMA table_info(inventory_master)");
-    if (invColsForExpiryMonth.some((c) => c.name === "expiry_month")) {
-      const monthExpr = (ref) => `CASE
+    try {
+      const invColsForExpiryMonth = await db2.all("PRAGMA table_info(inventory_master)");
+      if (invColsForExpiryMonth.some((c) => c.name === "expiry_month")) {
+        const monthExpr = (ref) => `CASE
         WHEN ${ref} IS NULL OR TRIM(${ref}) = '' THEN NULL
         WHEN length(${ref}) = 5 THEN '20' || substr(${ref}, 4, 2) || '-' || substr(${ref}, 1, 2)
         WHEN length(${ref}) = 7 AND ${ref} LIKE '%/%' THEN substr(${ref}, 4, 4) || '-' || substr(${ref}, 1, 2)
         WHEN ${ref} LIKE '____-__%' THEN substr(${ref}, 1, 7)
         ELSE NULL
       END`;
-      await db2.exec(`
+        await db2.exec(`
         CREATE TRIGGER IF NOT EXISTS trg_inventory_expiry_month_ins
         AFTER INSERT ON inventory_master
         WHEN NEW.expiry_date IS NOT NULL
@@ -9715,132 +10210,132 @@ async function ensureSchema(dbPath) {
           WHERE id = NEW.id;
         END;
       `);
-      await db2.run(`UPDATE inventory_master SET expiry_month = ${monthExpr("expiry_date")} WHERE expiry_month IS NULL OR expiry_month = ''`);
-      await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_expiry_month ON inventory_master (expiry_month)");
-    }
-  } catch (err) {
-    console.warn("[Database] expiry_month trigger/backfill warning:", err);
-  }
-  try {
-    const { backfillInventoryActiveFlags: backfillInventoryActiveFlags2, deactivateExpiredInventory: deactivateExpiredInventory2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
-    const invCols = await db2.all("PRAGMA table_info(inventory_master)");
-    if (invCols.some((c) => c.name === "is_active")) {
-      await backfillInventoryActiveFlags2(db2);
-      await deactivateExpiredInventory2(db2);
-    }
-  } catch (err) {
-    console.warn("[Database] inventory is_active backfill warning:", err);
-  }
-  const dropStatements = [
-    ["medicines", "manufactured_by", "ALTER TABLE medicines DROP COLUMN manufactured_by"],
-    ["medicines", "cgst", "ALTER TABLE medicines DROP COLUMN cgst"],
-    ["medicines", "sgst", "ALTER TABLE medicines DROP COLUMN sgst"],
-    ["medicines", "igst", "ALTER TABLE medicines DROP COLUMN igst"],
-    ["inventory_master", "storage_location_id", "ALTER TABLE inventory_master DROP COLUMN storage_location_id"],
-    ["held_bills", "data", "ALTER TABLE held_bills DROP COLUMN data"]
-  ];
-  for (const [table, col, stmt] of dropStatements) {
-    try {
-      const columns = await db2.all(`PRAGMA table_info(${table})`);
-      const exists = columns.some((c) => c.name.toLowerCase() === col.toLowerCase());
-      if (exists) {
-        await db2.run(stmt);
+        await db2.run(`UPDATE inventory_master SET expiry_month = ${monthExpr("expiry_date")} WHERE expiry_month IS NULL OR expiry_month = ''`);
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_expiry_month ON inventory_master (expiry_month)");
       }
+    } catch (err) {
+      console.warn("[Database] expiry_month trigger/backfill warning:", err);
+    }
+    try {
+      const { backfillInventoryActiveFlags: backfillInventoryActiveFlags2, deactivateExpiredInventory: deactivateExpiredInventory2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
+      const invCols = await db2.all("PRAGMA table_info(inventory_master)");
+      if (invCols.some((c) => c.name === "is_active")) {
+        await backfillInventoryActiveFlags2(db2);
+        await deactivateExpiredInventory2(db2);
+      }
+    } catch (err) {
+      console.warn("[Database] inventory is_active backfill warning:", err);
+    }
+    const dropStatements = [
+      ["medicines", "manufactured_by", "ALTER TABLE medicines DROP COLUMN manufactured_by"],
+      ["medicines", "cgst", "ALTER TABLE medicines DROP COLUMN cgst"],
+      ["medicines", "sgst", "ALTER TABLE medicines DROP COLUMN sgst"],
+      ["medicines", "igst", "ALTER TABLE medicines DROP COLUMN igst"],
+      ["inventory_master", "storage_location_id", "ALTER TABLE inventory_master DROP COLUMN storage_location_id"],
+      ["held_bills", "data", "ALTER TABLE held_bills DROP COLUMN data"]
+    ];
+    for (const [table, col, stmt] of dropStatements) {
+      try {
+        const columns = await db2.all(`PRAGMA table_info(${table})`);
+        const exists = columns.some((c) => c.name.toLowerCase() === col.toLowerCase());
+        if (exists) {
+          await db2.run(stmt);
+        }
+      } catch (_e) {
+      }
+    }
+    try {
+      await db2.run("DELETE FROM app_settings WHERE key IN ('delivery_boy_whatsapp', 'dinesh_whatsapp_number')");
     } catch (_e) {
     }
-  }
-  try {
-    await db2.run("DELETE FROM app_settings WHERE key IN ('delivery_boy_whatsapp', 'dinesh_whatsapp_number')");
-  } catch (_e) {
-  }
-  try {
-    const { isValidCustomerName: isValidCustomerName3 } = await Promise.resolve().then(() => (init_nameNormalizer(), nameNormalizer_exports));
-    const unlinkedRefills = await db2.all('SELECT id, patient_name, patient_phone FROM patient_refills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
-    for (const refill of unlinkedRefills) {
-      const phoneClean = refill.patient_phone.trim();
-      let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phoneClean]);
-      if (!cust && refill.patient_name && isValidCustomerName3(refill.patient_name)) {
-        cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [refill.patient_name]);
-      }
-      if (!cust && phoneClean && refill.patient_name && isValidCustomerName3(refill.patient_name)) {
-        const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [refill.patient_name.trim(), phoneClean]);
-        cust = { id: res.lastID };
-      }
-      if (cust) {
-        await db2.run("UPDATE patient_refills SET customer_id = ? WHERE id = ?", [cust.id, refill.id]);
-      }
-    }
-    const specialOrdersTableExists = await db2.get("SELECT name FROM sqlite_master WHERE type='table' AND name='special_orders'");
-    if (specialOrdersTableExists) {
-      const unlinkedOrders = await db2.all('SELECT id, requester, phone FROM special_orders WHERE customer_id IS NULL AND phone IS NOT NULL AND phone != ""');
-      for (const order of unlinkedOrders) {
-        const phoneClean = (order.phone || "").trim();
+    try {
+      const { isValidCustomerName: isValidCustomerName3 } = await Promise.resolve().then(() => (init_nameNormalizer(), nameNormalizer_exports));
+      const unlinkedRefills = await db2.all('SELECT id, patient_name, patient_phone FROM patient_refills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
+      for (const refill of unlinkedRefills) {
+        const phoneClean = refill.patient_phone.trim();
         let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phoneClean]);
-        if (!cust && order.requester && isValidCustomerName3(order.requester)) {
-          cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [order.requester]);
+        if (!cust && refill.patient_name && isValidCustomerName3(refill.patient_name)) {
+          cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [refill.patient_name]);
         }
-        if (!cust && phoneClean && order.requester && isValidCustomerName3(order.requester)) {
-          const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [order.requester.trim(), phoneClean]);
+        if (!cust && phoneClean && refill.patient_name && isValidCustomerName3(refill.patient_name)) {
+          const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [refill.patient_name.trim(), phoneClean]);
           cust = { id: res.lastID };
         }
         if (cust) {
-          await db2.run("UPDATE special_orders SET customer_id = ? WHERE id = ?", [cust.id, order.id]);
+          await db2.run("UPDATE patient_refills SET customer_id = ? WHERE id = ?", [cust.id, refill.id]);
         }
       }
-    }
-    const unlinkedBills = await db2.all('SELECT id, patient_name, patient_phone FROM held_bills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
-    for (const bill of unlinkedBills) {
-      const phoneClean = (bill.patient_phone || "").trim();
-      let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phoneClean]);
-      if (!cust && bill.patient_name && isValidCustomerName3(bill.patient_name)) {
-        cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [bill.patient_name]);
+      const specialOrdersTableExists = await db2.get("SELECT name FROM sqlite_master WHERE type='table' AND name='special_orders'");
+      if (specialOrdersTableExists) {
+        const unlinkedOrders = await db2.all('SELECT id, requester, phone FROM special_orders WHERE customer_id IS NULL AND phone IS NOT NULL AND phone != ""');
+        for (const order of unlinkedOrders) {
+          const phoneClean = (order.phone || "").trim();
+          let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phoneClean]);
+          if (!cust && order.requester && isValidCustomerName3(order.requester)) {
+            cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [order.requester]);
+          }
+          if (!cust && phoneClean && order.requester && isValidCustomerName3(order.requester)) {
+            const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [order.requester.trim(), phoneClean]);
+            cust = { id: res.lastID };
+          }
+          if (cust) {
+            await db2.run("UPDATE special_orders SET customer_id = ? WHERE id = ?", [cust.id, order.id]);
+          }
+        }
       }
-      if (!cust && phoneClean && bill.patient_name && isValidCustomerName3(bill.patient_name)) {
-        const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [bill.patient_name.trim(), phoneClean]);
-        cust = { id: res.lastID };
+      const unlinkedBills = await db2.all('SELECT id, patient_name, patient_phone FROM held_bills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
+      for (const bill of unlinkedBills) {
+        const phoneClean = (bill.patient_phone || "").trim();
+        let cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phoneClean]);
+        if (!cust && bill.patient_name && isValidCustomerName3(bill.patient_name)) {
+          cust = await db2.get("SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [bill.patient_name]);
+        }
+        if (!cust && phoneClean && bill.patient_name && isValidCustomerName3(bill.patient_name)) {
+          const res = await db2.run("INSERT INTO customers (name, phone) VALUES (?, ?)", [bill.patient_name.trim(), phoneClean]);
+          cust = { id: res.lastID };
+        }
+        if (cust) {
+          await db2.run("UPDATE held_bills SET customer_id = ? WHERE id = ?", [cust.id, bill.id]);
+        }
       }
-      if (cust) {
-        await db2.run("UPDATE held_bills SET customer_id = ? WHERE id = ?", [cust.id, bill.id]);
-      }
-    }
-    await db2.run(`
+      await db2.run(`
       UPDATE distributors SET
         phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
         contact = CASE WHEN contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%' THEN '' ELSE contact END
       WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
          OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
     `);
-    await db2.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
-    await db2.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
-    await db2.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
-    await db2.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
-    await db2.run(`
+      await db2.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
+      await db2.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
+      await db2.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
+      await db2.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
+      await db2.run(`
       UPDATE distributors 
       SET contact = phone 
       WHERE phone IS NOT NULL AND phone != '' AND (contact IS NULL OR contact != phone)
     `);
-  } catch (err) {
-    console.warn("Customer contact backfill warning:", err);
-  }
-  try {
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_item_code ON medicines (item_code);");
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_quantity ON inventory_master (quantity);");
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);");
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0");
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);");
-    await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_manufacturer ON medicines (manufacturer);");
-    const locCount = await db2.get("SELECT COUNT(*) as c FROM storage_locations");
-    if (!locCount || locCount.c === 0) {
-      await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Main Store', 'MAIN', 'main_store', 'Primary Pharmacy Counter & Shelves', 1, 1)");
-      await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Godown 1', 'GDN1', 'godown', 'Main Storage Godown', 0, 1)");
-      await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack A1', 'RA1', 'rack', 'Front Counter Rack A1', 0, 1)");
-      await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack B1', 'RB1', 'rack', 'Medicine Rack B1', 0, 1)");
-      await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Cold Storage', 'COLD', 'cold_storage', 'Refrigerated Items', 0, 1)");
+    } catch (err) {
+      console.warn("Customer contact backfill warning:", err);
     }
-  } catch (err) {
-    console.warn("Failed to create index idx_medicines_item_code or custom optimization indexes:", err);
-  }
-  await db2.exec(`
+    try {
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_item_code ON medicines (item_code);");
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_quantity ON inventory_master (quantity);");
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);");
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0");
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);");
+      await db2.run("CREATE INDEX IF NOT EXISTS idx_medicines_manufacturer ON medicines (manufacturer);");
+      const locCount = await db2.get("SELECT COUNT(*) as c FROM storage_locations");
+      if (!locCount || locCount.c === 0) {
+        await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Main Store', 'MAIN', 'main_store', 'Primary Pharmacy Counter & Shelves', 1, 1)");
+        await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Godown 1', 'GDN1', 'godown', 'Main Storage Godown', 0, 1)");
+        await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack A1', 'RA1', 'rack', 'Front Counter Rack A1', 0, 1)");
+        await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack B1', 'RB1', 'rack', 'Medicine Rack B1', 0, 1)");
+        await db2.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Cold Storage', 'COLD', 'cold_storage', 'Refrigerated Items', 0, 1)");
+      }
+    } catch (err) {
+      console.warn("Failed to create index idx_medicines_item_code or custom optimization indexes:", err);
+    }
+    await db2.exec(`
     CREATE TABLE IF NOT EXISTS staged_medicine_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_id INTEGER,
@@ -10249,15 +10744,15 @@ async function ensureSchema(dbPath) {
       scheduled_at INTEGER
     );
   `);
-  try {
-    const pCols = await db2.all("PRAGMA table_info(pending_whatsapp_jobs)");
-    const pNames = pCols.map((c) => c.name);
-    if (!pNames.includes("scheduled_at")) {
-      await db2.run("ALTER TABLE pending_whatsapp_jobs ADD COLUMN scheduled_at INTEGER");
+    try {
+      const pCols = await db2.all("PRAGMA table_info(pending_whatsapp_jobs)");
+      const pNames = pCols.map((c) => c.name);
+      if (!pNames.includes("scheduled_at")) {
+        await db2.run("ALTER TABLE pending_whatsapp_jobs ADD COLUMN scheduled_at INTEGER");
+      }
+    } catch (err) {
     }
-  } catch (err) {
-  }
-  await db2.exec(`
+    await db2.exec(`
     -- Expiry returns tracking and credit notes reconciliation
     CREATE TABLE IF NOT EXISTS expiry_returns_tracking (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10690,132 +11185,132 @@ async function ensureSchema(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
     CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
   `);
-  await ensureMedicinesFts(db2);
-  try {
-    const storeCount = await db2.get("SELECT COUNT(*) as count FROM stores");
-    if (!storeCount || storeCount.count === 0) {
-      await db2.run(
-        "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
-      );
-    }
-  } catch (err) {
-    console.warn("[Database Schema] Default store seed warning:", err);
-  }
-  await db2.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_host', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_port', '993')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_tls', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('login_password', 'admin123')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('master_password', 'master999')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('connection_mode', 'hybrid')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('bluetooth_com_port', 'COM1')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_enabled', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_limit', '10')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_enabled', 'false')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_token', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_chat_id', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_remote_mode', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_username', 'admin')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_password', 'admin123')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_unique_key', 'KEY-ADM-837261')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_notifications_enabled', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_delete_old_archives', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_manual_access', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_is_paused', 'false')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_version', 'unknown')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_enabled', 'false')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_phone_number_id', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_window_offset', '0')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
-  const doctorAlters = [
-    `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
-    `ALTER TABLE doctors ADD COLUMN speciality TEXT`
-  ];
-  for (const stmt of doctorAlters) {
+    await ensureMedicinesFts(db2);
     try {
-      await db2.run(stmt);
-    } catch (_e) {
+      const storeCount = await db2.get("SELECT COUNT(*) as count FROM stores");
+      if (!storeCount || storeCount.count === 0) {
+        await db2.run(
+          "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
+        );
+      }
+    } catch (err) {
+      console.warn("[Database Schema] Default store seed warning:", err);
     }
-  }
-  if (process.env.NODE_ENV !== "test" && !process.env.JEST_WORKER_ID) {
-    try {
-      (async () => {
-        const dbPathLocal = dbPath;
-        await new Promise((resolve) => setTimeout(resolve, 5e3));
-        const { open: open6 } = await import("sqlite");
-        const { default: sqlite37 } = await import("sqlite3");
-        const backgroundDb = await open6({ filename: dbPathLocal, driver: sqlite37.Database });
-        try {
-          const unpopulated = await backgroundDb.all("SELECT uid, subject, body, from_addr FROM emails WHERE is_order = 1 AND medicine_names IS NULL");
-          if (unpopulated.length > 0) {
-            console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
-            const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-            const fs54 = await import("fs");
-            for (const email of unpopulated) {
-              try {
-                const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
-                const parsedItems = [];
-                for (const att of attachments) {
-                  if (att.local_path && fs54.existsSync(att.local_path)) {
-                    try {
-                      const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
-                      if (resParse && resParse.success && resParse.items) {
-                        parsedItems.push(...resParse.items);
+    await db2.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_host', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_port', '993')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_tls', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('login_password', 'admin123')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('master_password', 'master999')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('connection_mode', 'hybrid')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('bluetooth_com_port', 'COM1')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_limit', '10')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_token', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_chat_id', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_remote_mode', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_username', 'admin')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_password', 'admin123')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_unique_key', 'KEY-ADM-837261')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_notifications_enabled', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_delete_old_archives', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_manual_access', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_is_paused', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_version', 'unknown')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_enabled', 'false')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_phone_number_id', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_window_offset', '0')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
+    const doctorAlters = [
+      `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
+      `ALTER TABLE doctors ADD COLUMN speciality TEXT`
+    ];
+    for (const stmt of doctorAlters) {
+      try {
+        await db2.run(stmt);
+      } catch (_e) {
+      }
+    }
+    if (process.env.NODE_ENV !== "test" && !process.env.JEST_WORKER_ID) {
+      try {
+        (async () => {
+          const dbPathLocal = dbPath;
+          await new Promise((resolve) => setTimeout(resolve, 5e3));
+          const { open: open6 } = await import("sqlite");
+          const { default: sqlite37 } = await import("sqlite3");
+          const backgroundDb = await open6({ filename: dbPathLocal, driver: sqlite37.Database });
+          try {
+            const unpopulated = await backgroundDb.all("SELECT uid, subject, body, from_addr FROM emails WHERE is_order = 1 AND medicine_names IS NULL");
+            if (unpopulated.length > 0) {
+              console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
+              const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
+              const fs56 = await import("fs");
+              for (const email of unpopulated) {
+                try {
+                  const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
+                  const parsedItems = [];
+                  for (const att of attachments) {
+                    if (att.local_path && fs56.existsSync(att.local_path)) {
+                      try {
+                        const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
+                        if (resParse && resParse.success && resParse.items) {
+                          parsedItems.push(...resParse.items);
+                        }
+                      } catch (pe) {
                       }
-                    } catch (pe) {
                     }
                   }
-                }
-                if (parsedItems.length === 0) {
-                  const orderInfo = await emailService2.extractOrderInfo({
-                    subject: email.subject || "",
-                    body: email.body || "",
-                    from: email.from_addr || "",
-                    attachments: []
-                  });
-                  for (const med of orderInfo.medicines) {
-                    parsedItems.push({ name: med.name });
+                  if (parsedItems.length === 0) {
+                    const orderInfo = await emailService2.extractOrderInfo({
+                      subject: email.subject || "",
+                      body: email.body || "",
+                      from: email.from_addr || "",
+                      attachments: []
+                    });
+                    for (const med of orderInfo.medicines) {
+                      parsedItems.push({ name: med.name });
+                    }
                   }
+                  const medNames = Array.from(new Set(parsedItems.map((i) => cleanMedicineName3(i.name)).filter((n) => Boolean(n) && !isNonMedicineNoise2(n))));
+                  await backgroundDb.run("UPDATE emails SET medicine_names = ? WHERE uid = ?", [JSON.stringify(medNames), email.uid]);
+                } catch (err) {
+                  console.error(`[Database Migration] Failed to populate medicine names for email ${email.uid}:`, err);
                 }
-                const medNames = Array.from(new Set(parsedItems.map((i) => cleanMedicineName3(i.name)).filter((n) => Boolean(n) && !isNonMedicineNoise2(n))));
-                await backgroundDb.run("UPDATE emails SET medicine_names = ? WHERE uid = ?", [JSON.stringify(medNames), email.uid]);
-              } catch (err) {
-                console.error(`[Database Migration] Failed to populate medicine names for email ${email.uid}:`, err);
               }
+              console.log("[Database Migration] Background medicine name population completed.");
             }
-            console.log("[Database Migration] Background medicine name population completed.");
+          } catch (err) {
+            console.warn("[Database Migration] Failed in background query:", err);
+          } finally {
+            await backgroundDb.close();
           }
-        } catch (err) {
-          console.warn("[Database Migration] Failed in background query:", err);
-        } finally {
-          await backgroundDb.close();
-        }
-      })();
-    } catch (err) {
-      console.warn("[Database Migration] Failed to initialize background runner:", err);
+        })();
+      } catch (err) {
+        console.warn("[Database Migration] Failed to initialize background runner:", err);
+      }
     }
-  }
-  try {
-    console.log("[Database Healing] Checking sales_invoices subtotals and discounts...");
-    const subtotalResult = await db2.run(`
+    try {
+      console.log("[Database Healing] Checking sales_invoices subtotals and discounts...");
+      const subtotalResult = await db2.run(`
       UPDATE sales_invoices
       SET subtotal = COALESCE(NULLIF(
         (
@@ -10830,39 +11325,39 @@ async function ensureSchema(dbPath) {
         ), 0), total_amount)
       WHERE subtotal IS NULL OR subtotal = 0;
     `);
-    if (subtotalResult && subtotalResult.changes !== void 0 && subtotalResult.changes > 0) {
-      console.log(`[Database Healing] Backfilled subtotals for ${subtotalResult.changes} invoices.`);
-    }
-    const discountResult = await db2.run(`
+      if (subtotalResult && subtotalResult.changes !== void 0 && subtotalResult.changes > 0) {
+        console.log(`[Database Healing] Backfilled subtotals for ${subtotalResult.changes} invoices.`);
+      }
+      const discountResult = await db2.run(`
       UPDATE sales_invoices
       SET discount = ROUND(subtotal - total_amount)
       WHERE subtotal > total_amount AND (discount IS NULL OR discount = 0);
     `);
-    if (discountResult && discountResult.changes !== void 0 && discountResult.changes > 0) {
-      console.log(`[Database Healing] Backfilled discounts for ${discountResult.changes} invoices.`);
-    }
-    await db2.run(`
+      if (discountResult && discountResult.changes !== void 0 && discountResult.changes > 0) {
+        console.log(`[Database Healing] Backfilled discounts for ${discountResult.changes} invoices.`);
+      }
+      await db2.run(`
       UPDATE sales_invoices
       SET discount = 0
       WHERE discount IS NULL;
     `);
-  } catch (healErr) {
-    console.warn("[Database Healing] Non-critical warning, failed to run database healing checks:", healErr);
-  }
-  try {
-    const distsWithEmail = await db2.all("SELECT id, email FROM distributors WHERE email IS NOT NULL AND email != ''");
-    const { extractCleanEmail: extractCleanEmail2 } = await Promise.resolve().then(() => (init_emailSanitizer(), emailSanitizer_exports));
-    for (const dist of distsWithEmail) {
-      const clean = extractCleanEmail2(dist.email);
-      if (clean && clean !== dist.email) {
-        console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean}"`);
-        await db2.run("UPDATE distributors SET email = ? WHERE id = ?", [clean, dist.id]);
-      }
+    } catch (healErr) {
+      console.warn("[Database Healing] Non-critical warning, failed to run database healing checks:", healErr);
     }
-  } catch (distEmailErr) {
-    console.warn("[Database Migration] Failed to clean distributor emails in DB:", distEmailErr);
-  }
-  await db2.run(`
+    try {
+      const distsWithEmail = await db2.all("SELECT id, email FROM distributors WHERE email IS NOT NULL AND email != ''");
+      const { extractCleanEmail: extractCleanEmail2 } = await Promise.resolve().then(() => (init_emailSanitizer(), emailSanitizer_exports));
+      for (const dist of distsWithEmail) {
+        const clean = extractCleanEmail2(dist.email);
+        if (clean && clean !== dist.email) {
+          console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean}"`);
+          await db2.run("UPDATE distributors SET email = ? WHERE id = ?", [clean, dist.id]);
+        }
+      }
+    } catch (distEmailErr) {
+      console.warn("[Database Migration] Failed to clean distributor emails in DB:", distEmailErr);
+    }
+    await db2.run(`
     CREATE TABLE IF NOT EXISTS whatsapp_send_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       number TEXT NOT NULL,
@@ -10876,72 +11371,72 @@ async function ensureSchema(dbPath) {
       target_name TEXT
     )
   `);
-  try {
-    const queueCols = await db2.all("PRAGMA table_info(whatsapp_send_queue)");
-    const colNames = queueCols.map((c) => c.name);
-    if (!colNames.includes("type")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN type TEXT DEFAULT 'distributor_collection'");
+    try {
+      const queueCols = await db2.all("PRAGMA table_info(whatsapp_send_queue)");
+      const colNames = queueCols.map((c) => c.name);
+      if (!colNames.includes("type")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN type TEXT DEFAULT 'distributor_collection'");
+      }
+      if (!colNames.includes("status")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN status TEXT DEFAULT 'pending'");
+      }
+      if (!colNames.includes("retry_count")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN retry_count INTEGER DEFAULT 0");
+      }
+      if (!colNames.includes("error_message")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN error_message TEXT");
+      }
+      if (!colNames.includes("target_name")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN target_name TEXT");
+      }
+      if (!colNames.includes("scheduled_at")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN scheduled_at INTEGER");
+      }
+      if (!colNames.includes("media_url")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN media_url TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes("file_json")) {
+        await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
+      }
+    } catch (colErr) {
+      console.warn("[Database Schema] Column check warning for whatsapp_send_queue:", colErr);
     }
-    if (!colNames.includes("status")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN status TEXT DEFAULT 'pending'");
+    try {
+      const medCols2 = await db2.all("PRAGMA table_info(medicines)");
+      const medColNames = new Set(medCols2.map((c) => c.name));
+      if (!medColNames.has("therapeutic")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL").catch(() => {
+        });
+      }
+      if (!medColNames.has("sub_therapeutic")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL").catch(() => {
+        });
+      }
+      if (!medColNames.has("short_code")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL").catch(() => {
+        });
+      }
+      if (!medColNames.has("ucode")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL").catch(() => {
+        });
+      }
+      if (!medColNames.has("disable_auto_barcode")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0").catch(() => {
+        });
+      }
+      if (!medColNames.has("tb_medicine")) {
+        await db2.run("ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0").catch(() => {
+        });
+      }
+    } catch (medColErr) {
+      console.warn("[Database Schema] Column check warning for medicines:", medColErr);
     }
-    if (!colNames.includes("retry_count")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN retry_count INTEGER DEFAULT 0");
-    }
-    if (!colNames.includes("error_message")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN error_message TEXT");
-    }
-    if (!colNames.includes("target_name")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN target_name TEXT");
-    }
-    if (!colNames.includes("scheduled_at")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN scheduled_at INTEGER");
-    }
-    if (!colNames.includes("media_url")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN media_url TEXT DEFAULT NULL");
-    }
-    if (!colNames.includes("file_json")) {
-      await db2.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
-    }
-  } catch (colErr) {
-    console.warn("[Database Schema] Column check warning for whatsapp_send_queue:", colErr);
-  }
-  try {
-    const medCols2 = await db2.all("PRAGMA table_info(medicines)");
-    const medColNames = new Set(medCols2.map((c) => c.name));
-    if (!medColNames.has("therapeutic")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL").catch(() => {
-      });
-    }
-    if (!medColNames.has("sub_therapeutic")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL").catch(() => {
-      });
-    }
-    if (!medColNames.has("short_code")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL").catch(() => {
-      });
-    }
-    if (!medColNames.has("ucode")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL").catch(() => {
-      });
-    }
-    if (!medColNames.has("disable_auto_barcode")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0").catch(() => {
-      });
-    }
-    if (!medColNames.has("tb_medicine")) {
-      await db2.run("ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0").catch(() => {
-      });
-    }
-  } catch (medColErr) {
-    console.warn("[Database Schema] Column check warning for medicines:", medColErr);
-  }
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_min', '5000')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_max', '8000')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
-  await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
-  await db2.run(`
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_min', '5000')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_max', '8000')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
+    await db2.run(`
     CREATE TABLE IF NOT EXISTS whatsapp_message_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -10951,42 +11446,221 @@ async function ensureSchema(dbPath) {
       updated_at INTEGER NOT NULL
     )
   `);
-  const tmplCount = await db2.get("SELECT COUNT(*) as count FROM whatsapp_message_templates");
-  if (!tmplCount || tmplCount.count === 0) {
-    const now = Date.now();
-    const seedTemplates = [
-      { name: "Refill Reminder", category: "Patients", body: "Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery." },
-      { name: "Payment Dues Reminder", category: "Patients", body: "Dear {{name}}, your bill invoice #{{invoice}} of \u20B9{{amount}} is due. Kindly let us know if you need assistance with payment." },
-      { name: "Stock Availability Inquiry", category: "Distributors", body: "Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you." },
-      { name: "General Reply", category: "General", body: "Hello! Thank you for contacting AI Pharmacy. How can we help you today?" }
-    ];
-    for (const t of seedTemplates) {
-      await db2.run(
-        "INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        [t.name, t.category, t.body, now, now]
-      );
+    const tmplCount = await db2.get("SELECT COUNT(*) as count FROM whatsapp_message_templates");
+    if (!tmplCount || tmplCount.count === 0) {
+      const now = Date.now();
+      const seedTemplates = [
+        { name: "Refill Reminder", category: "Patients", body: "Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery." },
+        { name: "Payment Dues Reminder", category: "Patients", body: "Dear {{name}}, your bill invoice #{{invoice}} of \u20B9{{amount}} is due. Kindly let us know if you need assistance with payment." },
+        { name: "Stock Availability Inquiry", category: "Distributors", body: "Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you." },
+        { name: "General Reply", category: "General", body: "Hello! Thank you for contacting AI Pharmacy. How can we help you today?" }
+      ];
+      for (const t of seedTemplates) {
+        await db2.run(
+          "INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+          [t.name, t.category, t.body, now, now]
+        );
+      }
     }
+    try {
+      await db2.run("ALTER TABLE compliance_logs ADD COLUMN missing_license INTEGER DEFAULT 0");
+    } catch {
+    }
+    try {
+      await db2.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
+      await db2.run("UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''");
+    } catch (syncErr) {
+      console.warn("[Database Schema] Distributor phone sync warning:", syncErr);
+    }
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS catalog_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL,
+      company_name TEXT,
+      product_name TEXT NOT NULL,
+      image_path TEXT NOT NULL,
+      thumbnail_path TEXT,
+      image_source TEXT DEFAULT 'pharmeasy',
+      source_url TEXT,
+      image_hash TEXT,
+      confidence_score REAL DEFAULT 0,
+      matching_method TEXT DEFAULT 'ai_multi_signal',
+      verification_status TEXT DEFAULT 'PENDING_REVIEW',
+      verification_reason TEXT,
+      ocr_text TEXT,
+      ocr_confidence REAL,
+      is_active INTEGER DEFAULT 0,
+      retry_count INTEGER DEFAULT 0,
+      replaced_from_image_id INTEGER,
+      previous_image_url TEXT,
+      next_review_at DATETIME,
+      skip_reason TEXT,
+      locked_by TEXT,
+      locked_at DATETIME,
+      verification_version INTEGER DEFAULT 1,
+      verified_by TEXT,
+      verified_at DATETIME,
+      image_type TEXT DEFAULT 'combined',
+      is_primary INTEGER DEFAULT 0,
+      slot_number INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS catalog_image_rejections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      medicine_id INTEGER NOT NULL,
+      rejected_image_url TEXT,
+      rejected_image_hash TEXT,
+      rejected_source TEXT,
+      reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS image_review_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_image_id INTEGER NOT NULL,
+      medicine_id INTEGER NOT NULL,
+      previous_status TEXT,
+      new_status TEXT NOT NULL,
+      previous_image_url TEXT,
+      new_image_url TEXT,
+      action TEXT NOT NULL,
+      reason TEXT,
+      performed_by TEXT DEFAULT 'admin',
+      performed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      metadata TEXT,
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)");
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS catalog_correction_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER,
+      order_item_id INTEGER,
+      changed_by TEXT NOT NULL,
+      old_medicine_id INTEGER,
+      new_medicine_id INTEGER,
+      old_batch_id INTEGER,
+      new_batch_id INTEGER,
+      change_type TEXT NOT NULL,
+      reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)");
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS pricing_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
+      target_id INTEGER,       -- medicine_id or store_id if applicable
+      category_name TEXT,     -- category if rule_type = 'CATEGORY'
+      margin_percent REAL DEFAULT 0,
+      discount_percent REAL DEFAULT 0,
+      custom_selling_price REAL,
+      min_margin_percent REAL,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)");
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS product_channel_visibility (
+      medicine_id INTEGER PRIMARY KEY,
+      is_pos_visible INTEGER DEFAULT 1,
+      is_website_visible INTEGER DEFAULT 1,
+      is_whatsapp_visible INTEGER DEFAULT 1,
+      is_portal_visible INTEGER DEFAULT 1,
+      featured_rank INTEGER DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+    )
+  `);
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)");
+    await db2.run(`
+    CREATE TABLE IF NOT EXISTS customer_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      session_token TEXT NOT NULL UNIQUE,
+      channel TEXT DEFAULT 'portal', -- 'portal', 'website', 'whatsapp'
+      device_info TEXT,
+      ip_address TEXT,
+      logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      logged_out_at DATETIME,
+      duration_seconds INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+    )
+  `);
+    try {
+      const sessCols = await db2.all("PRAGMA table_info(customer_sessions)");
+      const sessNames = new Set(sessCols.map((c) => c.name));
+      if (sessCols.length > 0 && !sessNames.has("logged_in_at")) {
+        await db2.run("ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+      }
+      if (sessCols.length > 0 && !sessNames.has("logged_out_at")) {
+        await db2.run("ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME");
+      }
+      if (sessCols.length > 0 && !sessNames.has("duration_seconds")) {
+        await db2.run("ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0");
+      }
+      if (sessCols.length > 0 && !sessNames.has("is_active")) {
+        await db2.run("ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1");
+      }
+    } catch (_) {
+    }
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)");
+    try {
+      const accCols = await db2.all("PRAGMA table_info(customer_portal_accounts)");
+      const accNames = new Set(accCols.map((c) => c.name));
+      if (accCols.length > 0 && !accNames.has("total_login_count")) {
+        await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0");
+      }
+      if (accCols.length > 0 && !accNames.has("total_time_spent_seconds")) {
+        await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0");
+      }
+      if (accCols.length > 0 && !accNames.has("last_logout_at")) {
+        await db2.run("ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME");
+      }
+    } catch (_) {
+    }
+    await ensureOrderTimingSchema(db2);
+    await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
+    await db2.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
+    console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
+  } finally {
+    dbManager.isBooting = false;
   }
-  try {
-    await db2.run("ALTER TABLE compliance_logs ADD COLUMN missing_license INTEGER DEFAULT 0");
-  } catch {
-  }
-  try {
-    await db2.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
-    await db2.run("UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''");
-  } catch (syncErr) {
-    console.warn("[Database Schema] Distributor phone sync warning:", syncErr);
-  }
-  await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
-  await db2.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
-  console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
 }
 var CURRENT_SCHEMA_VERSION, FTS_SHADOW_TABLES, FTS_CREATE_SQL, FTS_TRIGGER_SQL;
 var init_database = __esm({
   "src/database.ts"() {
     "use strict";
     init_connection();
-    CURRENT_SCHEMA_VERSION = 47;
+    CURRENT_SCHEMA_VERSION = 54;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -16086,12 +16760,17 @@ function buildStandardDistributorOrderMessage(params) {
       const packInfo = formatPackagingAndUnit(item.packaging, qty);
       const packLine = packInfo.packLabel ? `   \u{1F4E6} *${packInfo.packLabel}*
 ` : "";
+      const mrpVal = Number(item.mrp || 0) > 0 ? Number(item.mrp) : 0;
+      const mrpLine = mrpVal > 0 ? `   (MRP: \u20B9${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})
+` : "";
       msg += `${idx + 1}. *${name}*
 ${packLine}   \u{1F522} Order Qty: *${packInfo.unitQtyStr}*
+${mrpLine}
 `;
     });
   } else {
     msg += `  \u2022 Standard Pharmacy Order Items
+
 `;
   }
   msg += `
@@ -16285,8 +16964,12 @@ async function buildSeparateDispatchMessages(db2, orders, isLate = false) {
       const packInfo = formatPackagingAndUnit(item.packaging || item.packing, qty);
       const packLine = packInfo.packLabel ? `   \u{1F4E6} *${packInfo.packLabel}*
 ` : "";
+      const mrpVal = Number(item.mrp || 0) > 0 ? Number(item.mrp) : Number(item.ptr || 0) > 0 ? Number(item.ptr) : 0;
+      const mrpLine = mrpVal > 0 ? `   (MRP: \u20B9${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})
+` : "";
       msg += `${i + 1}. *${name}*
 ${packLine}   \u{1F522} Order Qty: *${packInfo.unitQtyStr}*
+${mrpLine}
 `;
     }
     msg += `
@@ -17099,8 +17782,12 @@ Mobile: ${formatDisplayPhone(clean)}
               const packInfo = formatPackagingAndUnit(item.packaging || item.packing, qty);
               const packLine = packInfo.packLabel ? `   \u{1F4E6} *${packInfo.packLabel}*
 ` : "";
+              const mrpVal = Number(item.mrp || 0) > 0 ? Number(item.mrp) : Number(item.ptr || 0) > 0 ? Number(item.ptr) : 0;
+              const mrpLine = mrpVal > 0 ? `   (MRP: \u20B9${mrpVal % 1 === 0 ? mrpVal : mrpVal.toFixed(2)})
+` : "";
               msg += `${idx + 1}. *${name}*
 ${packLine}   \u{1F522} Order Qty: *${packInfo.unitQtyStr}*
+${mrpLine}
 `;
             });
             msg += `
@@ -18052,9 +18739,71 @@ async function searchAndBroadcast(opts) {
   }
   console.log(`[Intent Service] Match result for "${medicineName}": ${filterResult.matches.length} local, ${catalogResults?.mapped?.length || 0} mapped, ${catalogResults?.nonMapped?.length || 0} non-mapped (bestScore=${bestScore.toFixed(2)}, availability=${availability})`);
 }
-function handleOcrComplete(data) {
+async function handleOcrComplete(data) {
   const { phone, chatId, messageBody, ocrResult, msgId, imagePath } = data;
   if (!ocrResult) return;
+  try {
+    const cleanDigits = String(phone || chatId || "").replace(/\D/g, "");
+    const last10 = cleanDigits.slice(-10);
+    if (last10.length >= 7) {
+      const db2 = await dbManager.getConnection();
+      const pendingOrder = await db2.get(
+        `SELECT id, total_amount, requester, phone, customer_id, payment_status, status
+         FROM special_orders
+         WHERE payment_status = 'PENDING_VERIFICATION'
+           AND (phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?)
+         ORDER BY id DESC
+         LIMIT 1`,
+        [`%${last10}`]
+      );
+      if (pendingOrder) {
+        const ocrText = String(ocrResult.text || "");
+        let detectedAmount = null;
+        const amountPatterns = [
+          /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)/i,
+          /(?:Paid|Paying|Total|Amount|Transferred|Sent)\s*(?:to|₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+          /([\d,]+(?:\.\d{1,2})?)\s*(?:Paid|Successful|Success|Completed)/i
+        ];
+        for (const pat of amountPatterns) {
+          const m = ocrText.match(pat);
+          if (m && m[1]) {
+            const parsed = parseFloat(m[1].replace(/,/g, ""));
+            if (!isNaN(parsed) && parsed > 0 && parsed < 1e6) {
+              detectedAmount = parsed;
+              break;
+            }
+          }
+        }
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path17.default.basename(imagePath)}` : null;
+        await db2.run(
+          `UPDATE special_orders
+           SET payment_screenshot_path = ?,
+               screenshot_amount = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [safeWebPath, detectedAmount, pendingOrder.id]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'payment_screenshot_received', ?, 'system', CURRENT_TIMESTAMP)`,
+          [
+            pendingOrder.id,
+            `Payment screenshot received via WhatsApp. Detected amount: ${detectedAmount ? "\u20B9" + detectedAmount.toFixed(2) : "Uncertain/Unread"}. Awaiting pharmacy manual verification.`
+          ]
+        );
+        eventService.broadcast("order_updated", {
+          at: Date.now(),
+          order_id: pendingOrder.id,
+          reason: "screenshot_received",
+          screenshot_amount: detectedAmount
+        });
+        console.log(`[Intent Service] Payment receipt attached to Order #${pendingOrder.id} (detected=\u20B9${detectedAmount}, expected=\u20B9${pendingOrder.total_amount}). Pending manual human review.`);
+        return;
+      }
+    }
+  } catch (paymentCheckErr) {
+    console.warn("[Intent Service] Payment screenshot check error:", paymentCheckErr);
+  }
   let medicineName = ocrResult.medicineInfo?.potentialName;
   const dosageForm = ocrResult.medicineInfo?.dosageForm;
   const mrp = ocrResult.medicineInfo?.mrp;
@@ -18244,6 +18993,7 @@ __export(whatsappClient_exports, {
   initClient: () => initClient,
   isPuppeteerDetachedError: () => isPuppeteerDetachedError,
   isReady: () => isReady,
+  isWhatsAppAutoConnectAllowed: () => isWhatsAppAutoConnectAllowed,
   isWhatsAppExplicitlyDisabled: () => isWhatsAppExplicitlyDisabled,
   isWhatsAppLoginWindowActive: () => isWhatsAppLoginWindowActive,
   markWhatsAppActivity: () => markWhatsAppActivity,
@@ -18272,6 +19022,24 @@ function hasSavedSession() {
   } catch {
     return false;
   }
+}
+async function isWhatsAppAutoConnectAllowed() {
+  if (await isWhatsAppExplicitlyDisabled()) return false;
+  if (!hasSavedSession()) return false;
+  try {
+    const db2 = await dbManager.getConnection();
+    const authRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_session_authenticated'");
+    if (authRow) {
+      return authRow.value === "true";
+    }
+    const phoneRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_connected_number'");
+    if (phoneRow && phoneRow.value && String(phoneRow.value).trim().length >= 10) {
+      return true;
+    }
+  } catch (err) {
+    console.error("[WhatsApp] Failed to query session authentication status:", err);
+  }
+  return false;
 }
 function safeRemoveDirectorySync(dirPath) {
   if (!import_fs16.default.existsSync(dirPath)) return;
@@ -18463,12 +19231,12 @@ async function getWhatsAppStatus() {
 }
 async function waitForWhatsAppReady(timeoutMs = 9e4) {
   if (await shouldRouteToBusiness()) return true;
+  if (await isWhatsAppExplicitlyDisabled()) return false;
+  if (!await isWhatsAppAutoConnectAllowed()) return false;
   const deadline = Date.now() + timeoutMs;
   let lastKick = 0;
   while (Date.now() < deadline) {
     if (isReady && clientInstance) return true;
-    if (await isWhatsAppExplicitlyDisabled()) return false;
-    if (!hasSavedSession()) return false;
     const now = Date.now();
     if (!initializing && !initPromise && now - lastKick > 2e4) {
       lastKick = now;
@@ -18703,9 +19471,9 @@ function launchClientInstance(forceQr) {
       reject(new Error("WhatsApp client initialization timed out (60s) \u2014 Chrome/Edge may be missing or unresponsive."));
     }, 6e4);
     const clearInitWatchdog = () => clearTimeout(initWatchdog);
-    client.on("qr", (qr) => {
+    client.on("qr", async (qr) => {
       clearInitWatchdog();
-      if (!forceQr && !hasSavedSession()) {
+      if (!forceQr && !await isWhatsAppAutoConnectAllowed()) {
         console.log("[WhatsApp] Unsolicited QR event suppressed. Stopping client until explicit user connection.");
         if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
         currentQr = null;
@@ -18772,11 +19540,20 @@ function launchClientInstance(forceQr) {
       } catch (_) {
       }
       try {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [(/* @__PURE__ */ new Date()).toISOString()]
+        );
         const infoNumber = client?.info?.wid?.user || client?.info?.wid?._serialized?.split("@")[0];
         if (infoNumber) {
           const cleanPhone = String(infoNumber).replace(/\D/g, "");
           console.log(`[WhatsApp Persist] Connected phone number detected: ${cleanPhone}`);
-          const db2 = await dbManager.getConnection();
           await db2.run(
             `INSERT INTO app_settings (key, value) VALUES ('whatsapp_connected_number', ?)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -18800,7 +19577,7 @@ function launchClientInstance(forceQr) {
           }
         }
       } catch (saveErr) {
-        console.warn("[WhatsApp Persist] Failed to save connected phone number to app_settings:", saveErr);
+        console.warn("[WhatsApp Persist] Failed to save connected state to app_settings:", saveErr);
       }
       Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports)).then(({ whatsappQueueWorker: whatsappQueueWorker2 }) => {
         whatsappQueueWorker2.triggerProcessing();
@@ -18839,12 +19616,21 @@ function launchClientInstance(forceQr) {
         console.log("WhatsApp client destroyed. Waiting for manual or API-triggered reconnect.");
       });
     });
-    client.on("auth_failure", (msg) => {
+    client.on("auth_failure", async (msg) => {
       initializing = false;
       isReady = false;
       activeClient = null;
       isSleeping = false;
       setLifecycleProgress("failed", 0, `Authentication failed: ${msg}`, msg);
+      try {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+           ON CONFLICT(key) DO UPDATE SET value = 'false'`
+        );
+        await db2.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
+      } catch (_) {
+      }
       eventService.broadcast("auth_failure", {
         message: `WhatsApp authentication failed: ${msg}. Please reconnect in Settings.`,
         service: "whatsapp"
@@ -18860,6 +19646,15 @@ function launchClientInstance(forceQr) {
       isSleeping = false;
       setLifecycleProgress("disconnected", 0, "WhatsApp signed out remotely");
       if (qrTimeout) clearTimeout(qrTimeout);
+      try {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+           ON CONFLICT(key) DO UPDATE SET value = 'false'`
+        );
+        await db2.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
+      } catch (_) {
+      }
       eventService.broadcast("wa_status_changed", {
         status: "logged_out",
         message: "WhatsApp signed out remotely. Scan the QR code in Settings to sign in again.",
@@ -18987,6 +19782,12 @@ function launchClientInstance(forceQr) {
 }
 async function initClient(options = {}) {
   const forceQr = options.forceQr ?? false;
+  const isManual = options.manual ?? false;
+  if (!forceQr && !isManual) {
+    console.log("[WhatsApp] Connection suppressed: App will never connect WhatsApp unless user manually invokes it.");
+    setLifecycleProgress("disconnected", 0, "WhatsApp is disconnected. Click Connect to start.");
+    return null;
+  }
   if (clientInstance && isReady) {
     setLifecycleProgress("ready", 100, "WhatsApp Ready");
     return clientInstance;
@@ -18995,23 +19796,18 @@ async function initClient(options = {}) {
     return initPromise;
   }
   if (isLoginWindowActive) {
-    console.log("[WhatsApp] Auto-init skipped: Chrome login window is currently active.");
+    console.log("[WhatsApp] Init skipped: Chrome login window is currently active.");
     return null;
   }
   if (!forceQr && await isWhatsAppExplicitlyDisabled()) {
-    console.log("[WhatsApp] Auto-init skipped: WhatsApp is disabled in Settings.");
+    console.log("[WhatsApp] Init skipped: WhatsApp is disabled in Settings.");
     return null;
   }
-  if (forceQr) {
+  if (forceQr || isManual) {
     lastInitFailureAt = 0;
   } else if (lastInitFailureAt > 0 && Date.now() - lastInitFailureAt < INIT_FAILURE_COOLDOWN_MS) {
     const remainingSec = Math.ceil((INIT_FAILURE_COOLDOWN_MS - (Date.now() - lastInitFailureAt)) / 1e3);
-    console.log(`[WhatsApp] Auto-init deferred (${remainingSec}s cooldown remaining after previous failure).`);
-    return null;
-  }
-  if (!forceQr && !hasSavedSession()) {
-    console.log("[WhatsApp] Auto-init skipped: No saved session on disk. Standing down until explicit user connection.");
-    setLifecycleProgress("disconnected", 0, "No saved WhatsApp session. Click Connect to scan QR.");
+    console.log(`[WhatsApp] Init deferred (${remainingSec}s cooldown remaining after previous failure).`);
     return null;
   }
   const { checkConnectivity: checkConnectivity2 } = await Promise.resolve().then(() => (init_networkDetector(), networkDetector_exports));
@@ -19064,26 +19860,6 @@ async function initClient(options = {}) {
 }
 async function prewarmWhatsApp() {
   markWhatsAppActivity();
-  if (isReady && clientInstance) {
-    return getWhatsAppReadiness();
-  }
-  if (await isWhatsAppExplicitlyDisabled()) {
-    return getWhatsAppReadiness();
-  }
-  if (!hasSavedSession()) {
-    return getWhatsAppReadiness();
-  }
-  if (initPromise) {
-    try {
-      await initPromise;
-    } catch (_) {
-    }
-    return getWhatsAppReadiness();
-  }
-  try {
-    await initClient();
-  } catch (_) {
-  }
   return getWhatsAppReadiness();
 }
 async function destroyClient() {
@@ -19140,15 +19916,16 @@ async function forceReconnect() {
   }
   try {
     const db2 = await dbManager.getConnection();
+    await db2.run(
+      `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'false')
+       ON CONFLICT(key) DO UPDATE SET value = 'false'`
+    );
+    await db2.run("DELETE FROM app_settings WHERE key = 'whatsapp_connected_number'");
     await db2.run("DELETE FROM ignored_whatsapp_numbers WHERE reason IN ('group', 'broadcast')");
     console.log("[WhatsApp] Cleared auto-ignored group and broadcast chats from database.");
   } catch (err) {
     console.error("[WhatsApp] Failed to clear auto-ignored chats from database (non-fatal):", err);
   }
-  await new Promise((r) => setTimeout(r, 1500));
-  initClient().catch((err) => {
-    console.error("[WhatsApp] Re-initialization after reconnect failed (non-fatal):", err.message);
-  });
 }
 async function reconnectClient() {
   console.log("[WhatsApp] Reconnect requested (non-destructive). Restarting with saved session...");
@@ -19158,7 +19935,7 @@ async function reconnectClient() {
     await new Promise((r) => setTimeout(r, 600));
   }
   try {
-    await initClient();
+    await initClient({ forceQr: true });
   } catch (err) {
     console.error("[WhatsApp] Non-destructive re-initialization failed (session preserved):", err?.message);
     eventService.broadcast("wa_status_changed", {
@@ -19223,16 +20000,7 @@ async function sendMessage(to, mediaPath, caption, file) {
     }
     const useBusiness = await shouldRouteToBusiness();
     if (!useBusiness && (!isReady || !clientInstance)) {
-      if (!hasSavedSession()) {
-        throw new Error("WhatsApp is not connected. Please connect WhatsApp in Learning or Settings before sending messages.");
-      }
-      try {
-        console.log("[WhatsApp Client] Client not ready on sendMessage call. Initializing saved session...");
-        await initClient();
-      } catch (initErr) {
-        console.error("[WhatsApp Client] Auto-initialization failed during send:", initErr);
-        throw new Error('WhatsApp session is not connected. Please scan the QR code in Settings or click "Open Live Chrome Window" to log in.');
-      }
+      throw new Error("WhatsApp is not connected. Please connect WhatsApp manually in Settings before sending messages.");
     }
     try {
       if (!useBusiness) {
@@ -19881,36 +20649,8 @@ var init_whatsappQueueWorker = __esm({
         } catch (_) {
         }
         if (scheduledAt <= now) {
-          try {
-            const { hasSavedSession: checkSaved, getWhatsAppStatus: checkStatus, initClient: wakeClient, isWhatsAppExplicitlyDisabled: checkDisabled } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-            if (!await checkDisabled() && checkSaved()) {
-              checkStatus().then((st) => {
-                if (!st.isReady && !st.initializing) {
-                  wakeClient().catch(() => {
-                  });
-                }
-              }).catch(() => {
-              });
-            }
-          } catch (_) {
-          }
           this.triggerProcessing();
         } else {
-          const wakeDelay = Math.max(0, scheduledAt - now - 12e4);
-          if (wakeDelay < scheduledAt - now) {
-            setTimeout(async () => {
-              try {
-                const { hasSavedSession: hasSavedSession2, getWhatsAppStatus: getWhatsAppStatus2, initClient: initClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-                const status = await getWhatsAppStatus2();
-                if (hasSavedSession2() && (status.sleeping || !status.isReady) && !status.initializing) {
-                  console.log("[WhatsApp Pre-Wake] 2-minute lead time triggered: silently warming up WhatsApp client...");
-                  initClient2().catch(() => {
-                  });
-                }
-              } catch (_) {
-              }
-            }, wakeDelay);
-          }
           const delay = Math.min(scheduledAt - now, 2147483647);
           setTimeout(() => this.triggerProcessing(), delay);
         }
@@ -20041,27 +20781,12 @@ var init_whatsappQueueWorker = __esm({
             const useBusiness = await shouldRouteToBusiness();
             let status = await getWhatsAppStatus();
             if (!useBusiness && !status.isReady) {
-              if (hasSavedSession() && !await isWhatsAppExplicitlyDisabled()) {
-                console.log("[WhatsAppQueueWorker] WhatsApp not yet ready \u2014 awaiting on-demand session wake-up...");
-                const ready = await waitForWhatsAppReady(2e4);
-                if (ready) {
-                  status = await getWhatsAppStatus();
-                }
-              }
-            }
-            if (!useBusiness && !status.isReady) {
               const logNow = Date.now();
               if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 6e5) {
-                console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving pending item(s) in queue until user connects on UI.`);
+                console.log(`[WhatsAppQueueWorker] WhatsApp client offline. Leaving pending item(s) in queue until user manually connects in UI.`);
                 this.lastOfflineLogTime = logNow;
               }
               this.lastWasOffline = true;
-              if (hasSavedSession() && !status.initializing && logNow - this.lastAutoInitAttempt > 6e4) {
-                this.lastAutoInitAttempt = logNow;
-                console.log("[WhatsAppQueueWorker] Saved session present but client idle \u2014 attempting silent WhatsApp restore...");
-                initClient().catch(() => {
-                });
-              }
               break;
             }
             this.lastWasOffline = false;
@@ -20640,8 +21365,22 @@ async function rebuildAllExpiryCaches(force = false) {
     return;
   }
   activeRebuildPromise = (async () => {
-    console.log("[ExpiryCache] Rebuilding all month-wise expiry cache files...");
     try {
+      const cacheDir = import_path19.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path19.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs17.default.existsSync(manifestPath)) {
+        try {
+          const rawManifest = await import_fs17.default.promises.readFile(manifestPath, "utf-8");
+          const manifest = JSON.parse(rawManifest);
+          if (manifest && typeof manifest.totalMonthFiles === "number") {
+            console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
+            lastRebuildTime = Date.now();
+            return;
+          }
+        } catch (_) {
+        }
+      }
+      console.log("[ExpiryCache] Rebuilding all month-wise expiry cache files...");
       const db2 = await dbManager.getConnection();
       const rows = await db2.all(`
         SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity, im.mrp, im.rack_location,
@@ -20661,7 +21400,6 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      const cacheDir = import_path19.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       if (!import_fs17.default.existsSync(cacheDir)) {
         await import_fs17.default.promises.mkdir(cacheDir, { recursive: true });
       }
@@ -20691,7 +21429,6 @@ async function rebuildAllExpiryCaches(force = false) {
           }
         }
       }
-      const manifestPath = import_path19.default.join(cacheDir, "manifest.json");
       await import_fs17.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
@@ -20780,7 +21517,7 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds) {
         await patchExpiryCacheForInventoryItem(id);
       }
     } else if (needFull) {
-      await rebuildAllExpiryCaches();
+      await rebuildAllExpiryCaches(true);
     }
   }, 800);
 }
@@ -26447,6 +27184,7 @@ var init_connection = __esm({
         this.txMutexTail = this.txMutexTail.then(() => nextTail);
         return acquired;
       }
+      isBooting = false;
       constructor() {
       }
       static getInstance() {
@@ -26568,7 +27306,7 @@ var init_connection = __esm({
           const sqlLower = sql.toLowerCase();
           const isWrite = sqlLower.includes("insert") || sqlLower.includes("update") || sqlLower.includes("delete");
           const isInternal = sqlLower.includes("action_logs") || sqlLower.includes("app_settings") || sqlLower.includes("processed_emails") || sqlLower.includes("processed_files") || sqlLower.includes("push_tokens");
-          if (isWrite && !isInternal && process.env.NODE_ENV !== "test") {
+          if (isWrite && !isInternal && !self.isBooting && process.env.NODE_ENV !== "test") {
             const isInventoryWrite = sqlLower.includes("inventory_master") || sqlLower.includes("sale_items") || sqlLower.includes("sales_invoices") || sqlLower.includes("purchase_items") || sqlLower.includes("purchases") || sqlLower.includes("return_items") || sqlLower.includes("returns");
             return { isInventoryWrite };
           }
@@ -27833,6 +28571,8 @@ async function runCatalogImport(jobId) {
   }
 }
 async function startWorker() {
+  if (isWorkerStarted) return;
+  isWorkerStarted = true;
   let db2;
   let attempts = 0;
   const maxAttempts = 5;
@@ -27912,7 +28652,7 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs22, import_path25, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url21, __filename20, __dirname20, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking;
+var import_fs22, import_path25, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url21, __filename20, __dirname20, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
@@ -27933,6 +28673,7 @@ var init_catalogWorker = __esm({
     catalogEmptyHistoryScans = 0;
     catalogNudgeRequested = false;
     isWorking = false;
+    isWorkerStarted = false;
   }
 });
 
@@ -29050,19 +29791,19 @@ var init_messageDAO = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang, path59, values = {}) {
-  const dbValue = getTemplate(lang, path59);
+function getMessage(lang, path61, values = {}) {
+  const dbValue = getTemplate(lang, path61);
   let template = "";
   if (dbValue !== null) {
     template = dbValue;
   } else {
-    const keys = path59.split(".");
+    const keys = path61.split(".");
     let segment = ALL_MESSAGES[lang];
     for (const k of keys) {
-      if (segment == null) return `[Missing: ${path59}]`;
+      if (segment == null) return `[Missing: ${path61}]`;
       segment = segment[k];
     }
-    if (typeof segment !== "string") return `[Not a string: ${path59}]`;
+    if (typeof segment !== "string") return `[Not a string: ${path61}]`;
     template = segment;
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
@@ -29858,6 +30599,7 @@ var init_workerSupervisor = __esm({
     "use strict";
     import_child_process5 = require("child_process");
     init_config();
+    init_activityTracker();
     WorkerSupervisor = class _WorkerSupervisor {
       static instance;
       workers = {
@@ -29873,6 +30615,7 @@ var init_workerSupervisor = __esm({
         }
       };
       healthCheckInterval = null;
+      isStarted = false;
       constructor() {
       }
       static getInstance() {
@@ -29883,11 +30626,13 @@ var init_workerSupervisor = __esm({
       }
       /** Starts all configured background workers */
       start() {
+        if (this.isStarted) return;
         if (process.env.DISABLE_BACKGROUND_WORKERS !== "false") {
           console.log("[WorkerSupervisor] ALL background workers are STOPPED and DISABLED.");
           this.stop();
           return;
         }
+        this.isStarted = true;
         console.log("[WorkerSupervisor] Starting background worker supervisor...");
         for (const key of Object.keys(this.workers)) {
           this.spawnWorker(key);
@@ -29896,6 +30641,7 @@ var init_workerSupervisor = __esm({
       }
       /** Gracefully stops all workers and loops */
       stop() {
+        this.isStarted = false;
         console.log("[WorkerSupervisor] Stopping background workers...");
         if (this.healthCheckInterval) {
           clearInterval(this.healthCheckInterval);
@@ -29970,6 +30716,7 @@ var init_workerSupervisor = __esm({
       startHealthCheckLoop() {
         if (this.healthCheckInterval) return;
         this.healthCheckInterval = setInterval(() => {
+          if (activityTracker.isIdle()) return;
           const now = Date.now();
           for (const [key, config2] of Object.entries(this.workers)) {
             if (!config2.instance) continue;
@@ -30734,17 +31481,22 @@ Content-Type: application/zip\r
             console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
             return false;
           }
-          const form = new URLSearchParams();
-          const fileStream = import_fs27.default.createReadStream(filePath);
-          const { default: FormData2 } = await import("form-data");
-          const formData = new FormData2();
+          const fileBuffer = import_fs27.default.readFileSync(filePath);
+          const formData = new FormData();
           formData.append("chat_id", chatId);
-          formData.append("document", fileStream, filename);
+          formData.append("document", new Blob([fileBuffer]), filename);
           formData.append("caption", `AI Pharmacy OS daily backup archive: ${filename}`);
-          const response = await import_axios.default.post(`https://api.telegram.org/bot${token}/sendDocument`, formData, {
-            headers: formData.getHeaders()
+          const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+            method: "POST",
+            body: formData
           });
-          return response.status === 200 && response.data.ok;
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "");
+            console.error("[Backup] Telegram document dispatch failed:", response.status, errorText);
+            return false;
+          }
+          const resData = await response.json().catch(() => ({}));
+          return resData?.ok === true;
         } catch (err) {
           console.error("[Backup] Telegram document dispatch failed:", err.response?.data || err.message);
           return false;
@@ -31823,6 +32575,203 @@ var init_migrationAudit = __esm({
     unresolvedMedicinesCount = 0;
     skippedRecordsCount = 0;
     preservedNullRecordsCount = 0;
+  }
+});
+
+// src/utils/medicineSimilarityMatcher.ts
+function normalizeString(str) {
+  return (str || "").toLowerCase().replace(/\[.*?\]/g, " ").replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+}
+function normalizeToken2(token) {
+  return token.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, "$1");
+}
+function extractTokens(name) {
+  const norm = normalizeString(name);
+  const words = norm.split(" ").filter((w) => w.length > 0);
+  const coreTokens = [];
+  const strengths = [];
+  for (const rawWord of words) {
+    const word = normalizeToken2(rawWord);
+    if (/^\d+(\.\d+)?$/.test(word)) {
+      strengths.push(word);
+      coreTokens.push(word);
+    } else if (!STOP_WORDS2.has(word) && word.length > 1) {
+      coreTokens.push(word);
+    }
+  }
+  return { coreTokens, strengths };
+}
+function levenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = i;
+    for (let j = 1; j <= b.length; j++) {
+      const val = a[i - 1] === b[j - 1] ? row[j - 1] : Math.min(row[j - 1], prev, row[j]) + 1;
+      row[j - 1] = prev;
+      prev = val;
+    }
+    row[b.length] = prev;
+  }
+  return row[b.length];
+}
+var STOP_WORDS2, MedicineSimilarityMatcher;
+var init_medicineSimilarityMatcher = __esm({
+  "src/utils/medicineSimilarityMatcher.ts"() {
+    "use strict";
+    STOP_WORDS2 = /* @__PURE__ */ new Set([
+      "tab",
+      "tabs",
+      "tablet",
+      "tablets",
+      "cap",
+      "caps",
+      "capsule",
+      "capsules",
+      "syp",
+      "syrup",
+      "susp",
+      "suspension",
+      "inj",
+      "injection",
+      "oint",
+      "ointment",
+      "crm",
+      "cream",
+      "gel",
+      "drop",
+      "drops",
+      "sol",
+      "solution",
+      "lot",
+      "lotion",
+      "strip",
+      "strips",
+      "box",
+      "btl",
+      "bottle",
+      "vial",
+      "amp",
+      "ampoule",
+      "pack",
+      "of",
+      "for",
+      "with",
+      "and",
+      "&",
+      "gm",
+      "mg",
+      "ml",
+      "mcg",
+      "iu",
+      "kg",
+      "ltr",
+      "10s",
+      "15s",
+      "20s",
+      "30s",
+      "5s",
+      "1s",
+      "6s",
+      "10",
+      "15",
+      "20",
+      "30"
+    ]);
+    MedicineSimilarityMatcher = class {
+      masterList = [];
+      tokenIndex = /* @__PURE__ */ new Map();
+      constructor(records) {
+        this.buildIndex(records);
+      }
+      buildIndex(records) {
+        this.masterList = [];
+        this.tokenIndex.clear();
+        records.forEach((rec, idx) => {
+          const normName = normalizeString(rec.name);
+          const { coreTokens, strengths } = extractTokens(rec.name);
+          const tokenSet = new Set(coreTokens);
+          const strengthSet = new Set(strengths);
+          this.masterList.push({
+            record: rec,
+            normName,
+            coreTokens: tokenSet,
+            strengths: strengthSet
+          });
+          tokenSet.forEach((token) => {
+            if (!this.tokenIndex.has(token)) {
+              this.tokenIndex.set(token, []);
+            }
+            this.tokenIndex.get(token).push(idx);
+          });
+        });
+      }
+      findBestMatch(importedName, minScore = 70) {
+        if (!importedName || typeof importedName !== "string") return null;
+        const normImported = normalizeString(importedName);
+        const { coreTokens: importedCore, strengths: importedStrengths } = extractTokens(importedName);
+        if (importedCore.length === 0) return null;
+        const importedSet = new Set(importedCore);
+        const candidateIndices = /* @__PURE__ */ new Set();
+        for (const token of importedCore) {
+          const hits = this.tokenIndex.get(token);
+          if (hits) {
+            for (const idx of hits) {
+              candidateIndices.add(idx);
+            }
+          }
+        }
+        if (candidateIndices.size === 0) return null;
+        let bestMatch = null;
+        let highestScore = 0;
+        for (const idx of candidateIndices) {
+          const master = this.masterList[idx];
+          if (master.normName === normImported) {
+            return {
+              id: master.record.id,
+              name: master.record.name,
+              manufacturer: master.record.manufacturer,
+              mrp: master.record.mrp,
+              score: 100,
+              reason: "Exact name match"
+            };
+          }
+          if (importedStrengths.length > 0 && master.strengths.size > 0) {
+            const hasMatchingStrength = importedStrengths.some((s) => master.strengths.has(s));
+            if (!hasMatchingStrength) {
+              continue;
+            }
+          }
+          let intersection = 0;
+          for (const token of importedSet) {
+            if (master.coreTokens.has(token)) intersection++;
+          }
+          const union = (/* @__PURE__ */ new Set([...importedSet, ...master.coreTokens])).size;
+          const jaccard = union > 0 ? intersection / union : 0;
+          const maxLen = Math.max(normImported.length, master.normName.length);
+          const levDist = levenshteinDistance(normImported, master.normName);
+          const levSim = maxLen > 0 ? 1 - levDist / maxLen : 0;
+          let score = Math.round((jaccard * 0.6 + levSim * 0.4) * 100);
+          if (importedStrengths.length > 0 && master.strengths.size > 0) {
+            score = Math.min(100, score + 5);
+          }
+          if (score > highestScore && score >= minScore) {
+            highestScore = score;
+            bestMatch = {
+              id: master.record.id,
+              name: master.record.name,
+              manufacturer: master.record.manufacturer,
+              mrp: master.record.mrp,
+              score,
+              reason: `${score}% token & string similarity`
+            };
+          }
+        }
+        return bestMatch;
+      }
+    };
   }
 });
 
@@ -34903,6 +35852,40 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     let inTxn = false;
     migrationStatus.message = "Streaming CSV rows into staging database...";
     resetDistributorLookupCache();
+    const initialMasterMeds = await db2.all(
+      "SELECT id, name, manufacturer, mrp FROM medicines"
+    );
+    const similarityMatcher = new MedicineSimilarityMatcher(initialMasterMeds);
+    const recordMedicineSimilarityConflict = async (rawName, stagedMedId) => {
+      try {
+        const bestMatch = similarityMatcher.findBestMatch(rawName, 70);
+        if (bestMatch && bestMatch.score < 100 && bestMatch.id !== stagedMedId) {
+          const existingConflict = await db2.get(
+            "SELECT id FROM migration_conflicts WHERE module_type = ? AND matching_record_id = ?",
+            ["medicine_similarity", bestMatch.id]
+          );
+          if (!existingConflict) {
+            const rawConflictData = {
+              imported_medicine_name: rawName,
+              staged_medicine_id: stagedMedId,
+              suggested_medicine_id: bestMatch.id,
+              suggested_name: bestMatch.name,
+              suggested_manufacturer: bestMatch.manufacturer,
+              suggested_mrp: bestMatch.mrp,
+              similarity_score: bestMatch.score,
+              similarity_reason: bestMatch.reason
+            };
+            await db2.run(
+              `INSERT INTO migration_conflicts (module_type, raw_imported_data, matching_record_id, conflict_reason)
+             VALUES (?, ?, ?, ?)`,
+              ["medicine_similarity", JSON.stringify(rawConflictData), bestMatch.id, `${bestMatch.score}% match with Master: ${bestMatch.name}`]
+            );
+          }
+        }
+      } catch (simErr) {
+        console.warn("[MigrationWorker] Similarity check error:", simErr);
+      }
+    };
     const processCsvImportRow = async (row) => {
       if (insertCount % 200 === 0) {
         await new Promise((resolve) => setImmediate(resolve));
@@ -35026,6 +36009,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           const placeholdersStr = ["?", ...medVals.map(() => "?")].join(", ");
           const result = await db2.run(`INSERT INTO medicines (${colsStr}) VALUES (${placeholdersStr})`, [medName, ...medVals]);
           med = { id: result.lastID };
+          await recordMedicineSimilarityConflict(medName, med.id);
         } else {
           if (medUpdates.length > 0) {
             await db2.run(`UPDATE medicines SET ${medUpdates.join(", ")} WHERE id = ?`, [...medVals, med.id]);
@@ -35207,6 +36191,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         if (!med) {
           const result = await db2.run("INSERT INTO medicines (name) VALUES (?)", [medName]);
           med = { id: result.lastID };
+          await recordMedicineSimilarityConflict(medName, med.id);
         }
         let inv;
         const batchNoKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "batch_no");
@@ -35328,6 +36313,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         if (!med) {
           const result = await db2.run("INSERT INTO medicines (name) VALUES (?)", [medName]);
           med = { id: result.lastID };
+          await recordMedicineSimilarityConflict(medName, med.id);
         }
         const qtyKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "quantity");
         const mrpKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "mrp");
@@ -35436,6 +36422,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         if (!med) {
           const result = await db2.run("INSERT INTO medicines (name) VALUES (?)", [medName]);
           med = { id: result.lastID };
+          await recordMedicineSimilarityConflict(medName, med.id);
         }
         const qtyKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "quantity" || mapping?.[k] === "return_quantity");
         const mrpKey = Object.keys(mapping || {}).find((k) => mapping?.[k] === "mrp");
@@ -35894,6 +36881,7 @@ var init_migrationWorker = __esm({
     init_doctorUtils();
     init_migrationAudit();
     init_config();
+    init_medicineSimilarityMatcher();
     init_pgCopyParser();
     init_pgMasterImporter();
     init_pgPurchaseImporter();
@@ -36529,10 +37517,16 @@ var init_migration = __esm({
         const db2 = await openStagingDb();
         const rows = await db2.all(`
       SELECT c.id, c.module_type, c.raw_imported_data, c.matching_record_id, c.conflict_reason, c.status,
-             m.name as existing_medicine_name, i.batch_no as existing_batch_no, i.quantity as existing_quantity
+             COALESCE(m_sim.name, m.name) as existing_medicine_name,
+             COALESCE(m_sim.manufacturer, m.manufacturer) as existing_manufacturer,
+             COALESCE(m_sim.mrp, m.mrp) as existing_mrp,
+             i.batch_no as existing_batch_no, i.quantity as existing_quantity,
+             ci.image_path as existing_image_path
       FROM migration_conflicts c
-      LEFT JOIN inventory_master i ON c.matching_record_id = i.id
+      LEFT JOIN inventory_master i ON c.matching_record_id = i.id AND c.module_type = 'inventory'
       LEFT JOIN medicines m ON i.medicine_id = m.id
+      LEFT JOIN medicines m_sim ON c.matching_record_id = m_sim.id AND c.module_type = 'medicine_similarity'
+      LEFT JOIN catalog_images ci ON ci.medicine_id = COALESCE(m_sim.id, m.id) AND ci.is_active = 1
       WHERE c.status = 'pending'
       ORDER BY c.id ASC
       LIMIT 500
@@ -36551,7 +37545,7 @@ var init_migration = __esm({
       if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
-      const allowed = ["merge", "overwrite", "skip"];
+      const allowed = ["merge", "overwrite", "skip", "keep_new"];
       if (!allowed.includes(resolution)) {
         return res.status(400).json({ error: `resolution must be one of: ${allowed.join(", ")}` });
       }
@@ -36561,6 +37555,32 @@ var init_migration = __esm({
         if (!conflict) {
           await db2.close();
           return res.status(404).json({ error: "Conflict not found or already resolved" });
+        }
+        if (conflict.module_type === "medicine_similarity") {
+          let rawData = {};
+          try {
+            rawData = JSON.parse(conflict.raw_imported_data);
+          } catch (_) {
+          }
+          const stagedMedId = rawData.staged_medicine_id;
+          const masterMedId = conflict.matching_record_id;
+          if (resolution === "merge") {
+            if (stagedMedId && masterMedId) {
+              await db2.run("UPDATE inventory_master SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]);
+              await db2.run("UPDATE sale_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("UPDATE purchase_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("UPDATE return_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("DELETE FROM medicines WHERE id = ?", [stagedMedId]);
+            }
+            await db2.run("UPDATE migration_conflicts SET status = ? WHERE id = ?", ["resolved_merge", conflictId]);
+          } else {
+            await db2.run("UPDATE migration_conflicts SET status = ? WHERE id = ?", ["resolved_keep_new", conflictId]);
+          }
+          await db2.close();
+          return res.json({ success: true, message: `Similarity conflict ${conflictId} resolved as ${resolution}` });
         }
         const rawRow = JSON.parse(conflict.raw_imported_data);
         if (resolution === "merge" && conflict.module_type === "inventory") {
@@ -36600,6 +37620,51 @@ var init_migration = __esm({
         res.json({ success: true, message: `Conflict ${conflictId} resolved as ${resolution}` });
       } catch (e) {
         res.status(500).json({ error: e.message });
+      }
+    });
+    router6.post("/staging/resolve-all-similar", async (req, res) => {
+      const minScore = typeof req.body?.minScore === "number" ? req.body.minScore : 85;
+      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+        return res.status(400).json({ error: "No staging database found" });
+      }
+      try {
+        const db2 = await openStagingDb();
+        const conflicts = await db2.all(
+          `SELECT * FROM migration_conflicts WHERE module_type = 'medicine_similarity' AND status = 'pending'`
+        );
+        let resolvedCount = 0;
+        for (const c of conflicts) {
+          let rawData = {};
+          try {
+            rawData = JSON.parse(c.raw_imported_data);
+          } catch (_) {
+          }
+          const score = rawData.similarity_score || 0;
+          if (score >= minScore) {
+            const stagedMedId = rawData.staged_medicine_id;
+            const masterMedId = c.matching_record_id;
+            if (stagedMedId && masterMedId) {
+              await db2.run("UPDATE inventory_master SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]);
+              await db2.run("UPDATE sale_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("UPDATE purchase_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("UPDATE return_items SET medicine_id = ? WHERE medicine_id = ?", [masterMedId, stagedMedId]).catch(() => {
+              });
+              await db2.run("DELETE FROM medicines WHERE id = ?", [stagedMedId]);
+            }
+            await db2.run("UPDATE migration_conflicts SET status = ? WHERE id = ?", ["resolved_merge", c.id]);
+            resolvedCount++;
+          }
+        }
+        await db2.close();
+        res.json({
+          success: true,
+          resolvedCount,
+          message: `Successfully merged ${resolvedCount} high-confidence medicine(s) (\u2265${minScore}%) into Master Catalog.`
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
       }
     });
     router6.get("/snapshots", async (_req, res) => {
@@ -40445,12 +41510,6 @@ var init_triggerSchedulerService = __esm({
         this.intervalHandles.clear();
         Promise.resolve().then(() => (init_distributorDispatchReminderWorker(), distributorDispatchReminderWorker_exports)).then((m) => m.stopDistributorDispatchReminderWorker()).catch(() => {
         });
-        Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.stop()).catch(() => {
-        });
-        Promise.resolve().then(() => (init_orderFulfillmentService(), orderFulfillmentService_exports)).then((m) => m.orderFulfillmentService.stop()).catch(() => {
-        });
-        Promise.resolve().then(() => (init_emailPoller(), emailPoller_exports)).then((m) => m.stopEmailPoller()).catch(() => {
-        });
       }
       /**
        * Fetch all trigger settings from app_settings table with fallback defaults
@@ -41081,6 +42140,163 @@ var init_medicineSalesMetricsService = __esm({
   }
 });
 
+// src/services/paymentQrService.ts
+var DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
+var init_paymentQrService = __esm({
+  "src/services/paymentQrService.ts"() {
+    "use strict";
+    init_connection();
+    DEFAULT_QR_CONFIGS = [
+      {
+        id: "QR_1",
+        label: "Pharmacy Counter UPI (QR 1)",
+        payee_name: "AI Pharmacy Counter 1",
+        upi_id: "aipharmacy1@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_2",
+        label: "Pharmacy Merchant UPI (QR 2)",
+        payee_name: "AI Pharmacy Merchant",
+        upi_id: "aipharmacy2@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_3",
+        label: "Pharmacy Direct UPI (QR 3)",
+        payee_name: "AI Pharmacy Store 3",
+        upi_id: "aipharmacy3@upi",
+        qr_image_url: "",
+        is_active: true
+      }
+    ];
+    PaymentQrService = class {
+      /**
+       * Load the 3 QR configurations from app_settings with fallback defaults
+       */
+      async getQrConfigs() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          "SELECT key, value FROM app_settings WHERE key LIKE 'payment_qr_%'"
+        ).catch(() => []);
+        const settingsMap = /* @__PURE__ */ new Map();
+        for (const r of rows) {
+          settingsMap.set(r.key, r.value);
+        }
+        const configs = [];
+        const qrIds = ["QR_1", "QR_2", "QR_3"];
+        for (const id of qrIds) {
+          const lower = id.toLowerCase();
+          const defaultConf = DEFAULT_QR_CONFIGS.find((d) => d.id === id);
+          configs.push({
+            id,
+            label: settingsMap.get(`payment_${lower}_label`) || defaultConf.label,
+            payee_name: settingsMap.get(`payment_${lower}_payee_name`) || defaultConf.payee_name,
+            upi_id: settingsMap.get(`payment_${lower}_upi_id`) || defaultConf.upi_id,
+            qr_image_url: settingsMap.get(`payment_${lower}_image_url`) || defaultConf.qr_image_url || "",
+            is_active: settingsMap.get(`payment_${lower}_active`) !== "false"
+          });
+        }
+        return configs;
+      }
+      /**
+       * Save QR configurations
+       */
+      async saveQrConfigs(configs) {
+        const db2 = await dbManager.getConnection();
+        for (const conf of configs) {
+          const lower = conf.id.toLowerCase();
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_label`, conf.label]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_payee_name`, conf.payee_name]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_upi_id`, conf.upi_id]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_image_url`, conf.qr_image_url || ""]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_active`, conf.is_active ? "true" : "false"]
+          );
+        }
+      }
+      /**
+       * Allocate the next alternating QR code for a new order.
+       * Rule (§13): selected_qr != previous_order_qr
+       */
+      async allocateNextQr() {
+        const db2 = await dbManager.getConnection();
+        const configs = await this.getQrConfigs();
+        const activeConfigs = configs.filter((c) => c.is_active && c.upi_id);
+        if (activeConfigs.length === 0) {
+          return DEFAULT_QR_CONFIGS[0];
+        }
+        if (activeConfigs.length === 1) {
+          return activeConfigs[0];
+        }
+        const lastRow = await db2.get(
+          "SELECT value FROM app_settings WHERE key = 'last_selected_payment_qr'"
+        ).catch(() => null);
+        const lastQrId = lastRow?.value || "";
+        const eligibleConfigs = activeConfigs.filter((c) => c.id !== lastQrId);
+        const pool = eligibleConfigs.length > 0 ? eligibleConfigs : activeConfigs;
+        const selected = pool[Math.floor(Math.random() * pool.length)];
+        await db2.run(
+          "INSERT INTO app_settings (key, value) VALUES ('last_selected_payment_qr', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          [selected.id]
+        ).catch(() => {
+        });
+        return selected;
+      }
+      /**
+       * Generate standard UPI payment URI
+       */
+      buildUpiUri(upiId, payeeName, amount, orderId) {
+        const cleanAmount = Number(amount || 0).toFixed(2);
+        const encodedName = encodeURIComponent(payeeName || "AI Pharmacy");
+        const note = encodeURIComponent(`Order #${orderId}`);
+        return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
+      }
+      /**
+       * Fetch QR details locked to a specific order
+       */
+      async getOrderQrDetails(orderId) {
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get(
+          "SELECT id, payment_qr_id, total_amount, advance_payment, payment_status FROM special_orders WHERE id = ?",
+          [orderId]
+        );
+        if (!order) return null;
+        const configs = await this.getQrConfigs();
+        const assignedId = order.payment_qr_id || "QR_1";
+        const config2 = configs.find((c) => c.id === assignedId) || configs[0] || DEFAULT_QR_CONFIGS[0];
+        const amount = Number(order.total_amount || order.advance_payment || 0);
+        return {
+          qr_id: config2.id,
+          label: config2.label,
+          payee_name: config2.payee_name,
+          upi_id: config2.upi_id,
+          upi_uri: this.buildUpiUri(config2.upi_id, config2.payee_name, amount, order.id),
+          qr_image_url: config2.qr_image_url || "",
+          amount,
+          payment_status: order.payment_status || "UNPAID"
+        };
+      }
+    };
+    paymentQrService = new PaymentQrService();
+  }
+});
+
 // src/routes/settings.ts
 var settings_exports = {};
 __export(settings_exports, {
@@ -41102,6 +42318,7 @@ var init_settings = __esm({
     init_password();
     init_triggerSchedulerService();
     init_medicineSalesMetricsService();
+    init_paymentQrService();
     __filename30 = (0, import_url32.fileURLToPath)(import_meta_url);
     __dirname30 = import_path38.default.dirname(__filename30);
     DB_PATH16 = process.env.DB_PATH || import_path38.default.resolve(__dirname30, "..", "..", "data", "app.db");
@@ -41404,17 +42621,14 @@ var init_settings = __esm({
           const hasWhatsappKey = keys.some((k) => k === "whatsapp_enabled" || k === "whatsapp_preferred_system" || k === "wa_business_enabled");
           if (hasWhatsappKey) {
             try {
-              const { initClient: initClient2, destroyClient: destroyClient2, shouldRouteToBusiness: shouldRouteToBusiness2, hasSavedSession: hasSavedSession2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+              const { destroyClient: destroyClient2, shouldRouteToBusiness: shouldRouteToBusiness2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
               const enabled = payload["whatsapp_enabled"] === "true";
               const useBusiness = await shouldRouteToBusiness2();
               if (useBusiness || !enabled) {
                 console.log("[Settings] WhatsApp Business API preferred or WhatsApp Web disabled. Shutting down automated client...");
                 await destroyClient2();
-              } else if (hasSavedSession2()) {
-                console.log("[Settings] Automated WhatsApp Web enabled with existing session. Re-initializing client...");
-                await initClient2().catch((err) => console.error("[Settings] WhatsApp Web initialization failed:", err));
               } else {
-                console.log("[Settings] Automated WhatsApp Web enabled, but no saved session exists. Standing down until manual connect.");
+                console.log("[Settings] WhatsApp settings saved. Connection remains manual-only (user must click Connect to start).");
               }
             } catch (err) {
               console.error("[Settings] Failed to hot-reload WhatsApp config:", err);
@@ -41962,6 +43176,127 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete signature" });
       }
     });
+    router12.get("/payment-qrs", async (_req, res) => {
+      try {
+        const configs = await paymentQrService.getQrConfigs();
+        res.json({ success: true, configs });
+      } catch (error) {
+        console.error("Fetch payment QRs error:", error);
+        res.status(500).json({ error: "Failed to load QR configurations" });
+      }
+    });
+    router12.post("/payment-qrs", async (req, res) => {
+      try {
+        const { configs } = req.body;
+        if (!Array.isArray(configs) || configs.length === 0) {
+          return res.status(400).json({ error: "configs array is required" });
+        }
+        await paymentQrService.saveQrConfigs(configs);
+        res.json({ success: true, message: "Payment QR configurations saved" });
+      } catch (error) {
+        console.error("Save payment QRs error:", error);
+        res.status(500).json({ error: "Failed to save QR configurations" });
+      }
+    });
+    router12.get("/delivery-config", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const row = await db2.get("SELECT value FROM app_settings WHERE key = 'delivery_enabled'");
+        const isDeliveryEnabled = row?.value === "true";
+        res.json({ success: true, delivery_enabled: isDeliveryEnabled });
+      } catch (error) {
+        console.error("Fetch delivery config error:", error);
+        res.status(500).json({ error: "Failed to fetch delivery configuration" });
+      }
+    });
+    router12.post("/delivery-config", async (req, res) => {
+      try {
+        const { delivery_enabled } = req.body;
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          "INSERT INTO app_settings (key, value) VALUES ('delivery_enabled', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          [delivery_enabled ? "true" : "false"]
+        );
+        res.json({ success: true, delivery_enabled: !!delivery_enabled });
+      } catch (error) {
+        console.error("Save delivery config error:", error);
+        res.status(500).json({ error: "Failed to update delivery configuration" });
+      }
+    });
+    router12.get("/holidays", async (req, res) => {
+      try {
+        const storeId = parseInt(String(req.query.store_id || "1"), 10) || 1;
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT * FROM pharmacy_holidays WHERE store_id = ? OR store_id = 1 ORDER BY holiday_date ASC`,
+          [storeId]
+        );
+        const holidays = (rows || []).map((r) => ({
+          ...r,
+          holiday_name: r.holiday_name || r.name || "Holiday",
+          name: r.name || r.holiday_name || "Holiday",
+          custom_window_start: r.custom_window_start || r.open_time || null,
+          custom_window_end: r.custom_window_end || r.close_time || null
+        }));
+        res.json({ success: true, holidays });
+      } catch (error) {
+        console.error("Fetch holidays error:", error);
+        res.status(500).json({ error: "Failed to fetch holidays" });
+      }
+    });
+    router12.post("/holidays", async (req, res) => {
+      try {
+        const {
+          holiday_date,
+          holiday_name,
+          name,
+          is_closed = 1,
+          open_time = null,
+          close_time = null,
+          custom_window_start = null,
+          custom_window_end = null,
+          store_id = 1
+        } = req.body;
+        const finalName = (holiday_name || name || "").trim();
+        if (!holiday_date || !finalName) {
+          return res.status(400).json({ error: "holiday_date and name are required" });
+        }
+        const winStart = custom_window_start || open_time || null;
+        const winEnd = custom_window_end || close_time || null;
+        const isClosedVal = is_closed === false || is_closed === 0 || is_closed === "0" || is_closed === "false" ? 0 : 1;
+        const db2 = await dbManager.getConnection();
+        const result = await db2.run(
+          `INSERT INTO pharmacy_holidays (store_id, holiday_date, name, holiday_name, is_closed, open_time, close_time, custom_window_start, custom_window_end, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(store_id, holiday_date) DO UPDATE SET
+         name = excluded.name,
+         holiday_name = excluded.holiday_name,
+         is_closed = excluded.is_closed,
+         open_time = excluded.open_time,
+         close_time = excluded.close_time,
+         custom_window_start = excluded.custom_window_start,
+         custom_window_end = excluded.custom_window_end,
+         updated_at = CURRENT_TIMESTAMP`,
+          [store_id, holiday_date, finalName, finalName, isClosedVal, winStart, winEnd, winStart, winEnd]
+        );
+        res.json({ success: true, id: result.lastID, message: "Holiday saved successfully" });
+      } catch (error) {
+        console.error("Save holiday error:", error);
+        res.status(500).json({ error: "Failed to save holiday: " + error.message });
+      }
+    });
+    router12.delete("/holidays/:id", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid holiday ID" });
+        const db2 = await dbManager.getConnection();
+        await db2.run("DELETE FROM pharmacy_holidays WHERE id = ?", [id]);
+        res.json({ success: true, message: "Holiday removed successfully" });
+      } catch (error) {
+        console.error("Delete holiday error:", error);
+        res.status(500).json({ error: "Failed to delete holiday" });
+      }
+    });
     router12.get("/:key", async (req, res) => {
       const { key } = req.params;
       try {
@@ -42024,26 +43359,12 @@ async function fetchPharmarack(url, options = {}) {
   };
   let response = await executeFetch(token);
   if ((response.status === 401 || response.status === 403) && token) {
-    if (options.nonBlockingOn401) {
-      console.log(`[Pharmarack Fetch] Search API returned ${response.status}. Triggering async background token refresh and returning immediately...`);
-      tokenRefreshScheduler.executeRefresh().catch((err) => {
-        console.warn("[Pharmarack Fetch] Async token refresh error:", err?.message || err);
-      });
-      return response;
-    }
-    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Attempting silent background token refresh...`);
-    const freshToken = await tokenRefreshScheduler.executeRefresh();
-    if (freshToken) {
-      console.log(`[Pharmarack Fetch] Retrying API ${url} with fresh token...`);
-      response = await executeFetch(freshToken);
-    } else {
-      console.log(`[Pharmarack Fetch] Silent background token refresh failed. Marking session status 'stale' (token preserved).`);
-      try {
-        const db2 = await dbManager.getConnection();
-        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'stale')");
-      } catch (dbErr) {
-        console.error("Failed to mark session stale:", dbErr);
-      }
+    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Marking session status 'expired' (manual re-auth required).`);
+    try {
+      const db2 = await dbManager.getConnection();
+      await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+    } catch (dbErr) {
+      console.error("Failed to mark session expired:", dbErr);
     }
   }
   return response;
@@ -42153,17 +43474,6 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     activityTracker.recordActivity();
     const settings = await getPharmarackSettings();
     let token = settings["pharmarack_session_token"] || "";
-    if (!token) {
-      const mainProfilePath = import_path39.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-      const hasStoredProfile = import_fs36.default.existsSync(mainProfilePath) && import_fs36.default.readdirSync(mainProfilePath).length > 0;
-      if (hasStoredProfile) {
-        console.log("[Pharmarack Search] No token stored but browser profile found. Attempting silent token restore...");
-        const freshToken = await tokenRefreshScheduler.executeRefresh().catch(() => null);
-        if (freshToken) {
-          token = freshToken;
-        }
-      }
-    }
     if (!token) {
       const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
       if (offline2.length > 0) {
@@ -42438,11 +43748,14 @@ async function loadLiveCartCore() {
   return { distributors, totalItems };
 }
 async function warmupStartupCart() {
+  if (isWarmingUpCart || startupCartWarmedUp) return;
+  isWarmingUpCart = true;
   try {
     const settings = await getPharmarackSettings();
     const token = settings["pharmarack_session_token"] || "";
     if (!token) {
       console.log("[StartupSync] No Pharmarack token configured. Marking startup cart sync complete.");
+      startupCartWarmedUp = true;
       startupSyncCoordinator.markCartLoaded();
       return;
     }
@@ -42454,10 +43767,13 @@ async function warmupStartupCart() {
     }
     const { distributors, totalItems } = await loadLiveCartCore();
     serverCartCache = { distributors, totalItems, ts: Date.now() };
+    startupCartWarmedUp = true;
     startupSyncCoordinator.markCartLoaded();
     console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
   } catch (err) {
     console.warn("[StartupSync] Boot cart warm-up could not load live cart:", err?.message || err);
+  } finally {
+    isWarmingUpCart = false;
   }
 }
 async function executeSingleItemDelete(item) {
@@ -42716,7 +44032,7 @@ async function verifyOrderPlacedInPharmarack(storeId) {
   }
   return false;
 }
-var import_express13, import_path39, import_url33, import_fs36, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, pharmarackDeleteQueue, isProcessingPharmarackDeleteQueue, handleManualReauth, pharmarack_default;
+var import_express13, import_path39, import_url33, import_fs36, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteQueue, isProcessingPharmarackDeleteQueue, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
@@ -43162,6 +44478,8 @@ var init_pharmarack = __esm({
       serverCartCache = null;
       userCartProbeCache = null;
     };
+    isWarmingUpCart = false;
+    startupCartWarmedUp = false;
     router13.post("/cart/add", async (req, res) => {
       const { items } = req.body;
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -45551,7 +46869,8 @@ var init_messaging = __esm({
           const qrUrl = await import_qrcode4.default.toDataURL(currentQr);
           return res.json({ isReady: false, qrUrl, initializing: false, status: "SCAN_QR" });
         }
-        if (hasSavedSession()) {
+        const isAutoAllowed = await isWhatsAppAutoConnectAllowed();
+        if (isAutoAllowed) {
           return res.json({
             isReady: false,
             qrUrl: null,
@@ -45561,7 +46880,7 @@ var init_messaging = __esm({
             message: 'Saved WhatsApp session present. Click "Connect WhatsApp" or send a message to activate.'
           });
         }
-        res.json({ isReady: false, qrUrl: null, initializing: false, status: "DISCONNECTED", message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
+        res.json({ isReady: false, qrUrl: null, initializing: false, hasSavedSession: false, status: "DISCONNECTED", message: 'WhatsApp is not connected. Click "Connect WhatsApp" to scan QR code.' });
       } catch (err) {
         console.error("QR check error:", err);
         res.status(500).json({ error: "Failed to check QR status" });
@@ -45573,7 +46892,7 @@ var init_messaging = __esm({
         if (explicitlyDisabled) {
           return res.status(400).json({ error: "WhatsApp is currently disabled in Settings. Enable WhatsApp before connecting." });
         }
-        initClient({ forceQr: true }).catch(console.error);
+        initClient({ forceQr: true, manual: true }).catch(console.error);
         res.json({ success: true, message: "Initializing WhatsApp QR code scan..." });
       } catch (err) {
         console.error("[WhatsApp Connect] Error:", err);
@@ -45673,8 +46992,15 @@ var init_messaging = __esm({
                 await db2.run(
                   "INSERT INTO app_settings (key, value) VALUES ('whatsapp_preferred_system', 'automated') ON CONFLICT(key) DO UPDATE SET value = 'automated'"
                 );
+                await db2.run(
+                  "INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true') ON CONFLICT(key) DO UPDATE SET value = 'true'"
+                );
+                await db2.run(
+                  "INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                  [(/* @__PURE__ */ new Date()).toISOString()]
+                );
               } catch (e) {
-                console.warn("[WhatsApp] Could not set whatsapp_preferred_system setting:", e);
+                console.warn("[WhatsApp] Could not set whatsapp_session_authenticated setting:", e);
               }
               const elapsedMs = Date.now() - launchTime;
               if (elapsedMs < MIN_WINDOW_MS) {
@@ -45718,9 +47044,9 @@ var init_messaging = __esm({
               console.error("[WhatsApp] Error closing browser:", err);
             }
           }
-          if (hasSavedSession()) {
-            console.log("[WhatsApp] Re-initializing background client...");
-            initClient().catch((err) => {
+          if (await isWhatsAppAutoConnectAllowed()) {
+            console.log("[WhatsApp] Re-initializing background client after manual user login...");
+            initClient({ manual: true }).catch((err) => {
               console.error("[WhatsApp] Re-initialization after popup failed:", err);
             });
           }
@@ -46567,6 +47893,397 @@ var init_telegramPrescription = __esm({
   }
 });
 
+// src/services/orderScheduleService.ts
+var OrderScheduleService, orderScheduleService;
+var init_orderScheduleService = __esm({
+  "src/services/orderScheduleService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    OrderScheduleService = class {
+      /**
+       * Load store/pharmacy timing configuration from app_settings and store_settings.
+       */
+      async getTimingConfig(dbOrStoreId, storeIdOrDb) {
+        let db2;
+        let storeId = 1;
+        if (dbOrStoreId && typeof dbOrStoreId.all === "function") {
+          db2 = dbOrStoreId;
+          if (typeof storeIdOrDb === "number") storeId = storeIdOrDb;
+        } else if (typeof dbOrStoreId === "number") {
+          storeId = dbOrStoreId;
+          if (storeIdOrDb && typeof storeIdOrDb.all === "function") {
+            db2 = storeIdOrDb;
+          }
+        } else {
+          db2 = await dbManager.getConnection();
+        }
+        try {
+          const rows = await db2.all("SELECT key, value FROM app_settings");
+          const settingsMap = {};
+          for (const r of rows) {
+            settingsMap[r.key] = r.value;
+          }
+          if (storeId > 0) {
+            try {
+              const storeRows = await db2.all("SELECT key, value FROM store_settings WHERE store_id = ?", [storeId]);
+              for (const sr of storeRows) {
+                settingsMap[sr.key] = sr.value;
+              }
+            } catch (_) {
+            }
+          }
+          return {
+            orderCutoffTime: settingsMap["pharmacy_cutoff_time"] || settingsMap["order_cutoff_time"] || "23:00",
+            sameDayDeliveryEnabled: settingsMap["same_day_delivery_enabled"] !== "false",
+            deliveryStartTime: settingsMap["delivery_window_start"] || settingsMap["delivery_start_time"] || "19:00",
+            deliveryEndTime: settingsMap["delivery_window_end"] || settingsMap["delivery_end_time"] || "21:00",
+            operatesSunday: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["operates_sunday"] === "true" || settingsMap["sunday_delivery"] === "true",
+            sundayDelivery: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["sunday_delivery"] === "true",
+            sundayWindowStart: settingsMap["sunday_window_start"] || "10:00",
+            sundayWindowEnd: settingsMap["sunday_window_end"] || "14:00",
+            holidayDelivery: settingsMap["holiday_delivery_enabled"] === "true" || settingsMap["holiday_delivery"] === "true",
+            holidayHandling: settingsMap["holiday_handling"] || "next_available_day",
+            is24Hours: settingsMap["is_24_hours"] === "true",
+            pharmacyTimezone: settingsMap["pharmacy_timezone"] || "Asia/Kolkata",
+            returnWindowDays: parseInt(settingsMap["return_window_days"] || "15", 10) || 15,
+            refillPauseAffectsDate: settingsMap["refill_pause_recalculation_enabled"] !== "false" && settingsMap["refill_pause_affects_date"] !== "false"
+          };
+        } catch (err) {
+          console.warn("[OrderScheduleService] Error fetching timing config, using defaults:", err);
+          return {
+            orderCutoffTime: "23:00",
+            sameDayDeliveryEnabled: true,
+            deliveryStartTime: "19:00",
+            deliveryEndTime: "21:00",
+            operatesSunday: false,
+            sundayDelivery: false,
+            sundayWindowStart: "10:00",
+            sundayWindowEnd: "14:00",
+            holidayDelivery: false,
+            holidayHandling: "next_available_day",
+            is24Hours: false,
+            pharmacyTimezone: "Asia/Kolkata",
+            returnWindowDays: 15,
+            refillPauseAffectsDate: true
+          };
+        }
+      }
+      /**
+       * Helper to format time strings (e.g. "19:00" -> "7:00 PM")
+       */
+      formatTime12h(timeStr) {
+        const [hStr, mStr] = (timeStr || "00:00").split(":");
+        let h = parseInt(hStr, 10) || 0;
+        const m = parseInt(mStr, 10) || 0;
+        const ampm = h >= 12 ? "PM" : "AM";
+        h = h % 12 || 12;
+        const mDisplay = m > 0 ? `:${m < 10 ? "0" : ""}${m}` : ":00";
+        return `${h}${mDisplay} ${ampm}`;
+      }
+      /**
+       * Format date as YYYY-MM-DD
+       */
+      formatDateYMD(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const d = String(dateObj.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      /**
+       * Helper to decompose a date into year, month, day, hour, minute, dayOfWeek for the pharmacy timezone.
+       */
+      getTimezoneParts(date, timeZone = "Asia/Kolkata") {
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          weekday: "short"
+        });
+        const parts = formatter.formatToParts(date);
+        const map = {};
+        for (const p of parts) {
+          map[p.type] = p.value;
+        }
+        const year = parseInt(map.year, 10);
+        const month = parseInt(map.month, 10);
+        const day = parseInt(map.day, 10);
+        let hour = parseInt(map.hour, 10);
+        if (hour === 24) hour = 0;
+        const minute = parseInt(map.minute, 10);
+        const ymd = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const dayOfWeek = weekdayMap[map.weekday] ?? 0;
+        return { year, month, day, hour, minute, ymd, dayOfWeek };
+      }
+      /**
+       * Helper to format YYYY-MM-DD and HH:mm with IST timezone into ISO string.
+       */
+      combineYmdAndTime(ymd, timeStr, timeZone = "Asia/Kolkata") {
+        const [hStr, mStr] = (timeStr || "00:00").split(":");
+        const h = String(parseInt(hStr, 10) || 0).padStart(2, "0");
+        const m = String(parseInt(mStr, 10) || 0).padStart(2, "0");
+        return (/* @__PURE__ */ new Date(`${ymd}T${h}:${m}:00+05:30`)).toISOString();
+      }
+      /**
+       * Core Single Scheduling Engine:
+       * Supports both positional args: calculateOrderSchedule(orderTime, storeId, db)
+       * and object options: calculateOrderSchedule({ storeId, orderCreatedAt, dbInstance })
+       */
+      async calculateOrderSchedule(orderCreatedAtOrOpts, storeIdArg, dbInstanceArg) {
+        let storeId = 1;
+        let orderCreatedAt = /* @__PURE__ */ new Date();
+        let db2 = null;
+        if (orderCreatedAtOrOpts instanceof Date || typeof orderCreatedAtOrOpts === "string") {
+          orderCreatedAt = orderCreatedAtOrOpts;
+          if (typeof storeIdArg === "number") {
+            storeId = storeIdArg;
+          }
+          if (dbInstanceArg) {
+            db2 = dbInstanceArg;
+          }
+        } else if (orderCreatedAtOrOpts && typeof orderCreatedAtOrOpts === "object") {
+          if (orderCreatedAtOrOpts.storeId !== void 0) storeId = orderCreatedAtOrOpts.storeId;
+          if (orderCreatedAtOrOpts.orderCreatedAt !== void 0) orderCreatedAt = orderCreatedAtOrOpts.orderCreatedAt;
+          if (orderCreatedAtOrOpts.dbInstance !== void 0) db2 = orderCreatedAtOrOpts.dbInstance;
+        } else if (typeof storeIdArg === "number") {
+          storeId = storeIdArg;
+          if (dbInstanceArg) db2 = dbInstanceArg;
+        }
+        if (!db2) {
+          db2 = await dbManager.getConnection();
+        }
+        const config2 = await this.getTimingConfig(db2, storeId);
+        const now = orderCreatedAt ? new Date(orderCreatedAt) : /* @__PURE__ */ new Date();
+        const nowIso = now.toISOString();
+        let holidays = [];
+        try {
+          holidays = await db2.all(
+            `SELECT * FROM pharmacy_holidays 
+         WHERE (store_id = ? OR store_id = 1)
+         ORDER BY holiday_date ASC`,
+            [storeId]
+          );
+        } catch (_) {
+        }
+        const holidayMap = /* @__PURE__ */ new Map();
+        for (const h of holidays) {
+          holidayMap.set(h.holiday_date, h);
+        }
+        const currentTzParts = this.getTimezoneParts(now, config2.pharmacyTimezone);
+        const todayYmd = currentTzParts.ymd;
+        const isTodaySunday = currentTzParts.dayOfWeek === 0;
+        const todayHoliday = holidayMap.get(todayYmd);
+        const isTodayHoliday = Boolean(todayHoliday);
+        const [cutoffH, cutoffM] = config2.orderCutoffTime.split(":").map((x) => parseInt(x, 10));
+        const cutoffPassed = !config2.is24Hours && (currentTzParts.hour > cutoffH || currentTzParts.hour === cutoffH && currentTzParts.minute >= cutoffM);
+        const sundayAllowed = config2.operatesSunday || config2.sundayDelivery;
+        const isTodayHolidayClosed = Boolean(
+          todayHoliday && (Number(todayHoliday.is_closed) === 1 || todayHoliday.is_closed === true) && !config2.holidayDelivery
+        );
+        let isNextDayCutoff = false;
+        let isSundayShift = false;
+        let isHolidayShift = false;
+        let scheduleStatus = "standard";
+        let primaryShiftReason = null;
+        if (cutoffPassed) {
+          isNextDayCutoff = true;
+          scheduleStatus = "post_cutoff";
+          primaryShiftReason = `Order placed after ${this.formatTime12h(config2.orderCutoffTime)} cutoff (post-cutoff rollover)`;
+        } else if (isTodaySunday && !sundayAllowed) {
+          isSundayShift = true;
+          scheduleStatus = "sunday_shift";
+          primaryShiftReason = "Pharmacy closed on Sundays (Sunday rollover)";
+        } else if (isTodayHolidayClosed) {
+          isHolidayShift = true;
+          const hName = todayHoliday?.holiday_name || todayHoliday?.name || "Public Holiday";
+          scheduleStatus = "holiday_shift";
+          primaryShiftReason = `Pharmacy closed for ${hName}`;
+        }
+        let isSameDay = false;
+        let targetDate = new Date(now);
+        let daysAdvanced = 0;
+        if (!isNextDayCutoff && !isSundayShift && !isHolidayShift) {
+          isSameDay = true;
+          scheduleStatus = "standard";
+          primaryShiftReason = null;
+        } else {
+          while (daysAdvanced < 14) {
+            daysAdvanced++;
+            targetDate.setDate(targetDate.getDate() + 1);
+            const targetParts2 = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
+            const isSun = targetParts2.dayOfWeek === 0;
+            const holidayRec = holidayMap.get(targetParts2.ymd);
+            const isHolClosed = Boolean(
+              holidayRec && (Number(holidayRec.is_closed) === 1 || holidayRec.is_closed === true) && !config2.holidayDelivery
+            );
+            if (isSun && !sundayAllowed) {
+              continue;
+            }
+            if (isHolClosed) {
+              continue;
+            }
+            break;
+          }
+        }
+        const targetParts = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
+        const isTargetSunday = targetParts.dayOfWeek === 0;
+        const targetHoliday = holidayMap.get(targetParts.ymd);
+        let deliveryStartTime = config2.deliveryStartTime;
+        let deliveryEndTime = config2.deliveryEndTime;
+        if (isTargetSunday && sundayAllowed) {
+          deliveryStartTime = config2.sundayWindowStart || "10:00";
+          deliveryEndTime = config2.sundayWindowEnd || "14:00";
+        } else if (targetHoliday && (Number(targetHoliday.is_closed) === 0 || targetHoliday.is_closed === false)) {
+          if (targetHoliday.custom_window_start || targetHoliday.open_time) {
+            deliveryStartTime = targetHoliday.custom_window_start || targetHoliday.open_time || deliveryStartTime;
+          }
+          if (targetHoliday.custom_window_end || targetHoliday.close_time) {
+            deliveryEndTime = targetHoliday.custom_window_end || targetHoliday.close_time || deliveryEndTime;
+          }
+        }
+        const estimatedDeliveryStart = this.combineYmdAndTime(targetParts.ymd, deliveryStartTime, config2.pharmacyTimezone);
+        const estimatedDeliveryEnd = this.combineYmdAndTime(targetParts.ymd, deliveryEndTime, config2.pharmacyTimezone);
+        const scheduledProcessingAt = this.combineYmdAndTime(targetParts.ymd, "08:00", config2.pharmacyTimezone);
+        const cutoffAt = this.combineYmdAndTime(currentTzParts.ymd, config2.orderCutoffTime, config2.pharmacyTimezone);
+        const dayLabel = isSameDay ? "Today" : daysAdvanced === 1 ? "Tomorrow" : new Intl.DateTimeFormat("en-IN", { timeZone: config2.pharmacyTimezone, weekday: "short", month: "short", day: "numeric" }).format(targetDate);
+        const formattedWindow = `${dayLabel}, ${this.formatTime12h(deliveryStartTime)} \u2013 ${this.formatTime12h(deliveryEndTime)}`;
+        return {
+          // CamelCase
+          isNextDayCutoff,
+          isSundayShift,
+          isHolidayShift,
+          cutoffTime: config2.orderCutoffTime,
+          estimatedDeliveryWindowFormatted: formattedWindow,
+          scheduledProcessingAt,
+          estimatedDeliveryStart,
+          estimatedDeliveryEnd,
+          cutoffAt,
+          timezone: config2.pharmacyTimezone,
+          scheduleStatus,
+          scheduleReason: primaryShiftReason,
+          scheduleVersion: 1,
+          calculatedAt: nowIso,
+          // Snake_case
+          is_next_day_cutoff: isNextDayCutoff,
+          is_sunday_shift: isSundayShift,
+          is_holiday_shift: isHolidayShift,
+          is_same_day: isSameDay,
+          scheduled_processing_at: scheduledProcessingAt,
+          estimated_delivery_start: estimatedDeliveryStart,
+          estimated_delivery_end: estimatedDeliveryEnd,
+          cutoff_at: cutoffAt,
+          cutoff_passed: cutoffPassed,
+          is_holiday: isTodayHoliday,
+          is_sunday: isTodaySunday,
+          pharmacy_timezone: config2.pharmacyTimezone,
+          schedule_status: scheduleStatus,
+          schedule_reason: primaryShiftReason,
+          schedule_version: 1,
+          schedule_calculated_at: nowIso,
+          formatted_window: formattedWindow
+        };
+      }
+      /**
+       * Persists the calculated schedule directly into special_orders.
+       */
+      async persistOrderSchedule(orderId, schedule, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        await db2.run(
+          `UPDATE special_orders
+       SET scheduled_processing_at = ?,
+           estimated_delivery_start = ?,
+           estimated_delivery_end = ?,
+           cutoff_at = ?,
+           pharmacy_timezone = ?,
+           schedule_status = ?,
+           schedule_reason = ?,
+           schedule_version = ?,
+           schedule_calculated_at = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [
+            schedule.scheduled_processing_at,
+            schedule.estimated_delivery_start,
+            schedule.estimated_delivery_end,
+            schedule.cutoff_at,
+            schedule.pharmacy_timezone,
+            schedule.schedule_status,
+            schedule.schedule_reason,
+            schedule.schedule_version,
+            schedule.schedule_calculated_at,
+            orderId
+          ]
+        );
+        const reasonText = schedule.schedule_reason ? ` (Reason: ${schedule.schedule_reason})` : "";
+        try {
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'schedule_calculated', ?, 'system', CURRENT_TIMESTAMP)`,
+            [orderId, `Estimated delivery: ${schedule.formatted_window}${reasonText}`]
+          );
+        } catch (_) {
+        }
+      }
+      /**
+       * Staff manual override for delivery schedule.
+       */
+      async overrideOrderSchedule(orderId, opts, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const staff = (opts.overrideBy || opts.staffName || "Pharmacist Admin").trim();
+        const reason = (opts.reason || "Manual schedule adjustment").trim();
+        const start = opts.estimatedDeliveryStart || opts.newDeliveryStart;
+        const end = opts.estimatedDeliveryEnd || opts.newDeliveryEnd;
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          return null;
+        }
+        const currentVersion = (order.schedule_version || 1) + 1;
+        await db2.run(
+          `UPDATE special_orders
+       SET estimated_delivery_start = ?,
+           estimated_delivery_end = ?,
+           schedule_status = 'overridden',
+           schedule_reason = ?,
+           schedule_version = ?,
+           schedule_overridden_by = ?,
+           schedule_overridden_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [
+            start,
+            end,
+            reason,
+            currentVersion,
+            staff,
+            orderId
+          ]
+        );
+        try {
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'schedule_overridden', ?, ?, CURRENT_TIMESTAMP)`,
+            [orderId, `Delivery ETA overridden by ${staff}. New window: ${start} to ${end}. Reason: ${reason}`, staff]
+          );
+        } catch (_) {
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "schedule_overridden" });
+        } catch (_) {
+        }
+        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return updated;
+      }
+    };
+    orderScheduleService = new OrderScheduleService();
+  }
+});
+
 // src/routes/refills.ts
 var refills_exports = {};
 __export(refills_exports, {
@@ -46651,6 +48368,7 @@ var init_refills = __esm({
     init_eventService();
     init_config();
     init_nameFormatter();
+    init_orderScheduleService();
     __filename37 = (0, import_url39.fileURLToPath)(import_meta_url);
     __dirname37 = import_path46.default.dirname(__filename37);
     DB_PATH23 = process.env.DB_PATH || import_path46.default.resolve(__dirname37, "..", "..", "data", "app.db");
@@ -47143,6 +48861,7 @@ var init_refills = __esm({
     });
     router19.post("/:id/toggle-pause", async (req, res) => {
       const { id } = req.params;
+      const pauseReason = (req.body?.reason || "Paused by pharmacist/customer").trim();
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -47151,10 +48870,18 @@ var init_refills = __esm({
           return res.status(404).json({ error: "Refill record not found" });
         }
         const newIsActive = refill.is_active === 0 ? 1 : 0;
+        let recalculatedNextDate = refill.next_refill_date;
         if (newIsActive === 0) {
           await db2.run(
-            `UPDATE patient_refills SET is_active = 0, is_ready = 0, hold_for_stock = 0 WHERE id = ?`,
-            [id]
+            `UPDATE patient_refills 
+         SET is_active = 0, 
+             status = 'paused', 
+             is_ready = 0, 
+             hold_for_stock = 0,
+             paused_at = CURRENT_TIMESTAMP,
+             pause_reason = ?
+         WHERE id = ?`,
+            [pauseReason, id]
           );
           await db2.run(
             `UPDATE automation_notifications SET lifecycle_status = 'skipped' 
@@ -47162,15 +48889,66 @@ var init_refills = __esm({
             [String(id)]
           );
         } else {
+          const now = /* @__PURE__ */ new Date();
+          let pauseDurationSeconds = 0;
+          if (refill.paused_at) {
+            const pausedAtMs = new Date(refill.paused_at).getTime();
+            const pauseMs = Math.max(0, now.getTime() - pausedAtMs);
+            pauseDurationSeconds = Math.floor(pauseMs / 1e3);
+            if (refill.next_refill_date) {
+              const originalDate = new Date(refill.next_refill_date);
+              let targetDate = new Date(originalDate.getTime() + pauseMs);
+              if (targetDate.getTime() < now.getTime()) {
+                targetDate = /* @__PURE__ */ new Date();
+                targetDate.setDate(targetDate.getDate() + (refill.refill_interval_days || 30));
+              }
+              const timingConfig = await orderScheduleService.getTimingConfig(db2, refill.store_id || 1);
+              let advanceCount = 0;
+              while (advanceCount < 14) {
+                const ymd = orderScheduleService.formatDateYMD(targetDate);
+                const isSun = targetDate.getDay() === 0;
+                const holiday = await db2.get(
+                  "SELECT is_closed FROM pharmacy_holidays WHERE (store_id = ? OR store_id = 1) AND holiday_date = ?",
+                  [refill.store_id || 1, ymd]
+                );
+                if (isSun && !timingConfig.operatesSunday) {
+                  targetDate.setDate(targetDate.getDate() + 1);
+                  advanceCount++;
+                  continue;
+                }
+                if (holiday && holiday.is_closed === 1) {
+                  targetDate.setDate(targetDate.getDate() + 1);
+                  advanceCount++;
+                  continue;
+                }
+                break;
+              }
+              recalculatedNextDate = targetDate.toISOString().slice(0, 19).replace("T", " ");
+            }
+          }
           await db2.run(
-            "UPDATE patient_refills SET is_active = 1 WHERE id = ?",
-            [id]
+            `UPDATE patient_refills 
+         SET is_active = 1,
+             status = 'pending',
+             resume_at = CURRENT_TIMESTAMP,
+             next_refill_date = COALESCE(?, next_refill_date),
+             pause_duration_seconds = COALESCE(pause_duration_seconds, 0) + ?,
+             refill_schedule_version = COALESCE(refill_schedule_version, 1) + 1,
+             paused_at = NULL,
+             pause_reason = NULL
+         WHERE id = ?`,
+            [recalculatedNextDate, pauseDurationSeconds, id]
           );
         }
         await checkAllRefills(db2);
+        try {
+          eventService.broadcast("refill_updated", { at: Date.now(), refillId: id, is_active: newIsActive });
+        } catch (_) {
+        }
         res.json({
           success: true,
           is_active: newIsActive,
+          next_refill_date: recalculatedNextDate,
           message: `Refill schedule ${newIsActive === 0 ? "paused" : "resumed"} successfully`
         });
       } catch (err) {
@@ -48873,21 +50651,44 @@ var init_stores = __esm({
 });
 
 // src/services/returnWindowService.ts
-var RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
+var DEFAULT_RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
 var init_returnWindowService = __esm({
   "src/services/returnWindowService.ts"() {
     "use strict";
     init_connection();
     init_eventService();
-    RETURN_WINDOW_DAYS = 14;
-    RETURN_WINDOW_MS = RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1e3;
+    DEFAULT_RETURN_WINDOW_DAYS = 15;
+    RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
     ReturnWindowService = class {
       /**
-       * Calculates the return window deadline given a delivered timestamp
+       * Fetches the configured return window duration from app_settings (default 15 days).
        */
-      calculateReturnWindowUntil(deliveredAt) {
+      async getConfiguredReturnWindowDays(storeIdOrDb, customDb) {
+        try {
+          let db2;
+          if (customDb) {
+            db2 = customDb;
+          } else if (storeIdOrDb && typeof storeIdOrDb.get === "function") {
+            db2 = storeIdOrDb;
+          } else {
+            db2 = await dbManager.getConnection();
+          }
+          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
+          if (row && row.value) {
+            const val = parseInt(row.value, 10);
+            if (!isNaN(val) && val > 0) return val;
+          }
+        } catch (_) {
+        }
+        return DEFAULT_RETURN_WINDOW_DAYS;
+      }
+      /**
+       * Calculates the return window deadline given a delivered timestamp and optional days
+       */
+      calculateReturnWindowUntil(deliveredAt, windowDays) {
         const deliveredDate = new Date(deliveredAt);
-        const deadlineMs = deliveredDate.getTime() + RETURN_WINDOW_MS;
+        const days = windowDays !== void 0 && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
+        const deadlineMs = deliveredDate.getTime() + days * 24 * 60 * 60 * 1e3;
         return new Date(deadlineMs).toISOString();
       }
       /**
@@ -48959,7 +50760,8 @@ var init_returnWindowService = __esm({
       async markDelivered(orderId, deliveredAtDate, dbInstance) {
         const db2 = dbInstance || await dbManager.getConnection();
         const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
-        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt);
+        const windowDays = await this.getConfiguredReturnWindowDays(db2);
+        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
         await db2.run(
           `UPDATE special_orders
        SET delivery_status = 'delivered',
@@ -48974,7 +50776,7 @@ var init_returnWindowService = __esm({
         await db2.run(
           `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
        VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
-          [orderId, `Order delivered. 14-day return window open until ${returnWindowUntil}`]
+          [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
         );
         try {
           eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
@@ -49067,6 +50869,27 @@ var init_returnWindowService = __esm({
   }
 });
 
+// src/utils/productNormalizer.ts
+function formatProductCode(id) {
+  if (!id || id <= 0) return "";
+  return `MED-${String(id).padStart(8, "0")}`;
+}
+function normalizeProductName(name) {
+  if (!name) return "";
+  return name.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function getThreeWordPrefix(name) {
+  const normalized = normalizeProductName(name);
+  if (!normalized) return "";
+  const words = normalized.split(" ").filter(Boolean);
+  return words.slice(0, 3).join(" ");
+}
+var init_productNormalizer = __esm({
+  "src/utils/productNormalizer.ts"() {
+    "use strict";
+  }
+});
+
 // src/routes/websiteOrders.ts
 var websiteOrders_exports = {};
 __export(websiteOrders_exports, {
@@ -49083,6 +50906,9 @@ var init_websiteOrders = __esm({
     init_nameFormatter();
     init_whatsappQueueWorker();
     init_storeSettingsService();
+    init_paymentQrService();
+    init_productNormalizer();
+    init_orderScheduleService();
     router24 = import_express24.default.Router();
     broadcastOrdersChanged = () => {
       try {
@@ -49099,54 +50925,67 @@ var init_websiteOrders = __esm({
           return res.status(400).json({ error: "Search query is required" });
         }
         const db2 = await dbManager.getConnection();
-        let medicines = await db2.all(
-          `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
-       FROM medicines
-       WHERE name LIKE ?
-       ORDER BY name ASC
+        const normalizedQuery = normalizeProductName(query);
+        const prefix = getThreeWordPrefix(query);
+        const medicines = await db2.all(
+          `SELECT m.id, m.name, m.canonical_name, m.normalized_name, m.product_code, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category,
+              ci.image_path as image_url
+       FROM medicines m
+       LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1
+       WHERE ((m.normalized_name IS NOT NULL AND m.normalized_name LIKE ?) OR m.name LIKE ?)
+         AND (m.status IS NULL OR m.status = 'ACTIVE')
+       ORDER BY m.name ASC
        LIMIT ?`,
-          [`${query}%`, limit]
+          [`${prefix || normalizedQuery}%`, `${query}%`, limit]
         ).catch(() => []);
-        if (medicines.length === 0 && query.length >= 2) {
-          medicines = await db2.all(
-            `SELECT id, name, generic_name, strength, packaging, manufacturer, category, mrp, sell_price
-         FROM medicines
-         WHERE name LIKE ?
-         ORDER BY name ASC
+        if (medicines.length < 5 && query.length >= 2) {
+          const existingIds = new Set(medicines.map((m) => m.id));
+          const fallbackRows = await db2.all(
+            `SELECT m.id, m.name, m.canonical_name, m.normalized_name, m.product_code, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category,
+                ci.image_path as image_url
+         FROM medicines m
+         LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1
+         WHERE ((m.normalized_name IS NOT NULL AND m.normalized_name LIKE ?) OR m.name LIKE ?)
+           AND (m.status IS NULL OR m.status = 'ACTIVE')
+         ORDER BY m.name ASC
          LIMIT ?`,
-            [`%${query}%`, limit]
+            [`%${normalizedQuery}%`, `%${query}%`, limit]
           ).catch(() => []);
+          for (const f of fallbackRows) {
+            if (!existingIds.has(f.id)) {
+              medicines.push(f);
+              existingIds.add(f.id);
+            }
+          }
         }
         const safeResults = [];
         for (const med of medicines) {
-          const stockRow = await db2.get(
-            `SELECT SUM(quantity) as total_qty 
-         FROM inventory_master 
-         WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+          const batchRow = await db2.get(
+            `SELECT MAX(mrp) as max_mrp, MAX(sell_price) as max_sell_price, SUM(quantity) as total_qty
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
             [med.id, storeId]
-          ).catch(() => ({ total_qty: 0 }));
-          const localStock = stockRow?.total_qty || 0;
-          const distRow = await db2.get(
-            `SELECT availability 
-         FROM distributor_catalog 
-         WHERE product_name LIKE ? AND is_mapped = 1
-         LIMIT 1`,
-            [`%${med.name}%`]
           ).catch(() => null);
-          const hasDistributorStock = distRow && String(distRow.availability || "").toLowerCase().includes("avail");
-          const isAvailable = localStock > 0 || Boolean(hasDistributorStock);
+          const highestMrp = batchRow?.max_mrp || 0;
+          const highestSellPrice = batchRow?.max_sell_price || highestMrp;
+          const totalStock = batchRow?.total_qty || 0;
           safeResults.push({
             id: med.id,
+            product_id: med.product_code || formatProductCode(med.id),
             name: med.name,
+            canonical_name: med.canonical_name || med.name,
             generic_name: med.generic_name || "",
             strength: med.strength || "",
             packaging: med.packaging || "",
             manufacturer: med.manufacturer || "",
             category: med.category || "",
-            mrp: med.mrp || 0,
-            price: med.sell_price || med.mrp || 0,
-            is_available: isAvailable,
-            availability_status: isAvailable ? "Available" : "Sold Out"
+            mrp: highestMrp,
+            price: highestSellPrice,
+            image_url: med.image_url || null,
+            is_available: totalStock > 0,
+            availability_status: totalStock > 0 ? "Available" : "Sold Out"
           });
         }
         res.json({
@@ -49170,7 +51009,9 @@ var init_websiteOrders = __esm({
         prescription_url,
         product_image_url,
         notes,
-        payment_method = "COD"
+        payment_method = "COUNTER_PICKUP",
+        delivery_mode = "pickup",
+        order_type: explicitOrderType
       } = req.body;
       if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Customer name and at least one item are required" });
@@ -49181,6 +51022,15 @@ var init_websiteOrders = __esm({
         const cleanName = formatCustomerName(customer_name);
         const targetStoreId = parseInt(String(store_id), 10) || 1;
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+        const orderType = (explicitOrderType || (delivery_mode === "delivery" ? "DELIVERY" : "PICKUP")).toUpperCase();
+        const totalOrderAmount = items.reduce(
+          (sum, it) => sum + (Number(it.qty) || 1) * (Number(it.price || it.mrp) || 0),
+          0
+        );
+        let allocatedQr = null;
+        if (payment_method === "UPI") {
+          allocatedQr = await paymentQrService.allocateNextQr();
+        }
         let customerId = null;
         if (cleanPhone && cleanPhone.length >= 10) {
           try {
@@ -49197,6 +51047,12 @@ var init_websiteOrders = __esm({
           } catch (_) {
           }
         }
+        const schedule = await orderScheduleService.calculateOrderSchedule({
+          storeId: targetStoreId,
+          orderCreatedAt: todayStr2,
+          orderType,
+          dbInstance: db2
+        });
         const createdOrders = [];
         await db2.run("BEGIN TRANSACTION");
         try {
@@ -49204,13 +51060,53 @@ var init_websiteOrders = __esm({
             const prodName = (item.product || item.product_name || item.name || "").trim();
             if (!prodName) continue;
             const qty = Number(item.qty) || 1;
-            const price = Number(item.price || item.mrp || 0);
+            const medicineId = item.medicine_id ? Number(item.medicine_id) : null;
+            let mrp = Number(item.price || item.mrp || 0);
+            if (medicineId && !mrp) {
+              const batchRow = await db2.get(
+                `SELECT MAX(mrp) as max_mrp FROM inventory_master
+             WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND quantity > 0
+               AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+                [medicineId, targetStoreId]
+              ).catch(() => null);
+              mrp = batchRow?.max_mrp || 0;
+            }
+            const itemSubtotal = qty * mrp;
+            if (medicineId) {
+              const availRow = await db2.get(
+                `SELECT SUM(im.quantity) - COALESCE(
+               (SELECT SUM(r.reserved_qty) FROM inventory_reservations r
+                JOIN inventory_master i ON i.id = r.inventory_id
+                WHERE i.medicine_id = ? AND i.store_id = ? AND r.status = 'ACTIVE'), 0
+             ) as available_qty
+             FROM inventory_master im
+             WHERE im.medicine_id = ? AND im.store_id = ? AND im.is_active = 1
+               AND im.quantity > 0
+               AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now'))`,
+                [medicineId, targetStoreId, medicineId, targetStoreId]
+              ).catch(() => null);
+              const availQty = availRow?.available_qty || 0;
+              if (availQty < qty) {
+                await db2.run("ROLLBACK");
+                return res.status(409).json({
+                  error: `Insufficient stock for "${prodName}". Available: ${Math.max(0, availQty)}, Requested: ${qty}`,
+                  product: prodName,
+                  available_qty: Math.max(0, availQty)
+                });
+              }
+            }
+            const initialPaymentStatus = payment_method === "UPI" ? "UNPAID" : "UNPAID";
+            const initialVerificationStatus = "PENDING";
             const result = await db2.run(
               `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, prescription_url, product_image_url,
-            delivery_status, return_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            delivery_status, return_status, payment_status, pharmacy_verification_status,
+            payment_qr_id, order_type, total_amount,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version, schedule_calculated_at,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
               [
                 targetStoreId,
                 customerId,
@@ -49221,15 +51117,54 @@ var init_websiteOrders = __esm({
                 todayStr2,
                 notes ? `[Website Order] ${notes}` : "[Website Order]",
                 prescription_url || null,
-                product_image_url || null
+                product_image_url || null,
+                initialPaymentStatus,
+                initialVerificationStatus,
+                allocatedQr?.id || null,
+                orderType,
+                totalOrderAmount,
+                schedule.scheduled_processing_at,
+                schedule.estimated_delivery_start,
+                schedule.estimated_delivery_end,
+                schedule.cutoff_at,
+                schedule.pharmacy_timezone,
+                schedule.schedule_status,
+                schedule.schedule_reason,
+                schedule.schedule_version,
+                schedule.schedule_calculated_at
               ]
             );
             const orderId = Number(result.lastID);
-            createdOrders.push({ id: orderId, product: prodName, qty });
+            createdOrders.push({ id: orderId, product: prodName, qty, payment_qr_id: allocatedQr?.id || null });
+            const itemRes = await db2.run(
+              `INSERT INTO online_order_items (
+            order_id, medicine_id, product_name, product_name_snapshot,
+            requested_qty, mrp, price_snapshot, subtotal, item_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+              [orderId, medicineId, prodName, prodName, qty, mrp, mrp, itemSubtotal]
+            );
+            const orderItemId = Number(itemRes.lastID);
+            if (medicineId) {
+              const bestBatch = await db2.get(
+                `SELECT id, quantity FROM inventory_master
+             WHERE medicine_id = ? AND store_id = ? AND is_active = 1 AND quantity > 0
+               AND (expiry_date IS NULL OR date(expiry_date) > date('now'))
+             ORDER BY mrp DESC, expiry_date ASC
+             LIMIT 1`,
+                [medicineId, targetStoreId]
+              ).catch(() => null);
+              if (bestBatch) {
+                await db2.run(
+                  `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+               VALUES (?, ?, ?, ?, 'ACTIVE')`,
+                  [bestBatch.id, orderId, orderItemId, qty]
+                );
+              }
+            }
             await db2.run(
               `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
            VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-              [orderId, `Order placed online via website for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty})`]
+              [orderId, `Order placed online (${orderType}) for Store #${targetStoreId}. Items: ${prodName} (Qty: ${qty}) - Estimated: ${schedule.formatted_window}`]
             );
           }
           await db2.run("COMMIT");
@@ -49239,45 +51174,557 @@ var init_websiteOrders = __esm({
         }
         if (cleanPhone && cleanPhone.length >= 10) {
           const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const medicalName = await getStoreMedicalName(db2);
           const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
           const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
-          const confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!
+          let confirmMsg = `Hello ${cleanName}, thank you for your order (${orderIdsStr}) at ${medicalName}!
 
 Order Items:
 ${itemsSummary}
+Total Amount: \u20B9${totalOrderAmount.toFixed(2)}
 
-We are preparing your order and will notify you upon dispatch.`;
+\u{1F69A} *Estimated Delivery:* ${schedule.formatted_window}${schedule.schedule_reason ? `
+\u2139\uFE0F *Note:* ${schedule.schedule_reason}` : ""}`;
+          if (allocatedQr) {
+            const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalOrderAmount, createdOrders[0]?.id || 1);
+            confirmMsg += `
+
+\u{1F4B3} Payment Instructions (${allocatedQr.label}):
+UPI ID: ${allocatedQr.upi_id}
+Payee: ${allocatedQr.payee_name}
+UPI Pay Link:
+${upiUri}
+
+*Important:* After paying via UPI, click "I HAVE PAID" on the website to notify the pharmacy to prepare your order.`;
+          } else {
+            confirmMsg += `
+
+\u{1F3E2} Fulfillment: In-Store Pickup
+Please collect and pay at our pharmacy counter.`;
+          }
           try {
             await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
-          } catch (waErr) {
-            console.warn("[WebsiteOrdersRoute] WhatsApp confirmation warning:", waErr);
+          } catch (_) {
           }
         }
         broadcastOrdersChanged();
+        const primaryOrderId = createdOrders[0]?.id;
+        const paymentQrResponse = allocatedQr ? {
+          qr_id: allocatedQr.id,
+          label: allocatedQr.label,
+          payee_name: allocatedQr.payee_name,
+          upi_id: allocatedQr.upi_id,
+          qr_image_url: allocatedQr.qr_image_url || "",
+          amount: totalOrderAmount,
+          upi_uri: paymentQrService.buildUpiUri(
+            allocatedQr.upi_id,
+            allocatedQr.payee_name,
+            totalOrderAmount,
+            primaryOrderId || 1
+          )
+        } : null;
         res.status(201).json({
           success: true,
           message: "Website order placed successfully",
           store_id: targetStoreId,
+          order_type: orderType,
           orders: createdOrders,
-          customer: { name: cleanName, phone: cleanPhone }
+          order_id: primaryOrderId,
+          total_amount: totalOrderAmount,
+          payment_method,
+          payment_qr: paymentQrResponse,
+          customer: { name: cleanName, phone: cleanPhone },
+          timing: {
+            sameDay: schedule.is_same_day,
+            scheduledProcessingAt: schedule.scheduled_processing_at,
+            estimatedDeliveryStart: schedule.estimated_delivery_start,
+            estimatedDeliveryEnd: schedule.estimated_delivery_end,
+            cutoffAt: schedule.cutoff_at,
+            timezone: schedule.pharmacy_timezone,
+            status: schedule.schedule_status,
+            reason: schedule.schedule_reason,
+            formattedWindow: schedule.formatted_window
+          },
+          returnPolicy: {
+            eligible: true,
+            windowDays: 15
+          }
         });
       } catch (err) {
         console.error("[WebsiteOrdersRoute] Order placement error:", err);
         res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
       }
     });
+    router24.post("/orders/:orderId/mark-paid", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        await db2.run(
+          `UPDATE special_orders
+       SET payment_status = 'PENDING_VERIFICATION',
+           pharmacy_verification_status = 'PENDING',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [orderId]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'customer_marked_paid', 'Customer reported payment completed. Awaiting pharmacy verification.', 'customer', CURRENT_TIMESTAMP)`,
+          [orderId]
+        );
+        if (order.phone) {
+          try {
+            const storeName = await getStoreMedicalName(db2, order.store_id) || "AI Pharmacy";
+            const customerName = formatCustomerName(order.customer_name || order.requester || "Customer");
+            const formattedAmount = Number(order.total_amount || 0).toFixed(2);
+            const screenshotMsg = `\u{1F64F} Namaste ${customerName}!
+
+We have received your payment report for Order #${orderId} (\u20B9${formattedAmount}).
+
+\u{1F4F8} *Please reply directly to this WhatsApp message with a screenshot of your payment receipt / UPI confirmation.*
+
+Our pharmacy team will manually verify the payment details and process your order.
+
+Thank you!
+\u2014 ${storeName}`;
+            await whatsappQueueWorker.enqueue(
+              order.phone,
+              screenshotMsg,
+              "payment_screenshot_request",
+              customerName
+            );
+          } catch (waErr) {
+            console.warn("[WebsiteOrdersRoute] Could not enqueue payment screenshot request:", waErr);
+          }
+        }
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          message: "Payment reported successfully. Pharmacy verification is in progress.",
+          order_id: orderId,
+          payment_status: "PENDING_VERIFICATION"
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Mark paid error:", err);
+        res.status(500).json({ error: "Failed to mark order paid" });
+      }
+    });
+    router24.get("/orders/:orderId/payment-qr", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const details = await paymentQrService.getOrderQrDetails(orderId);
+        if (!details) return res.status(404).json({ error: "Order or QR configuration not found" });
+        res.json({ success: true, ...details });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Payment QR fetch error:", err);
+        res.status(500).json({ error: "Failed to fetch payment QR" });
+      }
+    });
+    router24.patch("/orders/:orderId/payment", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const { payment_reference = "", confirmed_by = "Pharmacist", payment_method = "MANUAL" } = req.body;
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        if (order.payment_status === "CONFIRMED" || order.payment_status === "PAYMENT_CONFIRMED") {
+          return res.status(409).json({ error: "Payment already confirmed for this order" });
+        }
+        const nextOrderStatus = order.order_type === "DELIVERY" ? "Ready" : "ORDER_READY_FOR_PICKUP";
+        await db2.run(
+          `UPDATE special_orders
+       SET payment_status = 'PAYMENT_CONFIRMED',
+           pharmacy_verification_status = 'CONFIRMED',
+           status = ?,
+           payment_reference = ?,
+           payment_confirmed_at = CURRENT_TIMESTAMP,
+           payment_confirmed_by = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [nextOrderStatus, payment_reference || `${payment_method}-${Date.now()}`, confirmed_by, orderId]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'payment_confirmed', ?, ?, CURRENT_TIMESTAMP)`,
+          [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || "N/A"}. Ready for pickup.`, confirmed_by]
+        );
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          message: `Payment confirmed. Order #${orderId} is now ${nextOrderStatus}.`,
+          order_id: orderId,
+          status: nextOrderStatus,
+          payment_status: "PAYMENT_CONFIRMED"
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Payment confirm error:", err);
+        res.status(500).json({ error: "Failed to confirm payment" });
+      }
+    });
+    router24.get("/live-cart", async (req, res) => {
+      try {
+        const storeId = parseInt(req.query.store_id || "1", 10) || 1;
+        const db2 = await dbManager.getConnection();
+        const orders = await db2.all(
+          `SELECT so.*
+       FROM special_orders so
+       WHERE so.store_id = ?
+         AND so.payment_status = 'CONFIRMED'
+         AND so.pharmacy_verification_status != 'DONE'
+       ORDER BY so.payment_confirmed_at ASC, so.date DESC`,
+          [storeId]
+        );
+        const enriched = await Promise.all(orders.map(async (order) => {
+          const items = await db2.all(
+            `SELECT oi.*,
+                m.name as medicine_name, m.generic_name, m.strength, m.packaging, m.manufacturer,
+                am.name as actual_medicine_name,
+                im.batch_no as actual_batch_no, im.mrp as actual_mrp, im.expiry_date as actual_expiry
+         FROM online_order_items oi
+         LEFT JOIN medicines m ON m.id = oi.medicine_id
+         LEFT JOIN medicines am ON am.id = oi.actual_medicine_id
+         LEFT JOIN inventory_master im ON im.id = oi.actual_batch_id
+         WHERE oi.order_id = ?
+         ORDER BY oi.id ASC`,
+            [order.id]
+          ).catch(() => []);
+          const itemsWithBatches = await Promise.all(items.map(async (item) => {
+            const batches = await db2.all(
+              `SELECT id, batch_no, expiry_date, mrp, sell_price,
+                  (quantity - COALESCE(
+                    (SELECT SUM(r.reserved_qty) FROM inventory_reservations r
+                     WHERE r.inventory_id = inventory_master.id AND r.status = 'ACTIVE'), 0
+                  )) as available_qty
+           FROM inventory_master
+           WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+             AND quantity > 0
+             AND (expiry_date IS NULL OR date(expiry_date) > date('now'))
+           ORDER BY mrp DESC, expiry_date ASC`,
+              [item.medicine_id || item.actual_medicine_id, storeId]
+            ).catch(() => []);
+            return { ...item, available_batches: batches };
+          }));
+          return { ...order, items: itemsWithBatches };
+        }));
+        res.json({ store_id: storeId, count: enriched.length, orders: enriched });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Live cart fetch error:", err);
+        res.status(500).json({ error: "Failed to load live cart" });
+      }
+    });
+    router24.patch("/live-cart/items/:itemId", async (req, res) => {
+      try {
+        const itemId = parseInt(req.params.itemId, 10);
+        if (isNaN(itemId)) return res.status(400).json({ error: "Invalid item ID" });
+        const {
+          actual_medicine_id,
+          actual_batch_id,
+          confirmed_qty,
+          item_status,
+          // 'CONFIRMED' | 'REPLACED' | 'UNAVAILABLE' | 'QTY_ADJUSTED'
+          replacement_reason = "",
+          changed_by = "Pharmacist"
+        } = req.body;
+        if (!item_status) return res.status(400).json({ error: "item_status is required" });
+        const db2 = await dbManager.getConnection();
+        const item = await db2.get("SELECT * FROM online_order_items WHERE id = ?", [itemId]);
+        if (!item) return res.status(404).json({ error: "Order item not found" });
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [item.order_id]);
+        if (!order) return res.status(404).json({ error: "Associated order not found" });
+        if (order.pharmacy_verification_status === "DONE") {
+          return res.status(409).json({ error: "Order is already finalized" });
+        }
+        if (actual_batch_id && item_status !== "UNAVAILABLE") {
+          const batch = await db2.get("SELECT * FROM inventory_master WHERE id = ?", [actual_batch_id]);
+          if (!batch) return res.status(404).json({ error: "Batch not found" });
+          const reservedElsewhere = await db2.get(
+            `SELECT COALESCE(SUM(r.reserved_qty), 0) as reserved
+         FROM inventory_reservations r
+         WHERE r.inventory_id = ? AND r.status = 'ACTIVE' AND r.order_item_id != ?`,
+            [actual_batch_id, itemId]
+          ).catch(() => ({ reserved: 0 }));
+          const effectiveQty = confirmed_qty ?? item.requested_qty;
+          const available = batch.quantity - (reservedElsewhere?.reserved || 0);
+          if (available < effectiveQty) {
+            return res.status(409).json({
+              error: `Insufficient stock. Available: ${available}, Needed: ${effectiveQty}`,
+              available_qty: available
+            });
+          }
+        }
+        const isReplacement = actual_medicine_id && Number(actual_medicine_id) !== Number(item.medicine_id);
+        const isBatchChange = actual_batch_id && Number(actual_batch_id) !== Number(item.actual_batch_id);
+        if (isReplacement || isBatchChange || item_status === "UNAVAILABLE") {
+          await db2.run(
+            `INSERT INTO catalog_correction_log
+           (order_id, order_item_id, changed_by, old_medicine_id, new_medicine_id,
+            old_batch_id, new_batch_id, change_type, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.order_id,
+              itemId,
+              changed_by,
+              item.medicine_id,
+              actual_medicine_id ?? item.medicine_id,
+              item.actual_batch_id,
+              actual_batch_id ?? item.actual_batch_id,
+              item_status === "UNAVAILABLE" ? "UNAVAILABLE" : isReplacement ? "REPLACEMENT" : "BATCH_CHANGE",
+              replacement_reason || null
+            ]
+          );
+        }
+        let mrp = item.mrp;
+        let sellPrice = item.sell_price;
+        if (actual_batch_id) {
+          const batchInfo = await db2.get("SELECT mrp, sell_price FROM inventory_master WHERE id = ?", [actual_batch_id]).catch(() => null);
+          if (batchInfo) {
+            mrp = batchInfo.mrp;
+            sellPrice = batchInfo.sell_price;
+          }
+        }
+        const finalQty = confirmed_qty ?? item.requested_qty;
+        const finalSell = sellPrice || mrp || 0;
+        const discount = mrp > 0 ? Math.max(0, mrp - finalSell) : 0;
+        const finalPrice = finalQty * finalSell;
+        await db2.run(
+          `UPDATE online_order_items
+       SET actual_medicine_id = COALESCE(?, actual_medicine_id),
+           actual_batch_id = COALESCE(?, actual_batch_id),
+           confirmed_qty = ?,
+           mrp = ?,
+           sell_price = ?,
+           discount = ?,
+           final_price = ?,
+           item_status = ?,
+           replacement_reason = COALESCE(?, replacement_reason)
+       WHERE id = ?`,
+          [
+            actual_medicine_id || null,
+            actual_batch_id || null,
+            finalQty,
+            mrp,
+            finalSell,
+            discount,
+            finalPrice,
+            item_status,
+            replacement_reason || null,
+            itemId
+          ]
+        );
+        if (actual_batch_id && item_status !== "UNAVAILABLE") {
+          await db2.run(
+            `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_item_id = ? AND status = 'ACTIVE'`,
+            [itemId]
+          );
+          await db2.run(
+            `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+         VALUES (?, ?, ?, ?, 'ACTIVE')`,
+            [actual_batch_id, item.order_id, itemId, finalQty]
+          );
+        }
+        if (item_status === "UNAVAILABLE") {
+          await db2.run(
+            `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_item_id = ? AND status = 'ACTIVE'`,
+            [itemId]
+          );
+        }
+        broadcastOrdersChanged();
+        res.json({ success: true, message: "Item updated", item_id: itemId, item_status });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Item verify error:", err);
+        res.status(500).json({ error: "Failed to update order item" });
+      }
+    });
+    router24.post("/live-cart/orders/:orderId/finalize", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const { finalized_by = "Pharmacist" } = req.body;
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        if (order.payment_status !== "CONFIRMED") {
+          return res.status(400).json({ error: "Order payment is not confirmed yet" });
+        }
+        if (order.pharmacy_verification_status === "DONE") {
+          return res.status(409).json({ error: "Order already finalized" });
+        }
+        const items = await db2.all(
+          `SELECT oi.*, im.mrp as batch_mrp, im.sell_price as batch_sell, im.batch_no,
+              COALESCE(am.name, m.name) as resolved_name, m.id as orig_med_id
+       FROM online_order_items oi
+       LEFT JOIN medicines m ON m.id = oi.medicine_id
+       LEFT JOIN medicines am ON am.id = oi.actual_medicine_id
+       LEFT JOIN inventory_master im ON im.id = oi.actual_batch_id
+       WHERE oi.order_id = ?`,
+          [orderId]
+        );
+        const confirmedItems = items.filter((i) => i.item_status !== "UNAVAILABLE");
+        if (confirmedItems.length === 0) {
+          return res.status(400).json({ error: "No confirmed items in order \u2014 cannot finalize. Mark order as cancelled instead." });
+        }
+        const pendingItems = items.filter((i) => i.item_status === "PENDING");
+        if (pendingItems.length > 0) {
+          return res.status(400).json({
+            error: `${pendingItems.length} item(s) still pending pharmacy review`,
+            pending_count: pendingItems.length
+          });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of confirmedItems) {
+            if (item.actual_batch_id) {
+              await db2.run(
+                "UPDATE inventory_master SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
+                [item.confirmed_qty, item.actual_batch_id, item.confirmed_qty]
+              );
+              await db2.run(
+                `UPDATE inventory_reservations SET status = 'SOLD', released_at = CURRENT_TIMESTAMP
+             WHERE order_item_id = ? AND status = 'ACTIVE'`,
+                [item.id]
+              );
+            }
+          }
+          await db2.run(
+            `UPDATE special_orders
+         SET pharmacy_verification_status = 'DONE',
+             pharmacy_verified_by = ?,
+             pharmacy_verified_at = CURRENT_TIMESTAMP,
+             status = 'Ready',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [finalized_by, orderId]
+          );
+          const heldBillItems = confirmedItems.map((item) => ({
+            medicine_id: item.actual_medicine_id || item.medicine_id,
+            medicine_name: item.resolved_name,
+            batch_id: item.actual_batch_id,
+            batch_no: item.batch_no || "",
+            qty: item.confirmed_qty ?? item.requested_qty,
+            mrp: item.batch_mrp || item.mrp || 0,
+            sell_price: item.batch_sell || item.sell_price || item.mrp || 0,
+            discount: item.discount || 0,
+            final_price: item.final_price || 0
+          }));
+          const heldBillMeta = {
+            source: "online_order",
+            online_order_id: orderId,
+            customer_name: order.requester,
+            customer_phone: order.phone,
+            customer_id: order.customer_id,
+            items: heldBillItems,
+            notes: `Online Order #${orderId} \u2014 Payment Confirmed`
+          };
+          await db2.run(
+            `INSERT INTO staged_sales (store_id, customer_id, customer_name, cart_json, created_at, status)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'held')`,
+            [order.store_id, order.customer_id, order.requester, JSON.stringify(heldBillMeta)]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_finalized', ?, ?, CURRENT_TIMESTAMP)`,
+            [orderId, `Order finalized by pharmacy. ${confirmedItems.length} items confirmed, ${items.length - confirmedItems.length} unavailable. Held bill pushed to POS.`, finalized_by]
+          );
+          await db2.run(
+            `INSERT INTO action_logs (action_type, description, metadata, created_at)
+         VALUES ('online_order_finalized', ?, ?, CURRENT_TIMESTAMP)`,
+            [
+              `Online Order #${orderId} finalized \u2014 ${confirmedItems.length} item(s) confirmed`,
+              JSON.stringify({ orderId, finalized_by, confirmed_items: confirmedItems.length })
+            ]
+          );
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        if (order.phone && String(order.phone).replace(/\D/g, "").length >= 10) {
+          try {
+            const cleanPhone = String(order.phone).replace(/\D/g, "");
+            const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+            const medicalName = await getStoreMedicalName(db2);
+            const readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!
+
+Thank you for your payment.`;
+            await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, "order_ready_notification", order.requester);
+          } catch (_) {
+          }
+        }
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          message: "Order finalized. Held bill pushed to POS.",
+          order_id: orderId,
+          confirmed_items: confirmedItems.length,
+          unavailable_items: items.length - confirmedItems.length
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Finalize error:", err);
+        res.status(500).json({ error: "Failed to finalize order" });
+      }
+    });
+    router24.post("/live-cart/orders/:orderId/cancel", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.orderId, 10);
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        const { reason = "Cancelled by pharmacy", cancelled_by = "Pharmacist" } = req.body;
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) return res.status(404).json({ error: "Order not found" });
+        if (order.pharmacy_verification_status === "DONE") {
+          return res.status(409).json({ error: "Finalized orders cannot be cancelled \u2014 raise a return instead" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE inventory_reservations SET status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+         WHERE order_id = ? AND status = 'ACTIVE'`,
+            [orderId]
+          );
+          await db2.run(
+            `UPDATE special_orders
+         SET status = 'Cancelled',
+             pharmacy_verification_status = 'CANCELLED',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [orderId]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'order_cancelled', ?, ?, CURRENT_TIMESTAMP)`,
+            [orderId, `Order cancelled. Reason: ${reason}. ${order.payment_status === "CONFIRMED" ? "REFUND REQUIRED." : ""}`, cancelled_by]
+          );
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        broadcastOrdersChanged();
+        res.json({
+          success: true,
+          message: "Order cancelled. Stock reservations released.",
+          refund_required: order.payment_status === "CONFIRMED",
+          order_id: orderId
+        });
+      } catch (err) {
+        console.error("[WebsiteOrdersRoute] Cancel error:", err);
+        res.status(500).json({ error: "Failed to cancel order" });
+      }
+    });
     router24.get("/orders/:orderId/track", async (req, res) => {
       try {
         const orderId = parseInt(req.params.orderId, 10);
-        if (isNaN(orderId)) {
-          return res.status(400).json({ error: "Invalid order ID" });
-        }
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
         const db2 = await dbManager.getConnection();
         const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          return res.status(404).json({ error: "Order not found" });
-        }
+        if (!order) return res.status(404).json({ error: "Order not found" });
         const events = await db2.all(
           "SELECT * FROM order_tracking_events WHERE order_id = ? ORDER BY performed_at ASC",
           [orderId]
@@ -49290,6 +51737,8 @@ We are preparing your order and will notify you upon dispatch.`;
           quantity: order.qty,
           requester: order.requester,
           status: order.status,
+          payment_status: order.payment_status,
+          pharmacy_verification_status: order.pharmacy_verification_status,
           delivery_status: order.delivery_status || "pending",
           created_at: order.created_at,
           delivered_at: order.delivered_at,
@@ -49305,18 +51754,14 @@ We are preparing your order and will notify you upon dispatch.`;
       try {
         const orderId = parseInt(req.params.orderId, 10);
         const { reason = "Customer return request" } = req.body;
-        if (isNaN(orderId)) {
-          return res.status(400).json({ error: "Invalid order ID" });
-        }
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
         const db2 = await dbManager.getConnection();
         const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          return res.status(404).json({ error: "Order not found" });
-        }
+        if (!order) return res.status(404).json({ error: "Order not found" });
         const returnInfo = returnWindowService.evaluateOrderReturnStatus(order);
         if (!returnInfo.isEligible) {
           return res.status(400).json({
-            error: "14-day return window has expired for this order. Returns are no longer accepted.",
+            error: "14-day return window has expired for this order.",
             return_info: returnInfo
           });
         }
@@ -49348,10 +51793,2460 @@ We are preparing your order and will notify you upon dispatch.`;
   }
 });
 
-// src/routes/customerPortal.ts
-var customerPortal_exports = {};
-__export(customerPortal_exports, {
-  default: () => customerPortal_default,
+// src/services/catalogImageService.ts
+var import_fs42, import_path47, import_crypto3, DOSAGE_FORMS2, CatalogImageService, catalogImageService;
+var init_catalogImageService = __esm({
+  "src/services/catalogImageService.ts"() {
+    "use strict";
+    import_fs42 = __toESM(require("fs"), 1);
+    import_path47 = __toESM(require("path"), 1);
+    import_crypto3 = __toESM(require("crypto"), 1);
+    init_connection();
+    init_eventService();
+    DOSAGE_FORMS2 = [
+      "TABLET",
+      "TABLETS",
+      "TAB",
+      "TABS",
+      "DT",
+      "CAPSULE",
+      "CAPSULES",
+      "CAP",
+      "CAPS",
+      "SYRUP",
+      "SYP",
+      "SUSPENSION",
+      "SUSP",
+      "INJECTION",
+      "INJ",
+      "IV",
+      "IM",
+      "CREAM",
+      "GEL",
+      "OINTMENT",
+      "OINT",
+      "DROPS",
+      "DROP",
+      "EYE DROPS",
+      "EAR DROPS",
+      "INHALER",
+      "RESPULES",
+      "ROTACAPS",
+      "ROTACAP",
+      "POWDER",
+      "LOTION",
+      "SHAMPOO",
+      "SPRAY",
+      "SOLUTION"
+    ];
+    CatalogImageService = class _CatalogImageService {
+      static instance;
+      static getInstance() {
+        if (!_CatalogImageService.instance) {
+          _CatalogImageService.instance = new _CatalogImageService();
+        }
+        return _CatalogImageService.instance;
+      }
+      /**
+       * Compute SHA-256 hash of an image file for deduplication
+       */
+      computeFileHash(filePath) {
+        try {
+          if (!import_fs42.default.existsSync(filePath)) return null;
+          const buffer = import_fs42.default.readFileSync(filePath);
+          return import_crypto3.default.createHash("sha256").update(buffer).digest("hex");
+        } catch (e) {
+          return null;
+        }
+      }
+      /**
+       * Extract primary dosage form from text
+       */
+      extractDosageForm(text) {
+        if (!text) return null;
+        const upper = text.replace(/[-_.]/g, " ").toUpperCase();
+        for (const form of DOSAGE_FORMS2) {
+          const regex = new RegExp(`\\b${form}\\b`, "i");
+          if (regex.test(upper)) {
+            if (form.startsWith("TAB") || form === "DT") return "TABLET";
+            if (form.startsWith("CAP")) return "CAPSULE";
+            if (form.startsWith("SYP") || form.startsWith("SYRUP") || form.startsWith("SUSP")) return "SYRUP";
+            if (form.startsWith("INJ") || form === "IV" || form === "IM") return "INJECTION";
+            if (form === "GEL" || form === "CREAM" || form.startsWith("OINT")) return "TOPICAL";
+            if (form.startsWith("DROP")) return "DROPS";
+            if (form.startsWith("INH") || form.startsWith("ROTA") || form.startsWith("RESP")) return "INHALER";
+            return form;
+          }
+        }
+        return null;
+      }
+      /**
+       * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML")
+       */
+      extractStrength(text) {
+        if (!text) return null;
+        const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
+        return match ? match[0].toUpperCase().replace(/\s+/g, "") : null;
+      }
+      /**
+       * Extract core brand name (strips dosage, packaging, company brackets)
+       */
+      extractCoreBrand(raw) {
+        if (!raw) return "";
+        let c = raw.replace(/\[.*?\]/g, " ");
+        c = c.replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ");
+        c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, " ");
+        const words = c.split(/[^A-Za-z0-9\+\-]+/).filter((w) => w.length >= 2 && !DOSAGE_FORMS2.includes(w.toUpperCase()));
+        return words[0] ? words[0].toUpperCase() : "";
+      }
+      /**
+       * Multi-Signal AI Confidence Scoring
+       * Evaluates Company (15%), Brand (35%), Strength (20%), Dosage Form (15%), Pack (5%), OCR (10%).
+       */
+      computeConfidence(medicine, candidate) {
+        const medBrand = this.extractCoreBrand(medicine.name);
+        const candUpper = (candidate.name || "").toUpperCase();
+        const pathUpper = (candidate.imagePath || "").replace(/[-_.]/g, " ").toUpperCase();
+        const ocrUpper = (candidate.ocrText || "").toUpperCase();
+        let brandMatch = false;
+        let brandScore = 0;
+        if (medBrand) {
+          const normMedBrand = medBrand.replace(/[-_]/g, " ").trim();
+          const cleanCandStr = (candUpper + " " + pathUpper).replace(/[-_]/g, " ");
+          const candWords = cleanCandStr.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 2);
+          const exactWordMatch = candWords.some((w) => w === medBrand || w === normMedBrand || medBrand.length >= 5 && w.startsWith(medBrand));
+          const wordBoundaryMatch = new RegExp(`\\b${normMedBrand}\\b`, "i").test(cleanCandStr);
+          const subWords = normMedBrand.split(" ").filter((w) => w.length >= 2 && !/^\d+$/.test(w));
+          const subWordMatch = subWords.length > 0 && subWords.every((sw) => new RegExp(`\\b${sw}\\b`, "i").test(cleanCandStr));
+          if (exactWordMatch || wordBoundaryMatch || subWordMatch) {
+            brandMatch = true;
+            brandScore = 35;
+          }
+        }
+        let companyMatch = false;
+        let companyScore = 5;
+        const medMfg = (medicine.manufacturer || "").toUpperCase().trim();
+        const candMfg = (candidate.manufacturer || "").toUpperCase().trim();
+        if (medMfg && candMfg) {
+          const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
+          const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
+          if (cleanCandMfg && cleanMedMfg.includes(cleanCandMfg.slice(0, 5))) {
+            companyMatch = true;
+            companyScore = 15;
+          } else {
+            companyScore = 0;
+          }
+        } else if (medMfg && ocrUpper.includes(medMfg.slice(0, 6))) {
+          companyMatch = true;
+          companyScore = 15;
+        }
+        const medStr = this.extractStrength(medicine.strength || "") || this.extractStrength(medicine.name);
+        const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.imagePath || "") || this.extractStrength(candidate.ocrText || "");
+        let strengthMatch = false;
+        let strengthConflict = false;
+        let strengthScore = 10;
+        if (medStr && candStr) {
+          if (medStr === candStr) {
+            strengthMatch = true;
+            strengthScore = 20;
+          } else {
+            strengthConflict = true;
+            strengthScore = -40;
+          }
+        } else if (medStr && !candStr) {
+          strengthScore = 10;
+        }
+        const medForm = this.extractDosageForm(medicine.name) || this.extractDosageForm(medicine.packaging || "");
+        const candNameForm = this.extractDosageForm(candidate.name);
+        const candPathForm = this.extractDosageForm(candidate.imagePath || "");
+        const candForm = candNameForm || candPathForm || this.extractDosageForm(candidate.ocrText || "");
+        let dosageFormMatch = false;
+        let dosageFormConflict = false;
+        let dosageFormScore = 8;
+        if (medForm) {
+          if (candNameForm && candNameForm !== medForm) {
+            dosageFormConflict = true;
+            dosageFormScore = -40;
+          } else if (candPathForm && candPathForm !== medForm) {
+            dosageFormConflict = true;
+            dosageFormScore = -40;
+          } else if (candForm === medForm) {
+            dosageFormMatch = true;
+            dosageFormScore = 15;
+          }
+        }
+        let packMatch = false;
+        let packScore = 0;
+        const cleanMedPack = (medicine.packaging || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
+        const cleanCandPack = (candidate.name || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
+        const medPack = cleanMedPack.match(/\b\d+\b/)?.[0];
+        const candPack = cleanCandPack.match(/\b\d+\b/)?.[0];
+        if (medPack && candPack && medPack === candPack) {
+          packMatch = true;
+          packScore = 5;
+        } else if (!medPack || !candPack) {
+          packScore = 4;
+        }
+        let ocrMatch = false;
+        let ocrScore = 0;
+        if (candidate.ocrText && candidate.ocrText.length > 5) {
+          if (medBrand && ocrUpper.includes(medBrand)) {
+            ocrMatch = true;
+            ocrScore = 10;
+          } else if (ocrUpper.length > 40 && !ocrUpper.includes(medBrand) && !brandMatch) {
+            ocrScore = -15;
+          }
+        } else {
+          if (brandMatch) ocrScore = 9;
+        }
+        let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore;
+        let verificationStatus = "PENDING_REVIEW";
+        if (!brandMatch || strengthConflict || dosageFormConflict) {
+          totalScore = Math.min(totalScore, 30);
+          verificationStatus = "REJECTED";
+        } else if (totalScore >= 80) {
+          verificationStatus = "HIGH_CONFIDENCE";
+        } else if (totalScore < 45) {
+          verificationStatus = "REJECTED";
+        } else {
+          verificationStatus = "PENDING_REVIEW";
+        }
+        totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
+        const reasons = [];
+        if (brandMatch) reasons.push(`Brand matched ("${medBrand}")`);
+        else reasons.push(`Brand mismatch ("${medBrand}" not found)`);
+        if (strengthConflict) reasons.push(`Strength conflict (${medStr} vs ${candStr})`);
+        else if (strengthMatch) reasons.push(`Strength verified (${medStr})`);
+        if (dosageFormConflict) reasons.push(`Dosage form conflict (${medForm} vs ${candForm})`);
+        else if (dosageFormMatch) reasons.push(`Form matched (${medForm})`);
+        if (companyMatch) reasons.push("Manufacturer verified");
+        if (ocrMatch) reasons.push("OCR packaging text verified");
+        return {
+          confidenceScore: totalScore,
+          verificationStatus,
+          reason: reasons.join(" \u2022 "),
+          signals: {
+            brandMatch,
+            brandScore,
+            companyMatch,
+            companyScore,
+            strengthMatch,
+            strengthConflict,
+            strengthScore,
+            dosageFormMatch,
+            dosageFormConflict,
+            dosageFormScore,
+            packMatch,
+            packScore,
+            ocrMatch,
+            ocrScore
+          }
+        };
+      }
+      /**
+       * Fetch paginated catalog images with filtering
+       */
+      async getImages(options) {
+        const db2 = await dbManager.getConnection();
+        const page = Math.max(1, options.page || 1);
+        const limit = Math.min(100, Math.max(1, options.limit || 20));
+        const offset = (page - 1) * limit;
+        let whereSql = "1=1";
+        const params = [];
+        if (options.status && options.status !== "all") {
+          if (options.status === "review" || options.status === "pending") {
+            whereSql += " AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING')";
+          } else if (options.status === "missing_angles") {
+            whereSql += ` AND ci.medicine_id IN (
+          SELECT ci_sub.medicine_id FROM catalog_images ci_sub 
+          WHERE ci_sub.is_active = 1 
+          GROUP BY ci_sub.medicine_id 
+          HAVING COUNT(*) < 2
+        )`;
+          } else if (options.status === "high_confidence") {
+            whereSql += " AND ci.verification_status = 'HIGH_CONFIDENCE'";
+          } else if (options.status === "approved") {
+            whereSql += " AND ci.verification_status = 'APPROVED'";
+          } else if (options.status === "rejected") {
+            whereSql += " AND ci.verification_status = 'REJECTED'";
+          } else if (options.status === "removed") {
+            whereSql += " AND ci.verification_status = 'REMOVED'";
+          } else {
+            whereSql += " AND ci.verification_status = ?";
+            params.push(options.status.toUpperCase());
+          }
+        }
+        if (options.groupByMedicine) {
+          whereSql += " AND (ci.is_primary = 1 OR ci.id = (SELECT MIN(ci3.id) FROM catalog_images ci3 WHERE ci3.medicine_id = ci.medicine_id))";
+        }
+        if (options.medicine_id) {
+          whereSql += " AND ci.medicine_id = ?";
+          params.push(options.medicine_id);
+        }
+        if (options.search) {
+          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
+          const term = `%${options.search}%`;
+          params.push(term, term, term, term);
+        }
+        const countRow = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}`,
+          params
+        );
+        const totalCount = countRow ? countRow.count : 0;
+        const rows = await db2.all(
+          `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer,
+              (SELECT COUNT(*) FROM catalog_images ci2 WHERE ci2.medicine_id = ci.medicine_id AND ci2.is_active = 1) as angle_count
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}
+       ORDER BY 
+         CASE WHEN ci.verification_status = 'PENDING_REVIEW' THEN 1 
+              WHEN ci.verification_status = 'HIGH_CONFIDENCE' THEN 2 
+              ELSE 3 END,
+         ci.confidence_score DESC,
+         ci.id DESC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        );
+        return {
+          images: rows,
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+          page
+        };
+      }
+      /**
+       * Get counts across all verification buckets for Quick Assist & UI chips
+       */
+      async getCounts() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT verification_status, COUNT(*) as count 
+       FROM catalog_images 
+       GROUP BY verification_status`
+        );
+        const counts = {
+          total: 0,
+          pending_review: 0,
+          high_confidence: 0,
+          approved: 0,
+          rejected: 0,
+          removed: 0,
+          missing_angles: 0
+        };
+        for (const r of rows) {
+          counts.total += r.count;
+          if (r.verification_status === "PENDING_REVIEW" || r.verification_status === "PENDING") counts.pending_review += r.count;
+          else if (r.verification_status === "HIGH_CONFIDENCE") counts.high_confidence = r.count;
+          else if (r.verification_status === "APPROVED") counts.approved = r.count;
+          else if (r.verification_status === "REJECTED") counts.rejected = r.count;
+          else if (r.verification_status === "REMOVED") counts.removed = r.count;
+        }
+        const missingRow = await db2.get(
+          `SELECT COUNT(*) as count FROM (
+         SELECT medicine_id FROM catalog_images WHERE is_active = 1 GROUP BY medicine_id HAVING COUNT(*) < 2
+       )`
+        ).catch(() => ({ count: 0 }));
+        counts.missing_angles = missingRow?.count || 0;
+        return counts;
+      }
+      /**
+       * Approve an image -> marks as APPROVED and active catalogue image for its image_type slot
+       */
+      async approveImage(imageId, verifiedBy = "pharmacist", imageType = "combined", isPrimary) {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return false;
+        const targetType = imageType || image.image_type || "combined";
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [image.medicine_id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [image.medicine_id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [image.medicine_id, imageId]
+            );
+          }
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'APPROVED', 
+             is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [targetType, primaryVal, verifiedBy, imageId]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: image.medicine_id,
+            status: "APPROVED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return true;
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Reject an image -> logs rejection to prevent reuse and initiates auto-redownload
+       */
+      async rejectImage(imageId, reason = "Incorrect product image", verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return { success: false, rejectionLogged: false, autoRedownloadTriggered: false };
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'REJECTED', 
+             is_active = 0, 
+             verification_reason = ?, 
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, verifiedBy, imageId]
+          );
+          if (image.source_url || image.image_hash) {
+            await db2.run(
+              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
+           VALUES (?, ?, ?, ?, ?)`,
+              [image.medicine_id, image.source_url || null, image.image_hash || null, image.image_source || "pharmeasy", reason]
+            );
+          }
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: image.medicine_id,
+            status: "REJECTED",
+            is_active: 0
+          });
+          this.searchAndDownloadCandidate(image.medicine_id, (image.retry_count || 0) + 1).catch((err) => {
+            console.error(`[CatalogImageService] Auto-redownload failed for medicine ${image.medicine_id}:`, err.message);
+          });
+          return {
+            success: true,
+            rejectionLogged: true,
+            autoRedownloadTriggered: true
+          };
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Remove image from catalogue without deleting the medicine
+       */
+      async removeImage(imageId, verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return false;
+        await db2.run(
+          `UPDATE catalog_images 
+       SET verification_status = 'REMOVED', 
+           is_active = 0, 
+           verified_by = ?, 
+           verified_at = CURRENT_TIMESTAMP, 
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+          [verifiedBy, imageId]
+        );
+        eventService.broadcast("catalog_image_updated", {
+          id: imageId,
+          medicine_id: image.medicine_id,
+          status: "REMOVED",
+          is_active: 0
+        });
+        return true;
+      }
+      /**
+       * Replace image with a custom uploaded file or URL
+       */
+      async replaceImage(imageId, newImagePath, sourceUrl = null, verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return null;
+        const hash = this.computeFileHash(newImagePath);
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET is_active = 0, 
+             verification_status = 'REPLACED', 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [imageId]
+          );
+          const res = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, is_active, replaced_from_image_id, verified_by, verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_replacement', 'APPROVED', 1, ?, ?, CURRENT_TIMESTAMP)`,
+            [
+              current.medicine_id,
+              current.company_name,
+              current.product_name,
+              newImagePath,
+              newImagePath,
+              "manual_upload",
+              sourceUrl,
+              hash,
+              imageId,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: res.lastID,
+            medicine_id: current.medicine_id,
+            status: "APPROVED",
+            is_active: 1
+          });
+          return newRecord;
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Search and download candidate image online, strictly excluding rejected URLs/hashes
+       */
+      async searchAndDownloadCandidate(medicineId, retryCount = 1) {
+        if (retryCount > 3) {
+          console.warn(`[CatalogImageService] Max retry count (3) reached for medicine ID ${medicineId}. Stopping.`);
+          return null;
+        }
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
+        if (!med) return null;
+        const rejections = await db2.all(
+          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+          [medicineId]
+        );
+        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+        const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
+        const cleanQuery = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
+        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
+        let products = [];
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            signal: AbortSignal.timeout(8e3)
+          });
+          if (resp.ok) {
+            const json = await resp.json();
+            products = json?.data?.products || [];
+          }
+        } catch (err) {
+          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
+          return null;
+        }
+        if (products.length === 0) return null;
+        let selectedCandidate = null;
+        let selectedImageUrl = null;
+        for (const prod of products) {
+          const damImages = prod.damImages || [];
+          const frontImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+          if (!frontImg || !frontImg.url) continue;
+          const candidateUrl = frontImg.url.split("?")[0];
+          if (rejectedUrls.has(candidateUrl)) {
+            continue;
+          }
+          selectedCandidate = prod;
+          selectedImageUrl = candidateUrl;
+          break;
+        }
+        if (!selectedCandidate || !selectedImageUrl) {
+          console.log(`[CatalogImageService] No un-rejected candidate found for medicine ${med.name}`);
+          return null;
+        }
+        const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
+        const filename = `${slug}-candidate-${Date.now()}.jpg`;
+        const frontendDir = import_path47.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path47.default.resolve(process.cwd(), "uploads/products");
+        import_fs42.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path47.default.join(frontendDir, filename);
+        const uploadsPath = import_path47.default.join(uploadsDir, filename);
+        try {
+          const imgRes = await fetch(selectedImageUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+            signal: AbortSignal.timeout(1e4)
+          });
+          if (!imgRes.ok) return null;
+          const buffer = Buffer.from(await imgRes.arrayBuffer());
+          const hash = import_crypto3.default.createHash("sha256").update(buffer).digest("hex");
+          if (rejectedHashes.has(hash)) {
+            console.warn(`[CatalogImageService] Downloaded image content hash matches previously rejected image for medicine ${med.name}.`);
+            return null;
+          }
+          import_fs42.default.writeFileSync(frontendPath, buffer);
+          import_fs42.default.writeFileSync(uploadsPath, buffer);
+          const matchResult = this.computeConfidence(med, {
+            name: selectedCandidate.name,
+            manufacturer: selectedCandidate.manufacturer
+          });
+          const relPath = `/products/${filename}`;
+          const isActive = matchResult.verificationStatus === "HIGH_CONFIDENCE" ? 1 : 0;
+          if (isActive === 1) {
+            await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
+          }
+          const insertRes = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, verification_reason, is_active, retry_count
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?)`,
+            [
+              med.id,
+              med.manufacturer || null,
+              selectedCandidate.name,
+              relPath,
+              relPath,
+              "pharmeasy",
+              selectedImageUrl,
+              hash,
+              matchResult.confidenceScore,
+              matchResult.verificationStatus,
+              matchResult.reason,
+              isActive,
+              retryCount
+            ]
+          );
+          const record = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [insertRes.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: insertRes.lastID,
+            medicine_id: med.id,
+            status: matchResult.verificationStatus,
+            confidence: matchResult.confidenceScore
+          });
+          return record;
+        } catch (downloadErr) {
+          console.error(`[CatalogImageService] Download error:`, downloadErr.message);
+          return null;
+        }
+      }
+      /**
+       * One-time sync/backfill of existing downloaded images from data/image_download_state.json into catalog_images
+       */
+      async syncExistingDownloadedImages() {
+        const db2 = await dbManager.getConnection();
+        const stateFile = import_path47.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs42.default.existsSync(stateFile)) {
+          return { synced: 0, skipped: 0, totalInState: 0 };
+        }
+        const stateData = JSON.parse(import_fs42.default.readFileSync(stateFile, "utf-8"));
+        const products = stateData.products || {};
+        const entries = Object.entries(products);
+        const medRows = await db2.all("SELECT id, name, manufacturer, strength, packaging, mrp FROM medicines");
+        const medMap = /* @__PURE__ */ new Map();
+        for (const m of medRows) {
+          if (m.name) {
+            medMap.set(m.name.trim().toLowerCase(), m);
+          }
+        }
+        const existingImages = await db2.all("SELECT medicine_id, image_path FROM catalog_images");
+        const existingSet = new Set(existingImages.map((r) => `${r.medicine_id}::${r.image_path}`));
+        let synced = 0;
+        let skipped = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const [rawName, p] of entries) {
+            const item = p;
+            if (item.status !== "success" || !item.images) {
+              skipped++;
+              continue;
+            }
+            const front = item.images.front || item.images["box-front"] || item.images.default || Object.values(item.images)[0];
+            if (!front || !front.url) {
+              skipped++;
+              continue;
+            }
+            let matchedMed = medMap.get(rawName.trim().toLowerCase());
+            if (!matchedMed) {
+              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              matchedMed = medMap.get(clean);
+            }
+            if (!matchedMed) {
+              skipped++;
+              continue;
+            }
+            const imageKey = `${matchedMed.id}::${front.url}`;
+            if (existingSet.has(imageKey)) {
+              skipped++;
+              continue;
+            }
+            const matchRes = this.computeConfidence(matchedMed, {
+              name: item.matched_name || matchedMed.name,
+              manufacturer: matchedMed.manufacturer
+            });
+            const status = matchRes.verificationStatus === "HIGH_CONFIDENCE" ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
+            const isActive = status === "HIGH_CONFIDENCE" ? 1 : 0;
+            await db2.run(
+              `INSERT INTO catalog_images (
+             medicine_id, company_name, product_name, image_path, thumbnail_path,
+             image_source, source_url, image_hash, confidence_score, matching_method,
+             verification_status, verification_reason, is_active
+           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, ?, 'ai_multi_signal', ?, ?, ?)`,
+              [
+                matchedMed.id,
+                matchedMed.manufacturer || null,
+                item.matched_name || matchedMed.name,
+                front.url,
+                front.url,
+                front.url,
+                matchRes.confidenceScore,
+                status,
+                matchRes.reason,
+                isActive
+              ]
+            );
+            existingSet.add(imageKey);
+            synced++;
+          }
+          await db2.run("COMMIT");
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+        return { synced, skipped, totalInState: entries.length };
+      }
+      /**
+       * Check if image file physically exists on disk (Section 7 & 15)
+       */
+      verifyImageFileExists(imagePath) {
+        if (!imagePath) return false;
+        const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
+        const p1 = import_path47.default.resolve(process.cwd(), "frontend/public", cleanPath);
+        const p2 = import_path47.default.resolve(process.cwd(), cleanPath);
+        const p3 = import_path47.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
+        return import_fs42.default.existsSync(p1) || import_fs42.default.existsSync(p2) || import_fs42.default.existsSync(p3);
+      }
+      /**
+       * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
+       * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
+       */
+      async resolveProductImage(medicineId, options = { version: true }) {
+        const db2 = await dbManager.getConnection();
+        const row = await db2.get(
+          `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+          [medicineId]
+        ).catch(() => null);
+        if (!row || !row.image_path) {
+          return null;
+        }
+        if (!this.verifyImageFileExists(row.image_path)) {
+          await db2.run(
+            `UPDATE catalog_images SET is_active = 0, verification_status = 'BROKEN', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [row.id]
+          ).catch(() => null);
+          return null;
+        }
+        let url = row.image_path;
+        if (options.version && row.updated_at) {
+          const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
+          url = `${url}?v=${v}`;
+        }
+        return {
+          url,
+          status: row.verification_status,
+          id: row.id
+        };
+      }
+      /**
+       * Multi-Angle Gallery Resolver for Customer Portal & Website Shop
+       * Resolves up to 4-5 verified angle images per medicine (Combined, Front, Back, Box, Tablet)
+       */
+      async resolveProductImages(medicineId, options = { version: true }) {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY 
+         is_primary DESC,
+         CASE COALESCE(image_type, 'combined')
+           WHEN 'combined' THEN 1
+           WHEN 'front' THEN 2
+           WHEN 'back' THEN 3
+           WHEN 'box' THEN 4
+           WHEN 'tablet' THEN 5
+           ELSE 6
+         END ASC,
+         id DESC`,
+          [medicineId]
+        ).catch(() => []);
+        const gallery = [];
+        const imagesDict = {};
+        const seenTypes = /* @__PURE__ */ new Set();
+        const LABEL_MAP = {
+          combined: "Front & Back (Combined)",
+          front: "Front View",
+          back: "Back / Blister View",
+          box: "Packaging Box",
+          tablet: "Tablet / Pill"
+        };
+        for (const row of rows) {
+          if (!row.image_path) continue;
+          if (!this.verifyImageFileExists(row.image_path)) continue;
+          const type = (row.image_type || "combined").toLowerCase();
+          if (seenTypes.has(type) && gallery.length >= 4) continue;
+          seenTypes.add(type);
+          let url = row.image_path;
+          if (options.version && row.updated_at) {
+            const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
+            url = `${url}?v=${v}`;
+          }
+          const item = {
+            url,
+            type,
+            label: LABEL_MAP[type] || "Product View",
+            is_primary: row.is_primary === 1 || gallery.length === 0
+          };
+          gallery.push(item);
+          imagesDict[type] = item;
+          if (gallery.length >= 4) break;
+        }
+        const primary = gallery.find((g) => g.is_primary) || gallery[0] || null;
+        return {
+          primaryUrl: primary ? primary.url : null,
+          images: imagesDict,
+          gallery
+        };
+      }
+      /**
+       * Normalize image state cache angles into structured 3-4 image gallery
+       */
+      extractGalleryFromState(imgData) {
+        if (!imgData || !imgData.images) return [];
+        const gallery = [];
+        const seenTypes = /* @__PURE__ */ new Set();
+        const LABEL_MAP = {
+          combined: "Front & Back (Combined)",
+          front: "Front View",
+          back: "Back / Blister View",
+          box: "Packaging Box",
+          tablet: "Tablet / Pill"
+        };
+        const typeMapping = [
+          { raw: "combo", normalized: "combined" },
+          { raw: "combo-front", normalized: "combined" },
+          { raw: "front", normalized: "front" },
+          { raw: "back", normalized: "back" },
+          { raw: "box-front", normalized: "box" },
+          { raw: "box-back", normalized: "box" },
+          { raw: "box-side", normalized: "box" },
+          { raw: "side", normalized: "tablet" }
+        ];
+        for (const map of typeMapping) {
+          if (seenTypes.has(map.normalized)) continue;
+          const imgObj = imgData.images[map.raw];
+          if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+            seenTypes.add(map.normalized);
+            gallery.push({
+              url: imgObj.url,
+              type: map.normalized,
+              label: LABEL_MAP[map.normalized] || "Product View",
+              is_primary: map.normalized === "combined" || gallery.length === 0 && !seenTypes.has("combined")
+            });
+          }
+          if (gallery.length >= 4) break;
+        }
+        if (gallery.length === 0) {
+          const keys = Object.keys(imgData.images);
+          for (const k of keys) {
+            const imgObj = imgData.images[k];
+            if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+              gallery.push({
+                url: imgObj.url,
+                type: "front",
+                label: "Front View",
+                is_primary: true
+              });
+              break;
+            }
+          }
+        }
+        return gallery;
+      }
+      /**
+       * Backfill all available secondary angles (back, box, tablet, combined) from data/image_download_state.json
+       */
+      async syncMultiAngleImages() {
+        const db2 = await dbManager.getConnection();
+        const stateFile = import_path47.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs42.default.existsSync(stateFile)) {
+          return { added: 0, total: 0 };
+        }
+        const stateData = JSON.parse(import_fs42.default.readFileSync(stateFile, "utf-8"));
+        const products = stateData.products || {};
+        const entries = Object.entries(products);
+        const meds = await db2.all("SELECT id, name, manufacturer FROM medicines");
+        const medMap = /* @__PURE__ */ new Map();
+        for (const m of meds) {
+          if (m.name) medMap.set(m.name.trim().toLowerCase(), m);
+        }
+        const existing = await db2.all("SELECT medicine_id, image_path, image_type FROM catalog_images");
+        const existingSet = new Set(existing.map((e) => `${e.medicine_id}::${e.image_path}`));
+        const existingTypes = /* @__PURE__ */ new Map();
+        for (const e of existing) {
+          if (!existingTypes.has(e.medicine_id)) existingTypes.set(e.medicine_id, /* @__PURE__ */ new Set());
+          existingTypes.get(e.medicine_id).add(e.image_type || "combined");
+        }
+        const typeMapping = [
+          { raw: "combo", normalized: "combined", slot: 1 },
+          { raw: "combo-front", normalized: "combined", slot: 1 },
+          { raw: "front", normalized: "front", slot: 2 },
+          { raw: "back", normalized: "back", slot: 3 },
+          { raw: "box-front", normalized: "box", slot: 4 },
+          { raw: "box-back", normalized: "box", slot: 4 },
+          { raw: "side", normalized: "tablet", slot: 5 }
+        ];
+        let added = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const [rawName, p] of entries) {
+            const item = p;
+            if (item.status !== "success" || !item.images) continue;
+            let med = medMap.get(rawName.trim().toLowerCase());
+            if (!med) {
+              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              med = medMap.get(clean);
+            }
+            if (!med) continue;
+            const currentTypes = existingTypes.get(med.id) || /* @__PURE__ */ new Set();
+            for (const tm of typeMapping) {
+              const imgObj = item.images[tm.raw];
+              if (!imgObj || !imgObj.url) continue;
+              if (!this.verifyImageFileExists(imgObj.url)) continue;
+              const key = `${med.id}::${imgObj.url}`;
+              if (existingSet.has(key)) continue;
+              if (currentTypes.has(tm.normalized)) continue;
+              const isPrimary = tm.normalized === "combined" ? 1 : 0;
+              await db2.run(
+                `INSERT INTO catalog_images (
+               medicine_id, company_name, product_name, image_path, thumbnail_path,
+               image_source, source_url, image_hash, confidence_score, matching_method,
+               verification_status, verification_reason, is_active, image_type, is_primary, slot_number
+             ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, 90, 'state_sync', 'HIGH_CONFIDENCE', 'Downloaded angle', 1, ?, ?, ?)`,
+                [
+                  med.id,
+                  med.manufacturer || null,
+                  item.matched_name || med.name,
+                  imgObj.url,
+                  imgObj.url,
+                  imgObj.url,
+                  tm.normalized,
+                  isPrimary,
+                  tm.slot
+                ]
+              );
+              currentTypes.add(tm.normalized);
+              existingSet.add(key);
+              added++;
+            }
+          }
+          await db2.run("COMMIT");
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+        return { added, total: entries.length };
+      }
+      /**
+       * Multi-tier query generation for pharmaceutical search (Section 10 & 34)
+       */
+      generateAccurateQueries(rawName, mfg) {
+        const queries = [];
+        const clean = rawName.replace(/\[.*?\]/g, " ").replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ").replace(/\s+/g, " ").trim();
+        if (/^BUDETROL\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "400";
+          queries.push(`Budetrol ${str}`, `Budetrol Inhalation`);
+        } else if (/^THYROX\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Thyrox ${str} Macleods`, `Thyrox ${str}`, `Thyrox`);
+        } else if (/^DAPARYL\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Daparyl ${str}`, `Daparyl`);
+        } else if (/^VOGS M\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Vogs M ${str}`, `Vogs M`);
+        } else if (/^O2 TAB/i.test(rawName)) {
+          queries.push("O2 Tablet", "O2 Medley Tablet");
+        }
+        const brand = this.extractCoreBrand(rawName);
+        const strength = this.extractStrength(rawName);
+        if (brand && strength) {
+          queries.push(`${brand} ${strength}`);
+        }
+        queries.push(clean);
+        if (brand && mfg) {
+          const cleanMfg = mfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim().split(/\s+/)[0];
+          if (cleanMfg && cleanMfg.length >= 3) {
+            queries.push(`${brand} ${cleanMfg}`);
+          }
+        }
+        if (brand) {
+          queries.push(brand);
+        }
+        return Array.from(new Set(queries.filter((q) => q && q.trim().length >= 2)));
+      }
+      /**
+       * Batch auto-approve high-confidence pending images (Section 10 & 34)
+       * Promotes PENDING_REVIEW images with score >= 80% and verified physical file to HIGH_CONFIDENCE and active.
+       */
+      async autoApproveHighConfidence() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.confidence_score, ci.image_path,
+              m.name as med_name, m.manufacturer, m.strength, m.packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 0 AND ci.verification_status IN ('PENDING_REVIEW', 'HIGH_CONFIDENCE')`
+        );
+        let approved = 0;
+        let skipped = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const row of rows) {
+            if (!this.verifyImageFileExists(row.image_path)) {
+              skipped++;
+              continue;
+            }
+            const matchRes = this.computeConfidence(
+              {
+                name: row.med_name,
+                manufacturer: row.manufacturer,
+                strength: row.strength,
+                packaging: row.packaging
+              },
+              {
+                name: row.product_name,
+                manufacturer: row.manufacturer
+              }
+            );
+            if (matchRes.verificationStatus === "HIGH_CONFIDENCE" || matchRes.confidenceScore >= 80) {
+              await db2.run(
+                "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND id != ?",
+                [row.medicine_id, row.id]
+              );
+              await db2.run(
+                `UPDATE catalog_images 
+             SET verification_status = 'HIGH_CONFIDENCE',
+                 confidence_score = ?,
+                 verification_reason = ?,
+                 is_active = 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+                [matchRes.confidenceScore, matchRes.reason, row.id]
+              );
+              approved++;
+            } else {
+              skipped++;
+            }
+          }
+          await db2.run("COMMIT");
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+        eventService.broadcast("catalog_image_updated", {
+          action: "auto_approve_completed",
+          approved,
+          evaluated: rows.length
+        });
+        return { evaluated: rows.length, approved, skipped };
+      }
+      /**
+       * Image Health Auditor (Section 6, 7, 19, 34 of PRODUCT IMAGE MISSING.MD)
+       * Audits all database medicines and monthly refill catalog items.
+       */
+      async auditImageHealth() {
+        const db2 = await dbManager.getConnection();
+        const totalMedsRow = await db2.get("SELECT COUNT(*) as count FROM medicines");
+        const totalMedicines = totalMedsRow ? totalMedsRow.count : 0;
+        const statusRows = await db2.all(
+          `SELECT verification_status, is_active, COUNT(*) as count 
+       FROM catalog_images 
+       GROUP BY verification_status, is_active`
+        );
+        let approved = 0;
+        let highConfidence = 0;
+        let pendingReview = 0;
+        let rejected = 0;
+        for (const r of statusRows) {
+          if (r.verification_status === "APPROVED") approved += r.count;
+          else if (r.verification_status === "HIGH_CONFIDENCE") highConfidence += r.count;
+          else if (r.verification_status === "PENDING_REVIEW") pendingReview += r.count;
+          else if (r.verification_status === "REJECTED") rejected += r.count;
+        }
+        const activeRows = await db2.all(
+          `SELECT id, medicine_id, image_path FROM catalog_images WHERE is_active = 1`
+        );
+        let healthyActive = 0;
+        let broken = 0;
+        for (const img of activeRows) {
+          if (this.verifyImageFileExists(img.image_path)) {
+            healthyActive++;
+          } else {
+            broken++;
+          }
+        }
+        const refillMissingItems = [];
+        let refillCatalogMedicines = 0;
+        try {
+          const csvPath = import_path47.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs42.default.existsSync(csvPath)) {
+            const content = import_fs42.default.readFileSync(csvPath, "utf-8");
+            const lines = content.split(/\r?\n/).slice(1);
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              refillCatalogMedicines++;
+              const parts = line.split(",");
+              const category = parts[0]?.replace(/^"|"$/g, "").trim() || "";
+              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
+              if (!name) continue;
+              const med = await db2.get(
+                `SELECT id FROM medicines WHERE name = ? OR name LIKE ? LIMIT 1`,
+                [name, `${name.split(" ")[0]}%`]
+              );
+              if (!med) {
+                refillMissingItems.push({ name, category, reason: "Medicine not linked in DB" });
+                continue;
+              }
+              const activeImg = await db2.get(
+                `SELECT image_path FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1`,
+                [med.id]
+              );
+              if (!activeImg) {
+                refillMissingItems.push({ name, category, reason: "No active image record" });
+              } else if (!this.verifyImageFileExists(activeImg.image_path)) {
+                refillMissingItems.push({ name, category, reason: "Physical image file missing on disk" });
+              }
+            }
+          }
+        } catch (_) {
+        }
+        const missing = Math.max(0, totalMedicines - healthyActive);
+        return {
+          summary: {
+            totalMedicines,
+            refillCatalogMedicines,
+            healthyActive,
+            missing,
+            broken,
+            pendingReview,
+            approved,
+            highConfidence,
+            rejected
+          },
+          refillMissingItems
+        };
+      }
+      /**
+       * Bulk Missing Image Re-check & Auto-Repair Pipeline (Section 18 & 34 of PRODUCT IMAGE MISSING.MD)
+       * Scans medicines that lack an active verified image, generates tiered queries, downloads candidates,
+       * validates against product brand and strength, and activates high-confidence images.
+       */
+      async repairMissingImages(limit = 50) {
+        const db2 = await dbManager.getConnection();
+        const results = [];
+        const targetMeds = [];
+        const seenIds = /* @__PURE__ */ new Set();
+        try {
+          const csvPath = import_path47.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs42.default.existsSync(csvPath)) {
+            const content = import_fs42.default.readFileSync(csvPath, "utf-8");
+            const lines = content.split(/\r?\n/).slice(1);
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const parts = line.split(",");
+              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
+              if (!name) continue;
+              const med = await db2.get(
+                `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging,
+                    (SELECT COUNT(*) FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) as active_count
+             FROM medicines m WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
+                [name, `${name.split(" ")[0]}%`]
+              );
+              if (med && med.active_count === 0 && !seenIds.has(med.id)) {
+                seenIds.add(med.id);
+                targetMeds.push(med);
+                if (targetMeds.length >= limit) break;
+              }
+            }
+          }
+        } catch (_) {
+        }
+        if (targetMeds.length < limit) {
+          const remainingLimit = limit - targetMeds.length;
+          const additional = await db2.all(
+            `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging
+         FROM medicines m
+         WHERE m.id NOT IN (SELECT medicine_id FROM catalog_images WHERE is_active = 1)
+         ORDER BY m.id ASC
+         LIMIT ?`,
+            [remainingLimit]
+          );
+          for (const m of additional) {
+            if (!seenIds.has(m.id)) {
+              seenIds.add(m.id);
+              targetMeds.push(m);
+            }
+          }
+        }
+        let repaired = 0;
+        let failed = 0;
+        for (const med of targetMeds) {
+          try {
+            const queries = this.generateAccurateQueries(med.name, med.manufacturer);
+            let matchedCandidate = null;
+            let matchedImageUrl = null;
+            let bestScoreResult = null;
+            const rejections = await db2.all(
+              "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+              [med.id]
+            );
+            const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+            const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
+            for (const query of queries) {
+              const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
+              try {
+                const resp = await fetch(url, {
+                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+                  signal: AbortSignal.timeout(6e3)
+                });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const products = json?.data?.products || [];
+                for (const prod of products) {
+                  const damImages = prod.damImages || [];
+                  const frontImg = damImages.find((img) => img.face === "front" || img.face === "box-front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+                  if (!frontImg || !frontImg.url) continue;
+                  const candidateUrl = frontImg.url.split("?")[0];
+                  if (rejectedUrls.has(candidateUrl)) continue;
+                  const matchRes = this.computeConfidence(med, {
+                    name: prod.name,
+                    manufacturer: prod.manufacturer
+                  });
+                  if (matchRes.verificationStatus === "REJECTED" || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict) {
+                    continue;
+                  }
+                  if (matchRes.confidenceScore >= 75) {
+                    matchedCandidate = prod;
+                    matchedImageUrl = candidateUrl;
+                    bestScoreResult = matchRes;
+                    break;
+                  }
+                }
+              } catch (_) {
+              }
+              if (matchedCandidate) break;
+              await new Promise((r) => setTimeout(r, 100));
+            }
+            if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
+              failed++;
+              results.push({
+                medicine_id: med.id,
+                name: med.name,
+                status: "NOT_FOUND",
+                reason: "No high-confidence non-conflicting online image candidate found"
+              });
+              continue;
+            }
+            const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 50);
+            const filename = `${slug}-${Date.now()}.jpg`;
+            const frontendDir = import_path47.default.resolve(process.cwd(), "frontend/public/products");
+            const uploadsDir = import_path47.default.resolve(process.cwd(), "uploads/products");
+            import_fs42.default.mkdirSync(frontendDir, { recursive: true });
+            import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+            const frontendPath = import_path47.default.join(frontendDir, filename);
+            const uploadsPath = import_path47.default.join(uploadsDir, filename);
+            const imgRes = await fetch(matchedImageUrl, {
+              headers: { "User-Agent": "Mozilla/5.0" },
+              signal: AbortSignal.timeout(8e3)
+            });
+            if (!imgRes.ok) {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
+              continue;
+            }
+            const buffer = Buffer.from(await imgRes.arrayBuffer());
+            const hash = import_crypto3.default.createHash("sha256").update(buffer).digest("hex");
+            if (rejectedHashes.has(hash)) {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: "HASH_BLACKLISTED" });
+              continue;
+            }
+            import_fs42.default.writeFileSync(frontendPath, buffer);
+            import_fs42.default.writeFileSync(uploadsPath, buffer);
+            const relPath = `/products/${filename}`;
+            const isHighConfidence = bestScoreResult.verificationStatus === "HIGH_CONFIDENCE" || bestScoreResult.confidenceScore >= 80;
+            const status = isHighConfidence ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
+            const isActive = isHighConfidence ? 1 : 0;
+            await db2.run("BEGIN TRANSACTION");
+            if (isActive === 1) {
+              await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
+            }
+            await db2.run(
+              `INSERT INTO catalog_images (
+             medicine_id, company_name, product_name, image_path, thumbnail_path,
+             image_source, source_url, image_hash, confidence_score, matching_method,
+             verification_status, verification_reason, is_active
+           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
+              [
+                med.id,
+                med.manufacturer || null,
+                matchedCandidate.name,
+                relPath,
+                relPath,
+                matchedImageUrl,
+                hash,
+                bestScoreResult.confidenceScore,
+                status,
+                bestScoreResult.reason,
+                isActive
+              ]
+            );
+            await db2.run("COMMIT");
+            try {
+              const stateFile = import_path47.default.resolve(process.cwd(), "data/image_download_state.json");
+              if (import_fs42.default.existsSync(stateFile)) {
+                const state = JSON.parse(import_fs42.default.readFileSync(stateFile, "utf-8"));
+                if (!state.products) state.products = {};
+                state.products[med.name] = {
+                  status: "success",
+                  matched_name: matchedCandidate.name,
+                  slug,
+                  images: {
+                    front: {
+                      fileName: filename,
+                      url: relPath,
+                      uploadsUrl: `/uploads/products/${filename}`,
+                      bytes: buffer.length
+                    }
+                  },
+                  verified: isHighConfidence,
+                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                };
+                state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
+                import_fs42.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
+              }
+            } catch (_) {
+            }
+            repaired++;
+            results.push({
+              medicine_id: med.id,
+              name: med.name,
+              status,
+              matched_name: matchedCandidate.name,
+              reason: bestScoreResult.reason
+            });
+          } catch (err) {
+            failed++;
+            results.push({
+              medicine_id: med.id,
+              name: med.name,
+              status: "ERROR",
+              reason: err.message
+            });
+          }
+        }
+        eventService.broadcast("catalog_image_updated", {
+          action: "repair_batch_completed",
+          repaired,
+          failed,
+          scanned: targetMeds.length
+        });
+        return {
+          scanned: targetMeds.length,
+          repaired,
+          failed,
+          results
+        };
+      }
+      /**
+       * Dedicated Correction Queue:
+       * Returns unresolved images (PENDING_REVIEW, PENDING, INCORRECT)
+       * where next_review_at is NULL or <= CURRENT_TIMESTAMP.
+       * Excludes CORRECT, APPROVED, CORRECTED, and active SKIPPED.
+       */
+      async getCorrectionQueue(options) {
+        const db2 = await dbManager.getConnection();
+        const page = Math.max(1, options.page || 1);
+        const limit = Math.min(100, Math.max(1, options.limit || 20));
+        const offset = (page - 1) * limit;
+        let whereSql = "1=1";
+        const params = [];
+        const statusMode = options.status || "unresolved";
+        if (statusMode === "unresolved") {
+          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+        } else if (statusMode === "pending") {
+          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+        } else if (statusMode === "incorrect") {
+          whereSql += ` AND ci.verification_status = 'INCORRECT'`;
+        } else if (statusMode === "skipped") {
+          whereSql += ` AND ci.verification_status = 'SKIPPED' AND ci.next_review_at > CURRENT_TIMESTAMP`;
+        }
+        if (options.category && options.category !== "all" && options.category !== "All Categories") {
+          whereSql += ` AND (m.category = ? OR m.packaging LIKE ? OR m.name LIKE ?)`;
+          params.push(options.category, `%${options.category}%`, `%${options.category}%`);
+        }
+        if (options.search) {
+          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
+          const term = `%${options.search}%`;
+          params.push(term, term, term, term);
+        }
+        const countRow = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}`,
+          params
+        );
+        const totalCount = countRow ? countRow.count : 0;
+        const rows = await db2.all(
+          `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer,
+              m.category
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}
+       ORDER BY 
+         CASE WHEN ci.verification_status = 'INCORRECT' THEN 1
+              WHEN ci.verification_status IN ('PENDING_REVIEW', 'PENDING') THEN 2
+              ELSE 3 END,
+         ci.id ASC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        );
+        const categoryTokens = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "CREAM", "DROPS", "POWDER"];
+        const categories = [];
+        const unresolvedTotal = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+         AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`
+        );
+        categories.push({ category: "All Categories", count: unresolvedTotal?.count || 0 });
+        for (const token of categoryTokens) {
+          const catCount = await db2.get(
+            `SELECT COUNT(*) as count 
+         FROM catalog_images ci 
+         LEFT JOIN medicines m ON m.id = ci.medicine_id 
+         WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+           AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)
+           AND (m.packaging LIKE ? OR m.name LIKE ?)`,
+            [`%${token}%`, `%${token}%`]
+          );
+          if (catCount && catCount.count > 0) {
+            categories.push({ category: token, count: catCount.count });
+          }
+        }
+        return {
+          images: rows,
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+          page,
+          categories
+        };
+      }
+      /**
+       * Quality Dashboard & Verification Stats
+       */
+      async getCorrectionStats() {
+        const db2 = await dbManager.getConnection();
+        const pendingRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images 
+       WHERE verification_status IN ('PENDING_REVIEW', 'PENDING')
+         AND (next_review_at IS NULL OR next_review_at <= CURRENT_TIMESTAMP)`
+        );
+        const incorrectRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'INCORRECT'`
+        );
+        const correctedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'CORRECTED'`
+        );
+        const verifiedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status IN ('APPROVED', 'CORRECT')`
+        );
+        const skippedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'SKIPPED' AND next_review_at > CURRENT_TIMESTAMP`
+        );
+        const totalRow = await db2.get(`SELECT COUNT(*) as c FROM catalog_images`);
+        const verifiedTodayRow = await db2.get(
+          `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'MARK_CORRECT' AND DATE(performed_at) = DATE('now')`
+        );
+        const correctedTodayRow = await db2.get(
+          `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'IMAGE_REPLACED' AND DATE(performed_at) = DATE('now')`
+        );
+        const pending2 = pendingRow?.c || 0;
+        const incorrect = incorrectRow?.c || 0;
+        const corrected = correctedRow?.c || 0;
+        const verified = verifiedRow?.c || 0;
+        const skipped = skippedRow?.c || 0;
+        const total = totalRow?.c || 0;
+        const accurateCount = verified + corrected;
+        const evaluatedTotal = accurateCount + incorrect + pending2;
+        const accuracyPercent = evaluatedTotal > 0 ? Math.round(accurateCount / evaluatedTotal * 100) : 100;
+        return {
+          pending: pending2,
+          incorrect,
+          corrected,
+          verified,
+          skipped,
+          total,
+          accuracyPercent,
+          verifiedToday: verifiedTodayRow?.c || 0,
+          correctedToday: correctedTodayRow?.c || 0
+        };
+      }
+      /**
+       * Action: Mark image as CORRECT
+       */
+      async markImageCorrect(imageId, verifiedBy = "admin", imageType, isPrimary) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const targetType = imageType || current.image_type || "combined";
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [current.medicine_id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [current.medicine_id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [current.medicine_id, imageId]
+            );
+          }
+          const nextVersion = (current.verification_version || 1) + 1;
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'APPROVED', 
+             is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [targetType, primaryVal, verifiedBy, nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Confirmed correct by human agent', ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "APPROVED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Action: Mark image as INCORRECT or trigger smart angle workflow
+       */
+      async markImageIncorrect(imageId, reason = "Incorrect image", verifiedBy = "admin", reasonCode) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return { success: false, message: "Image not found" };
+        if (reasonCode === "NEED_BACKSIDE") {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET image_type = 'front', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [verifiedBy, imageId]
+            );
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_BACKSIDE', ?, ?)`,
+              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+            );
+            await db2.run("COMMIT");
+            eventService.broadcast("catalog_image_updated", {
+              id: imageId,
+              medicine_id: current.medicine_id,
+              status: "APPROVED",
+              image_type: "front",
+              is_active: 1
+            });
+            return {
+              success: true,
+              action: "search_candidate",
+              targetType: "back",
+              medicineId: current.medicine_id,
+              message: "Front image verified! Opening search for Backside image."
+            };
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+        }
+        if (reasonCode === "NEED_FRONT") {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET image_type = 'back', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [verifiedBy, imageId]
+            );
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_FRONT', ?, ?)`,
+              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+            );
+            await db2.run("COMMIT");
+            eventService.broadcast("catalog_image_updated", {
+              id: imageId,
+              medicine_id: current.medicine_id,
+              status: "APPROVED",
+              image_type: "back",
+              is_active: 1
+            });
+            return {
+              success: true,
+              action: "search_candidate",
+              targetType: "front",
+              medicineId: current.medicine_id,
+              message: "Current image saved as Back! Opening search for Front image."
+            };
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          const nextVersion = (current.verification_version || 1) + 1;
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'INCORRECT', 
+             is_active = 0, 
+             verification_reason = ?, 
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, verifiedBy, nextVersion, imageId]
+          );
+          if (current.source_url || current.image_hash) {
+            await db2.run(
+              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
+           VALUES (?, ?, ?, ?, ?)`,
+              [current.medicine_id, current.source_url || null, current.image_hash || null, current.image_source || "pharmeasy", reason]
+            );
+          }
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'INCORRECT', ?, ?, 'MARK_INCORRECT', ?, ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              reason,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "INCORRECT",
+            is_active: 0
+          });
+          return {
+            success: true,
+            action: "flagged_incorrect",
+            medicineId: current.medicine_id,
+            message: "Image flagged as incorrect."
+          };
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Action: Skip image review temporarily with cooldown
+       */
+      async skipImage(imageId, hours = 24, reason = "Temporarily skipped", verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const nextReview = new Date(Date.now() + hours * 3600 * 1e3).toISOString();
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'SKIPPED', 
+             skip_reason = ?, 
+             next_review_at = ?, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, nextReview, nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by, metadata
+         ) VALUES (?, ?, ?, 'SKIPPED', ?, ?, 'IMAGE_SKIPPED', ?, ?, ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              reason,
+              verifiedBy,
+              JSON.stringify({ next_review_at: nextReview, skip_hours: hours })
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "SKIPPED",
+            next_review_at: nextReview
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Search internet candidate images for review & correction
+       */
+      async searchCandidates(medicineId, queryOverride, imageType = "combined") {
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
+        if (!med) return [];
+        const rejections = await db2.all(
+          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+          [medicineId]
+        );
+        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+        const baseQuery = queryOverride && queryOverride.trim() ? queryOverride.trim() : this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
+        let cleanQuery = baseQuery;
+        if (imageType === "back" && !cleanQuery.toLowerCase().includes("back")) {
+          cleanQuery += " back";
+        }
+        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
+        let products = [];
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            signal: AbortSignal.timeout(8e3)
+          });
+          if (resp.ok) {
+            const json = await resp.json();
+            products = json?.data?.products || [];
+          }
+        } catch (err) {
+          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
+        }
+        const candidates = [];
+        for (const prod of products) {
+          const damImages = prod.damImages || [];
+          let targetImg = null;
+          if (imageType === "back") {
+            targetImg = damImages.find((img) => img.face === "back" || img.url && img.url.toLowerCase().includes("back"));
+            if (!targetImg && damImages.length > 1) targetImg = damImages[1];
+          } else if (imageType === "front") {
+            targetImg = damImages.find((img) => img.face === "front" || img.face === "default");
+          }
+          if (!targetImg) {
+            targetImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+          }
+          if (!targetImg || !targetImg.url) continue;
+          const candidateUrl = targetImg.url.split("?")[0];
+          if (rejectedUrls.has(candidateUrl)) continue;
+          const scoreResult = this.computeConfidence(med, {
+            name: prod.name,
+            manufacturer: prod.manufacturer
+          });
+          candidates.push({
+            id: String(prod.productId || candidateUrl),
+            name: prod.name,
+            manufacturer: prod.manufacturer || "Unknown",
+            imageUrl: candidateUrl,
+            source: "pharmeasy",
+            confidenceScore: scoreResult.confidenceScore,
+            verificationStatus: scoreResult.verificationStatus,
+            reason: scoreResult.reason,
+            signals: scoreResult.signals
+          });
+        }
+        candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
+        return candidates;
+      }
+      /**
+       * Action: Replace or add image with chosen candidate & mark as CORRECTED
+       */
+      async replaceWithCandidate(imageId, candidateUrl, candidateTitle, verifiedBy = "admin", imageType, isPrimary, keepExisting = false) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return null;
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [current.medicine_id]);
+        if (!med) return null;
+        const targetType = imageType || (keepExisting ? "back" : current.image_type || "combined");
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [med.id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        const slug = (med.name || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
+        const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
+        const frontendDir = import_path47.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path47.default.resolve(process.cwd(), "uploads/products");
+        import_fs42.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path47.default.join(frontendDir, filename);
+        const uploadsPath = import_path47.default.join(uploadsDir, filename);
+        const imgRes = await fetch(candidateUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+          signal: AbortSignal.timeout(1e4)
+        });
+        if (!imgRes.ok) {
+          throw new Error(`Failed to download candidate image: HTTP ${imgRes.status}`);
+        }
+        const buffer = Buffer.from(await imgRes.arrayBuffer());
+        const hash = import_crypto3.default.createHash("sha256").update(buffer).digest("hex");
+        const rejection = await db2.get(
+          "SELECT id FROM catalog_image_rejections WHERE medicine_id = ? AND rejected_image_hash = ?",
+          [med.id, hash]
+        );
+        if (rejection) {
+          throw new Error("This image was previously rejected for this medicine.");
+        }
+        import_fs42.default.writeFileSync(frontendPath, buffer);
+        import_fs42.default.writeFileSync(uploadsPath, buffer);
+        const relPath = `/products/${filename}`;
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          if (!keepExisting) {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET is_active = 0, 
+               verification_status = 'REPLACED', 
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+              [imageId]
+            );
+          }
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [med.id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [med.id, imageId]
+            );
+          }
+          const res = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, is_active, image_type, is_primary, replaced_from_image_id, previous_image_url,
+           verification_version, verified_by, verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_correction', 'CORRECTED', 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+            [
+              med.id,
+              med.manufacturer || current.company_name,
+              candidateTitle || med.name,
+              relPath,
+              relPath,
+              "online_correction",
+              candidateUrl,
+              hash,
+              targetType,
+              primaryVal,
+              keepExisting ? null : imageId,
+              current.image_path,
+              nextVersion,
+              verifiedBy
+            ]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'CORRECTED', ?, ?, 'IMAGE_REPLACED', ?, ?)`,
+            [
+              res.lastID,
+              med.id,
+              current.verification_status,
+              current.image_path,
+              relPath,
+              keepExisting ? `Added ${targetType} image` : "Replaced with online candidate",
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: res.lastID,
+            medicine_id: med.id,
+            status: "CORRECTED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return newRecord;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Retrieve all image slots / angles for a specific medicine
+       */
+      async getMedicineGallery(medicineId) {
+        const db2 = await dbManager.getConnection();
+        return db2.all(
+          `SELECT ci.*, m.category, m.packaging, m.strength, m.generic_name
+       FROM catalog_images ci
+       LEFT JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.medicine_id = ? 
+       ORDER BY 
+         ci.is_active DESC,
+         ci.is_primary DESC,
+         CASE COALESCE(ci.image_type, 'combined')
+           WHEN 'combined' THEN 1 
+           WHEN 'front' THEN 2 
+           WHEN 'back' THEN 3 
+           WHEN 'box' THEN 4 
+           WHEN 'tablet' THEN 5 
+           ELSE 6 END,
+         ci.id DESC`,
+          [medicineId]
+        ).catch(() => []);
+      }
+      /**
+       * Action: Reopen an approved/corrected image for QC review
+       */
+      async reopenImage(imageId, verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'PENDING_REVIEW', 
+             next_review_at = NULL, 
+             verification_version = ?,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, 'REOPENED', 'Reopened for quality control review', ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "PENDING_REVIEW"
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Fetch complete audit log from image_review_history
+       */
+      async getImageHistory(medicineId) {
+        const db2 = await dbManager.getConnection();
+        return db2.all(
+          `SELECT * FROM image_review_history WHERE medicine_id = ? ORDER BY performed_at DESC`,
+          [medicineId]
+        );
+      }
+      /**
+       * Filename-based auto-match engine.
+       * Scans both frontend/public/products and uploads/products directories,
+       * matches filenames to medicines using brand index & strict multi-signal scoring,
+       * and inserts into catalog_images.
+       * Idempotent — skips files already linked by image_path.
+       */
+      async scanAndAutoMatchLocalImages() {
+        const db2 = await dbManager.getConnection();
+        const publicDir = import_path47.default.join(process.cwd(), "frontend", "public", "products");
+        const uploadsDir = import_path47.default.join(process.cwd(), "uploads", "products");
+        const fileEntries = [];
+        if (import_fs42.default.existsSync(publicDir)) {
+          const publicFiles = import_fs42.default.readdirSync(publicDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+          for (const f of publicFiles) {
+            fileEntries.push({ filename: f, relPath: `/products/${f}` });
+          }
+        }
+        if (import_fs42.default.existsSync(uploadsDir)) {
+          const uploadFiles = import_fs42.default.readdirSync(uploadsDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+          for (const f of uploadFiles) {
+            fileEntries.push({ filename: f, relPath: `uploads/products/${f}` });
+          }
+        }
+        if (fileEntries.length === 0) {
+          return { matched: 0, pending_review: 0, unmatched: 0, skipped: 0 };
+        }
+        const existing = await db2.all("SELECT image_path FROM catalog_images");
+        const existingSet = new Set(existing.map((r) => r.image_path));
+        const allMeds = await db2.all("SELECT id, name, manufacturer, strength, packaging FROM medicines");
+        const brandMap = /* @__PURE__ */ new Map();
+        for (const med of allMeds) {
+          const brand = this.extractCoreBrand(med.name);
+          if (brand) {
+            const key = brand.toUpperCase();
+            if (!brandMap.has(key)) brandMap.set(key, []);
+            brandMap.get(key).push(med);
+          }
+        }
+        const activeMedsRows = await db2.all(
+          "SELECT DISTINCT medicine_id FROM catalog_images WHERE is_active = 1"
+        );
+        const activeMedsSet = new Set(activeMedsRows.map((r) => r.medicine_id));
+        let matched = 0, pending_review = 0, unmatched = 0, skipped = 0;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const entry of fileEntries) {
+          if (existingSet.has(entry.relPath)) {
+            skipped++;
+            continue;
+          }
+          const filename = entry.filename;
+          const relPath = entry.relPath;
+          let cleanName = filename.replace(/\.(jpg|jpeg|png|webp)$/i, "").replace(/-candidate-\d+$/i, "").replace(/-(front|back|side|box|tablet|combo|combined)$/i, "").replace(/-/g, " ").trim();
+          const angleMatch = filename.match(/-(front|back|side|box|tablet|combo|combined)\.(jpg|jpeg|png|webp)$/i);
+          const imageType = angleMatch ? angleMatch[1].toLowerCase() === "combo" ? "combined" : angleMatch[1].toLowerCase() : "combined";
+          const fileBrand = this.extractCoreBrand(cleanName);
+          const candidates = fileBrand ? brandMap.get(fileBrand.toUpperCase()) || [] : [];
+          let bestId = null;
+          let bestScore = 0;
+          let bestMed = null;
+          let bestResult = null;
+          for (const med of candidates) {
+            const result = this.computeConfidence(med, {
+              name: cleanName,
+              manufacturer: med.manufacturer,
+              imagePath: relPath
+            });
+            if (result.confidenceScore > bestScore) {
+              bestScore = result.confidenceScore;
+              bestId = med.id;
+              bestMed = med;
+              bestResult = result;
+            }
+          }
+          const hasActivePrimary = bestId ? activeMedsSet.has(bestId) : false;
+          const isPrimary = !hasActivePrimary && (imageType === "combined" || imageType === "front") ? 1 : 0;
+          if (bestScore >= 80 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict && bestResult.signals.brandMatch) {
+            await db2.run(
+              `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              verified_by, verified_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', ?, 1,
+                   ?, ?, 'filename_auto', ?, 'system_scanner', ?, ?, ?)`,
+              [
+                bestId,
+                bestMed?.name || cleanName,
+                bestMed?.manufacturer || null,
+                relPath,
+                relPath,
+                bestScore,
+                bestResult.reason,
+                imageType,
+                isPrimary,
+                bestScore,
+                now,
+                now,
+                now
+              ]
+            );
+            existingSet.add(relPath);
+            activeMedsSet.add(bestId);
+            matched++;
+          } else if (bestScore >= 50 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict) {
+            await db2.run(
+              `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', ?, 0,
+                   ?, 0, 'filename_auto', ?, ?, ?)`,
+              [
+                bestId,
+                bestMed?.name || cleanName,
+                bestMed?.manufacturer || null,
+                relPath,
+                relPath,
+                bestScore,
+                bestResult.reason,
+                imageType,
+                bestScore,
+                now,
+                now
+              ]
+            );
+            existingSet.add(relPath);
+            pending_review++;
+          } else {
+            if (bestId) {
+              await db2.run(
+                `INSERT INTO catalog_images
+               (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+                confidence_score, matching_method, verification_status, verification_reason, is_active,
+                image_type, is_primary, match_source, match_confidence,
+                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'REJECTED', ?, 0,
+                     ?, 0, 'filename_unmatched', ?, ?, ?)`,
+                [
+                  bestId,
+                  cleanName,
+                  bestMed?.manufacturer || null,
+                  relPath,
+                  relPath,
+                  bestScore,
+                  bestResult?.reason || "Unmatched or conflict detected",
+                  imageType,
+                  bestScore,
+                  now,
+                  now
+                ]
+              );
+            }
+            existingSet.add(relPath);
+            unmatched++;
+          }
+        }
+        return { matched, pending_review, unmatched, skipped };
+      }
+      /**
+       * Clean stale and rejected catalog images.
+       * Purges rejected/incorrect records, orphaned database entries, and broken image paths
+       * while keeping verified active images safe.
+       */
+      async cleanStaleAndRejectedImages(options) {
+        const purgeRejected = options?.purgeRejected ?? true;
+        const purgeMissingFiles = options?.purgeMissingFiles ?? true;
+        const purgeOrphans = options?.purgeOrphans ?? true;
+        const db2 = await dbManager.getConnection();
+        let purged_rejected = 0;
+        let purged_missing_files = 0;
+        let purged_orphans = 0;
+        if (purgeRejected) {
+          const res = await db2.run(
+            `DELETE FROM catalog_images WHERE verification_status IN ('REJECTED', 'INCORRECT')`
+          );
+          purged_rejected = res.changes || 0;
+        }
+        if (purgeOrphans) {
+          const res = await db2.run(
+            `DELETE FROM catalog_images WHERE medicine_id IS NULL OR medicine_id NOT IN (SELECT id FROM medicines)`
+          );
+          purged_orphans = res.changes || 0;
+        }
+        if (purgeMissingFiles) {
+          const images = await db2.all(
+            `SELECT id, image_path FROM catalog_images WHERE image_path IS NOT NULL AND image_path NOT LIKE 'http%'`
+          );
+          const toDeleteIds = [];
+          const cwd = process.cwd();
+          const publicDir = import_path47.default.resolve(cwd, "frontend/public");
+          const uploadsDir = import_path47.default.resolve(cwd, "uploads");
+          for (const img of images) {
+            const cleanPath = img.image_path.replace(/^[\/\\]/, "");
+            const p1 = import_path47.default.join(publicDir, cleanPath);
+            const p2 = import_path47.default.join(cwd, cleanPath);
+            const p3 = import_path47.default.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ""));
+            if (!import_fs42.default.existsSync(p1) && !import_fs42.default.existsSync(p2) && !import_fs42.default.existsSync(p3)) {
+              toDeleteIds.push(img.id);
+            }
+          }
+          if (toDeleteIds.length > 0) {
+            for (let i = 0; i < toDeleteIds.length; i += 500) {
+              const chunk = toDeleteIds.slice(i, i + 500);
+              const placeholders = chunk.map(() => "?").join(",");
+              await db2.run(`DELETE FROM catalog_images WHERE id IN (${placeholders})`, chunk);
+            }
+            purged_missing_files = toDeleteIds.length;
+          }
+        }
+        const counts = await db2.get(
+          `SELECT COUNT(*) as total, SUM(CASE WHEN is_active = 1 AND verification_status IN ('HIGH_CONFIDENCE', 'APPROVED', 'CORRECT') THEN 1 ELSE 0 END) as active FROM catalog_images`
+        );
+        return {
+          purged_rejected,
+          purged_missing_files,
+          purged_orphans,
+          total_remaining: counts?.total || 0,
+          active_verified: counts?.active || 0
+        };
+      }
+      /**
+       * Audit all catalog images against medicines using the strict validation engine.
+       * Deactivates and marks as REJECTED any records with dosage form conflicts,
+       * strength conflicts, or brand mismatches so they immediately stop displaying on wrong products.
+       */
+      async auditAndDeactivateMismatchedImages() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, ci.verification_status, ci.is_active,
+              m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 1`
+        );
+        let dosage_form_conflicts = 0;
+        let strength_conflicts = 0;
+        let brand_mismatches = 0;
+        const toDeactivate = [];
+        for (const r of rows) {
+          const match = this.computeConfidence(
+            {
+              name: r.med_name,
+              manufacturer: r.med_mfg || r.company_name,
+              strength: r.med_strength,
+              packaging: r.med_packaging
+            },
+            {
+              name: r.product_name,
+              manufacturer: r.company_name || r.med_mfg,
+              imagePath: r.image_path
+            }
+          );
+          if (match.signals.dosageFormConflict) {
+            dosage_form_conflicts++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          } else if (match.signals.strengthConflict) {
+            strength_conflicts++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          } else if (!match.signals.brandMatch) {
+            brand_mismatches++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          }
+        }
+        if (toDeactivate.length > 0) {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            for (const item of toDeactivate) {
+              await db2.run(
+                `UPDATE catalog_images
+             SET is_active = 0,
+                 is_primary = 0,
+                 verification_status = 'REJECTED',
+                 confidence_score = 30,
+                 verification_reason = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+                [item.reason, item.id]
+              );
+            }
+            await db2.run("COMMIT");
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+          eventService.broadcast("catalog_image_updated", {
+            action: "audit_deactivation_completed",
+            deactivated: toDeactivate.length
+          });
+        }
+        const remainingRow = await db2.get(
+          `SELECT COUNT(*) as count FROM catalog_images WHERE is_active = 1`
+        );
+        return {
+          total_audited: rows.length,
+          dosage_form_conflicts,
+          strength_conflicts,
+          brand_mismatches,
+          total_deactivated: toDeactivate.length,
+          remaining_active: remainingRow?.count || 0
+        };
+      }
+    };
+    catalogImageService = CatalogImageService.getInstance();
+  }
+});
+
+// src/utils/logger.ts
+var AppLogger, logger;
+var init_logger = __esm({
+  "src/utils/logger.ts"() {
+    "use strict";
+    AppLogger = class {
+      formatMessage(level, message, context) {
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+        const mod = context?.module ? `[${context.module}]` : "";
+        const op = context?.operation ? `[${context.operation}]` : "";
+        const req = context?.requestId ? `[req:${context.requestId}]` : "";
+        const dur = context?.durationMs !== void 0 ? ` (${context.durationMs}ms)` : "";
+        return `${timestamp} ${level.padEnd(5)} ${mod}${op}${req} ${message}${dur}`;
+      }
+      debug(message, context) {
+        if (process.env.DEBUG || process.env.NODE_ENV !== "production") {
+          console.debug(this.formatMessage("DEBUG", message, context));
+        }
+      }
+      info(message, context) {
+        console.log(this.formatMessage("INFO", message, context));
+      }
+      warn(message, context) {
+        console.warn(this.formatMessage("WARN", message, context));
+      }
+      error(message, error, context) {
+        const formatted = this.formatMessage("ERROR", message, context);
+        if (error) {
+          console.error(formatted, error);
+        } else {
+          console.error(formatted);
+        }
+      }
+    };
+    logger = new AppLogger();
+  }
+});
+
+// src/services/auth/customerAuthService.ts
+var customerAuthService_exports = {};
+__export(customerAuthService_exports, {
+  customerAuthService: () => customerAuthService,
   generateRandomOtp: () => generateRandomOtp,
   generateRandomPin: () => generateRandomPin,
   hashPin: () => hashPin,
@@ -49369,7 +54264,7 @@ function normalizePhone(raw) {
 }
 function hashPin(pin) {
   const salt = "pharmacy_portal_salt_2026";
-  return import_crypto3.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto4.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
 }
 function generateRandomPin() {
   return Math.floor(1e3 + Math.random() * 9e3).toString();
@@ -49377,19 +54272,523 @@ function generateRandomPin() {
 function generateRandomOtp() {
   return Math.floor(1e5 + Math.random() * 9e5).toString();
 }
-var import_express25, import_crypto3, router25, customerPortal_default;
+var import_crypto4, SESSION_SECRET, CustomerAuthService, customerAuthService;
+var init_customerAuthService = __esm({
+  "src/services/auth/customerAuthService.ts"() {
+    "use strict";
+    import_crypto4 = __toESM(require("crypto"), 1);
+    init_connection();
+    init_whatsappQueueWorker();
+    init_logger();
+    init_nameFormatter();
+    init_storeSettingsService();
+    SESSION_SECRET = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
+    CustomerAuthService = class {
+      /**
+       * Create an HMAC-signed token and store session in customer_sessions
+       */
+      async createSession(customerId, phone, channel = "portal", reqMetadata) {
+        const payload = `${customerId}:${phone}:${Date.now()}`;
+        const signature = import_crypto4.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+        const token = Buffer.from(`${payload}:${signature}`).toString("base64");
+        try {
+          const db2 = await dbManager.getConnection();
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+          await db2.run(
+            `INSERT INTO customer_sessions (
+           customer_id, phone, session_token, channel, device_info, ip_address,
+           logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+            [
+              customerId,
+              phone,
+              token,
+              channel,
+              reqMetadata?.userAgent || null,
+              reqMetadata?.ip || null,
+              expiresAt
+            ]
+          );
+        } catch (err) {
+          logger.warn("Failed to record customer session in DB", { module: "CustomerAuthService", error: err });
+        }
+        return token;
+      }
+      /**
+       * Verify customer session token
+       */
+      async verifySession(tokenStr) {
+        try {
+          if (!tokenStr) return null;
+          const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
+          const parts = decoded.split(":");
+          if (parts.length !== 4) return null;
+          const [customerIdStr, phone, timestampStr, signature] = parts;
+          const customerId = parseInt(customerIdStr, 10);
+          const timestamp = parseInt(timestampStr, 10);
+          if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
+          const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
+          const expectedSignature = import_crypto4.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
+          if (import_crypto4.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+            return { customerId, phone };
+          }
+        } catch (_) {
+        }
+        return null;
+      }
+      /**
+       * Request OTP for customer mobile login - strictly for existing CRM patients
+       */
+      async requestOtp(phoneRaw) {
+        const phone = normalizePhone(phoneRaw);
+        if (!phone || phone.length < 10) {
+          throw new Error("Valid 10-digit mobile number is required");
+        }
+        const db2 = await dbManager.getConnection();
+        const customer = await db2.get(
+          `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
+          [`%${phone}%`, phone]
+        );
+        if (!customer) {
+          throw new Error("This mobile number is not registered in pharmacy records. Please contact the pharmacy to register.");
+        }
+        const loginId = phone;
+        let account = await db2.get(
+          `SELECT id, customer_id, login_id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?`,
+          [customer.id, loginId]
+        );
+        if (!account) {
+          const pin = generateRandomPin();
+          const pHash = hashPin(pin);
+          await db2.run(
+            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status)
+         VALUES (?, ?, ?, ?, 1, 'active')`,
+            [customer.id, loginId, pHash, pin]
+          );
+        }
+        await db2.run(
+          `UPDATE customer_portal_otps SET is_used = 1 WHERE login_id = ? AND is_used = 0`,
+          [loginId]
+        );
+        const otp = generateRandomOtp();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString();
+        await db2.run(
+          `INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used)
+       VALUES (?, ?, ?, 0)`,
+          [loginId, otp, expiresAt]
+        );
+        try {
+          const storeName = await getStoreMedicalName(db2, 1) || "Your Pharmacy";
+          const msgText = `*${storeName} Portal Login*
+
+Your One-Time Password (OTP) is: *${otp}*
+
+Valid for 10 minutes. Do not share this OTP with anyone.`;
+          await whatsappQueueWorker.enqueue(
+            `91${phone}`,
+            msgText,
+            "portal_otp",
+            customer?.name || "Customer"
+          );
+          logger.info(`OTP queued for 91${phone}`, { module: "CustomerAuthService", operation: "requestOtp" });
+        } catch (msgErr) {
+          logger.warn("Failed to queue WhatsApp OTP, continuing", { module: "CustomerAuthService", error: msgErr });
+        }
+        return {
+          success: true,
+          message: "OTP sent to your WhatsApp number",
+          debugOtp: process.env.NODE_ENV !== "production" ? otp : void 0
+        };
+      }
+      /**
+       * Verify OTP and log customer in
+       */
+      async verifyOtp(phoneRaw, otpCode, reqMetadata) {
+        const phone = normalizePhone(phoneRaw);
+        const otp = (otpCode || "").trim();
+        if (!phone || !otp) {
+          throw new Error("Phone and OTP code are required");
+        }
+        const db2 = await dbManager.getConnection();
+        const loginId = phone;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const otpRecord = await db2.get(
+          `SELECT * FROM customer_portal_otps 
+       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > ?
+       ORDER BY created_at DESC LIMIT 1`,
+          [loginId, otp, now]
+        );
+        if (!otpRecord) {
+          throw new Error("Invalid or expired OTP");
+        }
+        await db2.run(`UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?`, [otpRecord.id]);
+        const account = await db2.get(
+          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.login_id = ? OR c.phone LIKE ?`,
+          [loginId, `%${phone}%`]
+        );
+        if (!account) {
+          throw new Error("Customer account not found");
+        }
+        if (account.status === "blocked") {
+          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
+        return {
+          token,
+          customer: {
+            id: account.customer_id,
+            name: formatCustomerName(account.name || "Customer"),
+            phone: account.phone || phone,
+            address: account.address || "",
+            loginId: account.login_id,
+            preferredStoreId: account.preferred_store_id || 1,
+            storeName: account.store_name || "Main Pharmacy"
+          },
+          features: {
+            bills: true,
+            refills: true,
+            orders: true,
+            catalog: true,
+            prescriptions: true
+          }
+        };
+      }
+      /**
+       * Login with Login ID + PIN
+       */
+      async loginWithPin(loginIdRaw, pinRaw, reqMetadata) {
+        const loginId = (loginIdRaw || "").trim();
+        const pin = (pinRaw || "").trim();
+        if (!loginId || !pin) {
+          throw new Error("Login ID and PIN are required");
+        }
+        const db2 = await dbManager.getConnection();
+        const cleanPhone = normalizePhone(loginId);
+        const account = await db2.get(
+          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?`,
+          [loginId, cleanPhone, `%${cleanPhone}%`]
+        );
+        if (!account) {
+          throw new Error("Invalid Login ID or PIN");
+        }
+        if (account.status === "blocked") {
+          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
+        }
+        const hashedInput = hashPin(pin);
+        if (hashedInput !== account.pin_hash && pin !== account.pin_display) {
+          throw new Error("Invalid Login ID or PIN");
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const phone = account.phone || cleanPhone;
+        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
+        return {
+          token,
+          customer: {
+            id: account.customer_id,
+            name: formatCustomerName(account.name || "Customer"),
+            phone,
+            address: account.address || "",
+            loginId: account.login_id,
+            preferredStoreId: account.preferred_store_id || 1,
+            storeName: account.store_name || "Main Pharmacy"
+          },
+          features: {
+            bills: true,
+            refills: true,
+            orders: true,
+            catalog: true,
+            prescriptions: true
+          }
+        };
+      }
+      /**
+       * Heartbeat to track active presence and calculate session duration
+       */
+      async recordHeartbeat(sessionToken) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const session = await db2.get(
+            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+            [sessionToken]
+          );
+          if (!session) return { success: false, durationSeconds: 0 };
+          const loggedInTime = new Date(session.logged_in_at).getTime();
+          const now = Date.now();
+          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
+          await db2.run(
+            `UPDATE customer_sessions 
+         SET last_active_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?
+         WHERE id = ?`,
+            [durationSeconds, session.id]
+          );
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET total_time_spent_seconds = COALESCE(total_time_spent_seconds, 0) + 30
+         WHERE customer_id = ?`,
+            [session.customer_id]
+          );
+          return { success: true, durationSeconds };
+        } catch (err) {
+          logger.warn("Heartbeat update failed", { module: "CustomerAuthService", error: err });
+          return { success: false, durationSeconds: 0 };
+        }
+      }
+      /**
+       * Terminate session on explicit customer logout and finalize duration
+       */
+      async logoutSession(sessionToken) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const session = await db2.get(
+            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+            [sessionToken]
+          );
+          if (!session) return { success: false, durationSeconds: 0 };
+          const loggedInTime = new Date(session.logged_in_at).getTime();
+          const now = Date.now();
+          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
+          await db2.run(
+            `UPDATE customer_sessions 
+         SET is_active = 0,
+             logged_out_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?,
+             last_active_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [durationSeconds, session.id]
+          );
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET last_logout_at = CURRENT_TIMESTAMP
+         WHERE customer_id = ?`,
+            [session.customer_id]
+          );
+          logger.info(`Session logged out (duration: ${durationSeconds}s)`, {
+            module: "CustomerAuthService",
+            operation: "logoutSession",
+            customerId: session.customer_id
+          });
+          return { success: true, durationSeconds };
+        } catch (err) {
+          logger.error("Logout session failed", err, { module: "CustomerAuthService" });
+          return { success: false, durationSeconds: 0 };
+        }
+      }
+      /**
+       * Get customer session history for CRM auditing
+       */
+      async getCustomerSessions(customerId) {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          `SELECT total_login_count, total_time_spent_seconds, last_login_at, last_logout_at
+       FROM customer_portal_accounts WHERE customer_id = ?`,
+          [customerId]
+        );
+        const sessions = await db2.all(
+          `SELECT id, channel, device_info, ip_address, logged_in_at, last_active_at, logged_out_at, duration_seconds, is_active
+       FROM customer_sessions
+       WHERE customer_id = ?
+       ORDER BY id DESC LIMIT 50`,
+          [customerId]
+        );
+        return {
+          stats: {
+            totalLogins: account?.total_login_count || sessions.length,
+            totalTimeSpentSeconds: account?.total_time_spent_seconds || 0,
+            lastLoginAt: account?.last_login_at || null,
+            lastLogoutAt: account?.last_logout_at || null,
+            activeSessionsCount: sessions.filter((s) => s.is_active === 1).length
+          },
+          sessions
+        };
+      }
+    };
+    customerAuthService = new CustomerAuthService();
+  }
+});
+
+// src/routes/customerPortal.ts
+var customerPortal_exports = {};
+__export(customerPortal_exports, {
+  createCustomerToken: () => createCustomerToken,
+  default: () => customerPortal_default,
+  generateRandomOtp: () => generateRandomOtp2,
+  generateRandomPin: () => generateRandomPin2,
+  hashPin: () => hashPin2,
+  normalizePhone: () => normalizePhone2,
+  verifyCustomerToken: () => verifyCustomerToken
+});
+function normalizePhone2(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+function hashPin2(pin) {
+  const salt = "pharmacy_portal_salt_2026";
+  return import_crypto5.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+}
+function generateRandomPin2() {
+  return Math.floor(1e3 + Math.random() * 9e3).toString();
+}
+function generateRandomOtp2() {
+  return Math.floor(1e5 + Math.random() * 9e5).toString();
+}
+function createCustomerToken(customerId, phone) {
+  const payload = `${customerId}:${phone}:${Date.now()}`;
+  const signature = import_crypto5.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
+  return Buffer.from(`${payload}:${signature}`).toString("base64");
+}
+function verifyCustomerToken(tokenStr) {
+  try {
+    if (!tokenStr) return null;
+    const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
+    const parts = decoded.split(":");
+    if (parts.length !== 4) return null;
+    const [customerIdStr, phone, timestampStr, signature] = parts;
+    const customerId = parseInt(customerIdStr, 10);
+    const timestamp = parseInt(timestampStr, 10);
+    if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
+    const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
+    const expectedSignature = import_crypto5.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
+    if (import_crypto5.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+      return { customerId, phone };
+    }
+  } catch (_) {
+  }
+  return null;
+}
+function loadCatalogAndImages() {
+  const now = Date.now();
+  if (catalogCache && imageStateCache && now - lastCacheLoad < 6e4) {
+    return { catalog: catalogCache, images: imageStateCache };
+  }
+  try {
+    const csvPath = import_path48.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs43.default.existsSync(csvPath)) {
+      const content = import_fs43.default.readFileSync(csvPath, "utf-8");
+      const lines = content.split(/\r?\n/);
+      const items = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let inQuotes = false;
+        let cur = "";
+        const parts = [];
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c];
+          if (ch === '"') inQuotes = !inQuotes;
+          else if (ch === "," && !inQuotes) {
+            parts.push(cur.trim());
+            cur = "";
+          } else {
+            cur += ch;
+          }
+        }
+        parts.push(cur.trim());
+        items.push({
+          category: parts[0]?.replace(/^"|"$/g, ""),
+          name: parts[1]?.replace(/^"|"$/g, ""),
+          pack: parts[2]?.replace(/^"|"$/g, ""),
+          schedule: parts[3]?.replace(/^"|"$/g, ""),
+          composition: parts[4]?.replace(/^"|"$/g, ""),
+          manufacturer: parts[5]?.replace(/^"|"$/g, ""),
+          mrp: parseFloat(parts[6]) || 0,
+          sell_price: parseFloat(parts[7]) || parseFloat(parts[6]) || 0
+        });
+      }
+      try {
+        const clinicalCsvPath = import_path48.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs43.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs43.default.readFileSync(clinicalCsvPath, "utf-8");
+          const clinLines = clinContent.split(/\r?\n/);
+          for (let j = 1; j < clinLines.length; j++) {
+            const clinLine = clinLines[j].trim();
+            if (!clinLine) continue;
+            if (clinLine.startsWith("TB,") || clinLine.startsWith('"TB",')) {
+              const p = clinLine.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+              const name = (p[1] || "").replace(/^"|"$/g, "").trim();
+              if (name && !items.some((it) => it.name === name)) {
+                items.push({
+                  category: "Tuberculosis (TB) Care",
+                  name,
+                  pack: (p[2] || "").replace(/^"|"$/g, "").trim(),
+                  schedule: (p[3] || "").replace(/^"|"$/g, "").trim(),
+                  composition: (p[4] || "").replace(/^"|"$/g, "").trim(),
+                  manufacturer: (p[5] || "").replace(/^"|"$/g, "").trim(),
+                  mrp: 0,
+                  sell_price: 0
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+      catalogCache = items;
+    }
+  } catch (e) {
+    catalogCache = [];
+  }
+  try {
+    const statePath = import_path48.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs43.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs43.default.readFileSync(statePath, "utf-8"));
+      imageStateCache = stateData.products || {};
+    }
+  } catch (e) {
+    imageStateCache = {};
+  }
+  lastCacheLoad = now;
+  return { catalog: catalogCache || [], images: imageStateCache || {} };
+}
+var import_express25, import_crypto5, import_fs43, import_path48, router25, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express25 = __toESM(require("express"), 1);
-    import_crypto3 = __toESM(require("crypto"), 1);
+    import_crypto5 = __toESM(require("crypto"), 1);
+    import_fs43 = __toESM(require("fs"), 1);
+    import_path48 = __toESM(require("path"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_eventService();
     init_nameFormatter();
     init_storeSettingsService();
     init_storeContextService();
+    init_catalogImageService();
+    init_paymentQrService();
+    init_orderScheduleService();
+    init_returnWindowService();
     router25 = import_express25.default.Router();
+    SESSION_SECRET2 = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
     router25.get("/accounts", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
@@ -49404,12 +54803,15 @@ var init_customerPortal = __esm({
         pa.preferred_store_id,
         pa.status,
         pa.last_login_at,
+        COALESCE(pa.total_login_count, 0) as total_login_count,
+        COALESCE(pa.total_time_spent_seconds, 0) as total_time_spent_seconds,
+        pa.last_logout_at,
         pa.created_at,
         c.name as customer_name,
         c.address as customer_address,
         s.name as preferred_store_name,
         (SELECT COUNT(*) FROM patient_refills pr WHERE pr.customer_id = pa.customer_id AND pr.is_active = 1) as active_refills_count,
-        (SELECT COUNT(*) FROM sales sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
+        (SELECT COUNT(*) FROM sales_invoices sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
       FROM customer_portal_accounts pa
       JOIN customers c ON c.id = pa.customer_id
       LEFT JOIN stores s ON s.id = pa.preferred_store_id
@@ -49432,6 +54834,22 @@ var init_customerPortal = __esm({
         res.status(500).json({ error: "Failed to fetch portal accounts" });
       }
     });
+    router25.get("/accounts/:id/sessions", async (req, res) => {
+      try {
+        const accountId = parseInt(String(req.params.id), 10);
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(`SELECT customer_id FROM customer_portal_accounts WHERE id = ?`, [accountId]);
+        if (!account) {
+          return res.status(404).json({ error: "Portal account not found" });
+        }
+        const { customerAuthService: customerAuthService2 } = await Promise.resolve().then(() => (init_customerAuthService(), customerAuthService_exports));
+        const sessionData = await customerAuthService2.getCustomerSessions(account.customer_id);
+        res.json({ success: true, ...sessionData });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch sessions error:", err);
+        res.status(500).json({ error: "Failed to fetch customer sessions" });
+      }
+    });
     router25.post("/accounts/generate", async (req, res) => {
       const {
         customer_id,
@@ -49441,7 +54859,7 @@ var init_customerPortal = __esm({
         custom_pin,
         send_whatsapp = true
       } = req.body;
-      const cleanPhone = normalizePhone(phone);
+      const cleanPhone = normalizePhone2(phone);
       if (!cleanPhone || cleanPhone.length < 10) {
         return res.status(400).json({ error: "Valid 10-digit mobile number is required" });
       }
@@ -49453,6 +54871,9 @@ var init_customerPortal = __esm({
           const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
           if (existingCust) {
             targetCustomerId = existingCust.id;
+            if (cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
+              await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
+            }
           } else {
             const custRes = await db2.run(
               "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -49460,9 +54881,14 @@ var init_customerPortal = __esm({
             );
             targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
           }
+        } else {
+          const existingCust = await db2.get("SELECT id, name FROM customers WHERE id = ?", [targetCustomerId]);
+          if (existingCust && cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
+            await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
+          }
         }
-        const pin = custom_pin && String(custom_pin).length === 4 ? String(custom_pin) : generateRandomPin();
-        const pinHashed = hashPin(pin);
+        const pin = custom_pin && String(custom_pin).length === 4 ? String(custom_pin) : generateRandomPin2();
+        const pinHashed = hashPin2(pin);
         const storeId = parseInt(String(preferred_store_id), 10) || 1;
         const existingAccount = await db2.get("SELECT id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?", [
           targetCustomerId,
@@ -49472,9 +54898,9 @@ var init_customerPortal = __esm({
         if (existingAccount) {
           await db2.run(
             `UPDATE customer_portal_accounts 
-         SET pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
+         SET customer_id = ?, login_id = ?, pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
          WHERE id = ?`,
-            [pinHashed, pin, storeId, existingAccount.id]
+            [targetCustomerId, cleanPhone, pinHashed, pin, storeId, existingAccount.id]
           );
           accountId = existingAccount.id;
         } else {
@@ -49500,7 +54926,7 @@ Hello ${cleanName}, your direct refill account is ready:
 \u{1F511} *4-Digit PIN:* ${pin}
 \u{1F4CD} *Collection Branch:* ${storeName}
 
-*Website:* /portal
+*Direct Login Link:* /customer-login?phone=${cleanPhone}
 
 Login to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
             await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials", cleanName);
@@ -49539,8 +54965,8 @@ Login to view your past store bills, choose medicines, and reorder for quick cou
         if (!account) return res.status(404).json({ error: "Portal account not found" });
         let pin = account.pin_display;
         if (!pin) {
-          pin = generateRandomPin();
-          const pinHashed = hashPin(pin);
+          pin = generateRandomPin2();
+          const pinHashed = hashPin2(pin);
           await db2.run(
             "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             [pinHashed, pin, accountId]
@@ -49559,7 +54985,7 @@ Here are your online refill portal details:
 \u{1F511} *PIN:* ${pin}
 \u{1F4CD} *Branch:* ${storeName}
 
-*Website:* /portal
+*Direct Login Link:* /customer-login?phone=${cleanPhone}
 
 Tap the link to login, select medicines from your previous bills, and place your pickup order.`;
         const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials_resend", customerName);
@@ -49593,7 +55019,7 @@ Tap the link to login, select medicines from your previous bills, and place your
         let updatedPin = null;
         const pinToSet = String(custom_pin || override_pin || "").trim();
         if (pinToSet && pinToSet.length >= 4) {
-          const hashed = hashPin(pinToSet);
+          const hashed = hashPin2(pinToSet);
           updates.push("pin_hash = ?", "pin_display = ?");
           params.push(hashed, pinToSet);
           updatedPin = pinToSet;
@@ -49640,7 +55066,7 @@ Your online refill portal PIN has been reset by the pharmacy.
     });
     router25.post("/auth/change-pin", async (req, res) => {
       const { customer_id, phone, current_pin, new_pin } = req.body;
-      const cleanPhone = normalizePhone(phone);
+      const cleanPhone = normalizePhone2(phone);
       const cleanCurrentPin = String(current_pin || "").trim();
       const cleanNewPin = String(new_pin || "").trim();
       if (!cleanNewPin || cleanNewPin.length < 4) {
@@ -49656,12 +55082,12 @@ Your online refill portal PIN has been reset by the pharmacy.
         }
         if (!account) return res.status(404).json({ error: "Account not found" });
         if (cleanCurrentPin) {
-          const currentHashed = hashPin(cleanCurrentPin);
+          const currentHashed = hashPin2(cleanCurrentPin);
           if (account.pin_hash !== currentHashed) {
             return res.status(401).json({ error: "Current PIN is incorrect" });
           }
         }
-        const newHashed = hashPin(cleanNewPin);
+        const newHashed = hashPin2(cleanNewPin);
         await db2.run(
           "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           [newHashed, cleanNewPin, account.id]
@@ -49690,14 +55116,14 @@ If you did not make this change, please contact your pharmacy immediately.`;
     });
     router25.post("/auth/login", async (req, res) => {
       const { login_id, pin } = req.body;
-      const cleanPhone = normalizePhone(login_id);
+      const cleanPhone = normalizePhone2(login_id);
       const cleanPin = String(pin || "").trim();
       if (!cleanPhone || cleanPhone.length < 10 || !cleanPin) {
         return res.status(400).json({ error: "Phone number and 4-digit PIN are required" });
       }
       try {
         const db2 = await dbManager.getConnection();
-        const hashed = hashPin(cleanPin);
+        const hashed = hashPin2(cleanPin);
         const account = await db2.get(
           `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
        FROM customer_portal_accounts pa
@@ -49735,33 +55161,47 @@ If you did not make this change, please contact your pharmacy immediately.`;
       }
     });
     router25.post("/auth/request-otp", async (req, res) => {
-      const { login_id } = req.body;
-      const cleanPhone = normalizePhone(login_id);
+      const { login_id, name } = req.body;
+      const cleanPhone = normalizePhone2(login_id);
       if (!cleanPhone || cleanPhone.length < 10) {
         return res.status(400).json({ error: "Valid 10-digit mobile number required" });
       }
       try {
         const db2 = await dbManager.getConnection();
-        const account = await db2.get(
-          `SELECT pa.*, c.name as customer_name 
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       WHERE pa.login_id = ? AND pa.status = 'active'`,
-          [cleanPhone]
+        let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+        if (!customer) {
+          const defaultName = formatCustomerName(name || "Customer");
+          const insResult = await db2.run(
+            "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            [defaultName, cleanPhone, ""]
+          );
+          const newCustId = insResult.lastID;
+          customer = await db2.get("SELECT * FROM customers WHERE id = ?", [newCustId]);
+        }
+        let account = await db2.get(
+          "SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?",
+          [customer.id, cleanPhone]
         );
         if (!account) {
-          return res.status(404).json({
-            error: "Refill account not found or disabled. Please contact your pharmacy branch to set up portal access."
-          });
+          const initialPin = generateRandomPin2();
+          const pHash = hashPin2(initialPin);
+          const accRes = await db2.run(
+            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+            [customer.id, cleanPhone, pHash, initialPin]
+          );
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE id = ?", [accRes.lastID]);
+        } else if (account.status !== "active") {
+          return res.status(403).json({ error: "Portal account disabled. Please contact your pharmacy branch." });
         }
-        const otpCode = generateRandomOtp();
+        const otpCode = generateRandomOtp2();
         const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString().replace("T", " ").slice(0, 19);
         await db2.run(
           "INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used) VALUES (?, ?, ?, 0)",
           [cleanPhone, otpCode, expiresAt]
         );
         const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-        const custName = formatCustomerName(account.customer_name || "Customer");
+        const custName = formatCustomerName(customer.name || "Customer");
         const medicalName = await getStoreMedicalNameAndPhone(db2);
         const otpMsg = `\u{1F510} *Your ${medicalName} Login OTP is: ${otpCode}*
 
@@ -49779,7 +55219,7 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
     });
     router25.post("/auth/verify-otp", async (req, res) => {
       const { login_id, otp_code } = req.body;
-      const cleanPhone = normalizePhone(login_id);
+      const cleanPhone = normalizePhone2(login_id);
       const cleanOtp = String(otp_code || "").trim();
       if (!cleanPhone || !cleanOtp) {
         return res.status(400).json({ error: "Phone number and OTP are required" });
@@ -49796,24 +55236,47 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
           return res.status(401).json({ error: "Invalid or expired OTP" });
         }
         await db2.run("UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?", [otpRow.id]);
-        const account = await db2.get(
+        let account = await db2.get(
           `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
        FROM customer_portal_accounts pa
        JOIN customers c ON c.id = pa.customer_id
-       WHERE pa.login_id = ? AND pa.status = 'active'`,
-          [cleanPhone]
+       WHERE (pa.login_id = ? OR c.phone = ?) AND pa.status = 'active'`,
+          [cleanPhone, cleanPhone]
         );
         if (!account) {
-          return res.status(404).json({
-            error: "Refill account not found or disabled. Please contact your pharmacy branch."
-          });
+          let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (!customer) {
+            const insResult = await db2.run(
+              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+              ["Customer", cleanPhone, ""]
+            );
+            customer = await db2.get("SELECT * FROM customers WHERE id = ?", [insResult.lastID]);
+          }
+          const initialPin = generateRandomPin2();
+          const pHash = hashPin2(initialPin);
+          await db2.run(
+            `INSERT OR REPLACE INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+            [customer.id, cleanPhone, pHash, initialPin]
+          );
+          account = await db2.get(
+            `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+         FROM customer_portal_accounts pa
+         JOIN customers c ON c.id = pa.customer_id
+         WHERE pa.login_id = ?`,
+            [cleanPhone]
+          );
         }
         await db2.run("UPDATE customer_portal_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", [account.id]);
+        const token = createCustomerToken(account.cust_id, cleanPhone);
         const stores = await storeContextService.listStores(void 0, false);
         res.json({
           success: true,
+          token,
           customer: {
             id: account.cust_id,
+            user_id: account.cust_id,
+            // permanent immutable internal identity (Rule 2)
             name: account.customer_name,
             phone: cleanPhone,
             address: account.customer_address || "",
@@ -49833,35 +55296,49 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
     });
     router25.get("/customer/bills", async (req, res) => {
       const customerId = parseInt(req.query.customer_id, 10);
-      const phone = normalizePhone(req.query.phone);
-      if (!customerId && !phone) {
-        return res.status(400).json({ error: "customer_id or phone required" });
+      const phone = normalizePhone2(req.query.phone);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied: Cannot access another customer's invoices" });
       }
+      let custId = customerId || verified?.customerId || 0;
       try {
         const db2 = await dbManager.getConnection();
-        let custId = customerId;
         if (!custId && phone) {
           const cust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [phone]);
           if (cust) custId = cust.id;
         }
         if (!custId) {
-          return res.json({ bills: [] });
+          return res.status(400).json({ error: "customer_id or phone required" });
         }
         const sales = await db2.all(
-          `SELECT s.id, s.invoice_number, s.store_id, s.total_amount, s.net_amount, s.created_at, st.name as store_name
-       FROM sales s
-       LEFT JOIN stores st ON st.id = s.store_id
-       WHERE s.customer_id = ?
-       ORDER BY s.created_at DESC LIMIT 20`,
+          `SELECT si.id, si.invoice_no, si.invoice_no as invoice_number, si.store_id,
+              si.total_amount, si.total_amount as net_amount, si.date, si.date as created_at,
+              COALESCE(st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+       ORDER BY si.date DESC LIMIT 50`,
           [custId]
         ).catch(() => []);
         const enrichedBills = [];
         for (const sale of sales) {
           const items = await db2.all(
-            `SELECT si.id, si.medicine_id, m.name as medicine_name, m.generic_name, si.quantity, si.unit_price, si.total_price
-         FROM sale_items si
-         JOIN medicines m ON m.id = si.medicine_id
-         WHERE si.sale_id = ?`,
+            `SELECT sit.id,
+                sit.quantity,
+                sit.unit_price,
+                sit.mrp,
+                sit.discount_per,
+                (sit.quantity * sit.unit_price) as total_price,
+                COALESCE(m.name, 'Medicine') as medicine_name,
+                COALESCE(m.generic_name, '') as generic_name,
+                im.medicine_id
+         FROM sale_items sit
+         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
             [sale.id]
           ).catch(() => []);
           enrichedBills.push({
@@ -49877,8 +55354,14 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
     });
     router25.get("/customer/refills", async (req, res) => {
       const customerId = parseInt(req.query.customer_id, 10);
-      const phone = normalizePhone(req.query.phone);
-      if (!customerId && !phone) {
+      const phone = normalizePhone2(req.query.phone);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied: Cannot access another customer's refills" });
+      }
+      let custId = customerId || verified?.customerId || 0;
+      if (!custId && !phone) {
         return res.status(400).json({ error: "customer_id or phone required" });
       }
       try {
@@ -49896,6 +55379,10 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         pr.quantity_needed,
         pr.last_refill_date,
         pr.next_refill_date,
+        pr.status,
+        pr.paused_at,
+        pr.pause_reason,
+        pr.resume_at,
         pr.store_id,
         s.name as store_name
       FROM patient_refills pr
@@ -49904,11 +55391,57 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
       WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
       ORDER BY pr.next_refill_date ASC
     `;
-        const refills = await db2.all(sql, [customerId || -1, `%${phone}%`]).catch(() => []);
+        const refills = await db2.all(sql, [custId || -1, `%${phone}%`]).catch(() => []);
         res.json({ success: true, count: refills.length, refills });
       } catch (err) {
         console.error("[CustomerPortal] Fetch customer refills error:", err);
         res.status(500).json({ error: "Failed to fetch refills" });
+      }
+    });
+    router25.put("/customer/phone", async (req, res) => {
+      const { customer_id, new_phone } = req.body;
+      const cleanPhone = normalizePhone2(new_phone);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
+      }
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.body.token);
+      const custId = parseInt(customer_id, 10) || verified?.customerId;
+      if (!custId) {
+        return res.status(400).json({ error: "customer_id is required" });
+      }
+      if (verified && verified.customerId !== custId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const conflict = await db2.get("SELECT id FROM customers WHERE phone = ? AND id != ?", [cleanPhone, custId]);
+        if (conflict) {
+          return res.status(409).json({ error: "Phone number already in use by another customer" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone, custId]);
+          await db2.run(
+            "UPDATE customer_portal_accounts SET login_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?",
+            [cleanPhone, custId]
+          );
+          await db2.run("COMMIT");
+          const newToken = createCustomerToken(custId, cleanPhone);
+          res.json({
+            success: true,
+            message: "Phone number updated successfully",
+            customer_id: custId,
+            new_phone: cleanPhone,
+            token: newToken
+          });
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+      } catch (err) {
+        console.error("[CustomerPortal] Update phone error:", err);
+        res.status(500).json({ error: "Failed to update phone number" });
       }
     });
     router25.post("/customer/refill-order", async (req, res) => {
@@ -49919,32 +55452,80 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         store_id = 1,
         items,
         payment_method = "COUNTER_PICKUP",
-        notes
+        delivery_mode = "pickup",
+        delivery_address = "",
+        notes = ""
       } = req.body;
       if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Customer name and at least one medicine required" });
       }
-      const cleanPhone = normalizePhone(customer_phone);
+      const cleanPhone = normalizePhone2(customer_phone);
       const cleanName = formatCustomerName(customer_name);
       const targetStoreId = parseInt(String(store_id), 10) || 1;
       const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+      const cleanAddress = String(delivery_address || "").trim();
+      const isDelivery = delivery_mode === "delivery";
       try {
         const db2 = await dbManager.getConnection();
         let custId = customer_id ? parseInt(String(customer_id), 10) : null;
         let registeredCustomer = null;
         if (custId) {
-          registeredCustomer = await db2.get("SELECT id, name FROM customers WHERE id = ?", [custId]);
+          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE id = ?", [custId]);
         } else if (cleanPhone) {
-          registeredCustomer = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
           if (registeredCustomer) custId = registeredCustomer.id;
         }
         if (!registeredCustomer || !custId) {
-          return res.status(403).json({
-            error: "Customer profile not found. Online refill ordering is only available for registered pharmacy customers."
+          if (cleanName && cleanPhone) {
+            const insRes = await db2.run(
+              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+              [cleanName, cleanPhone, cleanAddress || "Website Customer"]
+            );
+            custId = Number(insRes.lastID);
+            registeredCustomer = { id: custId, name: cleanName, address: cleanAddress };
+          } else {
+            return res.status(400).json({
+              error: "Please provide valid customer name and mobile number to place order."
+            });
+          }
+        } else if (cleanAddress && !registeredCustomer.address) {
+          await db2.run("UPDATE customers SET address = ? WHERE id = ?", [cleanAddress, custId]).catch(() => {
           });
         }
-        const officialCustomerName = registeredCustomer.name || cleanName;
+        const idempotencyKey = req.headers["idempotency-key"] || req.body.idempotency_key;
+        if (idempotencyKey) {
+          const recentOrder = await db2.get(
+            `SELECT id, product, qty FROM special_orders 
+         WHERE customer_id = ? AND notes LIKE ? AND created_at > datetime('now', '-2 minutes')
+         ORDER BY id DESC LIMIT 1`,
+            [custId, `%[Idempotency: ${idempotencyKey}]%`]
+          );
+          if (recentOrder) {
+            return res.json({
+              success: true,
+              message: "Order already received (idempotent)",
+              order_id: recentOrder.id,
+              customer_id: custId
+            });
+          }
+        }
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
         const createdOrders = [];
+        const modeLabel = isDelivery ? "Home Delivery" : "In-Store Pickup";
+        const orderType = isDelivery ? "DELIVERY" : "PICKUP";
+        const deliveryStatus = isDelivery ? "pending_dispatch" : "counter_pickup";
+        const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
+        const idempotencyTag = idempotencyKey ? ` [Idempotency: ${idempotencyKey}]` : "";
+        const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ""}${notes ? ` Notes: ${notes}` : ""}${idempotencyTag}`;
+        const totalAmount = items.reduce(
+          (sum, it) => sum + (Number(it.qty || it.quantity_needed) || 1) * (Number(it.price || it.sell_price || it.mrp) || 0),
+          0
+        );
+        let allocatedQr = null;
+        if (payment_method === "UPI") {
+          allocatedQr = await paymentQrService.allocateNextQr();
+        }
         await db2.run("BEGIN TRANSACTION");
         try {
           for (const item of items) {
@@ -49955,8 +55536,12 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
             const result = await db2.run(
               `INSERT INTO special_orders (
             store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
-            advance_payment, notes, customer_order_source, delivery_status, return_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website_refill', 'counter_pickup', 'none', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            advance_payment, notes, customer_order_source, delivery_status, return_status,
+            payment_status, pharmacy_verification_status, payment_qr_id, order_type, total_amount,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
               [
                 targetStoreId,
                 custId,
@@ -49965,15 +55550,28 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
                 cleanPhone,
                 qty,
                 todayStr2,
-                notes ? `[Refill Collection - ${payment_method}] ${notes}` : `[Refill Collection - ${payment_method}]`
+                fullNotes,
+                deliveryStatus,
+                allocatedQr?.id || null,
+                orderType,
+                totalAmount,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
               ]
             );
             const orderId = Number(result.lastID);
-            createdOrders.push({ id: orderId, product: prodName, qty, price });
+            createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null });
             await db2.run(
               `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-              [orderId, `Refill order placed for In-Store Pickup at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method}`]
+           VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method} (ETA: ${calculatedSchedule.estimatedDeliveryWindowFormatted})`]
             );
           }
           await db2.run("COMMIT");
@@ -49991,15 +55589,33 @@ Valid for 10 minutes. Please do not share this code with anyone.`;
         const storeInfo = await storeContextService.getStoreById(targetStoreId);
         const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
         const storeAddress = storeInfo?.address ? `
-\u{1F4CD} *Address:* ${storeInfo.address}` : "";
+\u{1F4CD} *Store Address:* ${storeInfo.address}` : "";
         const storePhone = storeInfo?.phone ? `
 \u{1F4DE} *Contact:* ${storeInfo.phone}` : "";
         if (cleanPhone && cleanPhone.length >= 10) {
           const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
           const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
           const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
-          const totalAmount = createdOrders.reduce((sum, o) => sum + o.price * o.qty, 0);
-          const pickupMsg = `*Refill Order Received (${orderIdsStr})*
+          const deliveryTimingBlock = isDelivery ? `
+\u{1F552} *Estimated Delivery Window:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}` : `
+\u{1F552} *Estimated Ready Time:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}`;
+          const scheduleReasonBlock = calculatedSchedule.scheduleReason ? `
+\u2139\uFE0F *Delivery Note:* ${calculatedSchedule.scheduleReason}` : "";
+          const returnNoteBlock = `
+\u{1F504} *Return Policy:* ${returnWindowDays}-day return window available on eligible delivered medicines.`;
+          let confirmMsg = isDelivery ? `*Online Order Received (${orderIdsStr})*
+
+Hello ${cleanName},
+Thank you for ordering at *${storeName}*.
+
+*Ordered Medicines:*
+${itemsSummary}
+
+\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
+\u{1F69A} *Mode:* Home Delivery${deliveryTimingBlock}${scheduleReasonBlock}
+\u{1F4CD} *Address:* ${cleanAddress || "As per records"}${storePhone}${returnNoteBlock}
+
+*Our team is packaging your order and will alert you upon dispatch!*` : `*Refill Order Received (${orderIdsStr})*
 
 Hello ${cleanName},
 Thank you for placing your refill order at *${storeName}*.
@@ -50008,34 +55624,1496 @@ Thank you for placing your refill order at *${storeName}*.
 ${itemsSummary}
 
 \u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
-\u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${storePhone}
+\u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}
 
 *Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+          if (allocatedQr) {
+            const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
+            confirmMsg += `
+
+\u{1F4B3} *Payment Instructions (${allocatedQr.label}):*
+UPI ID: ${allocatedQr.upi_id}
+Payee: ${allocatedQr.payee_name}
+UPI Pay Link:
+${upiUri}
+
+*Important:* After transferring via UPI, click "I HAVE PAID" on the website to submit your payment for pharmacy verification.`;
+          }
           try {
-            await whatsappQueueWorker.enqueue(formattedPhone, pickupMsg, "refill_collection_confirmation", cleanName);
+            await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
           } catch (waErr) {
             console.warn("[CustomerPortal] WhatsApp confirmation warning:", waErr);
           }
         }
         try {
-          eventService.broadcast("order_updated", { at: Date.now(), source: "customer_portal", store_id: targetStoreId });
-          eventService.broadcast("refill_updated", { at: Date.now(), source: "customer_portal", store_id: targetStoreId });
+          eventService.broadcast("order_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
+          eventService.broadcast("refill_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
+          eventService.broadcast("website_order_created", { at: Date.now(), store_id: targetStoreId, customer: cleanName });
         } catch (_) {
         }
+        const primaryOrderId = createdOrders[0]?.id;
+        const paymentQrResponse = allocatedQr ? {
+          qr_id: allocatedQr.id,
+          label: allocatedQr.label,
+          payee_name: allocatedQr.payee_name,
+          upi_id: allocatedQr.upi_id,
+          qr_image_url: allocatedQr.qr_image_url || "",
+          amount: totalAmount,
+          upi_uri: paymentQrService.buildUpiUri(
+            allocatedQr.upi_id,
+            allocatedQr.payee_name,
+            totalAmount,
+            primaryOrderId || 1
+          )
+        } : null;
         res.status(201).json({
           success: true,
-          message: "Refill collection order placed successfully",
+          message: `${modeLabel} order placed successfully`,
           store_id: targetStoreId,
           store_name: storeName,
+          delivery_mode: modeLabel,
+          order_type: orderType,
           orders: createdOrders,
-          customer: { name: cleanName, phone: cleanPhone }
+          order_id: primaryOrderId,
+          total_amount: totalAmount,
+          payment_method,
+          payment_qr: paymentQrResponse,
+          customer: { name: cleanName, phone: cleanPhone },
+          timing: calculatedSchedule,
+          returnPolicy: {
+            windowDays: returnWindowDays,
+            message: `${returnWindowDays}-day return window on eligible items upon delivery`
+          }
         });
       } catch (err) {
         console.error("[CustomerPortal] Refill order error:", err);
-        res.status(500).json({ error: "Failed to place refill order: " + (err.message || "Unknown error") });
+        res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
+      }
+    });
+    catalogCache = null;
+    imageStateCache = null;
+    lastCacheLoad = 0;
+    router25.get("/public-catalog", async (req, res) => {
+      try {
+        const category = String(req.query.category || "all").toLowerCase();
+        const search = String(req.query.search || "").trim().toLowerCase();
+        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "40"), 10)));
+        const { catalog, images } = loadCatalogAndImages();
+        const db2 = await dbManager.getConnection();
+        const isApprovedRefillCategory = (item) => {
+          const c = (item.category || "").toLowerCase();
+          const n = (item.name || "").toUpperCase();
+          return c.includes("diabet") || c.includes("bp") || c.includes("cardiac") || c.includes("heart") || c.includes("thyroid") || c.includes("tb") || c.includes("tuber") || n.includes("R-CINEX") || n.includes("PYZINA") || n.includes("COMBUTOL");
+        };
+        let filtered = catalog.filter(isApprovedRefillCategory);
+        if (category && category !== "all") {
+          if (category.includes("diabet")) {
+            filtered = filtered.filter((i) => i.category.toLowerCase().includes("diabet"));
+          } else if (category.includes("bp") || category.includes("cardiac") || category.includes("heart") || category.includes("blood") || category.includes("pressure")) {
+            filtered = filtered.filter((i) => i.category.toLowerCase().includes("cardiac") || i.category.toLowerCase().includes("bp"));
+          } else if (category.includes("thyroid")) {
+            filtered = filtered.filter((i) => i.category.toLowerCase().includes("thyroid"));
+          } else if (category.includes("tb") || category.includes("tuber")) {
+            filtered = filtered.filter(
+              (i) => i.category.toLowerCase().includes("tb") || i.category.toLowerCase().includes("tuber") || i.name.toUpperCase().includes("R-CINEX") || i.name.toUpperCase().includes("PYZINA") || i.name.toUpperCase().includes("COMBUTOL")
+            );
+          }
+        }
+        if (search) {
+          filtered = filtered.filter(
+            (i) => i.name.toLowerCase().includes(search) || i.composition.toLowerCase().includes(search) || i.manufacturer.toLowerCase().includes(search)
+          );
+          if (filtered.length < 30) {
+            const existingNames = new Set(filtered.map((f) => f.name.toUpperCase().trim()));
+            const dbMatches = await db2.all(
+              `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category, m.mrp, m.sell_price
+           FROM medicines m
+           WHERE m.name LIKE ? OR m.generic_name LIKE ?
+           ORDER BY m.name ASC
+           LIMIT 30`,
+              [`%${search}%`, `%${search}%`]
+            ).catch(() => []);
+            for (const dbm of dbMatches) {
+              const key = (dbm.name || "").toUpperCase().trim();
+              if (key && !existingNames.has(key)) {
+                filtered.push({
+                  category: dbm.category || "General Medicine",
+                  name: dbm.name,
+                  pack: dbm.packaging || "",
+                  schedule: "",
+                  composition: dbm.generic_name || "",
+                  manufacturer: dbm.manufacturer || "",
+                  mrp: Number(dbm.mrp || 0),
+                  sell_price: Number(dbm.sell_price || dbm.mrp || 0)
+                });
+                existingNames.add(key);
+              }
+            }
+          }
+        }
+        const totalCount = filtered.length;
+        const startIndex = (page - 1) * limit;
+        const paginated = filtered.slice(startIndex, startIndex + limit);
+        const enriched = [];
+        for (const item of paginated) {
+          const dbMed = await db2.get(
+            `SELECT m.id, m.mrp, m.sell_price, m.generic_name, m.strength, m.pack_size,
+                COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+         FROM medicines m
+         WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
+            [item.name, `${item.name.split(" ")[0]}%`]
+          ).catch(() => null);
+          let imageUrl = null;
+          let allImages = {};
+          let gallery = [];
+          if (dbMed && dbMed.id) {
+            const resolved = await catalogImageService.resolveProductImages(dbMed.id);
+            if (resolved && resolved.primaryUrl) {
+              imageUrl = resolved.primaryUrl;
+              allImages = resolved.images;
+              gallery = resolved.gallery;
+            }
+          }
+          const imgData = images[item.name];
+          if (imgData && imgData.images) {
+            const stateGallery = catalogImageService.extractGalleryFromState(imgData);
+            if (stateGallery.length > 0) {
+              if (gallery.length === 0) {
+                gallery = stateGallery;
+                const primaryItem = stateGallery.find((g) => g.is_primary) || stateGallery[0];
+                imageUrl = primaryItem?.url || null;
+                stateGallery.forEach((g) => {
+                  allImages[g.type] = g;
+                });
+              } else if (gallery.length < 4) {
+                const existingTypes = new Set(gallery.map((g) => g.type));
+                for (const sg of stateGallery) {
+                  if (!existingTypes.has(sg.type) && gallery.length < 4) {
+                    gallery.push(sg);
+                    existingTypes.add(sg.type);
+                    allImages[sg.type] = sg;
+                  }
+                }
+              }
+            }
+          }
+          const stockQty = Number(dbMed?.stock_qty || 0);
+          const resolvedMrp = Number(dbMed?.mrp || item.mrp || 0);
+          const resolvedSellPrice = Number(dbMed?.sell_price || item.sell_price || resolvedMrp || 0);
+          enriched.push({
+            id: dbMed?.id,
+            name: item.name,
+            category: item.category,
+            pack: item.pack || dbMed?.pack_size || "",
+            composition: item.composition || dbMed?.generic_name || "",
+            manufacturer: item.manufacturer,
+            mrp: resolvedMrp,
+            sell_price: resolvedSellPrice,
+            stock_qty: stockQty,
+            in_stock: stockQty > 0,
+            image_url: imageUrl,
+            images: allImages,
+            gallery
+          });
+        }
+        res.json({
+          success: true,
+          category,
+          search,
+          page,
+          limit,
+          total_count: totalCount,
+          total_pages: Math.ceil(totalCount / limit),
+          medicines: enriched
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Public catalog error:", err);
+        res.status(500).json({ error: "Failed to fetch catalog: " + err.message });
+      }
+    });
+    router25.get("/categories-summary", (req, res) => {
+      const { catalog } = loadCatalogAndImages();
+      const summary = {
+        all: 0,
+        diabetic: 0,
+        bp_cardiac: 0,
+        thyroid: 0,
+        tb: 0
+      };
+      catalog.forEach((item) => {
+        const c = (item.category || "").toLowerCase();
+        const n = (item.name || "").toUpperCase();
+        let isAllowed = false;
+        if (c.includes("diabet")) {
+          summary.diabetic++;
+          isAllowed = true;
+        } else if (c.includes("cardiac") || c.includes("bp")) {
+          summary.bp_cardiac++;
+          isAllowed = true;
+        } else if (c.includes("thyroid")) {
+          summary.thyroid++;
+          isAllowed = true;
+        } else if (c.includes("tb") || c.includes("tuber") || n.includes("R-CINEX") || n.includes("PYZINA") || n.includes("COMBUTOL")) {
+          summary.tb++;
+          isAllowed = true;
+        }
+        if (isAllowed) {
+          summary.all++;
+        }
+      });
+      res.json({ success: true, summary });
+    });
+    router25.get("/standalone-catalog", (req, res) => {
+      const filePath = import_path48.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs43.default.existsSync(filePath)) {
+        return res.sendFile(filePath);
+      }
+      res.status(404).send("Live catalog website file not found");
+    });
+    router25.get("/customer/bills", async (req, res) => {
+      try {
+        const customerId = parseInt(req.query.customer_id || "0", 10);
+        const phone = (req.query.phone || "").trim().replace(/\D/g, "");
+        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
+        const db2 = await dbManager.getConnection();
+        let resolvedCustomerId = customerId;
+        if (!resolvedCustomerId && phone) {
+          const digits10 = phone.slice(-10);
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [phone, `%${digits10}`]
+          );
+          if (cust) resolvedCustomerId = cust.id;
+        }
+        if (!resolvedCustomerId) {
+          return res.json({ success: true, count: 0, bills: [] });
+        }
+        const invoices = await db2.all(
+          `SELECT
+         si.id,
+         si.invoice_no as invoice_number,
+         COALESCE(si.date, si.business_date, si.created_at) as created_at,
+         COALESCE(si.total_amount, si.grand_total, 0) as total_amount,
+         si.online_order_id,
+         si.payment_medium,
+         COALESCE(st.name, 'Main Branch') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+         AND (si.status IS NULL OR si.status != 'cancelled')
+       ORDER BY si.id DESC
+       LIMIT ?`,
+          [resolvedCustomerId, limit]
+        ).catch(() => []);
+        const bills = await Promise.all(invoices.map(async (inv) => {
+          const items = await db2.all(
+            `SELECT
+           sit.id,
+           COALESCE(m.name, sit.medicine_name, 'Medicine') as medicine_name,
+           sit.quantity,
+           COALESCE(sit.unit_price, sit.sell_price, sit.mrp, 0) as unit_price,
+           COALESCE(sit.mrp, 0) as mrp
+         FROM sale_items sit
+         LEFT JOIN medicines m ON m.id = sit.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+            [inv.id]
+          ).catch(() => []);
+          return {
+            ...inv,
+            items
+          };
+        }));
+        res.json({ success: true, count: bills.length, bills });
+      } catch (err) {
+        console.error("[CustomerPortal] customer/bills error:", err);
+        res.status(500).json({ error: "Failed to fetch customer bills" });
+      }
+    });
+    router25.get("/customer/orders", async (req, res) => {
+      try {
+        const customerId = parseInt(req.query.customer_id || "0", 10);
+        const phone = req.query.phone || "";
+        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 100);
+        const db2 = await dbManager.getConnection();
+        let resolvedCustomerId = customerId;
+        const cleanPhone = phone.replace(/\D/g, "");
+        const digits10 = cleanPhone.slice(-10);
+        if (!resolvedCustomerId && digits10) {
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [phone, `%${digits10}`]
+          );
+          if (cust) resolvedCustomerId = cust.id;
+        }
+        if (!resolvedCustomerId && !digits10) {
+          return res.json({ success: true, count: 0, orders: [] });
+        }
+        const orders = await db2.all(
+          `SELECT
+         so.id,
+         so.store_id,
+         so.customer_id,
+         so.product,
+         so.qty,
+         so.status,
+         so.payment_status,
+         so.pharmacy_verification_status,
+         so.delivery_status,
+         so.order_type,
+         so.total_amount,
+         so.payment_qr_id,
+         so.scheduled_processing_at,
+         so.estimated_delivery_start,
+         so.estimated_delivery_end,
+         so.cutoff_at,
+         so.date,
+         so.created_at,
+         so.notes,
+         so.payment_screenshot_path,
+         so.screenshot_amount,
+         COALESCE(st.name, 'Main Branch') as store_name
+       FROM special_orders so
+       LEFT JOIN stores st ON st.id = so.store_id
+       WHERE (so.customer_id = ? OR (so.phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(so.phone, ' ', ''), '-', ''), '+', '') LIKE ?))
+       ORDER BY so.id DESC
+       LIMIT ?`,
+          [resolvedCustomerId || 0, `%${digits10}`, limit]
+        ).catch(() => []);
+        const enriched = await Promise.all(orders.map(async (ord) => {
+          const items = await db2.all(
+            `SELECT id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, confirmed_price, item_status
+         FROM online_order_items
+         WHERE order_id = ?
+         ORDER BY id ASC`,
+            [ord.id]
+          ).catch(() => []);
+          return {
+            ...ord,
+            items: items.length > 0 ? items : [{ product_name: ord.product, requested_qty: ord.qty, mrp: ord.total_amount }]
+          };
+        }));
+        res.json({ success: true, count: enriched.length, orders: enriched });
+      } catch (err) {
+        console.error("[CustomerPortal] customer/orders error:", err);
+        res.status(500).json({ error: "Failed to fetch customer orders" });
+      }
+    });
+    router25.get("/history", async (req, res) => {
+      try {
+        const customerId = parseInt(req.query.customer_id || "0", 10);
+        const loginId = req.query.login_id || "";
+        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
+        const offset = parseInt(req.query.offset || "0", 10) || 0;
+        if (!customerId && !loginId) {
+          return res.status(400).json({ error: "customer_id or login_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        let resolvedCustomerId = customerId;
+        if (!resolvedCustomerId && loginId) {
+          const account = await db2.get(
+            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
+            [loginId, "active"]
+          );
+          if (!account) return res.status(404).json({ error: "Customer account not found" });
+          resolvedCustomerId = account.customer_id;
+        }
+        const sales = await db2.all(
+          `SELECT
+         si.id as invoice_id,
+         si.date,
+         si.business_date,
+         si.grand_total,
+         si.online_order_id,
+         si.payment_medium,
+         si.status,
+         COALESCE(st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+         AND si.status != 'cancelled'
+       ORDER BY si.date DESC
+       LIMIT ? OFFSET ?`,
+          [resolvedCustomerId, limit, offset]
+        ).catch(() => []);
+        const enriched = await Promise.all(sales.map(async (sale) => {
+          const items = await db2.all(
+            `SELECT
+           sit.id,
+           m.name as medicine_name,
+           m.generic_name,
+           m.strength,
+           m.packaging,
+           sit.quantity,
+           sit.mrp,
+           sit.sell_price,
+           sit.discount,
+           sit.medicine_id
+         FROM sale_items sit
+         LEFT JOIN medicines m ON m.id = sit.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+            [sale.invoice_id]
+          ).catch(() => []);
+          return { ...sale, items };
+        }));
+        const countRow = await db2.get(
+          "SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND status != ?",
+          [resolvedCustomerId, "cancelled"]
+        ).catch(() => ({ total: 0 }));
+        res.json({
+          customer_id: resolvedCustomerId,
+          total: countRow?.total || 0,
+          limit,
+          offset,
+          purchases: enriched
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] History error:", err);
+        res.status(500).json({ error: "Failed to load purchase history" });
+      }
+    });
+    router25.post("/history/:invoiceId/refill", async (req, res) => {
+      try {
+        const invoiceId = parseInt(req.params.invoiceId, 10);
+        if (isNaN(invoiceId)) return res.status(400).json({ error: "Invalid invoice ID" });
+        const { customer_id, login_id, store_id = 1 } = req.body;
+        if (!customer_id && !login_id) {
+          return res.status(400).json({ error: "customer_id or login_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const targetStoreId = parseInt(String(store_id), 10) || 1;
+        let resolvedCustomerId = customer_id ? parseInt(String(customer_id), 10) : 0;
+        if (!resolvedCustomerId && login_id) {
+          const account = await db2.get(
+            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
+            [login_id, "active"]
+          );
+          if (!account) return res.status(404).json({ error: "Customer account not found" });
+          resolvedCustomerId = account.customer_id;
+        }
+        const invoice = await db2.get(
+          "SELECT * FROM sales_invoices WHERE id = ? AND customer_id = ?",
+          [invoiceId, resolvedCustomerId]
+        );
+        if (!invoice) return res.status(404).json({ error: "Invoice not found for this customer" });
+        const origItems = await db2.all(
+          `SELECT sit.medicine_id, sit.quantity, m.name as medicine_name
+       FROM sale_items sit
+       LEFT JOIN medicines m ON m.id = sit.medicine_id
+       WHERE sit.invoice_id = ?`,
+          [invoiceId]
+        );
+        if (!origItems || origItems.length === 0) {
+          return res.status(400).json({ error: "No items found in original invoice" });
+        }
+        const customer = await db2.get("SELECT * FROM customers WHERE id = ?", [resolvedCustomerId]);
+        if (!customer) return res.status(404).json({ error: "Customer record not found" });
+        const refillItems = [];
+        const unavailableItems = [];
+        for (const orig of origItems) {
+          if (!orig.medicine_id) continue;
+          const currentBatch = await db2.get(
+            `SELECT MAX(mrp) as current_mrp, MAX(sell_price) as current_sell, SUM(quantity) as total_qty
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+            [orig.medicine_id, targetStoreId]
+          ).catch(() => null);
+          if (!currentBatch || (currentBatch.total_qty || 0) <= 0) {
+            unavailableItems.push({ medicine_id: orig.medicine_id, name: orig.medicine_name });
+            continue;
+          }
+          refillItems.push({
+            medicine_id: orig.medicine_id,
+            product_name: orig.medicine_name,
+            qty: orig.quantity,
+            mrp: currentBatch.current_mrp || 0,
+            price: currentBatch.current_sell || currentBatch.current_mrp || 0
+          });
+        }
+        if (refillItems.length === 0) {
+          return res.status(409).json({
+            error: "None of the original items are currently available",
+            unavailable_items: unavailableItems
+          });
+        }
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
+        const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, "") : "";
+        const cleanName = formatCustomerName(customer.name);
+        const createdOrders = [];
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of refillItems) {
+            const itemTotal = item.qty * (item.price || item.mrp || 0);
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date,
+            notified, advance_payment, notes, customer_order_source,
+            payment_status, pharmacy_verification_status, delivery_status, return_status,
+            total_amount, scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', CURRENT_TIMESTAMP, 0, 0,
+            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none',
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                targetStoreId,
+                resolvedCustomerId,
+                item.product_name,
+                cleanName,
+                cleanPhone,
+                item.qty,
+                `[Refill from Invoice #${invoiceId}]`,
+                itemTotal,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
+              ]
+            );
+            const orderId = Number(result.lastID);
+            createdOrders.push({ id: orderId, product: item.product_name, qty: item.qty });
+            await db2.run(
+              `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
+           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+              [orderId, item.medicine_id, item.product_name, item.qty, item.mrp]
+            );
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: \u20B9${item.mrp}. Estimated Delivery: ${calculatedSchedule.estimatedDeliveryWindowFormatted}`]
+            );
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        eventService.broadcast("order_updated", { at: Date.now(), source: "refill" });
+        res.status(201).json({
+          success: true,
+          message: `Refill order created for ${createdOrders.length} item(s)`,
+          source_invoice_id: invoiceId,
+          orders: createdOrders,
+          unavailable_items: unavailableItems,
+          timing: calculatedSchedule,
+          returnPolicy: {
+            return_window_days: returnWindowDays,
+            policy_summary: `Medicines eligible for return up to ${returnWindowDays} days after delivery/sale`
+          }
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Refill error:", err);
+        res.status(500).json({ error: "Failed to create refill order" });
       }
     });
     customerPortal_default = router25;
+  }
+});
+
+// src/services/pricing/pricingService.ts
+var PricingService, pricingService;
+var init_pricingService = __esm({
+  "src/services/pricing/pricingService.ts"() {
+    "use strict";
+    init_connection();
+    init_logger();
+    PricingService = class {
+      rulesCache = null;
+      cacheExpiry = 0;
+      CACHE_TTL_MS = 60 * 1e3;
+      // 1 minute local cache
+      /**
+       * Invalidate cached pricing rules
+       */
+      invalidateCache() {
+        this.rulesCache = null;
+        this.cacheExpiry = 0;
+      }
+      /**
+       * Fetch all active pricing rules
+       */
+      async getActiveRules() {
+        const now = Date.now();
+        if (this.rulesCache && now < this.cacheExpiry) {
+          return this.rulesCache;
+        }
+        try {
+          const db2 = await dbManager.getConnection();
+          const rules = await db2.all(
+            `SELECT * FROM pricing_rules WHERE is_active = 1 ORDER BY id ASC`
+          );
+          this.rulesCache = rules || [];
+          this.cacheExpiry = now + this.CACHE_TTL_MS;
+          return this.rulesCache;
+        } catch (err) {
+          logger.error("Failed to load pricing rules", err, { module: "PricingService" });
+          return [];
+        }
+      }
+      /**
+       * Core centralized price calculation
+       */
+      async calculatePrice(input) {
+        const mrp = Number(input.mrp) || 0;
+        const costPrice = input.costPrice !== void 0 && input.costPrice !== null ? Number(input.costPrice) : null;
+        const category = (input.category || "").trim().toLowerCase();
+        const medicineId = input.medicineId ? Number(input.medicineId) : null;
+        const storeId = input.storeId ? Number(input.storeId) : null;
+        if (mrp <= 0) {
+          return {
+            sellingPrice: costPrice && costPrice > 0 ? costPrice : 0,
+            mrp: 0,
+            discountAmount: 0,
+            discountPercent: 0,
+            appliedRuleType: "ZERO_MRP"
+          };
+        }
+        const rules = await this.getActiveRules();
+        if (medicineId) {
+          const productRule = rules.find(
+            (r) => r.rule_type === "PRODUCT" && Number(r.target_id) === medicineId
+          );
+          if (productRule) {
+            if (productRule.custom_selling_price !== null && productRule.custom_selling_price !== void 0 && productRule.custom_selling_price > 0) {
+              const finalPrice = Math.min(mrp, Math.round(productRule.custom_selling_price * 100) / 100);
+              return {
+                sellingPrice: finalPrice,
+                mrp,
+                discountAmount: Math.max(0, Math.round((mrp - finalPrice) * 100) / 100),
+                discountPercent: Math.round((mrp - finalPrice) / mrp * 1e4) / 100,
+                appliedRuleType: "PRODUCT_OVERRIDE"
+              };
+            }
+            if (productRule.discount_percent && productRule.discount_percent > 0) {
+              const disc = mrp * productRule.discount_percent / 100;
+              const finalPrice = Math.max(0, Math.round((mrp - disc) * 100) / 100);
+              return {
+                sellingPrice: finalPrice,
+                mrp,
+                discountAmount: Math.round(disc * 100) / 100,
+                discountPercent: productRule.discount_percent,
+                appliedRuleType: "PRODUCT_DISCOUNT"
+              };
+            }
+          }
+        }
+        if (category) {
+          const catRule = rules.find(
+            (r) => r.rule_type === "CATEGORY" && (r.category_name || "").trim().toLowerCase() === category
+          );
+          if (catRule) {
+            if (catRule.discount_percent && catRule.discount_percent > 0) {
+              const disc = mrp * catRule.discount_percent / 100;
+              const finalPrice = Math.max(0, Math.round((mrp - disc) * 100) / 100);
+              return {
+                sellingPrice: finalPrice,
+                mrp,
+                discountAmount: Math.round(disc * 100) / 100,
+                discountPercent: catRule.discount_percent,
+                appliedRuleType: "CATEGORY_DISCOUNT"
+              };
+            }
+            if (costPrice && costPrice > 0 && catRule.margin_percent && catRule.margin_percent > 0) {
+              const marginVal = costPrice * catRule.margin_percent / 100;
+              const finalPrice = Math.min(mrp, Math.round((costPrice + marginVal) * 100) / 100);
+              return {
+                sellingPrice: finalPrice,
+                mrp,
+                discountAmount: Math.max(0, Math.round((mrp - finalPrice) * 100) / 100),
+                discountPercent: Math.round((mrp - finalPrice) / mrp * 1e4) / 100,
+                appliedRuleType: "CATEGORY_MARGIN",
+                marginPercent: catRule.margin_percent
+              };
+            }
+          }
+        }
+        if (storeId) {
+          const storeRule = rules.find(
+            (r) => r.rule_type === "STORE" && Number(r.target_id) === storeId
+          );
+          if (storeRule && storeRule.discount_percent && storeRule.discount_percent > 0) {
+            const disc = mrp * storeRule.discount_percent / 100;
+            const finalPrice = Math.max(0, Math.round((mrp - disc) * 100) / 100);
+            return {
+              sellingPrice: finalPrice,
+              mrp,
+              discountAmount: Math.round(disc * 100) / 100,
+              discountPercent: storeRule.discount_percent,
+              appliedRuleType: "STORE_DISCOUNT"
+            };
+          }
+        }
+        const defaultRule = rules.find((r) => r.rule_type === "DEFAULT");
+        if (defaultRule) {
+          if (defaultRule.discount_percent && defaultRule.discount_percent > 0) {
+            const disc = mrp * defaultRule.discount_percent / 100;
+            const finalPrice = Math.max(0, Math.round((mrp - disc) * 100) / 100);
+            return {
+              sellingPrice: finalPrice,
+              mrp,
+              discountAmount: Math.round(disc * 100) / 100,
+              discountPercent: defaultRule.discount_percent,
+              appliedRuleType: "DEFAULT_DISCOUNT"
+            };
+          }
+          if (costPrice && costPrice > 0 && defaultRule.margin_percent && defaultRule.margin_percent > 0) {
+            const marginVal = costPrice * defaultRule.margin_percent / 100;
+            const finalPrice = Math.min(mrp, Math.round((costPrice + marginVal) * 100) / 100);
+            return {
+              sellingPrice: finalPrice,
+              mrp,
+              discountAmount: Math.max(0, Math.round((mrp - finalPrice) * 100) / 100),
+              discountPercent: Math.round((mrp - finalPrice) / mrp * 1e4) / 100,
+              appliedRuleType: "DEFAULT_MARGIN",
+              marginPercent: defaultRule.margin_percent
+            };
+          }
+        }
+        return {
+          sellingPrice: mrp,
+          mrp,
+          discountAmount: 0,
+          discountPercent: 0,
+          appliedRuleType: "STANDARD_MRP"
+        };
+      }
+      /**
+       * Save or update a pricing rule
+       */
+      async saveRule(rule) {
+        const db2 = await dbManager.getConnection();
+        let id = rule.id;
+        if (id) {
+          await db2.run(
+            `UPDATE pricing_rules 
+         SET rule_type = ?, target_id = ?, category_name = ?, margin_percent = ?, 
+             discount_percent = ?, custom_selling_price = ?, min_margin_percent = ?, 
+             is_active = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [
+              rule.rule_type,
+              rule.target_id ?? null,
+              rule.category_name ?? null,
+              rule.margin_percent ?? 0,
+              rule.discount_percent ?? 0,
+              rule.custom_selling_price ?? null,
+              rule.min_margin_percent ?? null,
+              rule.is_active ?? 1,
+              id
+            ]
+          );
+        } else {
+          const res = await db2.run(
+            `INSERT INTO pricing_rules (
+           rule_type, target_id, category_name, margin_percent, discount_percent, 
+           custom_selling_price, min_margin_percent, is_active
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              rule.rule_type,
+              rule.target_id ?? null,
+              rule.category_name ?? null,
+              rule.margin_percent ?? 0,
+              rule.discount_percent ?? 0,
+              rule.custom_selling_price ?? null,
+              rule.min_margin_percent ?? null,
+              rule.is_active ?? 1
+            ]
+          );
+          id = res.lastID;
+        }
+        this.invalidateCache();
+        return id;
+      }
+      /**
+       * Delete or deactivate a pricing rule
+       */
+      async deleteRule(id) {
+        const db2 = await dbManager.getConnection();
+        await db2.run(`DELETE FROM pricing_rules WHERE id = ?`, id);
+        this.invalidateCache();
+      }
+    };
+    pricingService = new PricingService();
+  }
+});
+
+// src/services/customer/customerService.ts
+var CustomerService, customerService;
+var init_customerService = __esm({
+  "src/services/customer/customerService.ts"() {
+    "use strict";
+    init_connection();
+    init_nameFormatter();
+    init_pricingService();
+    CustomerService = class {
+      /**
+       * Get customer dashboard summary data
+       */
+      async getDashboardSummary(customerId) {
+        const db2 = await dbManager.getConnection();
+        const customer = await db2.get(
+          `SELECT id, name, phone, address, credit_balance, credit_enabled 
+       FROM customers WHERE id = ?`,
+          [customerId]
+        );
+        if (!customer) {
+          throw new Error("Customer record not found");
+        }
+        const refillCountRow = await db2.get(
+          `SELECT COUNT(*) as count FROM patient_refills WHERE customer_id = ? AND is_active = 1`,
+          [customerId]
+        );
+        const refills = await db2.all(
+          `SELECT pr.*, 
+        (SELECT COUNT(*) FROM patient_refill_items pri WHERE pri.refill_id = pr.id) as item_count
+       FROM patient_refills pr
+       WHERE pr.customer_id = ? AND pr.is_active = 1
+       ORDER BY pr.next_refill_date ASC LIMIT 5`,
+          [customerId]
+        );
+        const bills = await db2.all(
+          `SELECT id, invoice_number, date, total_amount, payment_status, payment_medium, store_id
+       FROM sales_invoices
+       WHERE customer_id = ?
+       ORDER BY date DESC LIMIT 5`,
+          [customerId]
+        );
+        const orders = await db2.all(
+          `SELECT id, product, medicine_name, qty, status, priority, date, delivery_status, advance_payment
+       FROM special_orders
+       WHERE customer_id = ?
+       ORDER BY date DESC LIMIT 5`,
+          [customerId]
+        );
+        return {
+          customer: {
+            id: customer.id,
+            name: formatCustomerName(customer.name),
+            phone: customer.phone,
+            address: customer.address || "",
+            creditBalance: customer.credit_balance || 0
+          },
+          stats: {
+            activeRefillsCount: refillCountRow?.count || 0,
+            recentBillsCount: bills.length,
+            recentOrdersCount: orders.length
+          },
+          refills,
+          recentBills: bills,
+          recentOrders: orders
+        };
+      }
+      /**
+       * Get customer's purchase bills with clean customer-facing fields
+       */
+      async getCustomerBills(customerId, limit = 50, offset = 0) {
+        const db2 = await dbManager.getConnection();
+        const bills = await db2.all(
+          `SELECT 
+         id, invoice_number, date, subtotal, tax_amount, discount_amount, 
+         total_amount, payment_status, payment_medium, store_id
+       FROM sales_invoices
+       WHERE customer_id = ?
+       ORDER BY date DESC LIMIT ? OFFSET ?`,
+          [customerId, limit, offset]
+        );
+        return bills;
+      }
+      /**
+       * Get single bill details with items (safe for customer view)
+       */
+      async getBillDetails(customerId, billId) {
+        const db2 = await dbManager.getConnection();
+        const invoice = await db2.get(
+          `SELECT id, invoice_number, date, subtotal, tax_amount, discount_amount, 
+              total_amount, payment_status, payment_medium, store_id
+       FROM sales_invoices
+       WHERE id = ? AND customer_id = ?`,
+          [billId, customerId]
+        );
+        if (!invoice) return null;
+        const items = await db2.all(
+          `SELECT 
+         si.id, si.medicine_id, m.name as medicine_name, si.batch_no, 
+         si.quantity, si.unit_price, si.discount_per, si.total_amount
+       FROM sale_items si
+       JOIN medicines m ON m.id = si.medicine_id
+       WHERE si.invoice_id = ?`,
+          [billId]
+        );
+        return {
+          invoice,
+          items
+        };
+      }
+      /**
+       * Load medicines from a previous bill for quick reordering with current catalog pricing
+       */
+      async getReorderMedicinesFromBill(customerId, billId) {
+        const db2 = await dbManager.getConnection();
+        const items = await db2.all(
+          `SELECT 
+         si.medicine_id, m.name as medicine_name, m.mrp, m.packaging, m.category,
+         si.quantity as previous_quantity
+       FROM sale_items si
+       JOIN medicines m ON m.id = si.medicine_id
+       WHERE si.invoice_id = ? AND si.medicine_id IN (
+         SELECT medicine_id FROM sale_items WHERE invoice_id = ?
+       )`,
+          [billId, billId]
+        );
+        const currentItems = await Promise.all(
+          items.map(async (item) => {
+            const pricing = await pricingService.calculatePrice({
+              mrp: item.mrp,
+              category: item.category,
+              medicineId: item.medicine_id
+            });
+            return {
+              medicineId: item.medicine_id,
+              name: item.medicine_name,
+              quantity: item.previous_quantity || 1,
+              mrp: item.mrp,
+              currentSellingPrice: pricing.sellingPrice,
+              discountPercent: pricing.discountPercent,
+              packaging: item.packaging
+            };
+          })
+        );
+        return currentItems;
+      }
+    };
+    customerService = new CustomerService();
+  }
+});
+
+// src/services/catalog/catalogService.ts
+var CatalogService, catalogService;
+var init_catalogService = __esm({
+  "src/services/catalog/catalogService.ts"() {
+    "use strict";
+    init_connection();
+    init_pricingService();
+    init_logger();
+    CatalogService = class {
+      /**
+       * Query centralized catalog for a specific channel
+       */
+      async getCatalog(params = {}) {
+        const start = Date.now();
+        const limit = Math.min(params.limit || 50, 100);
+        const offset = Math.max(params.offset || 0, 0);
+        const channel = params.channel || "all";
+        const storeId = params.storeId || 1;
+        const search = (params.search || "").trim();
+        const category = (params.category || "").trim();
+        try {
+          const db2 = await dbManager.getConnection();
+          let whereClauses = ["1=1"];
+          const queryParams = [];
+          if (channel === "website") {
+            whereClauses.push("(pcv.is_website_visible IS NULL OR pcv.is_website_visible = 1)");
+          } else if (channel === "whatsapp") {
+            whereClauses.push("(pcv.is_whatsapp_visible IS NULL OR pcv.is_whatsapp_visible = 1)");
+          } else if (channel === "portal") {
+            whereClauses.push("(pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 1)");
+          } else if (channel === "pos") {
+            whereClauses.push("(pcv.is_pos_visible IS NULL OR pcv.is_pos_visible = 1)");
+          }
+          if (category) {
+            whereClauses.push("m.category = ?");
+            queryParams.push(category);
+          }
+          if (search) {
+            whereClauses.push("(m.name LIKE ? OR m.manufacturer LIKE ? OR m.therapeutic LIKE ?)");
+            queryParams.push(`${search}%`, `%${search}%`, `%${search}%`);
+          }
+          const whereSql = whereClauses.join(" AND ");
+          const countRow = await db2.get(
+            `SELECT COUNT(*) as count 
+         FROM medicines m 
+         LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id 
+         WHERE ${whereSql}`,
+            queryParams
+          );
+          const total = countRow?.count || 0;
+          const sql = `
+        SELECT 
+          m.id,
+          m.name,
+          m.manufacturer,
+          m.category,
+          m.packaging,
+          m.strength,
+          m.schedule_type,
+          m.mrp,
+          m.sell_price as legacy_sell_price,
+          m.therapeutic as generic_name,
+          COALESCE(SUM(inv.quantity), 0) as total_quantity,
+          COALESCE(SUM(inv.loose_quantity), 0) as total_loose,
+          ci.image_path,
+          ci.thumbnail_path,
+          pcv.is_website_visible,
+          pcv.is_whatsapp_visible,
+          pcv.is_portal_visible,
+          pcv.is_pos_visible
+        FROM medicines m
+        LEFT JOIN inventory_master inv ON inv.medicine_id = m.id AND (inv.store_id = ? OR inv.store_id IS NULL)
+        LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+        LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1
+        WHERE ${whereSql}
+        GROUP BY m.id
+        ORDER BY ${search ? "m.name ASC" : "pcv.featured_rank DESC, m.name ASC"}
+        LIMIT ? OFFSET ?
+      `;
+          const rows = await db2.all(sql, [storeId, ...queryParams, limit, offset]);
+          const products = await Promise.all(
+            rows.map(async (r) => {
+              const mrp = Number(r.mrp) || 0;
+              const calculatedPrice = await pricingService.calculatePrice({
+                mrp,
+                costPrice: null,
+                category: r.category,
+                medicineId: r.id,
+                storeId
+              });
+              const sellingPrice = calculatedPrice.sellingPrice || (r.legacy_sell_price ? Number(r.legacy_sell_price) : mrp);
+              const totalStock = Number(r.total_quantity) || 0;
+              const sched = (r.schedule_type || "").toUpperCase();
+              const isRx = sched === "H" || sched === "H1" || sched === "X";
+              return {
+                id: r.id,
+                name: r.name,
+                genericName: r.generic_name || null,
+                brand: r.manufacturer || null,
+                manufacturer: r.manufacturer || null,
+                category: r.category || null,
+                strength: r.strength || null,
+                packaging: r.packaging || null,
+                dosageForm: null,
+                scheduleType: r.schedule_type || null,
+                prescriptionRequired: isRx,
+                mrp,
+                sellingPrice,
+                discountPercent: calculatedPrice.discountPercent,
+                availableStock: totalStock,
+                isInStock: totalStock > 0,
+                imagePath: r.image_path || null,
+                thumbnailPath: r.thumbnail_path || null,
+                visibility: {
+                  website: r.is_website_visible === null || r.is_website_visible === 1,
+                  whatsapp: r.is_whatsapp_visible === null || r.is_whatsapp_visible === 1,
+                  portal: r.is_portal_visible === null || r.is_portal_visible === 1,
+                  pos: r.is_pos_visible === null || r.is_pos_visible === 1
+                }
+              };
+            })
+          );
+          logger.debug(`Catalog query completed in ${Date.now() - start}ms`, {
+            module: "CatalogService",
+            operation: "getCatalog",
+            channel,
+            total
+          });
+          return { products, total };
+        } catch (err) {
+          logger.error("Failed to query catalog", err, { module: "CatalogService" });
+          return { products: [], total: 0 };
+        }
+      }
+      /**
+       * Get single product details by ID
+       */
+      async getProductById(id, storeId = 1) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const row = await db2.get(
+            `SELECT 
+           m.id, m.name, m.manufacturer, m.category, m.packaging, m.strength, 
+           m.schedule_type, m.mrp, m.sell_price as legacy_sell_price, m.therapeutic as generic_name,
+           COALESCE(SUM(inv.quantity), 0) as total_quantity,
+           ci.image_path, ci.thumbnail_path,
+           pcv.is_website_visible, pcv.is_whatsapp_visible, pcv.is_portal_visible, pcv.is_pos_visible
+         FROM medicines m
+         LEFT JOIN inventory_master inv ON inv.medicine_id = m.id AND (inv.store_id = ? OR inv.store_id IS NULL)
+         LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+         LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1
+         WHERE m.id = ?
+         GROUP BY m.id`,
+            [storeId, id]
+          );
+          if (!row) return null;
+          const mrp = Number(row.mrp) || 0;
+          const calculatedPrice = await pricingService.calculatePrice({
+            mrp,
+            category: row.category,
+            medicineId: row.id,
+            storeId
+          });
+          const sched = (row.schedule_type || "").toUpperCase();
+          return {
+            id: row.id,
+            name: row.name,
+            genericName: row.generic_name || null,
+            brand: row.manufacturer || null,
+            manufacturer: row.manufacturer || null,
+            category: row.category || null,
+            strength: row.strength || null,
+            packaging: row.packaging || null,
+            dosageForm: null,
+            scheduleType: row.schedule_type || null,
+            prescriptionRequired: sched === "H" || sched === "H1" || sched === "X",
+            mrp,
+            sellingPrice: calculatedPrice.sellingPrice || (row.legacy_sell_price ? Number(row.legacy_sell_price) : mrp),
+            discountPercent: calculatedPrice.discountPercent,
+            availableStock: Number(row.total_quantity) || 0,
+            isInStock: (Number(row.total_quantity) || 0) > 0,
+            imagePath: row.image_path || null,
+            thumbnailPath: row.thumbnail_path || null,
+            visibility: {
+              website: row.is_website_visible === null || row.is_website_visible === 1,
+              whatsapp: row.is_whatsapp_visible === null || row.is_whatsapp_visible === 1,
+              portal: row.is_portal_visible === null || row.is_portal_visible === 1,
+              pos: row.is_pos_visible === null || row.is_pos_visible === 1
+            }
+          };
+        } catch (err) {
+          logger.error(`Failed to get product by ID ${id}`, err, { module: "CatalogService" });
+          return null;
+        }
+      }
+      /**
+       * Update channel visibility and featured ranking
+       */
+      async updateChannelVisibility(medicineId, visibility) {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_website_visible, is_whatsapp_visible, is_portal_visible, is_pos_visible, featured_rank, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_website_visible = COALESCE(?, is_website_visible),
+         is_whatsapp_visible = COALESCE(?, is_whatsapp_visible),
+         is_portal_visible = COALESCE(?, is_portal_visible),
+         is_pos_visible = COALESCE(?, is_pos_visible),
+         featured_rank = COALESCE(?, featured_rank),
+         updated_at = CURRENT_TIMESTAMP`,
+          [
+            medicineId,
+            visibility.website !== void 0 ? visibility.website ? 1 : 0 : 1,
+            visibility.whatsapp !== void 0 ? visibility.whatsapp ? 1 : 0 : 1,
+            visibility.portal !== void 0 ? visibility.portal ? 1 : 0 : 1,
+            visibility.pos !== void 0 ? visibility.pos ? 1 : 0 : 1,
+            visibility.featuredRank ?? 0,
+            // Update bindings:
+            visibility.website !== void 0 ? visibility.website ? 1 : 0 : null,
+            visibility.whatsapp !== void 0 ? visibility.whatsapp ? 1 : 0 : null,
+            visibility.portal !== void 0 ? visibility.portal ? 1 : 0 : null,
+            visibility.pos !== void 0 ? visibility.pos ? 1 : 0 : null,
+            visibility.featuredRank !== void 0 ? visibility.featuredRank : null
+          ]
+        );
+      }
+    };
+    catalogService = new CatalogService();
+  }
+});
+
+// src/middleware/apiResponse.ts
+function sendSuccess(res, data, statusCode = 200, meta) {
+  const body = {
+    success: true,
+    data,
+    ...meta ? { meta } : {}
+  };
+  return res.status(statusCode).json(body);
+}
+function sendError(res, code, message, statusCode = 400, details) {
+  const body = {
+    success: false,
+    error: {
+      code,
+      message,
+      ...details ? { details } : {}
+    }
+  };
+  return res.status(statusCode).json(body);
+}
+var init_apiResponse = __esm({
+  "src/middleware/apiResponse.ts"() {
+    "use strict";
+  }
+});
+
+// src/routes/api/customerRoutes.ts
+var customerRoutes_exports = {};
+__export(customerRoutes_exports, {
+  default: () => customerRoutes_default,
+  requireCustomerAuth: () => requireCustomerAuth
+});
+async function requireCustomerAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.query.token;
+  if (!token) {
+    return sendError(res, "UNAUTHORIZED", "Authentication token required", 401);
+  }
+  const session = await customerAuthService.verifySession(token);
+  if (!session) {
+    return sendError(res, "INVALID_TOKEN", "Session expired or invalid token", 401);
+  }
+  req.customer = session;
+  next();
+}
+var import_express26, router26, customerRoutes_default;
+var init_customerRoutes = __esm({
+  "src/routes/api/customerRoutes.ts"() {
+    "use strict";
+    import_express26 = __toESM(require("express"), 1);
+    init_customerAuthService();
+    init_customerService();
+    init_catalogService();
+    init_apiResponse();
+    router26 = import_express26.default.Router();
+    router26.post("/auth/request-otp", async (req, res) => {
+      try {
+        const { phone } = req.body;
+        const result = await customerAuthService.requestOtp(phone);
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "OTP_REQUEST_FAILED", err.message || "Failed to send OTP", 400);
+      }
+    });
+    router26.post("/auth/verify-otp", async (req, res) => {
+      try {
+        const { phone, otp } = req.body;
+        const clientIp = req.ip;
+        const userAgent = req.headers["user-agent"];
+        const result = await customerAuthService.verifyOtp(phone, otp, { ip: clientIp, userAgent });
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "OTP_VERIFICATION_FAILED", err.message || "Failed to verify OTP", 400);
+      }
+    });
+    router26.post("/auth/login", async (req, res) => {
+      try {
+        const { loginId, pin } = req.body;
+        const clientIp = req.ip;
+        const userAgent = req.headers["user-agent"];
+        const result = await customerAuthService.loginWithPin(loginId, pin, { ip: clientIp, userAgent });
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "LOGIN_FAILED", err.message || "Invalid login credentials", 401);
+      }
+    });
+    router26.post("/auth/heartbeat", requireCustomerAuth, async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization;
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.query.token;
+        if (!token) return sendError(res, "UNAUTHORIZED", "Session token missing", 401);
+        const result = await customerAuthService.recordHeartbeat(token);
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "HEARTBEAT_FAILED", err.message || "Failed to update heartbeat", 500);
+      }
+    });
+    router26.post("/auth/logout", requireCustomerAuth, async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization;
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.query.token;
+        if (!token) return sendError(res, "UNAUTHORIZED", "Session token missing", 401);
+        const result = await customerAuthService.logoutSession(token);
+        return sendSuccess(res, { ...result, message: "Logged out successfully" });
+      } catch (err) {
+        return sendError(res, "LOGOUT_FAILED", err.message || "Failed to logout session", 500);
+      }
+    });
+    router26.get("/dashboard", requireCustomerAuth, async (req, res) => {
+      try {
+        const customerId = req.customer.customerId;
+        const summary = await customerService.getDashboardSummary(customerId);
+        return sendSuccess(res, summary);
+      } catch (err) {
+        return sendError(res, "DASHBOARD_ERROR", err.message || "Failed to load dashboard", 500);
+      }
+    });
+    router26.get("/catalog", async (req, res) => {
+      try {
+        const { search, category, inStockOnly, limit, offset, storeId } = req.query;
+        const result = await catalogService.getCatalog({
+          search,
+          category,
+          channel: "portal",
+          inStockOnly: inStockOnly === "true",
+          limit: limit ? parseInt(limit, 10) : 50,
+          offset: offset ? parseInt(offset, 10) : 0,
+          storeId: storeId ? parseInt(storeId, 10) : 1
+        });
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "CATALOG_ERROR", err.message || "Failed to load catalog", 500);
+      }
+    });
+    router26.get("/catalog/:id", async (req, res) => {
+      try {
+        const id = parseInt(String(req.params.id), 10);
+        const storeId = req.query.storeId ? parseInt(req.query.storeId, 10) : 1;
+        const product = await catalogService.getProductById(id, storeId);
+        if (!product) {
+          return sendError(res, "PRODUCT_NOT_FOUND", "Product not found", 404);
+        }
+        return sendSuccess(res, product);
+      } catch (err) {
+        return sendError(res, "PRODUCT_ERROR", err.message || "Failed to load product", 500);
+      }
+    });
+    router26.get("/bills", requireCustomerAuth, async (req, res) => {
+      try {
+        const customerId = req.customer.customerId;
+        const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+        const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
+        const bills = await customerService.getCustomerBills(customerId, limit, offset);
+        return sendSuccess(res, { bills });
+      } catch (err) {
+        return sendError(res, "BILLS_ERROR", err.message || "Failed to load bills", 500);
+      }
+    });
+    router26.get("/bills/:id", requireCustomerAuth, async (req, res) => {
+      try {
+        const customerId = req.customer.customerId;
+        const billId = parseInt(String(req.params.id), 10);
+        const details = await customerService.getBillDetails(customerId, billId);
+        if (!details) {
+          return sendError(res, "BILL_NOT_FOUND", "Invoice not found", 404);
+        }
+        return sendSuccess(res, details);
+      } catch (err) {
+        return sendError(res, "BILL_DETAILS_ERROR", err.message || "Failed to load bill details", 500);
+      }
+    });
+    router26.get("/bills/:id/reorder", requireCustomerAuth, async (req, res) => {
+      try {
+        const customerId = req.customer.customerId;
+        const billId = parseInt(String(req.params.id), 10);
+        const items = await customerService.getReorderMedicinesFromBill(customerId, billId);
+        return sendSuccess(res, { items });
+      } catch (err) {
+        return sendError(res, "REORDER_ERROR", err.message || "Failed to load reorder items", 500);
+      }
+    });
+    customerRoutes_default = router26;
+  }
+});
+
+// src/routes/api/adminRoutes.ts
+var adminRoutes_exports = {};
+__export(adminRoutes_exports, {
+  default: () => adminRoutes_default
+});
+var import_express27, router27, adminRoutes_default;
+var init_adminRoutes = __esm({
+  "src/routes/api/adminRoutes.ts"() {
+    "use strict";
+    import_express27 = __toESM(require("express"), 1);
+    init_pricingService();
+    init_catalogService();
+    init_apiResponse();
+    router27 = import_express27.default.Router();
+    router27.get("/pricing/rules", async (req, res) => {
+      try {
+        const rules = await pricingService.getActiveRules();
+        return sendSuccess(res, { rules });
+      } catch (err) {
+        return sendError(res, "PRICING_RULES_ERROR", err.message || "Failed to fetch pricing rules", 500);
+      }
+    });
+    router27.post("/pricing/rules", async (req, res) => {
+      try {
+        const rule = req.body;
+        if (!rule.rule_type) {
+          return sendError(res, "INVALID_RULE", "rule_type is required", 400);
+        }
+        const ruleId = await pricingService.saveRule(rule);
+        return sendSuccess(res, { ruleId, message: "Pricing rule saved successfully" });
+      } catch (err) {
+        return sendError(res, "PRICING_SAVE_ERROR", err.message || "Failed to save pricing rule", 500);
+      }
+    });
+    router27.delete("/pricing/rules/:id", async (req, res) => {
+      try {
+        const id = parseInt(String(req.params.id), 10);
+        await pricingService.deleteRule(id);
+        return sendSuccess(res, { message: "Pricing rule deleted successfully" });
+      } catch (err) {
+        return sendError(res, "PRICING_DELETE_ERROR", err.message || "Failed to delete pricing rule", 500);
+      }
+    });
+    router27.post("/pricing/calculate", async (req, res) => {
+      try {
+        const { mrp, costPrice, category, medicineId, storeId } = req.body;
+        const result = await pricingService.calculatePrice({
+          mrp: Number(mrp) || 0,
+          costPrice: costPrice !== void 0 ? Number(costPrice) : null,
+          category,
+          medicineId: medicineId ? Number(medicineId) : null,
+          storeId: storeId ? Number(storeId) : null
+        });
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "CALCULATION_ERROR", err.message || "Failed to calculate price", 500);
+      }
+    });
+    router27.get("/catalog", async (req, res) => {
+      try {
+        const { search, category, channel, limit, offset, storeId } = req.query;
+        const result = await catalogService.getCatalog({
+          search,
+          category,
+          channel: channel || "all",
+          limit: limit ? parseInt(limit, 10) : 50,
+          offset: offset ? parseInt(offset, 10) : 0,
+          storeId: storeId ? parseInt(storeId, 10) : 1
+        });
+        return sendSuccess(res, result);
+      } catch (err) {
+        return sendError(res, "ADMIN_CATALOG_ERROR", err.message || "Failed to fetch catalog", 500);
+      }
+    });
+    router27.put("/catalog/:id/visibility", async (req, res) => {
+      try {
+        const medicineId = parseInt(String(req.params.id), 10);
+        const { website, whatsapp, portal, pos, featuredRank } = req.body;
+        await catalogService.updateChannelVisibility(medicineId, {
+          website,
+          whatsapp,
+          portal,
+          pos,
+          featuredRank
+        });
+        return sendSuccess(res, { message: "Channel visibility updated successfully" });
+      } catch (err) {
+        return sendError(res, "VISIBILITY_UPDATE_ERROR", err.message || "Failed to update visibility", 500);
+      }
+    });
+    router27.get("/customers/:id/sessions", async (req, res) => {
+      try {
+        const customerId = parseInt(String(req.params.id), 10);
+        const { customerAuthService: customerAuthService2 } = await Promise.resolve().then(() => (init_customerAuthService(), customerAuthService_exports));
+        const sessionData = await customerAuthService2.getCustomerSessions(customerId);
+        return sendSuccess(res, sessionData);
+      } catch (err) {
+        return sendError(res, "SESSION_FETCH_ERROR", err.message || "Failed to fetch sessions", 500);
+      }
+    });
+    adminRoutes_default = router27;
   }
 });
 
@@ -50244,17 +57322,17 @@ var sync_exports = {};
 __export(sync_exports, {
   default: () => sync_default
 });
-var import_express26, router26, sync_default;
+var import_express28, router28, sync_default;
 var init_sync = __esm({
   "src/routes/sync.ts"() {
     "use strict";
-    import_express26 = __toESM(require("express"), 1);
+    import_express28 = __toESM(require("express"), 1);
     init_connection();
     init_storeSyncService();
     init_storeContextService();
     init_eventService();
-    router26 = import_express26.default.Router();
-    router26.get("/status", async (req, res) => {
+    router28 = import_express28.default.Router();
+    router28.get("/status", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const status = await storeSyncService.getSyncStatus(storeId);
@@ -50264,7 +57342,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to get sync status" });
       }
     });
-    router26.post("/push", async (req, res) => {
+    router28.post("/push", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const limit = parseInt(req.body.limit || "100", 10) || 100;
@@ -50275,7 +57353,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to push sync items" });
       }
     });
-    router26.post("/pull", async (req, res) => {
+    router28.post("/pull", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const { items = [] } = req.body;
@@ -50289,7 +57367,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to apply pull sync" });
       }
     });
-    router26.post("/resolve-conflict", async (req, res) => {
+    router28.post("/resolve-conflict", async (req, res) => {
       try {
         const storeId = resolveStoreId(req);
         const { conflict_id, resolution = "keep_local" } = req.body;
@@ -50331,7 +57409,7 @@ var init_sync = __esm({
         res.status(500).json({ error: "Failed to resolve conflict" });
       }
     });
-    sync_default = router26;
+    sync_default = router28;
   }
 });
 
@@ -50510,11 +57588,11 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express27, import_path47, import_fs42, import_pdfkit5, router27, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express29, import_path49, import_fs44, import_pdfkit5, router29, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
-    import_express27 = __toESM(require("express"), 1);
+    import_express29 = __toESM(require("express"), 1);
     init_inventoryActive();
     init_connection();
     init_productNameFilterService();
@@ -50523,15 +57601,16 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path47 = __toESM(require("path"), 1);
-    import_fs42 = __toESM(require("fs"), 1);
+    import_path49 = __toESM(require("path"), 1);
+    import_fs44 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
     init_medicineSalesMetricsService();
     init_refillService();
     init_orderNameMatcher();
-    router27 = import_express27.default.Router();
+    init_returnWindowService();
+    router29 = import_express29.default.Router();
     normalizeNumericSearch = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -50629,7 +57708,7 @@ var init_sales = __esm({
         itemTaxBreakdowns
       };
     };
-    router27.get("/next-invoice", async (req, res) => {
+    router29.get("/next-invoice", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -50646,14 +57725,15 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/", async (req, res) => {
+    router29.post("/", async (req, res) => {
       let db2;
       try {
         const verification = await verificationService.verifyPOSBill(req.body);
         if (!verification.success) {
           return res.status(400).json({ error: verification.message, layer: verification.layer });
         }
-        const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = "CASH", paymentStatus = "PAID", sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId, prescription_image } = req.body;
+        const { items = [], patient_id, doctor_id, doctor_name, discount = 0, patient_name, patient_phone, patient_address, paymentMedium = "CASH", paymentStatus = "PAID", sendWhatsApp = false, sale_date, refillEnabled = false, refillDays = 30, refillId, prescription_image, online_order_id, order_id } = req.body;
+        const resolvedOnlineOrderId = online_order_id ? parseInt(String(online_order_id), 10) : order_id ? parseInt(String(order_id), 10) : null;
         if (!Array.isArray(items) || items.length === 0) {
           return res.status(400).json({ error: "Cart items required" });
         }
@@ -50736,12 +57816,47 @@ var init_sales = __esm({
           return res.status(400).json({ error: "Doctor name is required to save the bill. Please select or enter a doctor name." });
         }
         const result = await db2.run(
-          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [invoice_no, customerId, total, tax, totalCgst, totalSgst, 0, paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal, resolvedDoctorId, roff]
+          "INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff, online_order_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [invoice_no, customerId, total, tax, totalCgst, totalSgst, 0, paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal, resolvedDoctorId, roff, resolvedOnlineOrderId || null]
         );
         const invoiceId = result.lastID;
         if (!invoiceId) {
           throw new Error("Failed to retrieve inserted invoice ID.");
+        }
+        if (resolvedOnlineOrderId) {
+          try {
+            const returnDays = await returnWindowService.getConfiguredReturnWindowDays(void 0, db2);
+            const deliveredAt = (/* @__PURE__ */ new Date()).toISOString();
+            const returnWindowUntil = returnWindowService.calculateReturnWindowUntil(deliveredAt, returnDays);
+            await db2.run(
+              `UPDATE special_orders
+           SET status = 'Delivered',
+               delivery_status = 'delivered',
+               delivered_at = ?,
+               return_window_until = ?,
+               pos_sale_invoice_id = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [deliveredAt, returnWindowUntil, invoiceId, resolvedOnlineOrderId]
+            );
+            await db2.run(
+              `UPDATE inventory_reservations SET status = 'SOLD', released_at = CURRENT_TIMESTAMP
+           WHERE order_id = ? AND status = 'ACTIVE'`,
+              [resolvedOnlineOrderId]
+            );
+            await db2.run(
+              `UPDATE staged_sales SET status = 'completed'
+           WHERE cart_json LIKE ?`,
+              [`%"online_order_id":${resolvedOnlineOrderId}%`]
+            );
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'pos_sale_completed', ?, 'POS', CURRENT_TIMESTAMP)`,
+              [resolvedOnlineOrderId, `Fulfilled via POS sale invoice #${invoice_no} (15-day return window active until ${returnWindowUntil})`]
+            );
+          } catch (ordErr) {
+            console.warn("[Sales] Failed to link online order:", resolvedOnlineOrderId, ordErr);
+          }
         }
         if (prescription_image && typeof prescription_image === "string") {
           try {
@@ -51114,13 +58229,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs42.default.existsSync(uploadsDir)) {
-                    import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs44.default.existsSync(uploadsDir)) {
+                    import_fs44.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path47.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path49.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -51224,7 +58339,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router27.post("/hold", async (req, res) => {
+    router29.post("/hold", async (req, res) => {
       let db2;
       try {
         if (!req.body) {
@@ -51349,7 +58464,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to hold bill" });
       }
     });
-    router27.get("/recommend-quantity", async (req, res) => {
+    router29.get("/recommend-quantity", async (req, res) => {
       const medicineName = req.query.medicineName;
       if (!medicineName) {
         return res.status(400).json({ error: "medicineName query parameter required" });
@@ -51402,7 +58517,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router27.get("/recommend-quantity/batch", async (req, res) => {
+    router29.get("/recommend-quantity/batch", async (req, res) => {
       const namesParam = req.query.medicineNames;
       if (!namesParam) {
         return res.status(400).json({ error: "medicineNames query parameter required" });
@@ -51512,7 +58627,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router27.get("/list", async (req, res) => {
+    router29.get("/list", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -51638,7 +58753,7 @@ var init_sales = __esm({
         return res.status(500).json({ error: "Internal server error", details: err.message });
       }
     });
-    router27.get("/search-medicine", async (req, res) => {
+    router29.get("/search-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -52036,7 +59151,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/suggest-medicine", async (req, res) => {
+    router29.get("/suggest-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -52067,7 +59182,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.post("/queue-from-pos", async (req, res) => {
+    router29.post("/queue-from-pos", async (req, res) => {
       const { medicine_id } = req.body;
       if (!medicine_id) {
         return res.status(400).json({ error: "medicine_id is required" });
@@ -52091,7 +59206,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/universal-search", async (req, res) => {
+    router29.get("/universal-search", async (req, res) => {
       const query = req.query.q;
       if (!query) {
         return res.json([]);
@@ -52113,7 +59228,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.get("/hold", async (req, res) => {
+    router29.get("/hold", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -52124,7 +59239,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to retrieve held bills" });
       }
     });
-    router27.post("/staged", async (req, res) => {
+    router29.post("/staged", async (req, res) => {
       try {
         const { patient_name, patient_phone, discount = 0, items } = req.body;
         if (!patient_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -52169,7 +59284,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to create staged sale" });
       }
     });
-    router27.get("/staged", async (req, res) => {
+    router29.get("/staged", async (req, res) => {
       const { all } = req.query;
       let db2;
       try {
@@ -52209,14 +59324,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs42.default.existsSync(uploadsDir)) {
-          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs44.default.existsSync(uploadsDir)) {
+          import_fs44.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit5.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path47.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs42.default.createWriteStream(pdfPath);
+        const pdfPath = import_path49.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs44.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -52242,7 +59357,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path47.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path49.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -52250,9 +59365,9 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to generate sale invoice barcode: " + error.message });
       }
     };
-    router27.get("/invoice-barcode", handleInvoiceBarcode);
-    router27.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
-    router27.get("/:id", async (req, res, next) => {
+    router29.get("/invoice-barcode", handleInvoiceBarcode);
+    router29.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
+    router29.get("/:id", async (req, res, next) => {
       const rawId = req.params.id;
       if (!/^\d+$/.test(rawId)) {
         return next();
@@ -52299,7 +59414,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error", details: error.message });
       }
     });
-    router27.put("/:id", async (req, res) => {
+    router29.put("/:id", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -52488,7 +59603,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router27.delete("/:id", async (req, res) => {
+    router29.delete("/:id", async (req, res) => {
       try {
         const { id } = req.params;
         let notFound = false;
@@ -52562,7 +59677,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router27.delete("/hold/:id", async (req, res) => {
+    router29.delete("/hold/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -52617,7 +59732,7 @@ var init_sales = __esm({
     });
     stagedDeviceColumnsReady = false;
     syncDedupeTableReady = false;
-    router27.post("/sync", async (req, res) => {
+    router29.post("/sync", async (req, res) => {
       let db2;
       try {
         const { sales = [], deviceName = "", device_uuid = "" } = req.body;
@@ -52666,7 +59781,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline sales" });
       }
     });
-    router27.post("/staged/:id/approve", async (req, res) => {
+    router29.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, patient_name, patient_phone, discount = 0 } = req.body;
       let db2;
@@ -52761,7 +59876,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged sale" });
       }
     });
-    router27.post("/staged/:id/reject", async (req, res) => {
+    router29.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -52775,7 +59890,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged sale" });
       }
     });
-    router27.post("/staged/:id/consume", async (req, res) => {
+    router29.post("/staged/:id/consume", async (req, res) => {
       const { id } = req.params;
       const invoiceNo = typeof req.body?.invoice_no === "string" ? req.body.invoice_no.slice(0, 64) : null;
       let db2;
@@ -52794,7 +59909,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to consume staged sale" });
       }
     });
-    router27.get("/credit-dues", async (req, res) => {
+    router29.get("/credit-dues", async (req, res) => {
       const customerId = Number(req.query.customer_id) || 0;
       const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
       const refillId = Number(req.query.refill_id) || 0;
@@ -52836,7 +59951,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to load credit dues" });
       }
     });
-    router27.get("/reorder-suggestions", async (_req, res) => {
+    router29.get("/reorder-suggestions", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { ensureMedicineSalesMetricsSchema: ensureMedicineSalesMetricsSchema2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
@@ -52921,7 +60036,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch reorder suggestions" });
       }
     });
-    router27.post("/reorder-suggestions/snooze", async (req, res) => {
+    router29.post("/reorder-suggestions/snooze", async (req, res) => {
       try {
         const { medicineId, snoozeDays = 7, snoozeType = "7_days", reason = "" } = req.body;
         if (!medicineId) {
@@ -52944,7 +60059,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to snooze reorder suggestion" });
       }
     });
-    router27.post("/reorder-suggestions/unsnooze", async (req, res) => {
+    router29.post("/reorder-suggestions/unsnooze", async (req, res) => {
       try {
         const { medicineId } = req.body;
         if (!medicineId) {
@@ -52958,7 +60073,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to unsnooze reorder suggestion" });
       }
     });
-    router27.get("/reorder-suggestions/snoozed", async (_req, res) => {
+    router29.get("/reorder-suggestions/snoozed", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -53013,7 +60128,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch snoozed reorders" });
       }
     });
-    router27.get("/medicine-refill-info/:medicineId", async (req, res) => {
+    router29.get("/medicine-refill-info/:medicineId", async (req, res) => {
       const { medicineId } = req.params;
       const medId = parseInt(medicineId, 10);
       if (isNaN(medId) || medId <= 0) {
@@ -53103,7 +60218,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get medicine refill info" });
       }
     });
-    router27.get("/patient-refill-medicines", async (req, res) => {
+    router29.get("/patient-refill-medicines", async (req, res) => {
       const { customerId, phone, name } = req.query;
       if (!customerId && !phone && !name) {
         return res.status(400).json({ error: "customerId, phone, or name is required" });
@@ -53275,21 +60390,21 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get patient refill medicines" });
       }
     });
-    router27.post("/prescription/upload", async (req, res) => {
+    router29.post("/prescription/upload", async (req, res) => {
       try {
         const { image, fileName } = req.body;
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs42.default.existsSync(uploadsDir)) {
-          import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs44.default.existsSync(uploadsDir)) {
+          import_fs44.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path47.default.join(uploadsDir, safeName);
-        import_fs42.default.writeFileSync(fullPath, buffer);
+        const fullPath = import_path49.default.join(uploadsDir, safeName);
+        import_fs44.default.writeFileSync(fullPath, buffer);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
       } catch (err) {
@@ -53297,7 +60412,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to upload prescription" });
       }
     });
-    router27.post("/:id/prescription", async (req, res) => {
+    router29.post("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       const { prescription_image } = req.body;
       if (!prescription_image) {
@@ -53315,7 +60430,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to attach prescription" });
       }
     });
-    router27.get("/:id/prescription", async (req, res) => {
+    router29.get("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -53338,7 +60453,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch prescription" });
       }
     });
-    sales_default = router27;
+    sales_default = router29;
   }
 });
 
@@ -53347,19 +60462,19 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express28, import_path48, import_url40, __filename38, __dirname38, DB_PATH24, router28, dashboard_default;
+var import_express30, import_path50, import_url40, __filename38, __dirname38, DB_PATH24, router30, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
-    import_express28 = __toESM(require("express"), 1);
+    import_express30 = __toESM(require("express"), 1);
     init_connection();
-    import_path48 = __toESM(require("path"), 1);
+    import_path50 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
-    __dirname38 = import_path48.default.dirname(__filename38);
-    DB_PATH24 = process.env.DB_PATH || import_path48.default.resolve(__dirname38, "..", "..", "data", "app.db");
-    router28 = import_express28.default.Router();
-    router28.get("/", async (_req, res) => {
+    __dirname38 = import_path50.default.dirname(__filename38);
+    DB_PATH24 = process.env.DB_PATH || import_path50.default.resolve(__dirname38, "..", "..", "data", "app.db");
+    router30 = import_express30.default.Router();
+    router30.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const [salesTodayRow, lowStockCount, pendingTasksCount, alerts, storageLocationsCount, pendingSpecialOrdersCount, activeDeliveryBoysCount, purchasesTodayRow, recentSales, recentCommunications] = await Promise.all([
@@ -53410,7 +60525,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router28.delete("/alerts/:id", async (req, res) => {
+    router30.delete("/alerts/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -53421,7 +60536,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    dashboard_default = router28;
+    dashboard_default = router30;
   }
 });
 
@@ -53441,12 +60556,12 @@ async function seedMasterMedicines(force = false) {
         return { loaded: 0 };
       }
     }
-    const csvPath = import_path49.default.join(process.cwd(), "data", "reference_medicines.csv");
-    if (!import_fs43.default.existsSync(csvPath)) {
+    const csvPath = import_path51.default.join(process.cwd(), "data", "reference_medicines.csv");
+    if (!import_fs45.default.existsSync(csvPath)) {
       console.warn("[MasterSeed] Reference CSV not found at:", csvPath);
       return { loaded: 0 };
     }
-    const fileStream = import_fs43.default.createReadStream(csvPath, { encoding: "utf8" });
+    const fileStream = import_fs45.default.createReadStream(csvPath, { encoding: "utf8" });
     const rl = import_readline2.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -53584,12 +60699,12 @@ async function upsertMasterMedicine(item) {
     console.warn("[MasterSeed] Failed to upsert master medicine:", cleanName, err.message);
   }
 }
-var import_fs43, import_path49, import_readline2;
+var import_fs45, import_path51, import_readline2;
 var init_masterMedicinesSeedService = __esm({
   "src/services/masterMedicinesSeedService.ts"() {
     "use strict";
-    import_fs43 = __toESM(require("fs"), 1);
-    import_path49 = __toESM(require("path"), 1);
+    import_fs45 = __toESM(require("fs"), 1);
+    import_path51 = __toESM(require("path"), 1);
     import_readline2 = __toESM(require("readline"), 1);
     init_connection();
   }
@@ -53829,13 +60944,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios2, import_fs44, import_path50, import_tesseract3, InvoiceVisionService, invoiceVisionService;
+var import_axios2, import_fs46, import_path52, import_tesseract3, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios2 = __toESM(require("axios"), 1);
-    import_fs44 = __toESM(require("fs"), 1);
-    import_path50 = __toESM(require("path"), 1);
+    import_fs46 = __toESM(require("fs"), 1);
+    import_path52 = __toESM(require("path"), 1);
     import_tesseract3 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -53846,14 +60961,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs44.default.existsSync(uploadsDir)) {
-          import_fs44.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs46.default.existsSync(uploadsDir)) {
+          import_fs46.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path50.default.extname(originalFilename) || ".jpg";
+        const ext = import_path52.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path50.default.join(uploadsDir, safeFilename);
-        import_fs44.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path52.default.join(uploadsDir, safeFilename);
+        import_fs46.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         let parsedResult = null;
@@ -54432,14 +61547,14 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express29, import_path51, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs45, __filename39, __dirname39, DB_PATH25, router29, upload2, purchases_default;
+var import_express31, import_path53, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs47, __filename39, __dirname39, DB_PATH25, router31, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
-    import_express29 = __toESM(require("express"), 1);
+    import_express31 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path51 = __toESM(require("path"), 1);
+    import_path53 = __toESM(require("path"), 1);
     import_url41 = require("url");
     import_multer2 = __toESM(require("multer"), 1);
     import_pdf_parse2 = __toESM(require("pdf-parse"), 1);
@@ -54452,7 +61567,7 @@ var init_purchases = __esm({
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs45 = __toESM(require("fs"), 1);
+    import_fs47 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -54461,11 +61576,11 @@ var init_purchases = __esm({
     init_medicineSalesMetricsService();
     init_barcodeService();
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
-    __dirname39 = import_path51.default.dirname(__filename39);
-    DB_PATH25 = process.env.DB_PATH || import_path51.default.resolve(__dirname39, "..", "..", "data", "app.db");
-    router29 = import_express29.default.Router();
+    __dirname39 = import_path53.default.dirname(__filename39);
+    DB_PATH25 = process.env.DB_PATH || import_path53.default.resolve(__dirname39, "..", "..", "data", "app.db");
+    router31 = import_express31.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
-    router29.get("/summary", async (_req, res) => {
+    router31.get("/summary", async (_req, res) => {
       try {
         const cached = await getSummaryCache("purchase_summary");
         if (cached) {
@@ -54478,22 +61593,22 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/upload", upload2.single("file"), async (req, res) => {
+    router31.post("/upload", upload2.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path51.default.join(getAppDataDir(), "uploads");
-        if (!import_fs45.default.existsSync(uploadsDir)) {
-          import_fs45.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path53.default.join(getAppDataDir(), "uploads");
+        if (!import_fs47.default.existsSync(uploadsDir)) {
+          import_fs47.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path51.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path51.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs45.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path53.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path53.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs47.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs45.default.unlinkSync(tempPath);
+            import_fs47.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -54519,7 +61634,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to process invoice file: " + err.message });
       }
     });
-    router29.get("/", async (req, res) => {
+    router31.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const months = parseInt(req.query.months) || 0;
@@ -54613,7 +61728,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/earliest-date", async (req, res) => {
+    router31.get("/earliest-date", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(`
@@ -54629,7 +61744,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/manual", async (req, res) => {
+    router31.post("/manual", async (req, res) => {
       const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
       let db2;
       try {
@@ -55011,7 +62126,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message, stack: error.stack });
       }
     });
-    router29.get("/items/all", async (req, res) => {
+    router31.get("/items/all", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limit = parseInt(req.query.limit) || 1e3;
@@ -55044,10 +62159,10 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.put("/:id/full", async (req, res) => {
+    router31.put("/:id/full", async (req, res) => {
       return handleUpdatePurchaseFull(req, res);
     });
-    router29.put("/:id", async (req, res) => {
+    router31.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { distributor, invoice_no, total_amount, date } = req.body;
       try {
@@ -55071,7 +62186,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.delete("/:id", async (req, res) => {
+    router31.delete("/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -55111,7 +62226,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/bulk-action", async (req, res) => {
+    router31.post("/bulk-action", async (req, res) => {
       const { action, ids = [] } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -55125,7 +62240,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/last-purchase", async (req, res) => {
+    router31.get("/last-purchase", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -55204,7 +62319,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/medicine-batches", async (req, res) => {
+    router31.get("/medicine-batches", async (req, res) => {
       let db2;
       try {
         const medicineIdParam = req.query.medicine_id;
@@ -55352,7 +62467,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/price-history", async (req, res) => {
+    router31.get("/price-history", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -55435,7 +62550,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/batch-last-purchase", async (req, res) => {
+    router31.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
         const { medicines, distributor_id } = req.body;
@@ -55503,7 +62618,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/history-prefill", async (req, res) => {
+    router31.get("/history-prefill", async (req, res) => {
       let db2;
       try {
         const name = String(req.query.name || "").trim();
@@ -55586,7 +62701,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/:id/pdf", async (req, res) => {
+    router31.get("/:id/pdf", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -55705,7 +62820,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/reconciliation", async (req, res) => {
+    router31.get("/reconciliation", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const aliasRows = await db2.all(
@@ -55790,7 +62905,7 @@ var init_purchases = __esm({
           if (medNames.length === 0 && !email.medicine_names) {
             const parsedItems = [];
             for (const att of attachments) {
-              if (att.local_path && import_fs45.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs47.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items) {
@@ -55979,7 +63094,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/ignored-words", async (req, res) => {
+    router31.get("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT id, word, source, created_at FROM permanently_ignored_words ORDER BY created_at DESC");
@@ -55989,7 +63104,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/ignored-words", async (req, res) => {
+    router31.post("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { word, source = "recon" } = req.body;
@@ -56008,7 +63123,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.delete("/ignored-words/:id", async (req, res) => {
+    router31.delete("/ignored-words/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = Number(req.params.id);
@@ -56022,7 +63137,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/reconciliation/learn-mapping", async (req, res) => {
+    router31.post("/reconciliation/learn-mapping", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { distributor_id, distributor_name, mapping_config } = req.body;
@@ -56041,7 +63156,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to save distributor mapping template" });
       }
     });
-    router29.post("/reconciliation/resolve", async (req, res) => {
+    router31.post("/reconciliation/resolve", async (req, res) => {
       const { email_uid } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -56063,7 +63178,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.get("/reconciliation/preview/:email_uid", async (req, res) => {
+    router31.get("/reconciliation/preview/:email_uid", async (req, res) => {
       try {
         const { email_uid } = req.params;
         const db2 = await dbManager.getConnection();
@@ -56079,7 +63194,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs45.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs47.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -56146,7 +63261,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router29.post("/reconciliation/reissue", async (req, res) => {
+    router31.post("/reconciliation/reissue", async (req, res) => {
       const { email_uid, invoice_date: bodyInvoiceDate } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -56188,7 +63303,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs45.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs47.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -56224,7 +63339,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs45.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs47.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -56413,7 +63528,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router29.post("/match-items", async (req, res) => {
+    router31.post("/match-items", async (req, res) => {
       try {
         const { names, distributor_id } = req.body || {};
         if (!Array.isArray(names) || names.length === 0) {
@@ -56450,7 +63565,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "match-items failed" });
       }
     });
-    router29.get("/staged", async (req, res) => {
+    router31.get("/staged", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -56466,7 +63581,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to retrieve staged purchases" });
       }
     });
-    router29.get("/reconciliation/bounced", async (req, res) => {
+    router31.get("/reconciliation/bounced", async (req, res) => {
       try {
         const { bouncedAlertService: bouncedAlertService2 } = await Promise.resolve().then(() => (init_bouncedAlertService(), bouncedAlertService_exports));
         const sent = await bouncedAlertService2.checkAndSendBouncedProductsAlert();
@@ -56476,7 +63591,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router29.get("/bill-barcode/:purchaseId", async (req, res) => {
+    router31.get("/bill-barcode/:purchaseId", async (req, res) => {
       const purchaseId = Number(req.params.purchaseId);
       if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
         return res.status(400).json({ error: "Valid purchase id is required" });
@@ -56505,14 +63620,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument7 } = await import("pdfkit");
-        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs45.default.existsSync(uploadsDir)) {
-          import_fs45.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs47.default.existsSync(uploadsDir)) {
+          import_fs47.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument7({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path51.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs45.default.createWriteStream(pdfPath);
+        const pdfPath = import_path53.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs47.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -56541,7 +63656,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path51.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path53.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -56550,7 +63665,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to generate purchase bill barcode: " + message });
       }
     });
-    router29.get("/:id", async (req, res) => {
+    router31.get("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -56577,7 +63692,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router29.post("/sync", async (req, res) => {
+    router31.post("/sync", async (req, res) => {
       let db2;
       try {
         const { purchases = [] } = req.body;
@@ -56618,7 +63733,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline purchases" });
       }
     });
-    router29.post("/staged/:id/approve", async (req, res) => {
+    router31.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, distributor_name, invoice_no, date, total_amount } = req.body;
       let db2;
@@ -56772,7 +63887,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged purchase" });
       }
     });
-    router29.post("/staged/:id/reject", async (req, res) => {
+    router31.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -56786,7 +63901,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged purchase" });
       }
     });
-    router29.post("/scan-bill", upload2.single("file"), async (req, res) => {
+    router31.post("/scan-bill", upload2.single("file"), async (req, res) => {
       try {
         const { invoiceVisionService: invoiceVisionService2 } = await Promise.resolve().then(() => (init_invoiceVisionService(), invoiceVisionService_exports));
         let buffer = null;
@@ -56812,7 +63927,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to process purchase bill image" });
       }
     });
-    purchases_default = router29;
+    purchases_default = router31;
   }
 });
 
@@ -56821,15 +63936,15 @@ var sellPrice_exports = {};
 __export(sellPrice_exports, {
   default: () => sellPrice_default
 });
-var import_express30, router30, sellPrice_default;
+var import_express32, router32, sellPrice_default;
 var init_sellPrice = __esm({
   "src/routes/sellPrice.ts"() {
     "use strict";
-    import_express30 = __toESM(require("express"), 1);
+    import_express32 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
-    router30 = import_express30.default.Router();
-    router30.post("/bulk-update", async (req, res) => {
+    router32 = import_express32.default.Router();
+    router32.post("/bulk-update", async (req, res) => {
       let db2;
       try {
         const items = Array.isArray(req.body) ? req.body : req.body?.items || [];
@@ -56878,7 +63993,7 @@ var init_sellPrice = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    sellPrice_default = router30;
+    sellPrice_default = router32;
   }
 });
 
@@ -56909,14 +64024,14 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express31, import_path52, import_fs46, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router31, returns_default;
+var import_express33, import_path54, import_fs48, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router33, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
-    import_express31 = __toESM(require("express"), 1);
+    import_express33 = __toESM(require("express"), 1);
     init_connection();
-    import_path52 = __toESM(require("path"), 1);
-    import_fs46 = __toESM(require("fs"), 1);
+    import_path54 = __toESM(require("path"), 1);
+    import_fs48 = __toESM(require("fs"), 1);
     import_pdfkit6 = __toESM(require("pdfkit"), 1);
     import_url42 = require("url");
     init_aiCameraService();
@@ -56925,10 +64040,10 @@ var init_returns = __esm({
     init_stockRebuild();
     init_eventService();
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
-    __dirname40 = import_path52.default.dirname(__filename40);
-    DB_PATH26 = process.env.DB_PATH || import_path52.default.resolve(__dirname40, "..", "..", "data", "app.db");
-    router31 = import_express31.default.Router();
-    router31.use((req, res, next) => {
+    __dirname40 = import_path54.default.dirname(__filename40);
+    DB_PATH26 = process.env.DB_PATH || import_path54.default.resolve(__dirname40, "..", "..", "data", "app.db");
+    router33 = import_express33.default.Router();
+    router33.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -56946,7 +64061,7 @@ var init_returns = __esm({
       }
       next();
     });
-    router31.get("/", async (req, res) => {
+    router33.get("/", async (req, res) => {
       let db2;
       try {
         const { search, date_from, date_to, min_amount, max_amount } = req.query;
@@ -56994,7 +64109,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/", async (req, res) => {
+    router33.post("/", async (req, res) => {
       let db2;
       try {
         const { return_no, original_invoice_id, type, total_amount, distributor_id, is_expiry, loss_percentage, return_invoice_id, return_sub_type, return_date_time } = req.body;
@@ -57028,7 +64143,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/near-expiry", async (req, res) => {
+    router33.get("/near-expiry", async (req, res) => {
       let db2;
       try {
         const monthsStr = req.query.months || "6";
@@ -57087,7 +64202,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/financial-note", async (req, res) => {
+    router33.post("/financial-note", async (req, res) => {
       let pdfDoc;
       let stream;
       try {
@@ -57097,8 +64212,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit6.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path52.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs46.default.createWriteStream(outPath);
+        const outPath = import_path54.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs48.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -57131,7 +64246,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/ai-camera/process", async (req, res) => {
+    router33.post("/ai-camera/process", async (req, res) => {
       try {
         if (!req.body || !req.body.image) {
           return res.status(400).json({ error: "Image data is required" });
@@ -57155,7 +64270,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error during OCR processing" });
       }
     });
-    router31.get("/lookup-purchases", async (req, res) => {
+    router33.get("/lookup-purchases", async (req, res) => {
       let db2;
       try {
         const { name, batch } = req.query;
@@ -57210,7 +64325,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/process-returns", async (req, res) => {
+    router33.post("/process-returns", async (req, res) => {
       let db2;
       try {
         const { items, loss_percentage } = req.body;
@@ -57321,7 +64436,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/export-pdf-report", async (req, res) => {
+    router33.post("/export-pdf-report", async (req, res) => {
       try {
         const { items } = req.body;
         if (!items || !Array.isArray(items) || items.length === 0) {
@@ -57393,7 +64508,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/:id/items", async (req, res) => {
+    router33.get("/:id/items", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57425,7 +64540,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/:id/resolve-missing", async (req, res) => {
+    router33.get("/:id/resolve-missing", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57511,7 +64626,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.put("/:id", async (req, res) => {
+    router33.put("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57538,7 +64653,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.delete("/:id", async (req, res) => {
+    router33.delete("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57554,7 +64669,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/expiry-reviews", async (req, res) => {
+    router33.get("/expiry-reviews", async (req, res) => {
       let db2;
       try {
         const { status, search, date_from, date_to } = req.query;
@@ -57617,7 +64732,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/expiry-reviews/scan", async (req, res) => {
+    router33.post("/expiry-reviews/scan", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { scanAndCreateExpiryReviews: scanAndCreateExpiryReviews2 } = await Promise.resolve().then(() => (init_returnsService(), returnsService_exports));
@@ -57632,7 +64747,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to run expiry scan" });
       }
     });
-    router31.post("/expiry-reviews/:id/approve", async (req, res) => {
+    router33.post("/expiry-reviews/:id/approve", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57772,7 +64887,7 @@ var init_returns = __esm({
         res.status(500).json({ error: err.message || "Failed to approve return review" });
       }
     });
-    router31.post("/expiry-reviews/:id/reject", async (req, res) => {
+    router33.post("/expiry-reviews/:id/reject", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -57811,7 +64926,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to reject expiry review" });
       }
     });
-    router31.post("/expiry-reviews/bulk-approve", async (req, res) => {
+    router33.post("/expiry-reviews/bulk-approve", async (req, res) => {
       let db2;
       try {
         const { ids, loss_percentage } = req.body;
@@ -57944,7 +65059,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to bulk approve expiry reviews" });
       }
     });
-    router31.get("/expiry-reviews/audit-history", async (req, res) => {
+    router33.get("/expiry-reviews/audit-history", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const logs = await db2.all(`
@@ -57959,7 +65074,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to fetch audit history" });
       }
     });
-    returns_default = router31;
+    returns_default = router33;
   }
 });
 
@@ -57980,17 +65095,17 @@ var customerReturns_exports = {};
 __export(customerReturns_exports, {
   default: () => customerReturns_default
 });
-var import_express32, router32, broadcastCustomerReturn, customerReturns_default;
+var import_express34, router34, broadcastCustomerReturn, customerReturns_default;
 var init_customerReturns = __esm({
   "src/routes/customerReturns.ts"() {
     "use strict";
-    import_express32 = __toESM(require("express"), 1);
+    import_express34 = __toESM(require("express"), 1);
     init_connection();
     init_asyncHandler();
     init_inventoryCache();
     init_stockRebuild();
     init_eventService();
-    router32 = import_express32.default.Router();
+    router34 = import_express34.default.Router();
     broadcastCustomerReturn = () => {
       try {
         eventService.broadcast("return_created", { at: Date.now(), type: "customer_return" });
@@ -57998,7 +65113,7 @@ var init_customerReturns = __esm({
       } catch (_) {
       }
     };
-    router32.get("/search-invoice", asyncHandler(async (req, res) => {
+    router34.get("/search-invoice", asyncHandler(async (req, res) => {
       const { invoice_no } = req.query;
       if (!invoice_no) {
         return res.status(400).json({ error: "invoice_no required" });
@@ -58032,7 +65147,7 @@ var init_customerReturns = __esm({
       await dbManager.close();
       res.json({ invoice, items, previousReturns });
     }));
-    router32.post("/", asyncHandler(async (req, res) => {
+    router34.post("/", asyncHandler(async (req, res) => {
       const { original_invoice_id, return_items, reason } = req.body;
       if (!original_invoice_id || !Array.isArray(return_items) || return_items.length === 0) {
         return res.status(400).json({ error: "Invalid return data" });
@@ -58158,7 +65273,7 @@ var init_customerReturns = __esm({
       broadcastCustomerReturn();
       res.json({ success: true, return_no: result.returnNo, total_refund: result.totalRefund });
     }));
-    router32.get("/history", asyncHandler(async (req, res) => {
+    router34.get("/history", asyncHandler(async (req, res) => {
       const db2 = await dbManager.getConnection();
       const start = req.query.start;
       const end = req.query.end;
@@ -58238,7 +65353,7 @@ var init_customerReturns = __esm({
         res.json(rows);
       }
     }));
-    customerReturns_default = router32;
+    customerReturns_default = router34;
   }
 });
 
@@ -58271,12 +65386,12 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
   let pdfPath = void 0;
   try {
-    const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs47.default.existsSync(uploadsDir)) {
-      import_fs47.default.mkdirSync(uploadsDir, { recursive: true });
+    const uploadsDir = import_path55.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs49.default.existsSync(uploadsDir)) {
+      import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
     }
     const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path53.default.join(uploadsDir, pdfFilename);
+    const fullPdfPath = import_path55.default.join(uploadsDir, pdfFilename);
     await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
     pdfPath = fullPdfPath;
   } catch (pdfErr) {
@@ -58302,14 +65417,14 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   });
   return true;
 }
-var import_express33, import_path53, import_fs47, import_url43, __filename41, __dirname41, DB_PATH27, router33, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express35, import_path55, import_fs49, import_url43, __filename41, __dirname41, DB_PATH27, router35, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
-    import_express33 = __toESM(require("express"), 1);
+    import_express35 = __toESM(require("express"), 1);
     init_connection();
-    import_path53 = __toESM(require("path"), 1);
-    import_fs47 = __toESM(require("fs"), 1);
+    import_path55 = __toESM(require("path"), 1);
+    import_fs49 = __toESM(require("fs"), 1);
     import_url43 = require("url");
     init_storeSettingsService();
     init_whatsappQueueWorker();
@@ -58319,10 +65434,11 @@ var init_orders = __esm({
     init_nameFormatter();
     init_storeContextService();
     init_returnWindowService();
+    init_orderScheduleService();
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
-    __dirname41 = import_path53.default.dirname(__filename41);
-    DB_PATH27 = process.env.DB_PATH || import_path53.default.resolve(__dirname41, "..", "..", "data", "app.db");
-    router33 = import_express33.default.Router();
+    __dirname41 = import_path55.default.dirname(__filename41);
+    DB_PATH27 = process.env.DB_PATH || import_path55.default.resolve(__dirname41, "..", "..", "data", "app.db");
+    router35 = import_express35.default.Router();
     broadcastOrdersChanged2 = () => {
       try {
         eventService.broadcast("order_updated", { at: Date.now() });
@@ -58330,7 +65446,7 @@ var init_orders = __esm({
       }
     };
     ordersTableInitialized = false;
-    router33.get("/", async (req, res) => {
+    router35.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
@@ -58356,7 +65472,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/batch", async (req, res) => {
+    router35.post("/batch", async (req, res) => {
       const {
         items,
         requester,
@@ -58378,6 +65494,7 @@ var init_orders = __esm({
         const cleanReqName = formatCustomerName(requester);
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
         const insertedOrders = [];
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
         await db2.run("BEGIN TRANSACTION");
         try {
           for (let i = 0; i < items.length; i++) {
@@ -58391,8 +65508,11 @@ var init_orders = __esm({
             const result = await db2.run(
               `INSERT INTO special_orders (
             store_id, product, requester, phone, qty, priority, status, date, notified,
-            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+            pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 targetStoreId,
                 medName,
@@ -58408,7 +65528,16 @@ var init_orders = __esm({
                 item.mrp !== void 0 ? item.mrp : item.pharmarack_mrp !== void 0 ? item.pharmarack_mrp : null,
                 item.mapped ? 1 : item.pharmarack_mapped ? 1 : 0,
                 item.scheme || item.pharmarack_scheme || null,
-                itemAdv
+                itemAdv,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
               ]
             );
             insertedOrders.push({
@@ -58463,7 +65592,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to create special orders: " + (err.message || "Unknown error") });
       }
     });
-    router33.post("/", async (req, res) => {
+    router35.post("/", async (req, res) => {
       const {
         requester,
         phone,
@@ -58504,14 +65633,18 @@ var init_orders = __esm({
         }
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
         const medName = reqProduct.trim();
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
         const initialNotified = 0;
         const initialStatus = status || "Pending";
         const result = await db2.run(
           `INSERT INTO special_orders (
         store_id, product, requester, phone, qty, priority, status, date, notified,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
-        customer_order_source, prescription_url, product_image_url, notes, notification_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        customer_order_source, prescription_url, product_image_url, notes, notification_count,
+        scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+        cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+        schedule_calculated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             targetStoreId,
             medName,
@@ -58531,7 +65664,16 @@ var init_orders = __esm({
             customer_order_source,
             prescription_url || null,
             product_image_url || null,
-            notes || null
+            notes || null,
+            calculatedSchedule.scheduledProcessingAt,
+            calculatedSchedule.estimatedDeliveryStart,
+            calculatedSchedule.estimatedDeliveryEnd,
+            calculatedSchedule.cutoffAt,
+            calculatedSchedule.timezone,
+            calculatedSchedule.scheduleStatus,
+            calculatedSchedule.scheduleReason,
+            calculatedSchedule.scheduleVersion,
+            calculatedSchedule.calculatedAt
           ]
         );
         if (Boolean(req.body.sendWhatsApp) && phone) {
@@ -58596,7 +65738,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/:id/notify-arrival", async (req, res) => {
+    router35.post("/:id/notify-arrival", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -58627,7 +65769,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router33.post("/:id/resend-booking", async (req, res) => {
+    router35.post("/:id/resend-booking", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -58666,7 +65808,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router33.get("/uncollected-alerts", async (_req, res) => {
+    router35.get("/uncollected-alerts", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
@@ -58681,7 +65823,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.put("/:id", async (req, res) => {
+    router35.put("/:id", async (req, res) => {
       const { id } = req.params;
       const {
         status,
@@ -58812,9 +65954,9 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
       }
     };
-    router33.post("/:id/status", handleStatusUpdate);
-    router33.put("/:id/status", handleStatusUpdate);
-    router33.delete("/:id", async (req, res) => {
+    router35.post("/:id/status", handleStatusUpdate);
+    router35.put("/:id/status", handleStatusUpdate);
+    router35.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -58872,7 +66014,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/convert-to-refill", async (req, res) => {
+    router35.post("/convert-to-refill", async (req, res) => {
       const { orderId, refillIntervalDays } = req.body;
       if (!orderId || !refillIntervalDays) {
         return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
@@ -58898,7 +66040,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router33.post("/:id/fulfill", async (req, res) => {
+    router35.post("/:id/fulfill", async (req, res) => {
       const { id } = req.params;
       const { invoiceNo, grandTotal, sendWhatsApp } = req.body;
       try {
@@ -58933,7 +66075,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to fulfill order: " + (err.message || "Unknown error") });
       }
     });
-    router33.post("/:id/mark-delivered", async (req, res) => {
+    router35.post("/:id/mark-delivered", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -58945,7 +66087,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to mark order delivered: " + (err.message || "Unknown error") });
       }
     });
-    router33.post("/:id/return-override", async (req, res) => {
+    router35.post("/:id/return-override", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         const { override_by = "Pharmacist", reason = "Customer accommodation" } = req.body;
@@ -58958,7 +66100,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to apply return override: " + (err.message || "Unknown error") });
       }
     });
-    router33.get("/:id/return-status", async (req, res) => {
+    router35.get("/:id/return-status", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -58972,7 +66114,36 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to evaluate return status" });
       }
     });
-    orders_default = router33;
+    router35.post("/:id/delivery-override", async (req, res) => {
+      try {
+        const orderId = parseInt(req.params.id, 10);
+        const {
+          estimated_delivery_start,
+          estimated_delivery_end,
+          reason = "Manual customer accommodation",
+          override_by = "Staff"
+        } = req.body;
+        if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
+        if (!estimated_delivery_start || !estimated_delivery_end) {
+          return res.status(400).json({ error: "estimated_delivery_start and estimated_delivery_end are required" });
+        }
+        const updated = await orderScheduleService.overrideOrderSchedule(orderId, {
+          estimatedDeliveryStart: estimated_delivery_start,
+          estimatedDeliveryEnd: estimated_delivery_end,
+          reason,
+          overrideBy: override_by
+        });
+        if (!updated) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        broadcastOrdersChanged2();
+        res.json({ success: true, message: "Delivery schedule overridden successfully", order: updated });
+      } catch (err) {
+        console.error("Delivery override error:", err);
+        res.status(500).json({ error: "Failed to override delivery schedule: " + (err.message || "Unknown error") });
+      }
+    });
+    orders_default = router35;
   }
 });
 
@@ -58981,15 +66152,15 @@ var quickAssistant_exports = {};
 __export(quickAssistant_exports, {
   default: () => quickAssistant_default
 });
-var import_express34, router34, quickAssistant_default;
+var import_express36, router36, quickAssistant_default;
 var init_quickAssistant = __esm({
   "src/routes/quickAssistant.ts"() {
     "use strict";
-    import_express34 = __toESM(require("express"), 1);
+    import_express36 = __toESM(require("express"), 1);
     init_connection();
     init_storeContextService();
-    router34 = import_express34.default.Router();
-    router34.get("/", async (req, res) => {
+    router36 = import_express36.default.Router();
+    router36.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const storeId = resolveStoreId(req);
@@ -59030,7 +66201,7 @@ var init_quickAssistant = __esm({
           ).catch(() => []),
           db2.all(
             `SELECT s.* FROM special_orders s
-         WHERE s.customer_order_source = 'website'
+         WHERE (s.customer_order_source IN ('website', 'website_refill') OR s.notes LIKE '[Website Order%')
            AND s.status NOT IN ('Fulfilled', 'FULFILLED', 'Cancelled')
            AND ${storeClause}
          ORDER BY s.id DESC`,
@@ -59068,7 +66239,7 @@ var init_quickAssistant = __esm({
         res.status(500).json({ error: "Failed to fetch quick assistant summary" });
       }
     });
-    quickAssistant_default = router34;
+    quickAssistant_default = router36;
   }
 });
 
@@ -59137,33 +66308,33 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express35, import_path54, import_url44, import_fs48, __filename42, __dirname42, DB_PATH28, router35, expiry_default;
+var import_express37, import_path56, import_url44, import_fs50, __filename42, __dirname42, DB_PATH28, router37, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
-    import_express35 = __toESM(require("express"), 1);
+    import_express37 = __toESM(require("express"), 1);
     init_connection();
-    import_path54 = __toESM(require("path"), 1);
+    import_path56 = __toESM(require("path"), 1);
     import_url44 = require("url");
-    import_fs48 = __toESM(require("fs"), 1);
+    import_fs50 = __toESM(require("fs"), 1);
     init_reportExporter();
     init_config();
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
-    __dirname42 = import_path54.default.dirname(__filename42);
-    DB_PATH28 = process.env.DB_PATH || import_path54.default.resolve(__dirname42, "..", "..", "data", "app.db");
-    router35 = import_express35.default.Router();
-    router35.get("/", async (req, res) => {
+    __dirname42 = import_path56.default.dirname(__filename42);
+    DB_PATH28 = process.env.DB_PATH || import_path56.default.resolve(__dirname42, "..", "..", "data", "app.db");
+    router37 = import_express37.default.Router();
+    router37.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
         const days = req.query.days ? parseInt(req.query.days, 10) : 90;
         date_to = getNDaysAheadString(days);
       }
-      const cacheDir = import_path54.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path56.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs48.default.existsSync(cacheDir);
-        const isInitialized = cacheDirExists && import_fs48.default.existsSync(import_path54.default.join(cacheDir, "manifest.json"));
+        const cacheDirExists = import_fs50.default.existsSync(cacheDir);
+        const isInitialized = cacheDirExists && import_fs50.default.existsSync(import_path56.default.join(cacheDir, "manifest.json"));
         if (!isInitialized) {
           console.log("[ExpiryCache] Cache directory or manifest missing. Using live SQL and triggering initial rebuild.");
           const db2 = await dbManager.getConnection();
@@ -59192,10 +66363,10 @@ var init_expiry = __esm({
         }
         let items = [];
         for (const ym of months) {
-          const filePath = import_path54.default.join(cacheDir, `expiry_${ym}.json`);
-          if (import_fs48.default.existsSync(filePath)) {
+          const filePath = import_path56.default.join(cacheDir, `expiry_${ym}.json`);
+          if (import_fs50.default.existsSync(filePath)) {
             try {
-              const raw = await import_fs48.default.promises.readFile(filePath, "utf-8");
+              const raw = await import_fs50.default.promises.readFile(filePath, "utf-8");
               items = items.concat(JSON.parse(raw));
             } catch (err) {
               console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -59210,7 +66381,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.get("/export", async (req, res) => {
+    router37.get("/export", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
@@ -59218,12 +66389,12 @@ var init_expiry = __esm({
         date_to = getNDaysAheadString(days);
       }
       const format = req.query.format || "pdf";
-      const cacheDir = import_path54.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path56.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       let items = [];
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs48.default.existsSync(cacheDir);
-        const hasCacheFiles = cacheDirExists && import_fs48.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
+        const cacheDirExists = import_fs50.default.existsSync(cacheDir);
+        const hasCacheFiles = cacheDirExists && import_fs50.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
         if (!cacheDirExists || !hasCacheFiles) {
           const db2 = await dbManager.getConnection();
           items = await db2.all(`
@@ -59247,10 +66418,10 @@ var init_expiry = __esm({
           items = items.filter((item) => isDateInRange(item.expiry_date, date_from, date_to));
         } else {
           for (const ym of months) {
-            const filePath = import_path54.default.join(cacheDir, `expiry_${ym}.json`);
-            if (import_fs48.default.existsSync(filePath)) {
+            const filePath = import_path56.default.join(cacheDir, `expiry_${ym}.json`);
+            if (import_fs50.default.existsSync(filePath)) {
               try {
-                const raw = await import_fs48.default.promises.readFile(filePath, "utf-8");
+                const raw = await import_fs50.default.promises.readFile(filePath, "utf-8");
                 items = items.concat(JSON.parse(raw));
               } catch (err) {
                 console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -59294,7 +66465,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to generate report" });
       }
     });
-    router35.post("/create-return", async (req, res) => {
+    router37.post("/create-return", async (req, res) => {
       const { inventory_id, quantity, loss_percentage } = req.body;
       if (!inventory_id || !quantity) {
         return res.status(400).json({ error: "inventory_id and quantity are required" });
@@ -59381,7 +66552,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/send-alerts", async (req, res) => {
+    router37.post("/send-alerts", async (req, res) => {
       const { phone, days } = req.body;
       const targetDays = days ? parseInt(days, 10) : 90;
       try {
@@ -59440,7 +66611,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to queue summary report alerts via WhatsApp" });
       }
     });
-    expiry_default = router35;
+    expiry_default = router37;
   }
 });
 
@@ -59449,19 +66620,19 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express36, import_path55, import_url45, __filename43, __dirname43, DB_PATH29, router36, compliance_default;
+var import_express38, import_path57, import_url45, __filename43, __dirname43, DB_PATH29, router38, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
-    import_express36 = __toESM(require("express"), 1);
+    import_express38 = __toESM(require("express"), 1);
     init_connection();
-    import_path55 = __toESM(require("path"), 1);
+    import_path57 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
-    __dirname43 = import_path55.default.dirname(__filename43);
-    DB_PATH29 = process.env.DB_PATH || import_path55.default.resolve(__dirname43, "..", "..", "data", "app.db");
-    router36 = import_express36.default.Router();
-    router36.get("/", async (_req, res) => {
+    __dirname43 = import_path57.default.dirname(__filename43);
+    DB_PATH29 = process.env.DB_PATH || import_path57.default.resolve(__dirname43, "..", "..", "data", "app.db");
+    router38 = import_express38.default.Router();
+    router38.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const expiredCount = await db2.get(`
@@ -59485,7 +66656,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/add", async (req, res) => {
+    router38.post("/add", async (req, res) => {
       const { date, product, patient_id, doctor_id, license_no, qty, bill_no } = req.body;
       if (!date || !product) return res.status(400).json({ error: "Missing required fields" });
       try {
@@ -59500,7 +66671,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.post("/add-schedule-h1", async (req, res) => {
+    router38.post("/add-schedule-h1", async (req, res) => {
       const { drug_name, patient_name, doctor_name, date, license_no, qty, bill_no } = req.body;
       if (!drug_name || !patient_name || !doctor_name) {
         return res.status(400).json({ error: "Missing required fields: drug_name, patient_name, doctor_name" });
@@ -59518,7 +66689,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/dashboard", async (_req, res) => {
+    router38.get("/dashboard", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
@@ -59557,7 +66728,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Failed to load compliance dashboard metrics" });
       }
     });
-    router36.get("/h1-register", async (req, res) => {
+    router38.get("/h1-register", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { startDate, endDate, search, doctor, scheduleType } = req.query;
@@ -59592,7 +66763,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.put("/:id/doctor", async (req, res) => {
+    router38.put("/:id/doctor", async (req, res) => {
       const { id } = req.params;
       const { doctor_name, license_no } = req.body;
       if (!doctor_name) {
@@ -59622,7 +66793,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router36.get("/export", async (req, res) => {
+    router38.get("/export", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT date, drug_name, patient_name, doctor_name, license_no, qty, bill_no, schedule_type FROM compliance_logs ORDER BY id DESC");
@@ -59649,7 +66820,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Export failed" });
       }
     });
-    compliance_default = router36;
+    compliance_default = router38;
   }
 });
 
@@ -59822,14 +66993,14 @@ function mergeMetadata(existingJson, patch) {
   }
   return JSON.stringify({ ...existing, ...patch });
 }
-var import_express37, router37, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
+var import_express39, router39, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
 var init_scheduleDrugs = __esm({
   "src/routes/scheduleDrugs.ts"() {
     "use strict";
-    import_express37 = __toESM(require("express"), 1);
+    import_express39 = __toESM(require("express"), 1);
     init_connection();
     init_scheduleResearchService();
-    router37 = import_express37.default.Router();
+    router39 = import_express39.default.Router();
     VALID_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
     MAX_LIMIT2 = 100;
     STOCK_JOIN = `
@@ -59839,7 +67010,7 @@ var init_scheduleDrugs = __esm({
     WHERE is_active = 1
     GROUP BY medicine_id
   ) inv ON inv.medicine_id = m.id`;
-    router37.get("/summary", async (_req, res) => {
+    router39.get("/summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -59860,7 +67031,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule summary" });
       }
     });
-    router37.get("/", async (req, res) => {
+    router39.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const type = normalizeType(String(req.query.type || ""));
@@ -59913,7 +67084,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule medicines" });
       }
     });
-    router37.get("/unclassified", async (req, res) => {
+    router39.get("/unclassified", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const q = String(req.query.q || "").trim();
@@ -59951,7 +67122,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load unclassified medicines" });
       }
     });
-    router37.get("/research", async (req, res) => {
+    router39.get("/research", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.query.id || ""), 10);
@@ -59981,7 +67152,7 @@ var init_scheduleDrugs = __esm({
       }
     });
     VALID_SAVE_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
-    router37.post("/classify", async (req, res) => {
+    router39.post("/classify", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.body?.id || ""), 10);
@@ -60011,7 +67182,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to save classification" });
       }
     });
-    scheduleDrugs_default = router37;
+    scheduleDrugs_default = router39;
   }
 });
 
@@ -60020,14 +67191,14 @@ var emailOrderReviews_exports = {};
 __export(emailOrderReviews_exports, {
   default: () => emailOrderReviews_default
 });
-var import_express38, router38, emailOrderReviews_default;
+var import_express40, router40, emailOrderReviews_default;
 var init_emailOrderReviews = __esm({
   "src/routes/emailOrderReviews.ts"() {
     "use strict";
-    import_express38 = __toESM(require("express"), 1);
+    import_express40 = __toESM(require("express"), 1);
     init_connection();
-    router38 = import_express38.default.Router();
-    router38.get("/", async (req, res) => {
+    router40 = import_express40.default.Router();
+    router40.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { status } = req.query;
@@ -60046,7 +67217,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router38.post("/:id/dismiss", async (req, res) => {
+    router40.post("/:id/dismiss", async (req, res) => {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) {
         return res.status(400).json({ error: "Invalid review id" });
@@ -60066,7 +67237,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    emailOrderReviews_default = router38;
+    emailOrderReviews_default = router40;
   }
 });
 
@@ -60076,31 +67247,31 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express39, import_crypto4, import_path56, import_fs49, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router39, upload_default;
+var import_express41, import_crypto6, import_path58, import_fs51, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router41, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
-    import_express39 = __toESM(require("express"), 1);
-    import_crypto4 = __toESM(require("crypto"), 1);
-    import_path56 = __toESM(require("path"), 1);
-    import_fs49 = __toESM(require("fs"), 1);
+    import_express41 = __toESM(require("express"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
+    import_path58 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
     import_url46 = require("url");
     init_connection();
     init_config();
     __filename44 = (0, import_url46.fileURLToPath)(import_meta_url);
-    __dirname44 = import_path56.default.dirname(__filename44);
-    UPLOAD_DIR = import_path56.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR4 = import_path56.default.join(UPLOAD_DIR, "temp");
-    RAW_DIR = import_path56.default.resolve(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs49.default.existsSync(UPLOAD_DIR)) {
-      import_fs49.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+    __dirname44 = import_path58.default.dirname(__filename44);
+    UPLOAD_DIR = import_path58.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR4 = import_path58.default.join(UPLOAD_DIR, "temp");
+    RAW_DIR = import_path58.default.resolve(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs51.default.existsSync(UPLOAD_DIR)) {
+      import_fs51.default.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
-    if (!import_fs49.default.existsSync(TEMP_DIR4)) {
-      import_fs49.default.mkdirSync(TEMP_DIR4, { recursive: true });
+    if (!import_fs51.default.existsSync(TEMP_DIR4)) {
+      import_fs51.default.mkdirSync(TEMP_DIR4, { recursive: true });
     }
-    if (!import_fs49.default.existsSync(RAW_DIR)) {
-      import_fs49.default.mkdirSync(RAW_DIR, { recursive: true });
+    if (!import_fs51.default.existsSync(RAW_DIR)) {
+      import_fs51.default.mkdirSync(RAW_DIR, { recursive: true });
     }
     ALLOWED_UPLOAD_EXTENSIONS = /\.(csv|xlsx?|pdf|zip|jpg|jpeg|png|gif|bmp|tiff?)$/i;
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
@@ -60110,7 +67281,7 @@ var init_upload = __esm({
       },
       filename: (_req, file, cb) => {
         const sanitized = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-        cb(null, Date.now() + "-" + import_crypto4.default.randomBytes(4).toString("hex") + "-" + sanitized);
+        cb(null, Date.now() + "-" + import_crypto6.default.randomBytes(4).toString("hex") + "-" + sanitized);
       }
     });
     upload3 = (0, import_multer3.default)({
@@ -60124,25 +67295,25 @@ var init_upload = __esm({
         }
       }
     });
-    router39 = import_express39.default.Router();
-    router39.post("/upload", upload3.single("file"), async (req, res) => {
+    router41 = import_express41.default.Router();
+    router41.post("/upload", upload3.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
         const tempPath = req.file.path;
-        const originalName = req.file.originalname || import_path56.default.basename(tempPath);
+        const originalName = req.file.originalname || import_path58.default.basename(tempPath);
         const timestamp = Date.now();
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const rawFileName = `${timestamp}-${sanitizedName}`;
-        const rawPath = import_path56.default.join(RAW_DIR, rawFileName);
-        import_fs49.default.copyFileSync(tempPath, rawPath);
+        const rawPath = import_path58.default.join(RAW_DIR, rawFileName);
+        import_fs51.default.copyFileSync(tempPath, rawPath);
         try {
-          import_fs49.default.unlinkSync(tempPath);
+          import_fs51.default.unlinkSync(tempPath);
         } catch (err) {
           console.warn("Failed to delete temporary upload file:", err);
         }
-        const ext = import_path56.default.extname(originalName).toLowerCase();
+        const ext = import_path58.default.extname(originalName).toLowerCase();
         if (![".csv", ".xlsx", ".xls", ".pdf"].includes(ext)) {
           return res.status(400).json({ error: "Unsupported file format. Please upload a CSV, PDF, or Excel file." });
         }
@@ -60167,7 +67338,471 @@ var init_upload = __esm({
         res.status(500).json({ error: error.message || "Internal server error during upload" });
       }
     });
-    upload_default = router39;
+    upload_default = router41;
+  }
+});
+
+// src/routes/catalogImages.ts
+var catalogImages_exports = {};
+__export(catalogImages_exports, {
+  default: () => catalogImages_default
+});
+var import_express42, router42, catalogImages_default;
+var init_catalogImages = __esm({
+  "src/routes/catalogImages.ts"() {
+    "use strict";
+    import_express42 = __toESM(require("express"), 1);
+    init_catalogImageService();
+    init_connection();
+    router42 = import_express42.default.Router();
+    router42.get("/", async (req, res) => {
+      try {
+        const status = typeof req.query.status === "string" ? req.query.status : void 0;
+        const search = typeof req.query.search === "string" ? req.query.search : void 0;
+        const medicine_id = req.query.medicine_id ? parseInt(String(req.query.medicine_id), 10) : void 0;
+        const groupByMedicine = req.query.group_by_medicine === "true" || req.query.groupByMedicine === "true";
+        const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+        const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+        const result = await catalogImageService.getImages({
+          status,
+          search,
+          medicine_id,
+          groupByMedicine,
+          page,
+          limit
+        });
+        res.json({
+          success: true,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch catalog images" });
+      }
+    });
+    router42.get("/counts", async (req, res) => {
+      try {
+        const counts = await catalogImageService.getCounts();
+        res.json({
+          success: true,
+          counts
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching counts:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch counts" });
+      }
+    });
+    router42.get("/queue", async (req, res) => {
+      try {
+        const category = typeof req.query.category === "string" ? req.query.category : void 0;
+        const search = typeof req.query.search === "string" ? req.query.search : void 0;
+        const status = typeof req.query.status === "string" ? req.query.status : "unresolved";
+        const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+        const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+        const result = await catalogImageService.getCorrectionQueue({
+          category,
+          search,
+          status,
+          page,
+          limit
+        });
+        res.json({
+          success: true,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching correction queue:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch correction queue" });
+      }
+    });
+    router42.get("/stats", async (req, res) => {
+      try {
+        const stats = await catalogImageService.getCorrectionStats();
+        res.json({
+          success: true,
+          stats
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching correction stats:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch correction stats" });
+      }
+    });
+    router42.get("/:id", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get(
+          `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ci.id = ?`,
+          [id]
+        );
+        if (!image) {
+          return res.status(404).json({ success: false, error: "Image not found" });
+        }
+        const rejections = await db2.all(
+          "SELECT * FROM catalog_image_rejections WHERE medicine_id = ? ORDER BY created_at DESC",
+          [image.medicine_id]
+        );
+        res.json({
+          success: true,
+          image,
+          rejections
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching image details:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch image details" });
+      }
+    });
+    router42.post("/:id/approve", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const verifiedBy = req.body?.verified_by || "pharmacist";
+        const medicineEdits = req.body?.medicine_edits;
+        if (medicineEdits && Object.keys(medicineEdits).length > 0) {
+          const db2 = await dbManager.getConnection();
+          const imageRow = await db2.get("SELECT medicine_id FROM catalog_images WHERE id = ?", [id]);
+          if (imageRow?.medicine_id) {
+            const updates = [];
+            const vals = [];
+            if (medicineEdits.name !== void 0) {
+              updates.push("name = ?");
+              vals.push(medicineEdits.name);
+            }
+            if (medicineEdits.manufacturer !== void 0) {
+              updates.push("manufacturer = ?");
+              vals.push(medicineEdits.manufacturer);
+            }
+            if (medicineEdits.mrp !== void 0) {
+              updates.push("mrp = ?");
+              vals.push(medicineEdits.mrp);
+            }
+            if (updates.length > 0) {
+              vals.push(imageRow.medicine_id);
+              await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, vals);
+            }
+          }
+        }
+        const ok = await catalogImageService.approveImage(id, verifiedBy);
+        if (!ok) {
+          return res.status(404).json({ success: false, error: "Image not found" });
+        }
+        res.json({
+          success: true,
+          message: "Image approved successfully. It is now the active catalogue image."
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error approving image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to approve image" });
+      }
+    });
+    router42.post("/:id/reject", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const reason = req.body?.reason || "Incorrect product image";
+        const verifiedBy = req.body?.verified_by || "pharmacist";
+        const result = await catalogImageService.rejectImage(id, reason, verifiedBy);
+        if (!result.success) {
+          return res.status(404).json({ success: false, error: "Image not found" });
+        }
+        res.json({
+          message: "Image rejected. Candidate logged to exclusion list and auto re-download initiated.",
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error rejecting image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to reject image" });
+      }
+    });
+    router42.post("/:id/remove", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const verifiedBy = req.body?.verified_by || "pharmacist";
+        const ok = await catalogImageService.removeImage(id, verifiedBy);
+        if (!ok) {
+          return res.status(404).json({ success: false, error: "Image not found" });
+        }
+        res.json({
+          success: true,
+          message: "Image removed from active catalogue. Medicine record remains intact."
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error removing image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to remove image" });
+      }
+    });
+    router42.post("/:id/replace", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const { new_image_path, source_url, verified_by } = req.body;
+        if (!new_image_path) {
+          return res.status(400).json({ success: false, error: "new_image_path is required" });
+        }
+        const newRecord = await catalogImageService.replaceImage(
+          id,
+          new_image_path,
+          source_url || null,
+          verified_by || "pharmacist"
+        );
+        if (!newRecord) {
+          return res.status(404).json({ success: false, error: "Original image not found" });
+        }
+        res.json({
+          success: true,
+          message: "Image replaced successfully.",
+          image: newRecord
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error replacing image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
+      }
+    });
+    router42.post("/:id/redownload", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT medicine_id, retry_count FROM catalog_images WHERE id = ?", [id]);
+        if (!current) {
+          return res.status(404).json({ success: false, error: "Image not found" });
+        }
+        const newRecord = await catalogImageService.searchAndDownloadCandidate(
+          current.medicine_id,
+          (current.retry_count || 0) + 1
+        );
+        if (!newRecord) {
+          return res.json({
+            success: false,
+            message: "No new alternative candidate image found online."
+          });
+        }
+        res.json({
+          success: true,
+          message: "New candidate downloaded and scored successfully.",
+          image: newRecord
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error re-downloading image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to re-download image" });
+      }
+    });
+    router42.post("/sync-state", async (req, res) => {
+      try {
+        const result = await catalogImageService.syncExistingDownloadedImages();
+        res.json({
+          success: true,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error syncing state:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to sync image state" });
+      }
+    });
+    router42.post("/audit", async (req, res) => {
+      try {
+        const report = await catalogImageService.auditImageHealth();
+        res.json({
+          success: true,
+          ...report
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error auditing images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to audit images" });
+      }
+    });
+    router42.post("/auto-approve", async (req, res) => {
+      try {
+        const result = await catalogImageService.autoApproveHighConfidence();
+        res.json({
+          success: true,
+          message: `Successfully evaluated ${result.evaluated} images and approved ${result.approved} verified active images.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error auto-approving images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to auto-approve images" });
+      }
+    });
+    router42.post("/scan-local", async (req, res) => {
+      try {
+        const result = await catalogImageService.scanAndAutoMatchLocalImages();
+        res.json({
+          success: true,
+          message: `Scan complete: ${result.matched} auto-matched, ${result.pending_review} need review, ${result.unmatched} unmatched, ${result.skipped} already linked.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error scanning local images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to scan local images" });
+      }
+    });
+    router42.post("/cleanup", async (req, res) => {
+      try {
+        const { purgeRejected, purgeMissingFiles, purgeOrphans } = req.body || {};
+        const result = await catalogImageService.cleanStaleAndRejectedImages({
+          purgeRejected,
+          purgeMissingFiles,
+          purgeOrphans
+        });
+        res.json({
+          success: true,
+          message: `Image cleanup complete: purged ${result.purged_rejected} rejected, ${result.purged_missing_files} missing files, ${result.purged_orphans} orphans. Active verified remaining: ${result.active_verified}.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error cleaning up images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to clean up images" });
+      }
+    });
+    router42.post("/audit-fix", async (req, res) => {
+      try {
+        const result = await catalogImageService.auditAndDeactivateMismatchedImages();
+        res.json({
+          success: true,
+          message: `Audit & cleanup complete: evaluated ${result.total_audited} images. Deactivated ${result.total_deactivated} wrong images (${result.dosage_form_conflicts} form conflicts, ${result.strength_conflicts} strength conflicts, ${result.brand_mismatches} brand mismatches). ${result.remaining_active} verified good images remain active.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error auditing & deactivating mismatches:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to audit and fix mismatches" });
+      }
+    });
+    router42.post("/repair-missing", async (req, res) => {
+      try {
+        const limit = req.body?.limit ? parseInt(String(req.body.limit), 10) : 50;
+        const result = await catalogImageService.repairMissingImages(limit);
+        res.json({
+          success: true,
+          message: `Scanned ${result.scanned} medicines: repaired ${result.repaired}, ${result.failed} not found/failed.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error repairing missing images:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to repair missing images" });
+      }
+    });
+    router42.post("/:id/correct", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const verifiedBy = req.body?.verified_by || "admin";
+        const imageType = req.body?.image_type || void 0;
+        const isPrimary = typeof req.body?.is_primary === "boolean" ? req.body.is_primary : void 0;
+        const ok = await catalogImageService.markImageCorrect(id, verifiedBy, imageType, isPrimary);
+        if (!ok) return res.status(404).json({ success: false, error: "Image not found" });
+        res.json({ success: true, message: "Image marked as correct and verified." });
+      } catch (err) {
+        console.error("[CatalogImages API] Error marking correct:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to mark correct" });
+      }
+    });
+    router42.post("/:id/incorrect", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const reason = req.body?.reason || "Incorrect image";
+        const reasonCode = req.body?.reason_code || void 0;
+        const verifiedBy = req.body?.verified_by || "admin";
+        const result = await catalogImageService.markImageIncorrect(id, reason, verifiedBy, reasonCode);
+        if (!result.success) return res.status(404).json({ success: false, error: result.message || "Image not found" });
+        res.json(result);
+      } catch (err) {
+        console.error("[CatalogImages API] Error marking incorrect:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to mark incorrect" });
+      }
+    });
+    router42.post("/:id/skip", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const hours = parseInt(String(req.body?.hours || 24), 10);
+        const reason = req.body?.reason || "Temporarily skipped";
+        const verifiedBy = req.body?.verified_by || "admin";
+        const ok = await catalogImageService.skipImage(id, hours, reason, verifiedBy);
+        if (!ok) return res.status(404).json({ success: false, error: "Image not found" });
+        res.json({ success: true, message: `Image review skipped for ${hours} hours.` });
+      } catch (err) {
+        console.error("[CatalogImages API] Error skipping image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to skip image" });
+      }
+    });
+    router42.post("/:id/search-candidates", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT medicine_id FROM catalog_images WHERE id = ?", [id]);
+        if (!current) return res.status(404).json({ success: false, error: "Image not found" });
+        const queryOverride = req.body?.query || void 0;
+        const imageType = req.body?.image_type || void 0;
+        const candidates = await catalogImageService.searchCandidates(current.medicine_id, queryOverride, imageType);
+        res.json({ success: true, candidates });
+      } catch (err) {
+        console.error("[CatalogImages API] Error searching candidates:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to search candidate images" });
+      }
+    });
+    router42.post("/:id/replace-candidate", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const { candidate_url, candidate_title, verified_by, image_type, is_primary, keep_existing } = req.body;
+        if (!candidate_url) {
+          return res.status(400).json({ success: false, error: "candidate_url is required" });
+        }
+        const newRecord = await catalogImageService.replaceWithCandidate(
+          id,
+          candidate_url,
+          candidate_title,
+          verified_by || "admin",
+          image_type,
+          is_primary,
+          !!keep_existing
+        );
+        if (!newRecord) return res.status(404).json({ success: false, error: "Original image not found" });
+        res.json({ success: true, message: "Image successfully saved and verified.", image: newRecord });
+      } catch (err) {
+        console.error("[CatalogImages API] Error replacing candidate:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
+      }
+    });
+    router42.get("/medicine/:medicineId/gallery", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        const images = await catalogImageService.getMedicineGallery(medicineId);
+        res.json({ success: true, images });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching medicine gallery:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch gallery" });
+      }
+    });
+    router42.post("/:id/reopen", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const verifiedBy = req.body?.verified_by || "admin";
+        const ok = await catalogImageService.reopenImage(id, verifiedBy);
+        if (!ok) return res.status(404).json({ success: false, error: "Image not found" });
+        res.json({ success: true, message: "Image reopened for review." });
+      } catch (err) {
+        console.error("[CatalogImages API] Error reopening image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to reopen image" });
+      }
+    });
+    router42.get("/:id/history", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT medicine_id FROM catalog_images WHERE id = ?", [id]);
+        if (!current) return res.status(404).json({ success: false, error: "Image not found" });
+        const history = await catalogImageService.getImageHistory(current.medicine_id);
+        res.json({ success: true, history });
+      } catch (err) {
+        console.error("[CatalogImages API] Error fetching history:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to fetch history" });
+      }
+    });
+    catalogImages_default = router42;
   }
 });
 
@@ -60176,16 +67811,16 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express40, import_fs50, router40, catalog_default;
+var import_express43, import_fs52, router43, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
-    import_express40 = __toESM(require("express"), 1);
-    import_fs50 = __toESM(require("fs"), 1);
+    import_express43 = __toESM(require("express"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
-    router40 = import_express40.default.Router();
-    router40.get("/catalog/job/:id", async (req, res) => {
+    router43 = import_express43.default.Router();
+    router43.get("/catalog/job/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const job = await db2.get(`SELECT * FROM catalog_jobs WHERE id = ?`, req.params.id);
@@ -60229,7 +67864,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error fetching job" });
       }
     });
-    router40.post("/catalog/job/:id/pause", async (req, res) => {
+    router43.post("/catalog/job/:id/pause", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -60260,7 +67895,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error pausing job" });
       }
     });
-    router40.post("/catalog/job/:id/resume", async (req, res) => {
+    router43.post("/catalog/job/:id/resume", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -60296,7 +67931,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error resuming job" });
       }
     });
-    router40.post("/catalog/import-job/:id", async (req, res) => {
+    router43.post("/catalog/import-job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const { mappings, filters } = req.body;
@@ -60333,7 +67968,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.post("/catalog/import", async (req, res) => {
+    router43.post("/catalog/import", async (req, res) => {
       const { medicines } = req.body;
       if (!Array.isArray(medicines)) {
         return res.status(400).json({ error: "Invalid payload, expected array of medicines" });
@@ -60363,7 +67998,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error during import" });
       }
     });
-    router40.get("/jobs", async (req, res) => {
+    router43.get("/jobs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const jobs = await db2.all("SELECT * FROM catalog_jobs ORDER BY created_at DESC LIMIT 1000");
@@ -60375,7 +68010,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.delete("/catalog/job/:id", async (req, res) => {
+    router43.delete("/catalog/job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -60384,9 +68019,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs50.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs52.default.existsSync(job.file_path)) {
           try {
-            import_fs50.default.unlinkSync(job.file_path);
+            import_fs52.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -60399,7 +68034,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error deleting job" });
       }
     });
-    router40.get("/catalog/reviews/pending", async (req, res) => {
+    router43.get("/catalog/reviews/pending", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const source = req.query.source || "whatsapp";
@@ -60431,7 +68066,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router40.get("/catalog/job/:id/reviews", async (req, res) => {
+    router43.get("/catalog/job/:id/reviews", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const reviews = await db2.all(
@@ -60462,7 +68097,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router40.post("/catalog/review/:id/approve", async (req, res) => {
+    router43.post("/catalog/review/:id/approve", async (req, res) => {
       const { approvedData } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -60562,7 +68197,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router40.post("/catalog/review/:id/reject", async (req, res) => {
+    router43.post("/catalog/review/:id/reject", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
@@ -60583,7 +68218,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router40.post("/catalog/review/:id/enrich", async (req, res) => {
+    router43.post("/catalog/review/:id/enrich", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const review = await db2.get("SELECT * FROM staged_medicine_reviews WHERE id = ?", req.params.id);
@@ -60633,7 +68268,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router40.get("/catalog/search-status", async (req, res) => {
+    router43.get("/catalog/search-status", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limitRow = await db2.get("SELECT value FROM app_settings WHERE key = 'google_search_daily_limit'");
@@ -60649,7 +68284,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    catalog_default = router40;
+    catalog_default = router43;
   }
 });
 
@@ -60658,16 +68293,16 @@ var medicines_exports = {};
 __export(medicines_exports, {
   default: () => medicines_default
 });
-var import_express41, router41, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
+var import_express44, router44, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
 var init_medicines = __esm({
   "src/routes/medicines.ts"() {
     "use strict";
-    import_express41 = __toESM(require("express"), 1);
+    import_express44 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
     init_packaging();
     init_nameNormalizer();
-    router41 = import_express41.default.Router();
+    router44 = import_express44.default.Router();
     normalizeNumericSearch2 = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -60679,7 +68314,7 @@ var init_medicines = __esm({
       }
       return cleaned;
     };
-    router41.get("/medicines", async (req, res) => {
+    router44.get("/medicines", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 100;
@@ -60860,7 +68495,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.post("/medicines", async (req, res) => {
+    router44.post("/medicines", async (req, res) => {
       const {
         name,
         generic_name,
@@ -60956,7 +68591,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.post("/medicines/bulk-delete", async (req, res) => {
+    router44.post("/medicines/bulk-delete", async (req, res) => {
       const { ids, all, search, productName, mrpFilter, apiFilter, packagingFilter, distributorFilter, category } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -61043,7 +68678,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.delete("/medicines/:id", async (req, res) => {
+    router44.delete("/medicines/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -61097,8 +68732,8 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during online search" });
       }
     };
-    router41.get("/online-search", handleOnlineSearch);
-    router41.get("/medicines/online-search", handleOnlineSearch);
+    router44.get("/online-search", handleOnlineSearch);
+    router44.get("/medicines/online-search", handleOnlineSearch);
     handleAutoEnrich = async (req, res) => {
       const { name, api_reference, manufacturer } = req.body;
       if (!name || !name.trim()) {
@@ -61137,9 +68772,9 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error saving enrichment" });
       }
     };
-    router41.post("/auto-enrich", handleAutoEnrich);
-    router41.post("/medicines/auto-enrich", handleAutoEnrich);
-    router41.get("/manufacturers", async (req, res) => {
+    router44.post("/auto-enrich", handleAutoEnrich);
+    router44.post("/medicines/auto-enrich", handleAutoEnrich);
+    router44.get("/manufacturers", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -61172,7 +68807,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.get("/marketed-by", async (req, res) => {
+    router44.get("/marketed-by", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -61205,7 +68840,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.get("/medicines/compact", async (req, res) => {
+    router44.get("/medicines/compact", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const items = await inventoryCache.get(db2);
@@ -61217,7 +68852,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.get("/medicines/:id/quick-details", async (req, res) => {
+    router44.get("/medicines/:id/quick-details", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -61254,7 +68889,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router41.post("/medicines/seed-master", async (req, res) => {
+    router44.post("/medicines/seed-master", async (req, res) => {
       try {
         const { seedMasterMedicines: seedMasterMedicines2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await seedMasterMedicines2(true);
@@ -61264,7 +68899,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to seed master medicines: " + error.message });
       }
     });
-    router41.post("/medicines/sync-from-inventory", async (req, res) => {
+    router44.post("/medicines/sync-from-inventory", async (req, res) => {
       try {
         const { syncInventoryToMaster: syncInventoryToMaster2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await syncInventoryToMaster2();
@@ -61274,7 +68909,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to sync inventory to master: " + error.message });
       }
     });
-    router41.put("/medicines/:id/quick-edit", async (req, res) => {
+    router44.put("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       const {
@@ -61494,7 +69129,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during update" });
       }
     });
-    router41.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
+    router44.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
       try {
         const { id } = req.params;
         const { allow_loose_sale } = req.body;
@@ -61511,7 +69146,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
       }
     });
-    router41.post("/medicines/merge", async (req, res) => {
+    router44.post("/medicines/merge", async (req, res) => {
       const { primaryMedicineId, secondaryMedicineId, secondaryMedicineIds: rawSecondaryIds, distributorId, billName } = req.body;
       const secondaryIds = Array.isArray(rawSecondaryIds) ? rawSecondaryIds.map(Number).filter((n) => !isNaN(n) && n > 0) : secondaryMedicineId && !isNaN(Number(secondaryMedicineId)) && Number(secondaryMedicineId) > 0 ? [Number(secondaryMedicineId)] : [];
       if (!primaryMedicineId || isNaN(Number(primaryMedicineId)) || secondaryIds.length === 0) {
@@ -61634,7 +69269,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to merge medicines: " + error.message });
       }
     });
-    medicines_default = router41;
+    medicines_default = router44;
   }
 });
 
@@ -61643,13 +69278,13 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express42, import_fs51, import_path57, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router42, upload4, enrichment_default;
+var import_express45, import_fs53, import_path59, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router45, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
-    import_express42 = __toESM(require("express"), 1);
-    import_fs51 = __toESM(require("fs"), 1);
-    import_path57 = __toESM(require("path"), 1);
+    import_express45 = __toESM(require("express"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
+    import_path59 = __toESM(require("path"), 1);
     import_url47 = require("url");
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
@@ -61657,12 +69292,12 @@ var init_enrichment = __esm({
     init_onlineDataEnricher();
     init_config();
     __filename45 = (0, import_url47.fileURLToPath)(import_meta_url);
-    __dirname45 = import_path57.default.dirname(__filename45);
-    DATA_DIR2 = import_path57.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path57.default.join(DATA_DIR2, "reference_medicines.csv");
-    router42 = import_express42.default.Router();
+    __dirname45 = import_path59.default.dirname(__filename45);
+    DATA_DIR2 = import_path59.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path59.default.join(DATA_DIR2, "reference_medicines.csv");
+    router45 = import_express45.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-    router42.get("/enrichment/status", async (_req, res) => {
+    router45.get("/enrichment/status", async (_req, res) => {
       try {
         const status = await getEnrichmentStatus();
         res.json(status);
@@ -61671,7 +69306,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/enrichment/start", async (_req, res) => {
+    router45.post("/enrichment/start", async (_req, res) => {
       try {
         if (getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is already running" });
@@ -61686,7 +69321,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/enrichment/stop", async (_req, res) => {
+    router45.post("/enrichment/stop", async (_req, res) => {
       try {
         if (!getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is not currently running" });
@@ -61698,7 +69333,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/enrichment/backfill-suggestions", async (_req, res) => {
+    router45.post("/enrichment/backfill-suggestions", async (_req, res) => {
       try {
         const result = await backfillSuggestedCompositions();
         res.json({ success: true, updated: result.updated });
@@ -61707,7 +69342,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
+    router45.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
       try {
         const result = await reclassifyNonPharmaProducts();
         res.json({ success: true, updated: result.updated });
@@ -61716,7 +69351,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/reference/reload-from-disk", async (_req, res) => {
+    router45.post("/reference/reload-from-disk", async (_req, res) => {
       try {
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
@@ -61731,7 +69366,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/reference/import", upload4.single("file"), async (req, res) => {
+    router45.post("/reference/import", upload4.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -61740,8 +69375,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs51.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs51.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs53.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs53.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -61755,7 +69390,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.get("/enrichment/reference/export", async (_req, res) => {
+    router45.get("/enrichment/reference/export", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT name, composition1, composition2, manufacturer FROM medicine_reference ORDER BY name");
@@ -61776,7 +69411,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.get("/enrichment/export", async (req, res) => {
+    router45.get("/enrichment/export", async (req, res) => {
       try {
         const status = req.query.status || "manual";
         const allowed = ["manual", "matched", "needs_review"];
@@ -61805,7 +69440,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.get("/enrichment/queue", async (req, res) => {
+    router45.get("/enrichment/queue", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -61835,7 +69470,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.put("/enrichment/queue/:id", async (req, res) => {
+    router45.put("/enrichment/queue/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         const { composition } = req.body;
@@ -61856,7 +69491,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.get("/enrichment/preview-tokens", (_req, res) => {
+    router45.get("/enrichment/preview-tokens", (_req, res) => {
       const rawName = (_req.query.name || "").trim();
       if (!rawName) {
         return res.status(400).json({ error: "name query param is required" });
@@ -61873,7 +69508,7 @@ var init_enrichment = __esm({
       const preview = tokens.filter((t) => t.included).map((t) => t.text.toUpperCase()).join(" ");
       res.json({ tokens, preview });
     });
-    router42.post("/enrichment/set-search-term", async (req, res) => {
+    router45.post("/enrichment/set-search-term", async (req, res) => {
       try {
         const id = parseInt(req.body.id);
         const searchTerm = (req.body.searchTerm || "").trim();
@@ -61894,7 +69529,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/enrichment/trigger-online/:id", async (req, res) => {
+    router45.post("/enrichment/trigger-online/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         if (!id) {
@@ -61920,7 +69555,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    enrichment_default = router42;
+    enrichment_default = router45;
   }
 });
 
@@ -61933,16 +69568,16 @@ async function ensureContactsTable(_db) {
   if (contactsTableInitialized) return;
   contactsTableInitialized = true;
 }
-var import_express43, router43, contactsTableInitialized, contacts_default;
+var import_express46, router46, contactsTableInitialized, contacts_default;
 var init_contacts = __esm({
   "src/routes/contacts.ts"() {
     "use strict";
-    import_express43 = __toESM(require("express"), 1);
+    import_express46 = __toESM(require("express"), 1);
     init_connection();
     init_distributorSyncHelper();
-    router43 = import_express43.default.Router();
+    router46 = import_express46.default.Router();
     contactsTableInitialized = false;
-    router43.get("/", async (req, res) => {
+    router46.get("/", async (req, res) => {
       const { type, search } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -61966,7 +69601,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to fetch contacts" });
       }
     });
-    router43.post("/", async (req, res) => {
+    router46.post("/", async (req, res) => {
       const { name, type = "general", phone, email, address, gstin, notes } = req.body;
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Name is required" });
@@ -62038,7 +69673,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to save contact" });
       }
     });
-    router43.put("/:id", async (req, res) => {
+    router46.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { name, type, phone, email, address, gstin, notes } = req.body;
       const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
@@ -62094,7 +69729,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to update contact" });
       }
     });
-    router43.delete("/:id", async (req, res) => {
+    router46.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -62105,7 +69740,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to delete contact" });
       }
     });
-    contacts_default = router43;
+    contacts_default = router46;
   }
 });
 
@@ -62114,19 +69749,19 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express44, import_fs52, router44, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express47, import_fs54, router47, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
-    import_express44 = __toESM(require("express"), 1);
-    import_fs52 = __toESM(require("fs"), 1);
+    import_express47 = __toESM(require("express"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
     init_eventService();
     init_distributorDispatchReminderWorker();
     init_nameNormalizer();
-    router44 = import_express44.default.Router();
+    router47 = import_express47.default.Router();
     getDistributorsHandler = async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
@@ -62136,9 +69771,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router44.get("/distributors", getDistributorsHandler);
-    router44.get("/", getDistributorsHandler);
-    router44.get("/pharmarack-list", async (_req, res) => {
+    router47.get("/distributors", getDistributorsHandler);
+    router47.get("/", getDistributorsHandler);
+    router47.get("/pharmarack-list", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM pharmarack_distributors ORDER BY store_name ASC LIMIT 1000");
@@ -62177,8 +69812,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router44.post("/distributors", postDistributorsHandler);
-    router44.post("/", postDistributorsHandler);
+    router47.post("/distributors", postDistributorsHandler);
+    router47.post("/", postDistributorsHandler);
     putDistributorHandler = async (req, res) => {
       const { id } = req.params;
       const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code } = req.body;
@@ -62209,8 +69844,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router44.put("/distributors/:id", putDistributorHandler);
-    router44.put("/:id", putDistributorHandler);
+    router47.put("/distributors/:id", putDistributorHandler);
+    router47.put("/:id", putDistributorHandler);
     deleteDistributorHandler = async (req, res) => {
       const { id } = req.params;
       try {
@@ -62218,9 +69853,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs52.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs54.default.existsSync(f.file_path)) {
               try {
-                import_fs52.default.unlinkSync(f.file_path);
+                import_fs54.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -62245,9 +69880,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router44.delete("/distributors/:id", deleteDistributorHandler);
-    router44.delete("/:id", deleteDistributorHandler);
-    router44.post("/purchases", async (req, res) => {
+    router47.delete("/distributors/:id", deleteDistributorHandler);
+    router47.delete("/:id", deleteDistributorHandler);
+    router47.post("/purchases", async (req, res) => {
       const { distributor, invoice_no, total_amount } = req.body;
       try {
         const cleanDist = (distributor || "").trim();
@@ -62270,7 +69905,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router44.post("/returns/reconcile-credit", async (req, res) => {
+    router47.post("/returns/reconcile-credit", async (req, res) => {
       const { distributor_id, actual_credit_amount, purchase_id } = req.body;
       if (!distributor_id || actual_credit_amount === void 0) {
         return res.status(400).json({ error: "distributor_id and actual_credit_amount are required" });
@@ -62284,7 +69919,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router44.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
+    router47.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -62302,7 +69937,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    distributors_default = router44;
+    distributors_default = router47;
   }
 });
 
@@ -62436,18 +70071,18 @@ async function checkDeviceConnections() {
     console.error("Error during periodic device monitoring:", err);
   }
 }
-var import_express45, import_qrcode5, import_os, router45, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
+var import_express48, import_qrcode5, import_os, router48, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
 var init_notifications2 = __esm({
   "src/routes/notifications.ts"() {
     "use strict";
-    import_express45 = __toESM(require("express"), 1);
+    import_express48 = __toESM(require("express"), 1);
     init_eventService();
     init_connection();
     import_qrcode5 = __toESM(require("qrcode"), 1);
     import_os = __toESM(require("os"), 1);
     init_config();
-    router45 = import_express45.default.Router();
-    router45.get("/notifications/connection-info", async (req, res) => {
+    router48 = import_express48.default.Router();
+    router48.get("/notifications/connection-info", async (req, res) => {
       try {
         const interfaces = import_os.default.networkInterfaces();
         const ips = [];
@@ -62480,16 +70115,16 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to generate connection info: " + err.message });
       }
     });
-    router45.get("/notifications/download-apk", (req, res) => {
-      const fs54 = require("fs");
-      const path59 = require("path");
+    router48.get("/notifications/download-apk", (req, res) => {
+      const fs56 = require("fs");
+      const path61 = require("path");
       const candidatePaths = [
-        path59.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path59.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path59.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path59.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path61.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path61.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path61.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path61.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs54.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs56.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -62499,7 +70134,7 @@ var init_notifications2 = __esm({
         message: "Place pharmacy-mobile.apk inside the data/ folder to enable direct mobile APK downloads."
       });
     });
-    router45.get("/notifications/stream", (req, res) => {
+    router48.get("/notifications/stream", (req, res) => {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
@@ -62528,7 +70163,7 @@ var init_notifications2 = __esm({
     deviceOnlineStateCache = /* @__PURE__ */ new Map();
     blockedNoticeAt = /* @__PURE__ */ new Map();
     deviceUuidColumnReady = false;
-    router45.post("/notifications/register-token", async (req, res) => {
+    router48.post("/notifications/register-token", async (req, res) => {
       const { token, deviceName, os: os2, device_uuid } = req.body;
       if (!token) {
         return res.status(400).json({ error: "Token is required" });
@@ -62611,7 +70246,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to register token: " + err.message });
       }
     });
-    router45.get("/notifications/devices", async (req, res) => {
+    router48.get("/notifications/devices", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await ensureDeviceUuidColumn(db2);
@@ -62647,7 +70282,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get devices: " + err.message });
       }
     });
-    router45.put("/notifications/devices/:token/block", async (req, res) => {
+    router48.put("/notifications/devices/:token/block", async (req, res) => {
       const { token } = req.params;
       const { blocked } = req.body;
       if (typeof blocked !== "boolean") {
@@ -62681,7 +70316,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to update block state: " + err.message });
       }
     });
-    router45.patch("/notifications/devices/:token/rename", async (req, res) => {
+    router48.patch("/notifications/devices/:token/rename", async (req, res) => {
       const { token } = req.params;
       const { name } = req.body;
       if (!name || !name.trim()) {
@@ -62696,7 +70331,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to rename device: " + err.message });
       }
     });
-    router45.get("/notifications/devices/logs", async (req, res) => {
+    router48.get("/notifications/devices/logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM device_connection_logs ORDER BY timestamp DESC LIMIT 150");
@@ -62706,7 +70341,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router45.post("/notifications/devices/logs/clear", async (req, res) => {
+    router48.post("/notifications/devices/logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM device_connection_logs");
@@ -62716,7 +70351,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router45.get("/notifications/action-logs", async (req, res) => {
+    router48.get("/notifications/action-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { category, status, search, limit = "250", offset = "0" } = req.query;
@@ -62762,7 +70397,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router45.post("/notifications/action-logs/clear", async (req, res) => {
+    router48.post("/notifications/action-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM action_logs");
@@ -62772,7 +70407,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router45.delete("/notifications/action-logs/:id", async (req, res) => {
+    router48.delete("/notifications/action-logs/:id", async (req, res) => {
       const { id } = req.params;
       const numId = parseInt(id, 10);
       if (isNaN(numId)) {
@@ -62787,7 +70422,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to delete action log: " + err.message });
       }
     });
-    router45.post("/notifications/chat-logs", async (req, res) => {
+    router48.post("/notifications/chat-logs", async (req, res) => {
       const { sessionId, deviceName, sender, messageText, metadata } = req.body;
       if (!sessionId || !sender || !messageText) {
         return res.status(400).json({ error: "sessionId, sender and messageText are required" });
@@ -62836,7 +70471,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to save assistant chat log: " + err.message });
       }
     });
-    router45.get("/notifications/chat-logs", async (req, res) => {
+    router48.get("/notifications/chat-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM assistant_chat_logs ORDER BY created_at ASC LIMIT 1000");
@@ -62846,7 +70481,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get assistant chat logs: " + err.message });
       }
     });
-    router45.post("/notifications/chat-logs/clear", async (req, res) => {
+    router48.post("/notifications/chat-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM assistant_chat_logs");
@@ -62877,7 +70512,7 @@ var init_notifications2 = __esm({
       checkDeviceConnections();
       tick();
     })();
-    notifications_default = router45;
+    notifications_default = router48;
   }
 });
 
@@ -62886,17 +70521,17 @@ var whatsappQueue_exports2 = {};
 __export(whatsappQueue_exports2, {
   default: () => whatsappQueue_default2
 });
-var import_express46, router46, whatsappQueue_default2;
+var import_express49, router49, whatsappQueue_default2;
 var init_whatsappQueue2 = __esm({
   "src/routes/whatsappQueue.ts"() {
     "use strict";
-    import_express46 = __toESM(require("express"), 1);
+    import_express49 = __toESM(require("express"), 1);
     init_whatsappQueueWorker();
     init_connection();
     init_whatsappClient();
     init_eventService();
-    router46 = import_express46.default.Router();
-    router46.get("/status", async (_req, res) => {
+    router49 = import_express49.default.Router();
+    router49.get("/status", async (_req, res) => {
       try {
         const state = await whatsappQueueWorker.getWorkerState();
         res.json(state);
@@ -62905,7 +70540,7 @@ var init_whatsappQueue2 = __esm({
         res.status(500).json({ error: err?.message || "Failed to fetch queue status" });
       }
     });
-    router46.post("/enqueue-distributor-collection", async (req, res) => {
+    router49.post("/enqueue-distributor-collection", async (req, res) => {
       const { orderIds, deliveryBoyPhone, deliveryBoyName } = req.body;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ error: "orderIds array is required" });
@@ -62956,7 +70591,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue collection messages" });
       }
     });
-    router46.post("/enqueue-pharmarack-batch", async (req, res) => {
+    router49.post("/enqueue-pharmarack-batch", async (req, res) => {
       const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
       if (!orders || !Array.isArray(orders) || orders.length === 0) {
         return res.status(400).json({ error: "orders array is required" });
@@ -63084,7 +70719,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue Pharmarack batch orders" });
       }
     });
-    router46.post("/enqueue-single-distributor-order", async (req, res) => {
+    router49.post("/enqueue-single-distributor-order", async (req, res) => {
       const { storeId, storeName, phone, message, items } = req.body || {};
       if (!storeName || !phone || !message) {
         return res.status(400).json({ error: "storeName, phone, and message are required" });
@@ -63132,7 +70767,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue single distributor order" });
       }
     });
-    router46.post("/enqueue-single", async (req, res) => {
+    router49.post("/enqueue-single", async (req, res) => {
       const { number, message, type = "crm_notification", targetName, explicitScheduledAt } = req.body || {};
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
@@ -63160,7 +70795,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue WhatsApp message" });
       }
     });
-    router46.post("/flush", async (_req, res) => {
+    router49.post("/flush", async (_req, res) => {
       try {
         whatsappQueueWorker.triggerProcessing();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -63169,7 +70804,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to trigger queue processing" });
       }
     });
-    router46.post("/toggle-pause", async (_req, res) => {
+    router49.post("/toggle-pause", async (_req, res) => {
       try {
         const isPaused = whatsappQueueWorker.togglePaused();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -63178,7 +70813,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to toggle queue pause" });
       }
     });
-    router46.post("/pause", async (_req, res) => {
+    router49.post("/pause", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(true);
         const state = await whatsappQueueWorker.getWorkerState();
@@ -63187,7 +70822,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pause queue" });
       }
     });
-    router46.post("/resume", async (_req, res) => {
+    router49.post("/resume", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(false);
         whatsappQueueWorker.triggerProcessing();
@@ -63197,7 +70832,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resume queue" });
       }
     });
-    router46.post("/retry-failed", async (_req, res) => {
+    router49.post("/retry-failed", async (_req, res) => {
       try {
         const retriedCount = await whatsappQueueWorker.retryAllFailed();
         res.json({ success: true, retriedCount, message: `Reset ${retriedCount} failed queue item(s) to pending` });
@@ -63205,7 +70840,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to retry failed items" });
       }
     });
-    router46.post("/items/:id/resend", async (req, res) => {
+    router49.post("/items/:id/resend", async (req, res) => {
       const id = Number(req.params.id);
       if (!id || isNaN(id)) {
         return res.status(400).json({ error: "Valid item id is required" });
@@ -63282,7 +70917,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resend message" });
       }
     });
-    router46.post("/flush-next", async (_req, res) => {
+    router49.post("/flush-next", async (_req, res) => {
       try {
         const forced = await whatsappQueueWorker.forceNext();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -63291,7 +70926,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to dispatch next item" });
       }
     });
-    router46.all("/pacing", async (req, res) => {
+    router49.all("/pacing", async (req, res) => {
       const { minSec, maxSec, preset } = req.body || {};
       try {
         if (preset === "turbo" || preset === "fast") {
@@ -63312,7 +70947,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update pacing" });
       }
     });
-    router46.put("/update-item", async (req, res) => {
+    router49.put("/update-item", async (req, res) => {
       const { id, number, message } = req.body;
       if (!id || !number) {
         return res.status(400).json({ error: "id and number are required" });
@@ -63327,7 +70962,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update queue item" });
       }
     });
-    router46.all("/delete-item", async (req, res) => {
+    router49.all("/delete-item", async (req, res) => {
       const id = req.body?.id || req.query?.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -63339,7 +70974,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router46.delete("/item/:id", async (req, res) => {
+    router49.delete("/item/:id", async (req, res) => {
       const id = req.params.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -63351,7 +70986,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router46.post("/clear-failed", async (_req, res) => {
+    router49.post("/clear-failed", async (_req, res) => {
       try {
         const cleared = await whatsappQueueWorker.clearAllFailed();
         res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} failed item(s)` });
@@ -63359,7 +70994,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to clear failed items" });
       }
     });
-    router46.post("/prewarm", async (_req, res) => {
+    router49.post("/prewarm", async (_req, res) => {
       try {
         const started = await whatsappQueueWorker.prewarm();
         res.json({ success: true, prewarmed: started });
@@ -63367,7 +71002,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pre-warm WhatsApp" });
       }
     });
-    whatsappQueue_default2 = router46;
+    whatsappQueue_default2 = router49;
   }
 });
 
@@ -63708,9 +71343,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path58.default.resolve(__dirname46, "..", "telegramBot.ts");
-    if (import_fs53.default.existsSync(botPath)) {
-      const src = import_fs53.default.readFileSync(botPath, "utf8");
+    const botPath = import_path60.default.resolve(__dirname46, "..", "telegramBot.ts");
+    if (import_fs55.default.existsSync(botPath)) {
+      const src = import_fs55.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -63927,12 +71562,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path58.default.resolve(__dirname46, "..", "..", "package.json"),
-    import_path58.default.resolve(process.cwd(), "package.json")
+    import_path60.default.resolve(__dirname46, "..", "..", "package.json"),
+    import_path60.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg2 = JSON.parse(import_fs53.default.readFileSync(p, "utf8"));
+      const pkg2 = JSON.parse(import_fs55.default.readFileSync(p, "utf8"));
       if (pkg2?.version) return String(pkg2.version);
     } catch (_e) {
     }
@@ -63983,17 +71618,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs53, import_path58, import_url48, import_child_process7, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs55, import_path60, import_url48, import_child_process7, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs53 = __toESM(require("fs"), 1);
-    import_path58 = __toESM(require("path"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
+    import_path60 = __toESM(require("path"), 1);
     import_url48 = require("url");
     import_child_process7 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
-    __dirname46 = import_path58.default.dirname(__filename46);
+    __dirname46 = import_path60.default.dirname(__filename46);
     BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
@@ -64011,15 +71646,15 @@ async function logAudit(db2, report) {
   );
   return result.lastID;
 }
-var import_express47, router47, audit_default;
+var import_express50, router50, audit_default;
 var init_audit = __esm({
   "src/routes/audit.ts"() {
     "use strict";
-    import_express47 = __toESM(require("express"), 1);
+    import_express50 = __toESM(require("express"), 1);
     init_connection();
     init_auditEngine();
-    router47 = import_express47.default.Router();
-    router47.post("/run", async (_req, res) => {
+    router50 = import_express50.default.Router();
+    router50.post("/run", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const report = await runAudit(db2);
@@ -64030,7 +71665,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/latest", async (_req, res) => {
+    router50.get("/latest", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -64043,7 +71678,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/history", async (_req, res) => {
+    router50.get("/history", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -64066,7 +71701,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/:id", async (req, res) => {
+    router50.get("/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -64080,7 +71715,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    audit_default = router47;
+    audit_default = router50;
   }
 });
 
@@ -64089,16 +71724,16 @@ var medicineAvailability_exports = {};
 __export(medicineAvailability_exports, {
   default: () => medicineAvailability_default
 });
-var import_express48, router48, medicineAvailability_default;
+var import_express51, router51, medicineAvailability_default;
 var init_medicineAvailability = __esm({
   "src/routes/medicineAvailability.ts"() {
     "use strict";
-    import_express48 = __toESM(require("express"), 1);
+    import_express51 = __toESM(require("express"), 1);
     init_medicineAvailabilityEngine();
     init_stockCalculatorWorker();
     init_substituteCacheWorker();
-    router48 = import_express48.default.Router();
-    router48.get("/medicines/availability", async (req, res) => {
+    router51 = import_express51.default.Router();
+    router51.get("/medicines/availability", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -64118,7 +71753,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.get("/medicines/search-full", async (req, res) => {
+    router51.get("/medicines/search-full", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -64140,7 +71775,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.get("/medicines/substitutes/:medicineId", async (req, res) => {
+    router51.get("/medicines/substitutes/:medicineId", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId);
         if (isNaN(medicineId)) {
@@ -64158,7 +71793,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.get("/medicines/emergency-stock", async (req, res) => {
+    router51.get("/medicines/emergency-stock", async (req, res) => {
       try {
         const categories = req.query.categories?.split(",") || [
           "Injured soldiers medicaments",
@@ -64172,7 +71807,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.post("/medicines/learn-correction", async (req, res) => {
+    router51.post("/medicines/learn-correction", async (req, res) => {
       try {
         const { originalQuery, correctedMedicineId, context } = req.body;
         if (!originalQuery || !correctedMedicineId) {
@@ -64189,7 +71824,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.post("/medicines/recalculate-stock", async (req, res) => {
+    router51.post("/medicines/recalculate-stock", async (req, res) => {
       try {
         await recalculateStockLimits();
         medicineAvailabilityEngine.refreshStockCache();
@@ -64199,7 +71834,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router48.post("/medicines/rebuild-substitutes", async (req, res) => {
+    router51.post("/medicines/rebuild-substitutes", async (req, res) => {
       try {
         await precomputeSubstitutes();
         res.json({ success: true, message: "Substitutes rebuilt" });
@@ -64208,7 +71843,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    medicineAvailability_default = router48;
+    medicineAvailability_default = router51;
   }
 });
 
@@ -64434,14 +72069,14 @@ __export(server_exports, {
   extractMedicinesWithPython: () => extractMedicinesWithPython
 });
 function lazyRoute(loader, tier = "medium") {
-  let router49 = null;
+  let router52 = null;
   let loadPromise = null;
   const preload = () => {
-    if (router49) return Promise.resolve(router49);
+    if (router52) return Promise.resolve(router52);
     if (!loadPromise) {
       loadPromise = loader().then((m) => {
-        router49 = m.default;
-        return router49;
+        router52 = m.default;
+        return router52;
       });
     }
     return loadPromise;
@@ -64452,7 +72087,7 @@ function lazyRoute(loader, tier = "medium") {
       loader().then((m) => m.default(req, res, next)).catch(next);
       return;
     }
-    if (router49) return router49(req, res, next);
+    if (router52) return router52(req, res, next);
     preload().then((r) => r(req, res, next)).catch(next);
   };
 }
@@ -64462,6 +72097,10 @@ async function startTieredPreWarm() {
   const t0 = performance.now();
   const loaders = (tier) => registeredLazyRoutes.filter((r) => r.tier === tier).map((r) => r.preload);
   await Promise.allSettled(loaders("hot"));
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[Boot] Dev mode: skipping medium route pre-warm (routes load on demand). Hot routes ready in ${Math.round(performance.now() - t0)}ms.`);
+    return;
+  }
   const medium = loaders("medium");
   for (let i = 0; i < medium.length; i += 5) {
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -64482,9 +72121,9 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path59.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path59.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs54.default.existsSync(pythonExecutable) || !import_fs54.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path61.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path61.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs56.default.existsSync(pythonExecutable) || !import_fs56.default.existsSync(scriptPath)) {
       return resolve([]);
     }
     const pythonProcess = (0, import_child_process8.spawn)(pythonExecutable, [scriptPath, messageText]);
@@ -64627,20 +72266,20 @@ async function gracefulShutdown(signal) {
   await dbManager.close(true);
   process.exit(0);
 }
-var import_express49, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path59, import_child_process8, import_url49, import_fs54, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
+var import_express52, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path61, import_child_process8, import_url49, import_fs56, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
     init_sqlitePatch();
-    import_express49 = __toESM(require("express"), 1);
+    import_express52 = __toESM(require("express"), 1);
     import_compression = __toESM(require("compression"), 1);
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path59 = __toESM(require("path"), 1);
+    import_path61 = __toESM(require("path"), 1);
     import_child_process8 = require("child_process");
     import_url49 = require("url");
-    import_fs54 = __toESM(require("fs"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
     import_axios3 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -64652,7 +72291,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
-    __dirname47 = import_path59.default.dirname(__filename47);
+    __dirname47 = import_path61.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
     import_axios3.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -64663,7 +72302,7 @@ var init_server = __esm({
     registerProcessGuardian();
     process.env.DISABLE_BACKGROUND_WORKERS = process.env.DISABLE_BACKGROUND_WORKERS || "false";
     process.env.DISABLE_SELF_HEALING_WORKERS = process.env.DISABLE_SELF_HEALING_WORKERS || "false";
-    app = (0, import_express49.default)();
+    app = (0, import_express52.default)();
     app.use((0, import_compression.default)());
     inFlightRequests = 0;
     app.use((req, res, next) => {
@@ -64690,15 +72329,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path59.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs54.default.existsSync(UPLOAD_DIR2)) {
-      import_fs54.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path61.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs56.default.existsSync(UPLOAD_DIR2)) {
+      import_fs56.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs54.default.existsSync(TEMP_DIR5)) {
-      import_fs54.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs56.default.existsSync(TEMP_DIR5)) {
+      import_fs56.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs54.default.existsSync(RAW_DIR2)) {
-      import_fs54.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs56.default.existsSync(RAW_DIR2)) {
+      import_fs56.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
@@ -64738,9 +72377,10 @@ var init_server = __esm({
       },
       message: { error: "Too many requests, please try again later" }
     }));
-    app.use(import_express49.default.json({ limit: "15mb" }));
-    app.use("/uploads", import_express49.default.static(UPLOAD_DIR2));
-    app.use("/data/search_screenshots", import_express49.default.static(import_path59.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use(import_express52.default.json({ limit: "15mb" }));
+    app.use("/uploads", import_express52.default.static(UPLOAD_DIR2));
+    app.use("/data/search_screenshots", import_express52.default.static(import_path61.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express52.default.static(import_path61.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -64775,6 +72415,8 @@ var init_server = __esm({
     app.use("/api/stores", lazyRoute(() => Promise.resolve().then(() => (init_stores(), stores_exports)), "hot"));
     app.use("/api/website", lazyRoute(() => Promise.resolve().then(() => (init_websiteOrders(), websiteOrders_exports)), "hot"));
     app.use("/api/customer-portal", lazyRoute(() => Promise.resolve().then(() => (init_customerPortal(), customerPortal_exports)), "hot"));
+    app.use("/api/customer", lazyRoute(() => Promise.resolve().then(() => (init_customerRoutes(), customerRoutes_exports)), "hot"));
+    app.use("/api/admin", lazyRoute(() => Promise.resolve().then(() => (init_adminRoutes(), adminRoutes_exports)), "hot"));
     app.use("/api/sync", lazyRoute(() => Promise.resolve().then(() => (init_sync(), sync_exports))));
     app.use("/api/sales", lazyRoute(() => Promise.resolve().then(() => (init_sales(), sales_exports)), "hot"));
     app.use("/api/inventory", lazyRoute(() => Promise.resolve().then(() => (init_inventory(), inventory_exports)), "hot"));
@@ -64791,6 +72433,7 @@ var init_server = __esm({
     app.use("/api/schedule-drugs", lazyRoute(() => Promise.resolve().then(() => (init_scheduleDrugs(), scheduleDrugs_exports))));
     app.use("/api/email-order-reviews", lazyRoute(() => Promise.resolve().then(() => (init_emailOrderReviews(), emailOrderReviews_exports))));
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_upload(), upload_exports))));
+    app.use("/api/catalog/images", lazyRoute(() => Promise.resolve().then(() => (init_catalogImages(), catalogImages_exports)), "hot"));
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_catalog(), catalog_exports))));
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicines(), medicines_exports)), "hot"));
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_enrichment(), enrichment_exports))));
@@ -64803,15 +72446,15 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path59.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path59.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path59.default.resolve(__dirname47, "..", "frontend", "dist"),
-      import_path59.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
-      import_path59.default.resolve(process.cwd(), "dist"),
-      import_path59.default.resolve(appDataDir2, "dist")
+      import_path61.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path61.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path61.default.resolve(__dirname47, "..", "frontend", "dist"),
+      import_path61.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
+      import_path61.default.resolve(process.cwd(), "dist"),
+      import_path61.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs54.default.existsSync(import_path59.default.join(dir, "index.html"))) || frontendCandidates[0];
-    app.use(import_express49.default.static(frontendDist, {
+    frontendDist = frontendCandidates.find((dir) => import_fs56.default.existsSync(import_path61.default.join(dir, "index.html"))) || frontendCandidates[0];
+    app.use(import_express52.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
         if (filePath.includes("assets") || /\.(js|css|woff2?)$/i.test(filePath)) {
@@ -64826,8 +72469,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path59.default.join(frontendDist, "index.html");
-      if (import_fs54.default.existsSync(indexPath)) {
+      const indexPath = import_path61.default.join(frontendDist, "index.html");
+      if (import_fs56.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }
@@ -64892,6 +72535,7 @@ var init_server = __esm({
         await ensureSchema(DB_PATH30);
         schemaReady = true;
         console.log(`[Boot:Phase1] Database schema ready in ${Math.round(performance.now() - phase1T0)}ms \u2014 API requests unblocked.`);
+        console.log(`[Boot:CoreReady] Core API and database ready in ${Math.round(performance.now() - BOOT_T0)}ms.`);
         void startTieredPreWarm();
         const db2 = await dbManager.getConnection();
         const phase2T0 = performance.now();
@@ -65049,23 +72693,6 @@ var init_server = __esm({
               console.error("[Boot:Phase4] Failed to initialize Telegram Bot:", err);
             }
           }, 8e3);
-          setTimeout(() => {
-            Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports)).then(async (m) => {
-              if (await m.isWhatsAppExplicitlyDisabled()) {
-                return;
-              }
-              if (m.hasSavedSession()) {
-                console.log("[Boot:Phase4] Saved WhatsApp session detected. Auto-starting WhatsApp client (staggered T+45s)...");
-                await m.initClient().catch((err) => {
-                  bootWorkerFailures++;
-                  console.error("[Boot:Phase4] Auto WhatsApp init failed:", err);
-                });
-              }
-            }).catch((err) => {
-              bootWorkerFailures++;
-              console.error("[Boot:Phase4] WhatsApp client module load failed:", err);
-            });
-          }, 45e3);
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => {
             m.tokenRefreshScheduler.onFirstRefreshComplete(() => {
               Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports)).then((mod) => mod.warmupStartupCart()).catch((err) => console.warn("[Boot] Cart warm-up failed:", err?.message || err));
@@ -65077,7 +72704,7 @@ var init_server = __esm({
           }, 5e4);
         });
         setTimeout(() => {
-          console.log(`[Boot] Startup complete: ${((performance.now() - BOOT_T0) / 1e3).toFixed(1)}s total, ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
+          console.log(`[Boot] Progressive background staging complete at T+10s: ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
         }, 1e4);
       } catch (err) {
         if (err instanceof Error && err.message === "DB_INTEGRITY_FAILURE") {
