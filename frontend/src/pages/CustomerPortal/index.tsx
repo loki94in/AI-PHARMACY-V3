@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Store as StoreIcon, Phone, Key, ShieldCheck, CheckCircle2, Clock,
-  ArrowRight, RefreshCw, ShoppingCart, Check, X, AlertCircle, MapPin,
+  ArrowRight, RefreshCw, ShoppingCart, ShoppingBag, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
   CreditCard, ExternalLink, Copy, RotateCcw
@@ -72,6 +72,7 @@ interface SelectedMedicine {
 
 export default function CustomerPortal() {
   const location = useLocation();
+  const navigate = useNavigate();
 
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'catalog' | 'portal'>('catalog');
@@ -124,16 +125,16 @@ export default function CustomerPortal() {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
-  // ─── Dashboard States ───────────────────────────────────────────────────────
   const [stores, setStores] = useState<StoreItem[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number>(1);
   const [refills, setRefills] = useState<RefillItem[]>([]);
   const [bills, setBills] = useState<PastBill[]>([]);
+  const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
   // ─── Selection & Checkout States ───────────────────────────────────────────
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedMedicine>>({});
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('COUNTER_PICKUP');
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COUNTER_PICKUP'>('UPI');
   const [deliveryMode, setDeliveryMode] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -199,20 +200,34 @@ export default function CustomerPortal() {
     loadCustomerData(session.id, session.phone);
   }, [session]);
 
+  // Real-time synchronization: refresh customer profile and order status on SSE updates
+  useEffect(() => {
+    const handleInvalidate = () => {
+      if (session) {
+        loadCustomerData(session.id, session.phone);
+      }
+    };
+    window.addEventListener('cache-invalidate', handleInvalidate);
+    return () => window.removeEventListener('cache-invalidate', handleInvalidate);
+  }, [session]);
+
   const loadCustomerData = async (custId: number, phone: string) => {
     setLoadingData(true);
     try {
       const token = localStorage.getItem('customer_portal_token') || undefined;
-      const [refillRes, billRes] = await Promise.all([
+      const [refillRes, billRes, orderRes] = await Promise.all([
         api.getCustomerRefills({ customer_id: custId, phone, token }),
-        api.getCustomerBills({ customer_id: custId, phone, token })
+        api.getCustomerBills({ customer_id: custId, phone, token }),
+        api.getCustomerOrders({ customer_id: custId, phone, token })
       ]);
 
       const loadedRefills = refillRes?.refills || [];
       const loadedBills = billRes?.bills || [];
+      const loadedOrders = orderRes?.orders || [];
 
       setRefills(loadedRefills);
       setBills(loadedBills);
+      setCustomerOrders(loadedOrders);
 
       // Pre-select all active refills by default
       const initialMap: Record<string, SelectedMedicine> = {};
@@ -463,10 +478,34 @@ export default function CustomerPortal() {
     try {
       await api.markOrderPaid(paymentQrModal.orderId);
       setPaymentQrModal(prev => prev ? { ...prev, isPaidMarked: true } : null);
+      if (session) {
+        loadCustomerData(session.id, session.phone);
+      }
     } catch (err: any) {
       setOrderError(err.response?.data?.error || 'Failed to submit payment status');
     } finally {
       setIsMarkingPaid(false);
+    }
+  };
+
+  const handleOpenOrderPaymentQr = async (order: any) => {
+    try {
+      const qrRes = await api.getOrderPaymentQr(order.id);
+      if (qrRes?.success) {
+        setPaymentQrModal({
+          isOpen: true,
+          orderId: order.id,
+          label: qrRes.label || 'Pharmacy Counter UPI',
+          payeeName: qrRes.payee_name || 'AI Pharmacy',
+          upiId: qrRes.upi_id,
+          upiUri: qrRes.upi_uri,
+          qrImageUrl: qrRes.qr_image_url,
+          amount: qrRes.amount || order.total_amount,
+          isPaidMarked: order.payment_status === 'PENDING_VERIFICATION'
+        });
+      }
+    } catch (err: any) {
+      setOrderError(err.response?.data?.error || 'Failed to open payment QR');
     }
   };
 
@@ -698,6 +737,14 @@ export default function CustomerPortal() {
                 <span>Patient Login</span>
               </button>
             )}
+
+            <button
+              onClick={() => navigate('/website-orders')}
+              className="text-xs text-muted hover:text-primary px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 transition-colors flex items-center gap-1.5 font-medium"
+              title="Return to Pharmacy Staff Workspace"
+            >
+              <span>← Staff Workspace</span>
+            </button>
           </div>
         </div>
       </header>
@@ -918,8 +965,128 @@ export default function CustomerPortal() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left / Middle: Regular Medicines & Past Bills */}
+          {/* Left / Middle: Regular Medicines, Online Orders & Past Bills */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Section 0: Active & Recent Online Orders */}
+            {customerOrders.length > 0 && (
+              <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-text flex items-center gap-2">
+                      <ShoppingBag className="w-4 h-4 text-primary" />
+                      <span>Your Online Orders & Live Status</span>
+                    </h3>
+                    <p className="text-xs text-muted">Track fulfilment and payment status for orders placed online</p>
+                  </div>
+                  <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
+                    {customerOrders.length} {customerOrders.length === 1 ? 'Online Order' : 'Online Orders'}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {customerOrders.map(order => {
+                    const isPendingVerification = order.payment_status === 'PENDING_VERIFICATION';
+                    const isPaid = order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED';
+                    const isUnpaid = !isPendingVerification && !isPaid;
+
+                    return (
+                      <div key={order.id} className="bg-bg border border-border rounded-xl p-4 space-y-3 shadow-xs">
+                        {/* Header: Order ID, Store, Time, Badges */}
+                        <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-border/60 flex-wrap">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-black text-primary">#{order.id}</span>
+                              <span className="text-xs font-bold text-text">{order.store_name || 'Pharmacy Branch'}</span>
+                              <span className="text-[10px] text-muted">
+                                {order.created_at ? new Date(order.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                              </span>
+                            </div>
+                            {order.estimated_delivery_start && order.estimated_delivery_end && (
+                              <div className="text-[11px] text-muted flex items-center gap-1 mt-1">
+                                <Clock className="w-3 h-3 text-primary" />
+                                <span>Expected Delivery: <strong className="text-text">{new Date(order.estimated_delivery_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(order.estimated_delivery_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong></span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Payment & Fulfilment Badges */}
+                          <div className="flex flex-col items-end gap-1">
+                            {isPendingVerification ? (
+                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1 animate-pulse">
+                                <Clock className="w-3 h-3" />
+                                <span>Payment Confirmation Pending</span>
+                              </span>
+                            ) : isPaid ? (
+                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Payment Confirmed</span>
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                                <CreditCard className="w-3 h-3" />
+                                <span>Payment Pending</span>
+                              </span>
+                            )}
+
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                              order.status === 'Fulfilled' || order.status === 'ORDER_READY_FOR_PICKUP' || order.status === 'Ready'
+                                ? 'bg-blue-500/10 text-blue-500 border-blue-500/30'
+                                : 'bg-bg3 text-muted border-border'
+                            }`}>
+                              Status: {order.status === 'ORDER_READY_FOR_PICKUP' ? 'Ready for Pickup' : (order.status || 'Pending')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Order Items */}
+                        <div className="space-y-1 bg-bg2/40 p-2.5 rounded-xl border border-border/50">
+                          {order.items?.map((item: any, idx: number) => (
+                            <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                              <span className="text-text font-medium">{item.product_name || item.product || order.product}</span>
+                              <span className="text-muted font-mono">Qty: {item.requested_qty || item.qty || order.qty || 1}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Payment & Re-open QR CTA */}
+                        <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2 flex-wrap text-xs">
+                          <div className="flex items-center gap-1">
+                            <span className="text-muted">Total:</span>
+                            <span className="font-bold text-primary font-mono text-sm">₹{Number(order.total_amount || 0).toFixed(2)}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {isPendingVerification && (
+                              <span className="text-[11px] text-amber-500 font-medium">
+                                ⏳ Awaiting pharmacy verification. Please share your screenshot on WhatsApp.
+                              </span>
+                            )}
+
+                            {order.payment_screenshot_path && (
+                              <span className="text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md font-semibold flex items-center gap-1">
+                                <span>📸 Screenshot Received</span>
+                              </span>
+                            )}
+
+                            {isUnpaid && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenOrderPaymentQr(order)}
+                                className="px-3 py-1.5 bg-primary text-white rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <QrCode className="w-3.5 h-3.5" />
+                                <span>Pay via UPI QR</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Section 1: Active Refills */}
             <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
@@ -1141,45 +1308,21 @@ export default function CustomerPortal() {
                   </div>
 
                   {/* Payment Mode Selection */}
-                  <div className="space-y-2 pt-2">
+                  <div className="space-y-1.5 pt-2">
                     <label className="text-xs font-semibold text-text uppercase tracking-wider block">
                       Payment Mode
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod('COUNTER_PICKUP')}
-                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold text-center transition-all ${
-                          paymentMethod === 'COUNTER_PICKUP'
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : 'bg-bg border-border text-muted'
-                        }`}
-                      >
-                        Pay at Counter
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod('UPI')}
-                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold text-center transition-all ${
-                          paymentMethod === 'UPI'
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : 'bg-bg border-border text-muted'
-                        }`}
-                      >
-                        Dynamic UPI QR
-                      </button>
+                    <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <QrCode className="w-5 h-5 text-primary" />
+                        <div>
+                          <span className="text-xs font-bold text-text block">Dynamic UPI QR</span>
+                          <span className="text-[10px] text-muted">Scan & pay with any UPI app</span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 bg-primary text-white rounded-md">UPI</span>
                     </div>
                   </div>
-
-                  {paymentMethod === 'UPI' && (
-                    <div className="p-3 bg-bg rounded-xl border border-border text-center space-y-2">
-                      <QrCode className="w-12 h-12 mx-auto text-primary" />
-                      <p className="text-[11px] text-muted">
-                        Dynamic UPI QR Code will be presented upon order placement for GPay / PhonePe / Paytm.
-                      </p>
-                    </div>
-                  )}
 
                   {orderError && (
                     <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-600 flex items-center gap-1.5">
@@ -1408,29 +1551,15 @@ export default function CustomerPortal() {
               <label className="text-xs font-semibold text-text uppercase tracking-wider block">
                 {deliveryMode === 'delivery' ? 'Payment Method' : 'Collection Payment Mode'}
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('COUNTER_PICKUP')}
-                  className={`p-2.5 rounded-xl border text-xs font-semibold text-left transition-all ${
-                    paymentMethod === 'COUNTER_PICKUP'
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-bg text-muted'
-                  }`}
-                >
-                  {deliveryMode === 'delivery' ? 'Cash on Delivery (COD)' : 'Pay at Counter'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('UPI')}
-                  className={`p-2.5 rounded-xl border text-xs font-semibold text-left transition-all ${
-                    paymentMethod === 'UPI'
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-bg text-muted'
-                  }`}
-                >
-                  Pay via UPI
-                </button>
+              <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <QrCode className="w-5 h-5 text-primary" />
+                  <div>
+                    <span className="text-xs font-bold text-text block">Pay via UPI (Dynamic QR)</span>
+                    <span className="text-[11px] text-muted">Scan & pay via GPay / PhonePe / Paytm upon placement</span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 bg-primary text-white rounded-md">UPI QR</span>
               </div>
             </div>
 
@@ -1638,7 +1767,7 @@ export default function CustomerPortal() {
                 onClick={() => setPaymentQrModal(null)}
                 className="w-full py-1.5 text-xs text-muted hover:text-text font-medium"
               >
-                {paymentQrModal.isPaidMarked ? 'Close & View Orders' : 'Close and Pay at Counter'}
+                {paymentQrModal.isPaidMarked ? 'Close & View Orders' : 'Cancel & Close'}
               </button>
             </div>
           </div>

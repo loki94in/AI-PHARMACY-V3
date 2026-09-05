@@ -249,6 +249,12 @@ async function ensureOrderTimingSchema(db: any) {
     if (spCols.length > 0 && !spNames.has('pos_sale_invoice_id')) {
       await db.run('ALTER TABLE special_orders ADD COLUMN pos_sale_invoice_id INTEGER DEFAULT NULL');
     }
+    if (spCols.length > 0 && !spNames.has('payment_screenshot_path')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN payment_screenshot_path TEXT DEFAULT NULL');
+    }
+    if (spCols.length > 0 && !spNames.has('screenshot_amount')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN screenshot_amount REAL DEFAULT NULL');
+    }
   } catch (_) {}
 
   try {
@@ -1384,7 +1390,9 @@ export async function ensureSchema(dbPath: string) {
       sync_id TEXT DEFAULT NULL,
       sync_status TEXT DEFAULT 'synced',
       last_synced_at DATETIME DEFAULT NULL,
-      pos_sale_invoice_id INTEGER DEFAULT NULL
+      pos_sale_invoice_id INTEGER DEFAULT NULL,
+      payment_screenshot_path TEXT DEFAULT NULL,
+      screenshot_amount REAL DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS distributor_learning_profiles (

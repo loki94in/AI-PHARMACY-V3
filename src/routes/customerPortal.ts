@@ -1497,6 +1497,86 @@ router.get('/customer/bills', async (req, res) => {
   }
 });
 
+// ─── Fetch Customer's Created Online & Website Orders ────────────────────────
+// GET /api/customer-portal/customer/orders
+router.get('/customer/orders', async (req, res) => {
+  try {
+    const customerId = parseInt((req.query.customer_id as string) || '0', 10);
+    const phone = (req.query.phone as string) || '';
+    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 100);
+
+    const db = await dbManager.getConnection();
+    let resolvedCustomerId = customerId;
+    const cleanPhone = phone.replace(/\D/g, '');
+    const digits10 = cleanPhone.slice(-10);
+
+    if (!resolvedCustomerId && digits10) {
+      const cust = await db.get(
+        `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+        [phone, `%${digits10}`]
+      );
+      if (cust) resolvedCustomerId = cust.id;
+    }
+
+    if (!resolvedCustomerId && !digits10) {
+      return res.json({ success: true, count: 0, orders: [] });
+    }
+
+    // Query special_orders placed by this customer (website orders / online refills)
+    const orders = await db.all(
+      `SELECT
+         so.id,
+         so.store_id,
+         so.customer_id,
+         so.product,
+         so.qty,
+         so.status,
+         so.payment_status,
+         so.pharmacy_verification_status,
+         so.delivery_status,
+         so.order_type,
+         so.total_amount,
+         so.payment_qr_id,
+         so.scheduled_processing_at,
+         so.estimated_delivery_start,
+         so.estimated_delivery_end,
+         so.cutoff_at,
+         so.date,
+         so.created_at,
+         so.notes,
+         so.payment_screenshot_path,
+         so.screenshot_amount,
+         COALESCE(st.name, 'Main Branch') as store_name
+       FROM special_orders so
+       LEFT JOIN stores st ON st.id = so.store_id
+       WHERE (so.customer_id = ? OR (so.phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(so.phone, ' ', ''), '-', ''), '+', '') LIKE ?))
+       ORDER BY so.id DESC
+       LIMIT ?`,
+      [resolvedCustomerId || 0, `%${digits10}`, limit]
+    ).catch(() => []);
+
+    // Attach items from online_order_items if present
+    const enriched = await Promise.all(orders.map(async (ord: any) => {
+      const items = await db.all(
+        `SELECT id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, confirmed_price, item_status
+         FROM online_order_items
+         WHERE order_id = ?
+         ORDER BY id ASC`,
+        [ord.id]
+      ).catch(() => []);
+      return {
+        ...ord,
+        items: items.length > 0 ? items : [{ product_name: ord.product, requested_qty: ord.qty, mrp: ord.total_amount }]
+      };
+    }));
+
+    res.json({ success: true, count: enriched.length, orders: enriched });
+  } catch (err: any) {
+    console.error('[CustomerPortal] customer/orders error:', err);
+    res.status(500).json({ error: 'Failed to fetch customer orders' });
+  }
+});
+
 // ─── Customer Purchase History (spec §12, §13) ───────────────────────────────
 // GET /api/customer-portal/history
 // Returns completed POS sales for the authenticated customer.

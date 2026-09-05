@@ -4,7 +4,7 @@ import { returnWindowService } from '../services/returnWindowService.js';
 import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
-import { getStoreMedicalNameAndPhone } from '../services/storeSettingsService.js';
+import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
@@ -328,7 +328,7 @@ router.post('/orders', async (req, res) => {
     // Send WhatsApp order confirmation with exact same selected QR (§14)
     if (cleanPhone && cleanPhone.length >= 10) {
       const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-      const medicalName = await getStoreMedicalNameAndPhone(db);
+      const medicalName = await getStoreMedicalName(db);
       const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join('\n');
       const orderIdsStr = createdOrders.map(o => `#${o.id}`).join(', ');
 
@@ -424,6 +424,30 @@ router.post('/orders/:orderId/mark-paid', async (req, res) => {
        VALUES (?, 'customer_marked_paid', 'Customer reported payment completed. Awaiting pharmacy verification.', 'customer', CURRENT_TIMESTAMP)`,
       [orderId]
     );
+
+    // Automatically send WhatsApp message requesting payment screenshot
+    if (order.phone) {
+      try {
+        const storeName = (await getStoreMedicalName(db, order.store_id)) || 'AI Pharmacy';
+        const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
+        const formattedAmount = Number(order.total_amount || 0).toFixed(2);
+        const screenshotMsg =
+          `🙏 Namaste ${customerName}!\n\n` +
+          `We have received your payment report for Order #${orderId} (₹${formattedAmount}).\n\n` +
+          `📸 *Please reply directly to this WhatsApp message with a screenshot of your payment receipt / UPI confirmation.*\n\n` +
+          `Our pharmacy team will manually verify the payment details and process your order.\n\n` +
+          `Thank you!\n— ${storeName}`;
+
+        await whatsappQueueWorker.enqueue(
+          order.phone,
+          screenshotMsg,
+          'payment_screenshot_request',
+          customerName
+        );
+      } catch (waErr) {
+        console.warn('[WebsiteOrdersRoute] Could not enqueue payment screenshot request:', waErr);
+      }
+    }
 
     broadcastOrdersChanged();
 
@@ -844,7 +868,7 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
       try {
         const cleanPhone = String(order.phone).replace(/\D/g, '');
         const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-        const medicalName = await getStoreMedicalNameAndPhone(db);
+        const medicalName = await getStoreMedicalName(db);
         const readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!\n\nThank you for your payment.`;
         await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, 'order_ready_notification', order.requester);
       } catch (_) {}

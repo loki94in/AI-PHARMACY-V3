@@ -55,6 +55,12 @@ export default function WebsiteOrders() {
   const [overrideDeliveryEnd, setOverrideDeliveryEnd] = useState('');
   const [overrideDeliveryReason, setOverrideDeliveryReason] = useState('');
   const [submittingDeliveryOverride, setSubmittingDeliveryOverride] = useState(false);
+  const [selectedScreenshot, setSelectedScreenshot] = useState<{
+    path: string;
+    orderId: number;
+    amount: number;
+    screenshotAmount?: number;
+  } | null>(null);
 
   // Fetch website orders
   const fetchOrders = useCallback(async (silent = false) => {
@@ -607,6 +613,64 @@ export default function WebsiteOrders() {
                     </div>
                   </div>
 
+                  {/* WhatsApp Payment Verification Card (Human-in-the-Loop) */}
+                  {(order.payment_screenshot_path || order.payment_status === 'PENDING_VERIFICATION') && (
+                    <div className="p-2.5 rounded-xl bg-bg border border-amber-500/30 space-y-2 text-xs shadow-xs">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span className="flex items-center gap-1.5 text-amber-500">
+                          <CreditCard size={13} />
+                          <span>WhatsApp Payment Receipt</span>
+                        </span>
+                        {order.payment_screenshot_path ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-semibold">
+                            Photo Received
+                          </span>
+                        ) : (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 font-semibold">
+                            Awaiting Screenshot
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-muted">
+                        <span>Expected Total: <strong className="text-text">₹{Number(order.total_amount || 0).toFixed(2)}</strong></span>
+                        {order.screenshot_amount ? (
+                          <span>OCR Amount: <strong className="text-emerald-500">₹{Number(order.screenshot_amount).toFixed(2)}</strong></span>
+                        ) : (
+                          <span className="italic text-muted">OCR Amount: Pending/Unclear</span>
+                        )}
+                      </div>
+
+                      {order.screenshot_amount && Math.abs(Number(order.screenshot_amount) - Number(order.total_amount || 0)) < 0.01 ? (
+                        <div className="text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg font-medium flex items-center gap-1">
+                          <CheckCircle2 size={11} className="shrink-0" />
+                          <span>Exact Amount Match (₹{Number(order.screenshot_amount).toFixed(2)}) — Verify receipt photo to approve</span>
+                        </div>
+                      ) : order.payment_screenshot_path ? (
+                        <div className="text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg font-medium flex items-center gap-1">
+                          <AlertCircle size={11} className="shrink-0" />
+                          <span>Manual Review Required: Check receipt image to verify UPI transaction</span>
+                        </div>
+                      ) : null}
+
+                      {order.payment_screenshot_path && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedScreenshot({
+                            path: order.payment_screenshot_path,
+                            orderId: order.id,
+                            amount: Number(order.total_amount || 0),
+                            screenshotAmount: order.screenshot_amount ? Number(order.screenshot_amount) : undefined
+                          })}
+                          className="w-full py-1.5 px-3 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-xs font-bold text-text flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Eye size={13} className="text-primary" />
+                          <span>Inspect WhatsApp Payment Receipt</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {/* Prescription Preview Button */}
                   {order.prescription_url && (
                     <button
@@ -940,6 +1004,89 @@ export default function WebsiteOrders() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Payment Screenshot Review Modal (Human-in-the-Loop) */}
+      {selectedScreenshot && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-bg border border-border rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <FileImage size={18} className="text-primary" />
+                <div>
+                  <h3 className="text-sm font-bold text-text">WhatsApp Payment Receipt</h3>
+                  <span className="text-[11px] text-muted">Order #{selectedScreenshot.orderId} Verification</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedScreenshot(null)}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg2 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Amount Verification Bar */}
+            <div className="p-3 bg-bg2 rounded-xl border border-border flex items-center justify-between text-xs">
+              <div>
+                <span className="text-muted block text-[11px]">Expected Total</span>
+                <span className="font-bold text-text text-sm">₹{selectedScreenshot.amount.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-muted block text-[11px]">Extracted by OCR</span>
+                <span className={`font-bold text-sm ${
+                  selectedScreenshot.screenshotAmount && Math.abs(selectedScreenshot.screenshotAmount - selectedScreenshot.amount) < 0.01
+                    ? 'text-emerald-500'
+                    : 'text-amber-500'
+                }`}>
+                  {selectedScreenshot.screenshotAmount ? `₹${selectedScreenshot.screenshotAmount.toFixed(2)}` : 'Not Detected'}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted block text-[11px]">Review Requirement</span>
+                <span className="text-amber-500 font-bold text-[10px]">Human Verification</span>
+              </div>
+            </div>
+
+            {/* Image Preview */}
+            <div className="flex-1 overflow-auto rounded-xl border border-border bg-bg3 flex items-center justify-center p-2 min-h-[250px]">
+              <img
+                src={selectedScreenshot.path}
+                alt="Payment Screenshot"
+                className="max-h-[50vh] max-w-full object-contain rounded-lg shadow-sm"
+                onError={(e) => {
+                  (e.target as any).style.display = 'none';
+                }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="pt-2 flex items-center justify-between gap-2 border-t border-border/60">
+              <button
+                type="button"
+                onClick={() => setSelectedScreenshot(null)}
+                className="px-4 py-2 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-muted hover:text-text cursor-pointer"
+              >
+                Close
+              </button>
+
+              <button
+                type="button"
+                disabled={actionInProgress === selectedScreenshot.orderId}
+                onClick={async () => {
+                  const id = selectedScreenshot.orderId;
+                  setSelectedScreenshot(null);
+                  await handleConfirmPayment(id);
+                }}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Check size={14} />
+                <span>Verify & Confirm Payment</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

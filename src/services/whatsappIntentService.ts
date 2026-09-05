@@ -764,9 +764,88 @@ async function searchAndBroadcast(opts: {
  * Handle OCR scan completion — called when ocrScanQueue finishes processing an image.
  * Registered as an event listener in server.ts startup.
  */
-export function handleOcrComplete(data: any): void {
+export async function handleOcrComplete(data: any): Promise<void> {
   const { phone, chatId, messageBody, ocrResult, msgId, imagePath } = data;
   if (!ocrResult) return;
+
+  // ─── 0. Payment Confirmation Screenshot Detection (Human-in-the-Loop) ────────
+  // If the sender has an active order waiting for payment verification, attach this
+  // image as a payment screenshot, extract amount, and queue for staff manual review.
+  try {
+    const cleanDigits = String(phone || chatId || '').replace(/\D/g, '');
+    const last10 = cleanDigits.slice(-10);
+    if (last10.length >= 7) {
+      const db = await dbManager.getConnection();
+      const pendingOrder = await db.get(
+        `SELECT id, total_amount, requester, phone, customer_id, payment_status, status
+         FROM special_orders
+         WHERE payment_status = 'PENDING_VERIFICATION'
+           AND (phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ?)
+         ORDER BY id DESC
+         LIMIT 1`,
+        [`%${last10}`]
+      );
+
+      if (pendingOrder) {
+        const ocrText = String(ocrResult.text || '');
+        let detectedAmount: number | null = null;
+
+        // Extract currency amount from OCR text
+        const amountPatterns = [
+          /(?:₹|INR|Rs\.?)\s*([\d,]+(?:\.\d{1,2})?)/i,
+          /(?:Paid|Paying|Total|Amount|Transferred|Sent)\s*(?:to|₹|INR|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+          /([\d,]+(?:\.\d{1,2})?)\s*(?:Paid|Successful|Success|Completed)/i
+        ];
+
+        for (const pat of amountPatterns) {
+          const m = ocrText.match(pat);
+          if (m && m[1]) {
+            const parsed = parseFloat(m[1].replace(/,/g, ''));
+            if (!isNaN(parsed) && parsed > 0 && parsed < 1000000) {
+              detectedAmount = parsed;
+              break;
+            }
+          }
+        }
+
+        const safeWebPath = imagePath ? `/data/inbound_media/${path.basename(imagePath)}` : null;
+
+        await db.run(
+          `UPDATE special_orders
+           SET payment_screenshot_path = ?,
+               screenshot_amount = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [safeWebPath, detectedAmount, pendingOrder.id]
+        );
+
+        await db.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'payment_screenshot_received', ?, 'system', CURRENT_TIMESTAMP)`,
+          [
+            pendingOrder.id,
+            `Payment screenshot received via WhatsApp. Detected amount: ${detectedAmount ? '₹' + detectedAmount.toFixed(2) : 'Uncertain/Unread'}. Awaiting pharmacy manual verification.`
+          ]
+        );
+
+        eventService.broadcast('order_updated', {
+          at: Date.now(),
+          order_id: pendingOrder.id,
+          reason: 'screenshot_received',
+          screenshot_amount: detectedAmount
+        });
+
+        console.log(`[Intent Service] Payment receipt attached to Order #${pendingOrder.id} (detected=₹${detectedAmount}, expected=₹${pendingOrder.total_amount}). Pending manual human review.`);
+
+        // CRITICAL HUMAN-IN-THE-LOOP RULE:
+        // NEVER autonomously confirm payment or auto-message customer that payment is confirmed.
+        // Return here so payment screenshots are NOT processed as prescription medicine searches.
+        return;
+      }
+    }
+  } catch (paymentCheckErr) {
+    console.warn('[Intent Service] Payment screenshot check error:', paymentCheckErr);
+  }
 
   let medicineName = ocrResult.medicineInfo?.potentialName;
   const dosageForm = ocrResult.medicineInfo?.dosageForm;

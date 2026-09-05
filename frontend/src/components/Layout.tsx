@@ -3064,10 +3064,10 @@ const QuickAssistSidebar = memo(({
               <span>Online Website Orders ({groupedWebsiteOrders.length})</span>
             </div>
             <button
-              onClick={() => navigate('/portal')}
+              onClick={() => navigate('/website-orders')}
               className="text-[9px] font-black text-cyan-300 hover:underline uppercase tracking-widest cursor-pointer"
             >
-              Website
+              Website Orders
             </button>
           </div>
           {groupedWebsiteOrders.length === 0 ? (
@@ -3492,7 +3492,7 @@ export const Layout = ({
 }) => {
   const location = useLocation();
   const queryClient = useQueryClient();
-  const isPortalPage = ['/portal', '/refill-portal'].includes(location.pathname);
+  const isPortalPage = ['/portal', '/refill-portal', '/customer-login', '/customer/login', '/my-bills', '/customer-bills'].includes(location.pathname);
   const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration'].includes(location.pathname);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
@@ -3940,6 +3940,16 @@ export const Layout = ({
     refetchSpecialOrders();
     refetchRefills();
   }, [fetchStagedNotifications, refetchSpecialOrders, refetchRefills]);
+
+  if (isPortalPage) {
+    return (
+      <div className="min-h-screen w-full bg-bg text-text selection:bg-primary/30 flex flex-col overflow-y-auto">
+        <main className="flex-1 w-full flex flex-col min-h-0">
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text selection:bg-primary/30">
