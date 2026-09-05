@@ -13,7 +13,7 @@ import { runHeavyJob } from '../utils/backgroundJobLane.js';
 let catalogSyncTask: any = null;
 
 export async function ensureCatalogSyncCron(): Promise<void> {
-  if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') return;
+  if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
   if (catalogSyncTask) return;
   try {
     const db = await dbManager.getConnection();

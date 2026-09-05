@@ -465,7 +465,7 @@ export async function recalculateStockLimits(): Promise<void> {
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export function startStockCalculatorWorker(intervalMs: number = 86400000): void {
-  if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+  if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
     console.log('[StockCalculatorWorker] StockCalculatorWorker is STOPPED and DISABLED.');
     stopStockCalculatorWorker();
     return;

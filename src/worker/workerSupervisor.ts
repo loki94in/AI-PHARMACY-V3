@@ -40,7 +40,7 @@ export class WorkerSupervisor {
   /** Starts all configured background workers */
   public start(): void {
     if (this.isStarted) return;
-    if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+    if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
       console.log('[WorkerSupervisor] ALL background workers are STOPPED and DISABLED.');
       this.stop();
       return;

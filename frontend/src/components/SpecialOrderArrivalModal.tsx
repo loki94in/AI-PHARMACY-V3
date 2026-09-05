@@ -30,7 +30,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
   orders,
   onSuccess
 }) => {
-  useModalEscape(onClose);
+  useModalEscape(isOpen, onClose);
 
   const [itemStatuses, setItemStatuses] = useState<Record<number, 'arrived' | 'delayed'>>({});
   const [delayNotes, setDelayNotes] = useState<Record<number, string>>({});

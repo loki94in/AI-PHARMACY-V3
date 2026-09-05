@@ -7,7 +7,7 @@ export class AutoMatchWorker {
   private isRunning: boolean = false;
 
   start(intervalMs: number = 900000) { // Default: 15 minutes
-    if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+    if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
       console.log('[AutoMatchWorker] AutoMatchWorker is STOPPED and DISABLED.');
       this.stop();
       return;

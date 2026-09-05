@@ -196,7 +196,7 @@ export class TokenRefreshScheduler {
   }
 
   public async start() {
-    if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+    if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
       console.log('[TokenRefreshScheduler] Background token refresh scheduler is STOPPED and DISABLED.');
       this.stop();
       return;

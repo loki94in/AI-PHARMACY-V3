@@ -133,7 +133,7 @@ class TriggerSchedulerService {
    * Initialize or re-register all background trigger schedules dynamically
    */
   public async initSchedules(db?: any): Promise<void> {
-    if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+    if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
       console.log('[TriggerScheduler] Background workers disabled via env. Skipping scheduler initialization.');
       return;
     }

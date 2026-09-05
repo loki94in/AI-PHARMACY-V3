@@ -98,6 +98,7 @@ Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedo
 ; Launcher helper + license
 Source: "packaging\RUN-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\RUN-PharmacyOS-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "packaging\STOP-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
@@ -108,8 +109,10 @@ Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifs
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{group}\Open in Browser"; Filename: "http://localhost:{#MyAppPort}"
 Name: "{group}\Run (with browser)"; Filename: "{app}\RUN-PharmacyOS.bat"; WorkingDir: "{app}"
+Name: "{group}\Stop AI Pharmacy OS"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\Stop {#MyAppName}"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\AIPharmacyOS"; Flags: uninsdeletekey
@@ -350,6 +353,7 @@ begin
     DeleteFile(AppDir + '\PharmacyOS.exe');
     DeleteFile(AppDir + '\sea-entry.cjs');
     DeleteFile(AppDir + '\RUN-PharmacyOS.bat');
+    DeleteFile(AppDir + '\STOP-PharmacyOS.bat');
     DeleteFile(AppDir + '\license.txt');
     DeleteFile(AppDir + '\README.md');
     DeleteFile(AppDir + '\eng.traineddata');

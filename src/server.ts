@@ -471,7 +471,10 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true') {
     setTimeout(() => {
       console.log(`[Boot] Launching dedicated app window at ${serverUrl}...`);
-      launchAppBrowser(serverUrl);
+      launchAppBrowser(serverUrl, undefined, () => {
+        console.log('[Boot] Main application UI window closed. Exiting AI Pharmacy OS...');
+        void gracefulShutdown('UI_WINDOW_CLOSED');
+      });
     }, 1000);
   }
 });
@@ -718,7 +721,7 @@ server.on('error', (err: any) => {
         // Checks if an authenticated WhatsApp session exists on disk. If not configured or never connected,
         // it auto-stops immediately without launching Chrome or spamming checks.
         setTimeout(async () => {
-          if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') return;
+          if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
           try {
             const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
             if (await isWhatsAppAutoConnectAllowed()) {
@@ -746,7 +749,7 @@ server.on('error', (err: any) => {
         }).catch(err => console.warn('[Boot] Token-refresh warm-up hook failed:', err));
 
         setTimeout(() => {
-          if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') return;
+          if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
           import('./routes/pharmarack.js').then(mod => mod.warmupStartupCart()).catch(err => console.warn('[Boot:Phase4] Cart warm-up fallback failed:', err?.message || err));
         }, 50_000);
       });
@@ -772,7 +775,7 @@ server.on('error', (err: any) => {
   })();
 
 async function setupCrons(db: any) {
-  if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
+  if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') {
     console.log('[Cron] All background crons are STOPPED and DISABLED.');
     return;
   }
@@ -835,6 +838,15 @@ async function setupCrons(db: any) {
     console.warn('[Boot] WhatsApp intent service registration skipped:', err);
   }
 }
+
+// Client-initiated clean application exit: releases port 5175, runs backup, and closes DB
+app.post('/api/system/shutdown', (req, res) => {
+  console.log('[System] Received client exit / shutdown request. Terminating server...');
+  res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
+  setTimeout(() => {
+    void gracefulShutdown('CLIENT_EXIT');
+  }, 100);
+});
 
 // Graceful shutdown with auto-backup
 async function gracefulShutdown(signal: string) {

@@ -27,28 +27,72 @@ export class OrderFulfillmentService {
         console.log('[OrderFulfillmentService] Refill scheduler disabled in Settings.');
         return;
       }
+
+      // Read the user-configured refill check time (HH:MM, 24h). Default: 09:00.
+      let checkHour = 9, checkMin = 0;
+      try {
+        const timeRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_refills_check_time'");
+        if (timeRow?.value && timeRow.value.includes(':')) {
+          const [h, m] = timeRow.value.split(':').map((s: string) => parseInt(s.trim(), 10));
+          checkHour = isNaN(h) ? 9 : h;
+          checkMin = isNaN(m) ? 0 : m;
+        }
+      } catch (_) {}
+
+      console.log(`[OrderFulfillmentService] Starting background refill scheduler at ${String(checkHour).padStart(2, '0')}:${String(checkMin).padStart(2, '0')} daily...`);
     } catch (_) {}
 
-    console.log('[OrderFulfillmentService] Starting background refill scheduler (every hour)...');
-    
     // Run initial evaluation on boot
     this.checkRefillsAndGenerateOrders();
 
-    // Check every hour. P3 gated worker: skip ticks while the user is idle
-    // >30 min; evaluation resumes automatically on the next tick after wake.
-    this.intervalId = setInterval(async () => {
+    // Schedule daily cron at the configured time.  Falls back to a 1-hour safety net
+    // in case the cron import is unavailable (defensive for unusual environments).
+    try {
+      const cron = await import('node-cron');
+      const db = await dbManager.getConnection();
+      let checkHour = 9, checkMin = 0;
       try {
-        const { activityTracker } = await import('../utils/activityTracker.js');
-        if (activityTracker.isIdle()) return;
+        const timeRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_refills_check_time'");
+        if (timeRow?.value && timeRow.value.includes(':')) {
+          const [h, m] = timeRow.value.split(':').map((s: string) => parseInt(s.trim(), 10));
+          checkHour = isNaN(h) ? 9 : h;
+          checkMin = isNaN(m) ? 0 : m;
+        }
       } catch (_) {}
-      this.checkRefillsAndGenerateOrders();
-    }, 60 * 60 * 1000);
+
+      const cronExpr = `${checkMin} ${checkHour} * * *`;
+      const task = cron.default.schedule(cronExpr, async () => {
+        try {
+          const { activityTracker } = await import('../utils/activityTracker.js');
+          if (activityTracker.isIdle()) return; // P3 gated
+        } catch (_) {}
+        this.checkRefillsAndGenerateOrders();
+      });
+
+      // Store the cron task so stop() can cancel it
+      (this as any)._cronTask = task;
+      console.log(`[OrderFulfillmentService] Refill evaluator scheduled daily at cron: ${cronExpr}`);
+    } catch (cronErr) {
+      // Fallback to hourly interval if cron import fails
+      console.warn('[OrderFulfillmentService] node-cron unavailable, falling back to hourly interval:', cronErr);
+      this.intervalId = setInterval(async () => {
+        try {
+          const { activityTracker } = await import('../utils/activityTracker.js');
+          if (activityTracker.isIdle()) return;
+        } catch (_) {}
+        this.checkRefillsAndGenerateOrders();
+      }, 60 * 60 * 1000);
+    }
   }
 
   public stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+    if ((this as any)._cronTask) {
+      try { (this as any)._cronTask.stop(); } catch (_) {}
+      (this as any)._cronTask = null;
     }
   }
 

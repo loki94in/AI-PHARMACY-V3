@@ -45,6 +45,7 @@ import {
   Zap,
   Globe,
   Image as ImageIcon,
+  Power,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {
@@ -126,6 +127,57 @@ interface LocalApiErrorShape {
 // ──────────────────────────────────────────────
 // Sidebar
 // ──────────────────────────────────────────────
+const ExitAppButton = () => {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-1.5 p-1 bg-red-500/10 border border-red-500/30 rounded-xl animate-fade-in">
+        <button
+          onClick={async () => {
+            try {
+              toastEvent.trigger('Shutting down AI Pharmacy OS...', 'info');
+              await api.shutdownSystem();
+            } catch (_) {}
+            window.close();
+            setTimeout(() => {
+              document.body.innerHTML = `
+                <div style="height:100vh;display:flex;align-items:center;justify-content:center;background:#090d16;color:#94a3b8;font-family:sans-serif;text-align:center;">
+                  <div>
+                    <h2 style="color:#ef4444;margin-bottom:8px;">AI PHARMACY OS SHUT DOWN</h2>
+                    <p style="font-size:14px;color:#cbd5e1;">The backend process has terminated cleanly and port 5175 is free.</p>
+                    <p style="font-size:12px;color:#64748b;margin-top:16px;">You can safely close this browser window.</p>
+                  </div>
+                </div>
+              `;
+            }, 400);
+          }}
+          className="flex-1 py-1.5 text-center text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors cursor-pointer"
+        >
+          Confirm Exit
+        </button>
+        <button
+          onClick={() => setConfirming(false)}
+          className="px-2.5 py-1.5 text-[11px] font-semibold text-muted hover:text-text rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-red-500/80 hover:text-white hover:bg-red-500 transition-all cursor-pointer border border-red-500/20"
+      title="Shut down AI Pharmacy OS and close application"
+    >
+      <Power size={16} />
+      <span>Exit App</span>
+    </button>
+  );
+};
+
 // memo: chrome is isolated from navigation re-renders — Sidebar subscribes to
 // the router itself so the active highlight updates without Layout re-renders.
 const Sidebar = memo(({
@@ -334,8 +386,8 @@ const Sidebar = memo(({
           </nav>
         </div>
 
-        {/* Sidebar Bottom Footer: Log Out */}
-        <div className="p-3 mx-2 border-t border-glass-border/60 shrink-0">
+        {/* Sidebar Bottom Footer: Log Out & Exit App */}
+        <div className="p-3 mx-2 border-t border-glass-border/60 shrink-0 flex flex-col gap-1">
           <button
             onClick={() => {
               try {
@@ -347,12 +399,13 @@ const Sidebar = memo(({
                 window.location.reload();
               }, 300);
             }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold text-muted hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
+            className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-muted hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
             title="Log Out of System"
           >
             <LogOut size={16} />
             <span>Log Out</span>
           </button>
+          <ExitAppButton />
         </div>
 
       </div>

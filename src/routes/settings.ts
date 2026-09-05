@@ -147,6 +147,19 @@ router.post('/save-single', async (req, res) => {
     }
 
     res.json({ success: true, key, value: saveValue });
+
+    // Reload trigger schedules asynchronously if a trigger-related key was changed
+    const isTriggerKey = key.startsWith('trigger_') || key === 'automation_enabled';
+    if (isTriggerKey) {
+      setImmediate(async () => {
+        try {
+          const db = await dbManager.getConnection();
+          await triggerSchedulerService.reloadSchedules(db);
+        } catch (tsErr) {
+          console.error('[Settings] Trigger scheduler reload error (save-single):', tsErr);
+        }
+      });
+    }
   } catch (error) {
     console.error('Settings save-single error:', error);
     res.status(500).json({ error: 'Failed to save setting' });

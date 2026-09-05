@@ -103,7 +103,7 @@ export async function copyProfileFolder(src: string, dest: string, logPrefix = '
  * - --disable-background-networking / --disable-sync: Disables background telemetry, syncing, and auto-updates.
  * - Direct process spawn: Eliminates lingering cmd.exe / terminal processes.
  */
-export function launchAppBrowser(url: string, customProfileDir?: string): boolean {
+export function launchAppBrowser(url: string, customProfileDir?: string, onExit?: () => void): boolean {
   try {
     const browserPath = findChromePath({ includeEdge: true });
     if (browserPath) {
@@ -125,13 +125,20 @@ export function launchAppBrowser(url: string, customProfileDir?: string): boolea
       ];
 
       const child = spawn(browserPath, args, {
-        detached: true,
+        detached: !onExit,
         stdio: 'ignore'
       });
       child.on('error', (err) => {
         console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
       });
-      child.unref();
+      if (onExit) {
+        child.on('exit', (code) => {
+          console.log(`[ChromeBrowser] App browser window closed (code: ${code}). Triggering app shutdown...`);
+          onExit();
+        });
+      } else {
+        child.unref();
+      }
       return true;
     }
   } catch (err: any) {

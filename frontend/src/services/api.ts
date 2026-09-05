@@ -1426,6 +1426,7 @@ export const api = {
   deletePatient: (id: number) => apiClient.delete(`/crm/patients/${id}`).then(res => res.data),
   deleteDoctor: (id: number | string) => apiClient.delete(`/crm/doctors/${id}`).then(res => res.data),
   getPatientHistory: (id: number) => apiClient.get(`/crm/${id}/history`).then(res => res.data),
+  getUncollectedAlerts: () => apiClient.get<any[]>('/orders/uncollected-alerts').then(res => res.data),
 
   // Catalog Upload & Import
   uploadCatalogFile: (file: File) => {
@@ -1913,6 +1914,10 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; order_id: number; payment_status: string }>(`/website/orders/${orderId}/mark-paid`).then(res => res.data),
   getOrderPaymentQr: (orderId: number) =>
     apiClient.get<{ success: boolean; qr_id: string; label: string; payee_name: string; upi_id: string; upi_uri: string; qr_image_url: string; amount: number; payment_status: string }>(`/website/orders/${orderId}/payment-qr`).then(res => res.data),
+
+  // Application lifecycle & process shutdown
+  shutdownSystem: () =>
+    apiClient.post<{ success: boolean; message: string }>('/system/shutdown').then(res => res.data),
 };
 
 export interface CatalogImageItem {

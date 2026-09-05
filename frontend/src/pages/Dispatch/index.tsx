@@ -856,7 +856,7 @@ const Dispatch = () => {
           );
         }
 
-        const activeDistributorOrdersCount = distributorReminders.filter(r => r.has_order_today !== false).length;
+        const activeDistributorOrdersCount = distributorReminders.filter(r => Boolean(r.has_order_today)).length;
         if (activeDistributorOrdersCount === 0) {
           return (
             <div className="rounded-xl border px-4 py-3 flex items-center gap-3 transition-colors duration-500 bg-bg2/40 border-glass-border/80">
