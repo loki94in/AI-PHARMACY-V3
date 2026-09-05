@@ -3,7 +3,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { sendMessage } from '../whatsappClient.js';
+import { sendMessage, normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage, buildMultiOrderNotificationMessage, type MultiOrderItemArrival } from '../services/storeSettingsService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
@@ -729,6 +729,55 @@ router.put('/:id', async (req, res) => {
            AND reference_id = ?`,
         [String(id), String(id)]
       ).catch(() => {});
+    }
+
+    // 2-Way Sync: If phone or requester updated, cascade changes to pending/failed WhatsApp queue rows & customers table
+    if (newPhone && (newPhone !== existing.phone || newRequester !== existing.requester)) {
+      const cleanNewPhone = normalizeWhatsAppPhone(newPhone);
+      const oldDigits = (existing.phone || '').replace(/\D/g, '');
+      const last8Old = oldDigits.length >= 7 ? oldDigits.slice(-8) : oldDigits;
+
+      if (cleanNewPhone) {
+        // Update whatsapp_send_queue for this customer/order
+        await db.run(
+          `UPDATE whatsapp_send_queue
+           SET number = ?, target_name = ?, status = 'pending', retry_count = 0, error_message = NULL
+           WHERE (
+             (target_name IS NOT NULL AND target_name = ?)
+             OR (? != '' AND number LIKE ?)
+             OR message LIKE ?
+           )
+           AND status IN ('pending', 'failed_offline', 'failed_perm', 'review_required')`,
+          [cleanNewPhone, newRequester, existing.requester, last8Old, `%${last8Old}%`, `%${existing.product}%`]
+        ).catch(() => {});
+
+        // Also update automation_notifications
+        await db.run(
+          `UPDATE automation_notifications
+           SET recipient_phone = ?, recipient_name = ?, status = 'queued', error_message = NULL
+           WHERE (
+             reference_id = ?
+             OR (recipient_name IS NOT NULL AND recipient_name = ?)
+             OR (? != '' AND recipient_phone LIKE ?)
+           )
+           AND status IN ('queued', 'failed', 'error')`,
+          [cleanNewPhone, newRequester, String(id), existing.requester, last8Old, `%${last8Old}%`]
+        ).catch(() => {});
+
+        // Sync to customers table
+        await db.run(
+          `UPDATE customers 
+           SET phone = ?, name = ?
+           WHERE phone = ? OR name = ?`,
+          [newPhone, newRequester, existing.phone, existing.requester]
+        ).catch(() => {});
+
+        try {
+          whatsappQueueWorker.triggerProcessing();
+          whatsappQueueWorker.broadcastQueueState(true);
+          eventService.broadcast('customers_changed', { timestamp: Date.now() });
+        } catch (_) {}
+      }
     }
 
     broadcastOrdersChanged();

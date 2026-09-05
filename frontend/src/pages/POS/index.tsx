@@ -1905,7 +1905,7 @@ const POS = () => {
 
     const filtered = filterLocalInventory(term, mappedInventory);
     setRowSearchResults(filtered);
-    setRowSearchHighlightIndex(-1);
+    setRowSearchHighlightIndex(filtered.length > 0 ? 0 : -1);
 
     if (rowCatalogSearchTimeoutRef.current) clearTimeout(rowCatalogSearchTimeoutRef.current);
     if (rowCatalogSearchAbortRef.current) {
@@ -4896,9 +4896,10 @@ const POS = () => {
                                     e.preventDefault();
                                     setRowSearchHighlightIndex(i => Math.max(i - 1, 0));
                                   } else if (e.key === 'Enter' || e.key === 'Tab') {
-                                    if (rowSearchHighlightIndex >= 0 && rowSearchHighlightIndex < rowSearchResults.length) {
+                                    const targetIdx = rowSearchHighlightIndex >= 0 ? rowSearchHighlightIndex : 0;
+                                    if (targetIdx >= 0 && targetIdx < rowSearchResults.length) {
                                       e.preventDefault();
-                                      fetchDetailsAndChangeRowMedicine(idx, rowSearchResults[rowSearchHighlightIndex]);
+                                      fetchDetailsAndChangeRowMedicine(idx, rowSearchResults[targetIdx]);
                                     }
                                   } else if (e.key === 'Escape') {
                                     setActiveRowSearchIndex(null);

@@ -774,7 +774,7 @@ class WhatsAppQueueWorker {
   }
 
   /** P1 push event: queue started/stopped processing — UI updates without polling */
-  private broadcastQueueState(active: boolean): void {
+  public broadcastQueueState(active: boolean = false): void {
     import('../services/eventService.js')
       .then(({ eventService }) => {
         eventService.broadcast('wa_queue_update', { active, at: Date.now() });
@@ -844,25 +844,87 @@ class WhatsAppQueueWorker {
     return totalCleared;
   }
 
-  /** Update individual queue item */
+  /** Update individual queue item with 2-way sync to CRM special orders & customers */
   public async updateItem(id: number, number: string, message?: string): Promise<boolean> {
     const db = await dbManager.getConnection();
     const cleanPhone = normalizeWhatsAppPhone(number);
+    let changed = false;
+    let targetName = '';
+    let oldNumber = '';
 
-    let sql = "UPDATE whatsapp_send_queue SET number = ?, status = 'pending', retry_count = 0, error_message = NULL";
-    const params: any[] = [cleanPhone];
+    if (id >= 900000) {
+      const realNotifId = id - 900000;
+      const notifRow = await db.get("SELECT * FROM automation_notifications WHERE id = ?", [realNotifId]);
+      if (notifRow) {
+        targetName = notifRow.recipient_name || '';
+        oldNumber = notifRow.recipient_phone || '';
+        const msg = message || notifRow.message;
+        await db.run(
+          "UPDATE automation_notifications SET recipient_phone = ?, message = ?, status = 'queued', error_message = NULL WHERE id = ?",
+          [cleanPhone, msg, realNotifId]
+        );
+        // Also enqueue into whatsapp_send_queue for immediate delivery
+        await this.enqueue(cleanPhone, msg, notifRow.type || 'special_order', targetName, undefined, undefined, undefined, { skipDedupe: true });
+        changed = true;
+      }
+    } else {
+      const queueRow = await db.get("SELECT * FROM whatsapp_send_queue WHERE id = ?", [id]);
+      if (queueRow) {
+        targetName = queueRow.target_name || '';
+        oldNumber = queueRow.number || '';
+      }
 
-    if (message) {
-      sql += ", message = ?";
-      params.push(message);
+      let sql = "UPDATE whatsapp_send_queue SET number = ?, status = 'pending', retry_count = 0, error_message = NULL";
+      const params: any[] = [cleanPhone];
+
+      if (message) {
+        sql += ", message = ?";
+        params.push(message);
+      }
+      sql += " WHERE id = ?";
+      params.push(id);
+
+      const result = await db.run(sql, params);
+      changed = (result.changes || 0) > 0;
     }
-    sql += " WHERE id = ?";
-    params.push(id);
 
-    const result = await db.run(sql, params);
-    this.triggerProcessing();
-    this.broadcastQueueState(true);
-    return (result.changes || 0) > 0;
+    if (changed) {
+      // 2-Way Sync: Update CRM special_orders and customers if matched
+      const rawNewDigits = number.replace(/\D/g, '');
+      const rawOldDigits = oldNumber.replace(/\D/g, '');
+      if (rawNewDigits) {
+        if (targetName) {
+          await db.run(
+            `UPDATE special_orders SET phone = ? WHERE requester = ?`,
+            [rawNewDigits, targetName]
+          ).catch(() => {});
+          await db.run(
+            `UPDATE customers SET phone = ? WHERE name = ?`,
+            [rawNewDigits, targetName]
+          ).catch(() => {});
+        }
+        if (rawOldDigits && rawOldDigits.length >= 7) {
+          const last8 = rawOldDigits.slice(-8);
+          await db.run(
+            `UPDATE special_orders SET phone = ? WHERE phone LIKE ?`,
+            [rawNewDigits, `%${last8}%`]
+          ).catch(() => {});
+          await db.run(
+            `UPDATE customers SET phone = ? WHERE phone LIKE ?`,
+            [rawNewDigits, `%${last8}%`]
+          ).catch(() => {});
+        }
+        try {
+          eventService.broadcast('order_updated', { at: Date.now() });
+          eventService.broadcast('customers_changed', { at: Date.now() });
+          eventService.broadcast('automation_hub_updated', { type: 'updated', id });
+        } catch (_) {}
+      }
+
+      this.triggerProcessing();
+      this.broadcastQueueState(true);
+    }
+    return changed;
   }
 
   /** Get complete status snapshot for API endpoint */

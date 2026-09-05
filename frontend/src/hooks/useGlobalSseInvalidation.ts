@@ -28,12 +28,14 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   sales_sync: [['sells-list'], ['investigation-list']],
   purchases_sync: [['purchase-history-list'], ['investigation-list']],
   pharmarack_cart_changed: [['pharmarack-cart']],
+  customers_changed: [['customers'], ['crm-customers'], ['pos-customers']],
 };
 
 // SSE event type -> DOM CustomEvents dispatched for non-react-query consumers
 const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   activity_logged: ['sse-activity-logged'],
   order_updated: ['refresh-special-orders'],
+  customers_changed: ['app-customers-updated', 'refresh-special-orders'],
   refill_updated: ['app-refills-updated'],
   return_created: ['sse-return-created'],
   wa_status_changed: ['sse-wa-status-changed'],

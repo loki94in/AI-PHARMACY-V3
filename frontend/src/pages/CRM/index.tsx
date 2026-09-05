@@ -3837,6 +3837,7 @@ const SpecialOrdersSection: React.FC = () => {
   // Pharmarack Search States
   const [prSearchResults, setPrSearchResults] = useState<PharmarackSearchResult[]>([]);
   const [showPrDropdown, setShowPrDropdown] = useState(false);
+  const [activePrIndex, setActivePrIndex] = useState(0);
   const [loadingPr, setLoadingPr] = useState(false);
 
   const productContainerRef = useRef<HTMLDivElement>(null);
@@ -3879,6 +3880,7 @@ const SpecialOrdersSection: React.FC = () => {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- clears dropdown when input empties
       setPrSearchResults([]);
       setShowPrDropdown(false);
+      setActivePrIndex(0);
       return;
     }
 
@@ -3888,8 +3890,10 @@ const SpecialOrdersSection: React.FC = () => {
       try {
         const results = await api.searchPharmarack(product);
         if (isSelectingPrRef.current) return;
-        setPrSearchResults(Array.isArray(results) ? (results as PharmarackSearchResult[]) : []);
-        setShowPrDropdown(results && results.length > 0);
+        const matches = Array.isArray(results) ? (results as PharmarackSearchResult[]) : [];
+        setPrSearchResults(matches);
+        setShowPrDropdown(matches.length > 0);
+        setActivePrIndex(0);
       } catch (err) {
         console.error('Pharmarack query failed:', err);
       } finally {
@@ -4151,10 +4155,10 @@ const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Customer Name is required.', 'error', '/crm');
       return;
     }
-    if (!customerPhone || customerPhone.length < 10) {
+    if (!customerPhone || customerPhone.length < 8 || customerPhone.length > 15) {
       setShakePhone(true);
       setTimeout(() => setShakePhone(false), 400);
-      toastEvent.trigger('Please enter a valid 10-digit mobile number.', 'error', '/crm');
+      toastEvent.trigger('Please enter a valid phone number (8–15 digits).', 'error', '/crm');
       return;
     }
     if (!qty || Number(qty) < 1) {
@@ -4273,10 +4277,10 @@ const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Customer Name is required.', 'error', '/crm');
       return;
     }
-    if (!customerPhone || customerPhone.length < 10) {
+    if (!customerPhone || customerPhone.length < 8 || customerPhone.length > 15) {
       setShakeEditPhone(true);
       setTimeout(() => setShakeEditPhone(false), 400);
-      toastEvent.trigger('Customer phone number must be 10 digits.', 'error', '/crm');
+      toastEvent.trigger('Customer phone number must be 8–15 digits.', 'error', '/crm');
       return;
     }
     if (!editQty || Number(editQty) < 1) {
@@ -4889,6 +4893,7 @@ const SpecialOrdersSection: React.FC = () => {
                   <input
                     type="text"
                     required
+                    autoFocus
                     placeholder="Search medicine e.g. Lipitor 10mg..."
                     value={product}
                     onChange={e => {
@@ -4896,6 +4901,24 @@ const SpecialOrdersSection: React.FC = () => {
                       setProduct(e.target.value);
                     }}
                     onFocus={() => { if (prSearchResults.length > 0) setShowPrDropdown(true); }}
+                    onKeyDown={e => {
+                      if (showPrDropdown && prSearchResults.length > 0) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setActivePrIndex(prev => Math.min(prev + 1, prSearchResults.length - 1));
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setActivePrIndex(prev => Math.max(prev - 1, 0));
+                        } else if (e.key === 'Enter') {
+                          if (activePrIndex >= 0 && activePrIndex < prSearchResults.length) {
+                            e.preventDefault();
+                            handleSelectPharmarackItem(prSearchResults[activePrIndex]);
+                          }
+                        } else if (e.key === 'Escape') {
+                          setShowPrDropdown(false);
+                        }
+                      }
+                    }}
                     className="w-full px-3.5 py-2.5 bg-bg border border-border rounded-xl font-medium focus:outline-none focus:border-primary text-xs"
                   />
                   {loadingPr && (
@@ -4922,7 +4945,10 @@ const SpecialOrdersSection: React.FC = () => {
                       <div
                         key={idx}
                         onClick={() => handleSelectPharmarackItem(item)}
-                        className="p-3 border-b border-border/30 hover:bg-bg3/80 transition-colors cursor-pointer flex flex-col gap-1 text-xs"
+                        onMouseEnter={() => setActivePrIndex(idx)}
+                        className={`p-3 border-b border-border/30 transition-colors cursor-pointer flex flex-col gap-1 text-xs ${
+                          idx === activePrIndex ? 'bg-primary/20 border-l-4 border-primary' : 'hover:bg-bg3/80'
+                        }`}
                       >
                         <div className="flex justify-between items-start">
                           <div className="flex items-center gap-1.5 flex-wrap truncate max-w-[200px]">

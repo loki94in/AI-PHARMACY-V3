@@ -995,7 +995,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     if (cachedResults && cachedResults.length > 0) {
       setSuggestions(cachedResults);
       setShowSuggestions(true);
-      setActiveSuggestionIndex(-1);
+      setActiveSuggestionIndex(0);
       cachedSessionStatus = 'active';
       setSessionStatus('active');
     }
@@ -1106,7 +1106,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         if (isSelectingRef.current) return;
         setSuggestions(mergedList);
         setShowSuggestions(mergedList.length > 0);
-        setActiveSuggestionIndex(-1);
+        setActiveSuggestionIndex(mergedList.length > 0 ? 0 : -1);
       } catch (err) {
         console.error('Error searching Pharmarack catalog:', err);
       } finally {
@@ -1193,13 +1193,17 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       }
     }
 
-    if (e.key === 'Enter' || (e.key === 'Tab' && showSuggestions && activeSuggestionIndex >= 0)) {
-      e.preventDefault();
-      if (showSuggestions && activeSuggestionIndex >= 0 && activeSuggestionIndex < suggestions.length) {
-        selectSuggestion(suggestions[activeSuggestionIndex]);
-      } else {
-        handleSubmit(e);
+    if (e.key === 'Enter' || (e.key === 'Tab' && showSuggestions)) {
+      if (showSuggestions && suggestions.length > 0) {
+        const targetIdx = activeSuggestionIndex >= 0 ? activeSuggestionIndex : 0;
+        if (targetIdx < suggestions.length && !suggestions[targetIdx].isErrorMessage) {
+          e.preventDefault();
+          selectSuggestion(suggestions[targetIdx]);
+          return;
+        }
       }
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 

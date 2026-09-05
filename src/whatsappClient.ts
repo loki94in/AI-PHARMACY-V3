@@ -1310,9 +1310,9 @@ export async function sendMessage(
     }
     cleanPhone = normalizeWhatsAppPhone(cleanPhone);
 
-    if (!cleanPhone || cleanPhone.length < 10) {
+    if (!cleanPhone || cleanPhone.length < 8) {
       console.warn(`[WhatsApp] Invalid phone number passed to sendMessage: "${recipient}". Skipping.`);
-      throw new Error(`Invalid phone number: "${recipient}" (must contain at least 10 valid digits).`);
+      throw new Error(`Invalid phone number: "${recipient}" (must contain at least 8 valid digits).`);
     }
 
     const chatId = `${cleanPhone}@c.us`;
@@ -1417,6 +1417,9 @@ export async function sendMessage(
               throw new Error('WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.');
             }
           } else {
+            if (errMsg.includes('No LID for user')) {
+              throw new Error(`Contact not registered or not saved in phone contacts (No LID found for ${cleanPhone}). Save this contact in your WhatsApp phone's contact book or verify the phone number.`);
+            }
             throw sendErr;
           }
         }
