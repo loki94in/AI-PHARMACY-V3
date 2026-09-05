@@ -927,6 +927,7 @@ const LiveHeaderClock = () => {
 // Live Cart Countdown Pill Button
 // ──────────────────────────────────────────────
 const LiveCartCountdownPill: React.FC = memo(() => {
+  const navigate = useNavigate();
   const [cartCount, setCartCount] = useState<number>(0);
   const [cutoffTime, setCutoffTime] = useState<string>('11:00');
   const [pausedDates, setPausedDates] = useState<string[]>([]);
@@ -944,17 +945,25 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       // 1. Fetch live cart summary
       const cartRes = await apiClient.get('/pharmarack/live-cart-summary').catch(() => null);
       if (cartRes?.data?.success) {
-        setCartCount(cartRes.data.totalItems || 0);
-        const dists = cartRes.data.distributors || [];
-        let missing = 0;
-        for (const d of dists) {
-          const rawP = d.phone || '';
-          const cleanP = String(rawP).replace(/\D/g, '').slice(-10);
-          if (!cleanP || cleanP.length !== 10) {
-            missing++;
+        const total = typeof cartRes.data.totalItems === 'number'
+          ? cartRes.data.totalItems
+          : (cartRes.data.distributors || cartRes.data.cart?.distributors || []).reduce((acc: number, d: any) => acc + (d.items?.length || 0), 0);
+        setCartCount(total);
+
+        if (typeof cartRes.data.missingDistributorsCount === 'number') {
+          setMissingPhoneCount(cartRes.data.missingDistributorsCount);
+        } else {
+          const dists = cartRes.data.distributors || cartRes.data.cart?.distributors || [];
+          let missing = 0;
+          for (const d of dists) {
+            const rawP = d.phone || '';
+            const cleanP = String(rawP).replace(/\D/g, '').slice(-10);
+            if (!cleanP || cleanP.length !== 10) {
+              missing++;
+            }
           }
+          setMissingPhoneCount(missing);
         }
-        setMissingPhoneCount(missing);
       }
 
       // 2. Fetch dispatch schedule (paused dates)
@@ -1064,8 +1073,16 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       </div>
       <span className="font-mono text-xs font-black whitespace-nowrap">{countdownInfo.label}</span>
       {missingPhoneCount > 0 && (
-        <span className="px-1 py-0.2 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
-          ⚠️ {missingPhoneCount}
+        <span 
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate('/pharmarack-cart?filter=unmapped');
+          }}
+          className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 flex items-center gap-1 shadow-xs transition-colors"
+          title={`${missingPhoneCount} distributor(s) missing WhatsApp phone number — Click to view in Pharmarack Cart`}
+        >
+          <span>⚠️</span>
+          <span>{missingPhoneCount} Missing</span>
         </span>
       )}
     </button>

@@ -2065,9 +2065,22 @@ router.get('/live-cart-summary', async (req, res) => {
     }
 
     const db = await dbManager.getConnection();
-    const [pendingOrders, ignoredRows] = await Promise.all([
+    const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
       db.all("SELECT * FROM special_orders WHERE status = 'Pending' OR status = 'Ordered' ORDER BY id DESC"),
-      db.all("SELECT word FROM permanently_ignored_words").catch(() => [])
+      db.all("SELECT word FROM permanently_ignored_words").catch(() => []),
+      db.all(`
+        SELECT 
+          LOWER(TRIM(m.store_name)) as store_name_lower, 
+          COALESCE(d.phone, d.contact, m.phone) as phone
+        FROM pharmarack_distributor_mappings m
+        LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+        UNION
+        SELECT 
+          LOWER(TRIM(d.name)) as store_name_lower, 
+          COALESCE(d.phone, d.contact) as phone
+        FROM distributors d
+        WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+      `).catch(() => [])
     ]);
 
     const ignoredWordsSet = new Set((ignoredRows || []).map((r: any) => String(r.word || '').toLowerCase().trim()).filter(Boolean));
@@ -2076,9 +2089,35 @@ router.get('/live-cart-summary', async (req, res) => {
       return p && !ignoredWordsSet.has(p);
     });
 
+    const phoneMap = new Map<string, string>();
+    for (const r of (mappingRows || [])) {
+      if (r.store_name_lower && r.phone) {
+        const cleanP = String(r.phone).replace(/\D/g, '').slice(-10);
+        if (cleanP && cleanP.length === 10) {
+          phoneMap.set(r.store_name_lower, cleanP);
+        }
+      }
+    }
+
+    let missingDistributorsCount = 0;
+    for (const dist of cartDistributors) {
+      const sLower = String(dist.storeName || '').toLowerCase().trim();
+      const mappedPhone = phoneMap.get(sLower) || '';
+      dist.phone = mappedPhone;
+      const cleanP = mappedPhone.replace(/\D/g, '').slice(-10);
+      if (!cleanP || cleanP.length !== 10) {
+        missingDistributorsCount++;
+      }
+    }
+
+    const totalItems = cartDistributors.reduce((sum: number, d: any) => sum + (d.items?.length || 0), 0);
+
     return res.json({
       success: true,
       cart: { distributors: cartDistributors },
+      distributors: cartDistributors,
+      totalItems,
+      missingDistributorsCount,
       orders: filteredOrders,
       autoRefills: []
     });

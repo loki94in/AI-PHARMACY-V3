@@ -42,6 +42,102 @@ const splitMedicineName = (name: string, packaging: string) => {
   return { baseName, packType: detectedType };
 };
 
+interface ItemTypeDefaults {
+  packType: string;
+  packaging: string;
+  pack_size: number;
+  pack_unit: string;
+  allow_loose_sale: number;
+  placeholder: string;
+}
+
+const ITEM_TYPE_PACKAGING_DEFAULTS: Record<string, ItemTypeDefaults> = {
+  TABLET: {
+    packType: 'TAB',
+    packaging: 'STRIP OF 10 TAB',
+    pack_size: 10,
+    pack_unit: 'TAB',
+    allow_loose_sale: 1,
+    placeholder: 'e.g. STRIP OF 10 TAB, 10 TAB, 15 TAB',
+  },
+  CAPSULE: {
+    packType: 'CAP',
+    packaging: 'STRIP OF 10 CAP',
+    pack_size: 10,
+    pack_unit: 'CAP',
+    allow_loose_sale: 1,
+    placeholder: 'e.g. STRIP OF 10 CAP, 10 CAP, 15 CAP',
+  },
+  SYRUP: {
+    packType: 'SYP',
+    packaging: '100ML BOTTLE',
+    pack_size: 1,
+    pack_unit: 'BOTTLE',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 100ML BOTTLE, 60ML BOTTLE, 200ML',
+  },
+  INJECTION: {
+    packType: 'INJ',
+    packaging: '1 VIAL',
+    pack_size: 1,
+    pack_unit: 'VIAL',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 1 VIAL, 1 AMPOULE, 2ML AMP',
+  },
+  CREAM: {
+    packType: 'CREAM',
+    packaging: '15GM TUBE',
+    pack_size: 1,
+    pack_unit: 'TUBE',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 15GM TUBE, 30GM TUBE, 50GM',
+  },
+  DROPS: {
+    packType: 'BOTTLE',
+    packaging: '10ML BOTTLE',
+    pack_size: 1,
+    pack_unit: 'BOTTLE',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 10ML BOTTLE, 5ML BOTTLE',
+  },
+  POWDER: {
+    packType: 'NONE',
+    packaging: '1 SACHET',
+    pack_size: 1,
+    pack_unit: 'SACHET',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 1 SACHET, 100GM JAR, 200GM',
+  },
+  DEVICE: {
+    packType: 'NONE',
+    packaging: '1 PIECE',
+    pack_size: 1,
+    pack_unit: 'PIECE',
+    allow_loose_sale: 0,
+    placeholder: 'e.g. 1 PIECE, 1 BOX, 1 PACK',
+  },
+};
+
+const compileMedicineName = (base: string, suffix: string, packaging: string): string => {
+  const b = (base || '').trim();
+  const s = (suffix && suffix !== 'NONE') ? suffix.trim() : '';
+  const p = (packaging || '').trim();
+
+  if (!b) return '';
+  if (!s && !p) return b;
+
+  const bUpper = b.toUpperCase();
+  const pUpper = p.toUpperCase();
+  const sUpper = s.toUpperCase();
+
+  const bHasSuffix = s && (bUpper === sUpper || bUpper.endsWith(' ' + sUpper));
+  const pHasSuffix = s && (pUpper === sUpper || pUpper.startsWith(sUpper + ' ') || pUpper.endsWith(' ' + sUpper) || pUpper.includes(' ' + sUpper + ' '));
+
+  if (s && !bHasSuffix && !pHasSuffix) {
+    return p ? `${b} ${s} ${p}`.trim() : `${b} ${s}`.trim();
+  }
+  return p ? `${b} ${p}`.trim() : b;
+};
 
 const THERAPEUTIC_CLASSES = [
   'Analgesic / Antipyretic',
@@ -239,7 +335,9 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
 
   const [form, setForm] = useState<LocalUniversalMedicineForm>(() => {
     const nameVal = initialData?.name || '';
-    const packagingVal = initialData?.packaging || (isCreateMode ? '10 TAB' : '');
+    const initialType = (ocrData?.dosageForm || initialData?.item_type || 'TABLET').toUpperCase();
+    const typeDefault = ITEM_TYPE_PACKAGING_DEFAULTS[initialType] || ITEM_TYPE_PACKAGING_DEFAULTS['TABLET'];
+    const packagingVal = initialData?.packaging || (isCreateMode ? typeDefault.packaging : '');
     const mrpVal = ocrData?.mrp ?? initialData?.mrp ?? '';
     const rateVal = ocrData?.rate ?? initialData?.rate ?? '';
     const sellPriceVal = ocrData?.sell_price ?? initialData?.sell_price ?? (mrpVal !== '' ? mrpVal : '');
@@ -248,9 +346,9 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       name: ocrData?.potentialName || nameVal,
       item_type: ocrData?.dosageForm || initialData?.item_type || 'TABLET',
       category: initialData?.category || 'Allopathy',
-      pack_unit: initialData?.pack_unit || 'TAB',
+      pack_unit: initialData?.pack_unit || typeDefault.pack_unit,
       packaging: ocrData?.packaging || packagingVal,
-      pack_size: initialData?.pack_size ?? (parsePackSizeFromPackaging(ocrData?.packaging || packagingVal) || 1),
+      pack_size: initialData?.pack_size ?? (parsePackSizeFromPackaging(ocrData?.packaging || packagingVal) || typeDefault.pack_size),
       therapeutic: initialData?.therapeutic || '',
       sub_therapeutic: initialData?.sub_therapeutic || '',
       schedule_type: initialData?.schedule_type || 'None',
@@ -427,9 +525,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
     if (!isManualName) {
       setForm(prev => {
         const packagingStr = (prev.packaging || '').trim();
-        const compiled = packType && packType !== 'NONE'
-          ? (packagingStr ? `${baseName} ${packType} ${packagingStr}`.trim() : `${baseName} ${packType}`.trim())
-          : (packagingStr ? `${baseName} ${packagingStr}`.trim() : baseName.trim());
+        const compiled = compileMedicineName(baseName, packType, packagingStr);
         return {
           ...prev,
           name: compiled,
@@ -470,6 +566,31 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       rate: historyPrefill.rate ?? prev.rate
     }));
     setPrefillDismissed(true);
+  };
+
+  const handleItemTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newItemType = e.target.value;
+    const defaults = ITEM_TYPE_PACKAGING_DEFAULTS[newItemType] || ITEM_TYPE_PACKAGING_DEFAULTS['TABLET'];
+
+    if (defaults.packType) {
+      setPackType(defaults.packType);
+    }
+
+    setForm(prev => {
+      const updated = {
+        ...prev,
+        item_type: newItemType,
+        packaging: defaults.packaging,
+        pack_size: defaults.pack_size,
+        pack_unit: defaults.pack_unit,
+        allow_loose_sale: defaults.allow_loose_sale,
+        is_loose: defaults.allow_loose_sale === 1,
+      };
+      if (!isManualName) {
+        updated.name = compileMedicineName(baseName, defaults.packType, defaults.packaging);
+      }
+      return updated;
+    });
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -712,7 +833,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                       <select 
                         name="item_type" 
                         value={form.item_type || 'TABLET'} 
-                        onChange={handleChange}
+                        onChange={handleItemTypeChange}
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-medium focus:border-primary focus:outline-none"
                       >
                         <option value="TABLET">TABLET (Solid oral dosage)</option>
@@ -766,7 +887,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Custom Packaging Description (Universal Truth)</label>
+                      <label className="block text-xs font-semibold text-muted mb-1.5">Custom Packaging Description</label>
                       <input 
                         type="text" 
                         name="packaging"
@@ -781,16 +902,12 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                               ...(autoParsedSize ? { pack_size: autoParsedSize } : {})
                             };
                             if (!isManualName) {
-                              const packagingStr = val.trim();
-                              const compiled = packType && packType !== 'NONE'
-                                ? (packagingStr ? `${baseName} ${packType} ${packagingStr}`.trim() : `${baseName} ${packType}`.trim())
-                                : (packagingStr ? `${baseName} ${packagingStr}`.trim() : baseName.trim());
-                              updated.name = compiled;
+                              updated.name = compileMedicineName(baseName, packType, val);
                             }
                             return updated;
                           });
                         }}
-                        placeholder="e.g. STRIP OF 10 TAB, 10 TAB, 15 TAB, BOTTLE OF 100ML"
+                        placeholder={ITEM_TYPE_PACKAGING_DEFAULTS[form.item_type || 'TABLET']?.placeholder || "e.g. STRIP OF 10 TAB, 10 TAB, 15 TAB"}
                         className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-bold focus:border-primary focus:outline-none"
                       />
                     </div>

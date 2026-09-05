@@ -429,11 +429,13 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
   const index = getCompactInventoryIndex();
   const useIndex = index.length === compact.length;
 
-  const t1List: CompactInventoryItem[] = [];
-  const t2List: CompactInventoryItem[] = [];
-  const t3List: CompactInventoryItem[] = [];
-  const t4List: CompactInventoryItem[] = [];
-  const t5List: CompactInventoryItem[] = [];
+  interface GroupedMedEntry {
+    item: CompactInventoryItem;
+    tier: number;
+    totalStock: number;
+    totalLoose: number;
+  }
+  const byMedicine = new Map<string, GroupedMedEntry>();
 
   for (let i = 0; i < compact.length; i++) {
     const item = compact[i];
@@ -493,15 +495,50 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
 
     if (!tier) continue;
 
-    if (tier === 1) t1List.push(item);
-    else if (tier === 2) t2List.push(item);
-    else if (tier === 3) t3List.push(item);
-    else if (tier === 4) t4List.push(item);
-    else t5List.push(item);
+    // Group batches by medicine ID or normalized medicine name
+    const medId = item.medicine_id || (item as any).id;
+    const medKey = medId ? `id_${medId}` : `name_${(item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    if (!medKey) continue;
+
+    const itemStock = typeof item.stock_qty === 'number' ? item.stock_qty : 0;
+    const itemLoose = typeof (item as any).loose_quantity === 'number'
+      ? (item as any).loose_quantity
+      : (typeof (item as any).loose_qty === 'number' ? (item as any).loose_qty : 0);
+
+    const existing = byMedicine.get(medKey);
+    if (!existing) {
+      byMedicine.set(medKey, {
+        item,
+        tier,
+        totalStock: itemStock,
+        totalLoose: itemLoose,
+      });
+    } else {
+      existing.totalStock += itemStock;
+      existing.totalLoose += itemLoose;
+      if (tier < existing.tier) {
+        existing.tier = tier;
+        existing.item = item;
+      }
+    }
   }
 
-  const sortAlpha = (a: CompactInventoryItem, b: CompactInventoryItem) =>
-    (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' });
+  const t1List: GroupedMedEntry[] = [];
+  const t2List: GroupedMedEntry[] = [];
+  const t3List: GroupedMedEntry[] = [];
+  const t4List: GroupedMedEntry[] = [];
+  const t5List: GroupedMedEntry[] = [];
+
+  for (const entry of byMedicine.values()) {
+    if (entry.tier === 1) t1List.push(entry);
+    else if (entry.tier === 2) t2List.push(entry);
+    else if (entry.tier === 3) t3List.push(entry);
+    else if (entry.tier === 4) t4List.push(entry);
+    else t5List.push(entry);
+  }
+
+  const sortAlpha = (a: GroupedMedEntry, b: GroupedMedEntry) =>
+    (a.item.name || '').localeCompare(b.item.name || '', undefined, { numeric: true, sensitivity: 'base' });
 
   t1List.sort(sortAlpha);
   t2List.sort(sortAlpha);
@@ -510,7 +547,7 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
   t5List.sort(sortAlpha);
 
   const matched = [...t1List, ...t2List, ...t3List, ...t4List, ...t5List].slice(0, 30);
-  return matched.map(c => ({
+  const rows = matched.map(({ item: c, totalStock, totalLoose }) => ({
     id: c.medicine_id || (c as any).id,
     name: c.name,
     generic_name: '',
@@ -526,9 +563,11 @@ const getInstantLocalInventoryPreview = (term: string): Medicine[] => {
     cgst_per: 6,
     sgst_per: 6,
     hsn_code: '',
-    stock_qty: c.stock_qty,
-    loose_qty: (c as any).loose_quantity ?? (c as any).loose_qty ?? 0,
+    stock_qty: totalStock,
+    loose_qty: totalLoose,
   }));
+
+  return dedupeMedicinesByName(rows);
 };
 
 // ONE row per medicine NAME in the Purchases dropdown. The master catalog
@@ -797,6 +836,24 @@ const formatExpiryToMMYY = (val: string): string => {
     if (yy.length >= 4) yy = yy.substring(2, 4);
     else if (yy.length === 1) yy = `0${yy}`;
     if (yy.length === 2) return `${mm}/${yy}`;
+  }
+
+  return cleaned;
+};
+
+const sanitizeExpiryInput = (raw: string, prev: string): string => {
+  // Reject letters and non-numeric characters (digits and slash only)
+  const cleaned = raw.replace(/[^0-9/]/g, '');
+  if (cleaned.length > 5) return prev;
+
+  // Auto-format 4 continuous digits: e.g. "1228" -> "12/28"
+  if (/^\d{4}$/.test(cleaned) && !cleaned.includes('/')) {
+    return `${cleaned.slice(0, 2)}/${cleaned.slice(2, 4)}`;
+  }
+
+  // Auto-append slash when typing second digit of month (if advancing forward)
+  if (/^\d{2}$/.test(cleaned) && prev.length === 1) {
+    return `${cleaned}/`;
   }
 
   return cleaned;
@@ -1639,7 +1696,7 @@ const Purchases: React.FC = () => {
     // The debounced backend fetch below then replaces this with the complete,
     // authoritative list for the exact term.
     const narrowed = getInstantNarrowedResults(cleanTerm);
-    const instantPreview = narrowed.length > 0 ? narrowed : getInstantLocalInventoryPreview(cleanTerm);
+    const instantPreview = dedupeMedicinesByName(narrowed.length > 0 ? narrowed : getInstantLocalInventoryPreview(cleanTerm));
     if (instantPreview.length > 0) {
       setSearchResults(instantPreview);
       setSearchHighlightIndex(-1);
@@ -3115,19 +3172,26 @@ const Purchases: React.FC = () => {
                               setDistributorSearch(distName);
                               setShowDistributorDropdown(false);
                             }}
-                            className={`w-full text-left px-4 py-2 text-text text-sm flex items-center justify-between transition-colors border-b border-glass-border/20 last:border-0 ${
-                              isHighlighted ? 'bg-primary/20 font-bold' : 'hover:bg-bg3'
+                            className={`w-full text-left px-4 py-2.5 text-text text-sm flex items-center justify-between transition-all border-b border-glass-border/20 last:border-0 ${
+                              isHighlighted 
+                                ? 'bg-primary/30 font-bold border-l-4 border-primary ring-1 ring-primary/40 shadow-sm shadow-primary/20' 
+                                : 'hover:bg-bg3'
                             }`}
                           >
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span className="font-semibold truncate text-text">{distName}</span>
                               {dist.phone && <span className="text-muted text-xs truncate">({dist.phone})</span>}
                             </div>
-                            {isMapped && (
-                              <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                Mapped 🔗
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {isHighlighted && (
+                                <span className="text-[10px] font-mono text-primary font-bold">↵ Select</span>
+                              )}
+                              {isMapped && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                  Mapped 🔗
+                                </span>
+                              )}
+                            </div>
                           </button>
                         );
                       })
@@ -3706,12 +3770,16 @@ const Purchases: React.FC = () => {
                                   data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
                                   onMouseEnter={() => setSearchHighlightIndex(idx)}
                                   onClick={() => selectMedicine(medicine, index)}
-                                  className={`w-full text-left px-4 py-2 hover:bg-bg3 text-text border-b border-glass-border/10 last:border-0 ${idx === searchHighlightIndex ? 'bg-primary/20 border-l-2 border-primary' : ''}`}
+                                  className={`w-full text-left px-4 py-2.5 transition-all text-text border-b border-glass-border/10 last:border-0 ${
+                                    idx === searchHighlightIndex 
+                                      ? 'bg-primary/30 border-l-4 border-primary shadow-sm shadow-primary/20 ring-1 ring-primary/40' 
+                                      : 'hover:bg-bg3'
+                                  }`}
                                 >
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
                                       <div className="font-medium truncate flex flex-wrap items-center gap-1.5">
-                                        <span>{medicine.name}</span>
+                                        <span className={idx === searchHighlightIndex ? "font-bold text-text" : ""}>{medicine.name}</span>
                                         {(() => {
                                           const sq = medicine.stock_qty;
                                           const lq = medicine.loose_qty || 0;
@@ -3753,8 +3821,13 @@ const Purchases: React.FC = () => {
                                         {medicine.pack_unit && <span> | {medicine.pack_unit}</span>}
                                       </div>
                                     </div>
-                                    <div className="text-right flex-shrink-0">
-                                      <div className="font-mono text-sm">₹{medicine.mrp}</div>
+                                    <div className="text-right flex-shrink-0 flex flex-col items-end">
+                                      <div className="font-mono text-sm font-bold">₹{medicine.mrp}</div>
+                                      {idx === searchHighlightIndex && (
+                                        <span className="text-[10px] text-primary font-mono font-semibold flex items-center gap-0.5 mt-0.5">
+                                          ↵ Select
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                 </button>
@@ -3764,8 +3837,10 @@ const Purchases: React.FC = () => {
                                 data-highlighted={searchHighlightIndex === searchResults.length ? "true" : "false"}
                                 onMouseEnter={() => setSearchHighlightIndex(searchResults.length)}
                                 onClick={() => openAddMedicineModal(index)}
-                                className={`w-full text-left px-4 py-2.5 hover:bg-emerald-500/15 text-emerald-400 font-semibold border-t border-glass-border/30 flex items-center justify-between transition-all ${
-                                  searchHighlightIndex === searchResults.length ? 'bg-emerald-500/20 border-l-2 border-emerald-400' : ''
+                                className={`w-full text-left px-4 py-2.5 text-emerald-400 font-semibold border-t border-glass-border/30 flex items-center justify-between transition-all ${
+                                  searchHighlightIndex === searchResults.length 
+                                    ? 'bg-emerald-500/25 border-l-4 border-emerald-400 ring-1 ring-emerald-500/40 shadow-sm' 
+                                    : 'hover:bg-emerald-500/15'
                                 }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -3887,8 +3962,10 @@ const Purchases: React.FC = () => {
                                       e.preventDefault();
                                       selectBatch(index, b);
                                     }}
-                                    className={`w-full text-left p-2 transition-colors flex items-center justify-between gap-2 ${
-                                      isHighlighted ? 'bg-primary/20 font-bold' : 'hover:bg-bg3'
+                                    className={`w-full text-left p-2.5 transition-all flex items-center justify-between gap-2 ${
+                                      isHighlighted 
+                                        ? 'bg-primary/30 text-text font-bold border-l-4 border-primary ring-1 ring-primary/40 shadow-sm shadow-primary/20' 
+                                        : 'hover:bg-bg3 text-text'
                                     }`}
                                   >
                                     <span className="font-mono font-bold text-sm text-text bg-bg3 px-1.5 py-0.5 rounded border border-glass-border">
@@ -3918,11 +3995,12 @@ const Purchases: React.FC = () => {
                   <td className="py-2.5 px-1">
                     <input
                       type="text"
+                      inputMode="numeric"
                       data-row-index={index}
                       data-field="expiry_date"
                       placeholder="MM/YY"
                       value={item.expiry_date}
-                      onChange={(e) => updateItem(index, 'expiry_date', e.target.value)}
+                      onChange={(e) => updateItem(index, 'expiry_date', sanitizeExpiryInput(e.target.value, item.expiry_date || ''))}
                       onBlur={(e) => updateItem(index, 'expiry_date', formatExpiryToMMYY(e.target.value))}
                       onKeyDown={(e) => handleRowInputKeyDown(e, index, 'expiry_date')}
                       className="w-[68px] bg-white/10 border border-white/20 rounded px-1 py-1 text-white text-sm font-mono text-center h-8"
