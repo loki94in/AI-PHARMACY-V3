@@ -41,6 +41,8 @@ class DatabaseManager {
     return acquired;
   }
 
+  public isBooting = false;
+
   private constructor() {}
 
   public static getInstance(): DatabaseManager {
@@ -176,7 +178,7 @@ class DatabaseManager {
       const sqlLower = sql.toLowerCase();
       const isWrite = sqlLower.includes('insert') || sqlLower.includes('update') || sqlLower.includes('delete');
       const isInternal = sqlLower.includes('action_logs') || sqlLower.includes('app_settings') || sqlLower.includes('processed_emails') || sqlLower.includes('processed_files') || sqlLower.includes('push_tokens');
-      if (isWrite && !isInternal && process.env.NODE_ENV !== 'test') {
+      if (isWrite && !isInternal && !self.isBooting && process.env.NODE_ENV !== 'test') {
         const isInventoryWrite = sqlLower.includes('inventory_master') || 
                                  sqlLower.includes('sale_items') || 
                                  sqlLower.includes('sales_invoices') || 

@@ -104,6 +104,11 @@ async function startTieredPreWarm(): Promise<void> {
 
   await Promise.allSettled(loaders('hot'));
 
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[Boot] Dev mode: skipping medium route pre-warm (routes load on demand). Hot routes ready in ${Math.round(performance.now() - t0)}ms.`);
+    return;
+  }
+
   const medium = loaders('medium');
   for (let i = 0; i < medium.length; i += 5) {
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -494,6 +499,7 @@ server.on('error', (err: any) => {
       await ensureSchema(DB_PATH);
       schemaReady = true;
       console.log(`[Boot:Phase1] Database schema ready in ${Math.round(performance.now() - phase1T0)}ms — API requests unblocked.`);
+      console.log(`[Boot:CoreReady] Core API and database ready in ${Math.round(performance.now() - BOOT_T0)}ms.`);
 
       // Route pre-warm now starts here (not at module load) so V8 compile work
       // never competes with database DDL for the event loop.
@@ -731,7 +737,7 @@ server.on('error', (err: any) => {
       // One-line boot health summary, ~T+10s (covers the T+2/5/6/8s staggers).
       // Later failures (WhatsApp T+45s, cart warm-up) still log their own errors.
       setTimeout(() => {
-        console.log(`[Boot] Startup complete: ${((performance.now() - BOOT_T0) / 1000).toFixed(1)}s total, ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
+        console.log(`[Boot] Progressive background staging complete at T+10s: ${bootWorkerFailures} background worker start failure(s), ${registeredLazyRoutes.length} lazy routes registered.`);
       }, 10_000);
 
     } catch (err) {

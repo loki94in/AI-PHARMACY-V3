@@ -1032,9 +1032,12 @@ export async function runCatalogImport(jobId: number) {
 }
 
 let isWorking = false;
+let isWorkerStarted = false;
 
 // Loop to poll jobs
 export async function startWorker() {
+  if (isWorkerStarted) return;
+  isWorkerStarted = true;
   // Reset stuck jobs on startup to allow resuming
   // ponytail: database write lock retry loop to handle startup contention
   let db;

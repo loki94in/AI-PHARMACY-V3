@@ -59,9 +59,6 @@ class TriggerSchedulerService {
     this.intervalHandles.clear();
 
     import('./distributorDispatchReminderWorker.js').then(m => m.stopDistributorDispatchReminderWorker()).catch(() => {});
-    import('./tokenRefreshScheduler.js').then(m => m.tokenRefreshScheduler.stop()).catch(() => {});
-    import('./orderFulfillmentService.js').then(m => m.orderFulfillmentService.stop()).catch(() => {});
-    import('../worker/emailPoller.js').then(m => m.stopEmailPoller()).catch(() => {});
   }
 
   /**

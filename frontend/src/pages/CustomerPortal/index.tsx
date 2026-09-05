@@ -5,7 +5,7 @@ import {
   ArrowRight, RefreshCw, ShoppingCart, ShoppingBag, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
-  CreditCard, ExternalLink, Copy, RotateCcw
+  CreditCard, ExternalLink, Copy, RotateCcw, Trash2
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -386,12 +386,21 @@ export default function CustomerPortal() {
     setSelectedItems(prev => {
       const existing = prev[name];
       if (!existing) return prev;
-      const newQty = Math.max(1, existing.qty + delta);
+      const newQty = existing.qty + delta;
+      if (newQty <= 0) {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
       return {
         ...prev,
         [name]: { ...existing, qty: newQty }
       };
     });
+  };
+
+  const clearCart = () => {
+    setSelectedItems({});
   };
 
   // ─── Submit Refill Order ───────────────────────────────────────────────────
@@ -759,6 +768,7 @@ export default function CustomerPortal() {
             selectedItems={selectedItems}
             onToggleItem={toggleItem}
             onUpdateQuantity={updateQuantity}
+            onClearCart={clearCart}
             onOpenCartModal={() => setIsCartModalOpen(true)}
             onOpenLogin={() => setActiveTab('portal')}
           />
@@ -1154,9 +1164,10 @@ export default function CustomerPortal() {
                           <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
                             <button
                               onClick={() => updateQuantity(r.medicine_name, -1)}
-                              className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text"
+                              title={currentQty === 1 ? 'Remove from refill' : 'Decrease quantity'}
+                              className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
                             >
-                              <Minus className="w-3 h-3" />
+                              {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
                             </button>
                             <span className="text-xs font-bold w-6 text-center">{currentQty}</span>
                             <button
@@ -1283,11 +1294,21 @@ export default function CustomerPortal() {
                   <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                     {selectedList.map(item => (
                       <div key={item.product} className="flex items-center justify-between text-xs text-text bg-bg p-2 rounded-lg border border-border/50">
-                        <div>
-                          <span className="font-semibold block">{item.product}</span>
+                        <div className="max-w-[60%]">
+                          <span className="font-semibold block truncate">{item.product}</span>
                           <span className="text-muted">Qty: {item.qty} × ₹{item.price.toFixed(2)}</span>
                         </div>
-                        <span className="font-bold text-primary">₹{(item.price * item.qty).toFixed(2)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-primary">₹{(item.price * item.qty).toFixed(2)}</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleItem(item.product, item.price)}
+                            title={`Remove ${item.product}`}
+                            className="p-1 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1374,33 +1395,54 @@ export default function CustomerPortal() {
 
             {/* Selected Items List */}
             <div className="space-y-2">
-              <span className="text-xs font-bold text-muted uppercase tracking-wider block">
-                Selected Medicines ({selectedList.length})
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-muted uppercase tracking-wider block">
+                  Selected Medicines ({selectedList.length})
+                </span>
+                {selectedList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearCart}
+                    className="text-[11px] font-semibold text-muted hover:text-red-400 transition-colors cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
                 {selectedList.map(item => (
                   <div key={item.product} className="flex items-center justify-between p-3 bg-bg rounded-xl border border-border">
-                    <div className="space-y-0.5 max-w-[60%]">
+                    <div className="space-y-0.5 max-w-[50%]">
                       <span className="text-xs font-bold text-text block truncate">{item.product}</span>
                       <span className="text-[11px] text-muted">₹{item.price.toFixed(2)} each</span>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
                       <button
                         onClick={() => updateQuantity(item.product, -1)}
-                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3 hover:text-red-500 transition-colors cursor-pointer"
+                        title={item.qty === 1 ? 'Remove medicine' : 'Decrease quantity'}
                       >
-                        <Minus className="w-3 h-3" />
+                        {item.qty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
                       </button>
                       <span className="text-xs font-bold text-primary px-1.5">{item.qty}</span>
                       <button
                         onClick={() => updateQuantity(item.product, 1)}
-                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                        className="w-6 h-6 rounded-md bg-bg2 flex items-center justify-center text-text hover:bg-bg3 transition-colors cursor-pointer"
+                        title="Increase quantity"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
-                      <span className="text-xs font-bold text-text ml-2 min-w-16 text-right">
+                      <span className="text-xs font-bold text-text ml-1 min-w-16 text-right">
                         ₹{(item.price * item.qty).toFixed(2)}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleItem(item.product, item.price)}
+                        className="p-1 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors ml-1 cursor-pointer"
+                        title={`Remove ${item.product}`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 ))}

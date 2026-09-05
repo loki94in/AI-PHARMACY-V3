@@ -3,7 +3,7 @@ import {
   Search, ShoppingCart, CheckCircle2, AlertCircle, RefreshCw,
   Plus, Minus, MessageSquare, MapPin, Pill, Activity, Heart,
   Wind, ShieldCheck, ChevronRight, Store as StoreIcon, ExternalLink,
-  Eye, Camera, Layers, X, Sparkles
+  Eye, Camera, Layers, X, Sparkles, Trash2
 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -30,6 +30,7 @@ interface PublicCatalogViewProps {
   selectedItems: Record<string, { product: string; qty: number; price: number }>;
   onToggleItem: (name: string, price: number, defaultQty?: number) => void;
   onUpdateQuantity: (name: string, delta: number) => void;
+  onClearCart?: () => void;
   onOpenCartModal: () => void;
   onOpenLogin: () => void;
 }
@@ -49,6 +50,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   selectedItems,
   onToggleItem,
   onUpdateQuantity,
+  onClearCart,
   onOpenCartModal,
   onOpenLogin
 }) => {
@@ -465,10 +467,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onUpdateQuantity(med.name, -1)}
-                          aria-label={`Decrease quantity for ${med.name}`}
-                          className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                          aria-label={selected.qty === 1 ? `Remove ${med.name} from refill` : `Decrease quantity for ${med.name}`}
+                          title={selected.qty === 1 ? 'Remove from refill' : 'Decrease quantity'}
+                          className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3 hover:text-red-500 transition-colors"
                         >
-                          <Minus className="w-3.5 h-3.5" />
+                          {selected.qty === 1 ? <Trash2 className="w-3.5 h-3.5 text-red-500" /> : <Minus className="w-3.5 h-3.5" />}
                         </button>
                         <span className="text-xs font-bold text-primary px-2">
                           Qty: {selected.qty}
@@ -557,13 +560,25 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onOpenCartModal}
-            className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-md hover:opacity-95 transition-all flex items-center gap-1.5 shrink-0"
-          >
-            <span>Review & Order</span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onClearCart && (
+              <button
+                type="button"
+                onClick={onClearCart}
+                className="px-3 py-2 text-xs font-semibold text-muted hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-colors cursor-pointer"
+                title="Clear selected medicines"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={onOpenCartModal}
+              className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-md hover:opacity-95 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <span>Review & Order</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -731,19 +746,22 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                 {/* Pricing Block */}
                 <div className="p-3.5 rounded-xl bg-bg3/40 border border-border flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-muted uppercase font-bold block">Patient Price</span>
+                    <span className="text-[10px] text-muted uppercase font-bold block">MRP</span>
                     <div className="flex items-baseline gap-2 mt-0.5">
                       <span className="text-xl font-black text-primary">
-                        ₹{quickViewMed.sell_price.toFixed(2)}
+                        ₹{(quickViewMed.sell_price > 0 && quickViewMed.mrp > quickViewMed.sell_price
+                          ? quickViewMed.sell_price
+                          : (quickViewMed.mrp > 0 ? quickViewMed.mrp : quickViewMed.sell_price)
+                        ).toFixed(2)}
                       </span>
-                      {quickViewMed.mrp > quickViewMed.sell_price && (
+                      {quickViewMed.sell_price > 0 && quickViewMed.mrp > quickViewMed.sell_price && (
                         <span className="text-xs text-muted line-through">
                           ₹{quickViewMed.mrp.toFixed(2)}
                         </span>
                       )}
                     </div>
                   </div>
-                  {quickViewMed.mrp > quickViewMed.sell_price && (
+                  {quickViewMed.sell_price > 0 && quickViewMed.mrp > quickViewMed.sell_price && (
                     <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold text-xs">
                       {Math.round(((quickViewMed.mrp - quickViewMed.sell_price) / quickViewMed.mrp) * 100)}% OFF
                     </span>
@@ -753,18 +771,29 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
               {/* Action Buttons */}
               <div className="pt-4 border-t border-border mt-4 space-y-2">
-                <button
-                  onClick={() => {
-                    onToggleItem(quickViewMed.name, quickViewMed.sell_price, 1);
-                    setQuickViewMed(null);
-                  }}
-                  className="w-full py-3 rounded-xl bg-primary text-white font-bold text-xs shadow-lg hover:opacity-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <ShoppingCart size={16} />
-                  <span>
-                    {selectedItems[quickViewMed.name] ? 'Update in Refill Cart' : 'Add to Monthly Refill Cart'}
-                  </span>
-                </button>
+                {selectedItems[quickViewMed.name] ? (
+                  <button
+                    onClick={() => {
+                      onToggleItem(quickViewMed.name, quickViewMed.sell_price, 1);
+                      setQuickViewMed(null);
+                    }}
+                    className="w-full py-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Trash2 size={16} />
+                    <span>Remove from Refill Cart</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      onToggleItem(quickViewMed.name, quickViewMed.sell_price, 1);
+                      setQuickViewMed(null);
+                    }}
+                    className="w-full py-3 rounded-xl bg-primary text-white font-bold text-xs shadow-lg hover:opacity-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ShoppingCart size={16} />
+                    <span>Add to Monthly Refill Cart</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {

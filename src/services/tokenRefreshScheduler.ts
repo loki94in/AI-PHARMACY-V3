@@ -128,6 +128,8 @@ export class TokenRefreshScheduler {
   private refreshPromise: Promise<string | null> | null = null;
   private heartbeatInFlight = false;
   private lastHeartbeatAt: number | null = null;
+  private isRunning = false;
+  private hasRunBootProbe = false;
 
   /**
    * Invoke cb once the first boot refresh attempt settles (success, failure or skip).
@@ -210,12 +212,16 @@ export class TokenRefreshScheduler {
       }
     } catch (_) {}
 
-    if (this.timeoutId) return;
+    if (this.isRunning || this.timeoutId) return;
+    this.isRunning = true;
     console.log('[TokenRefreshScheduler] Starting REST session heartbeat scheduler (browser only on demand)...');
     // Boot validation is REST-first now: one cheap authenticated probe confirms the
     // session; a headless Chrome launches ONLY if that probe returns 401/403 or no
     // token exists but cookies do (legacy capture path).
-    this.runSessionHeartbeat('boot');
+    if (!this.hasRunBootProbe) {
+      this.hasRunBootProbe = true;
+      this.runSessionHeartbeat('boot');
+    }
     // Schedule next execution
     this.scheduleNextRun();
   }
@@ -252,6 +258,7 @@ export class TokenRefreshScheduler {
   }
 
   public stop() {
+    this.isRunning = false;
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = null;

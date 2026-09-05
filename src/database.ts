@@ -84,14 +84,11 @@ export async function purgeMedicinesFts(db: any) {
  * is completely empty. Only a MATCH touches the index itself.
  */
 async function ftsIndexIsPopulated(db: any): Promise<boolean> {
-  const sample = await db.get("SELECT name FROM medicines WHERE name IS NOT NULL AND name != '' LIMIT 1");
-  if (!sample) return true;
-  // The trigram tokenizer needs at least three characters to match on.
-  const token = String(sample.name).replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toLowerCase();
-  if (token.length < 3) return true;
   try {
-    const hit = await db.get('SELECT rowid FROM medicines_fts WHERE medicines_fts MATCH ? LIMIT 1', [`"${token}"`]);
-    return !!hit;
+    // Check if the FTS5 docsize shadow table already has indexed documents.
+    // This is instant (0ms) and avoids fragile tokenizer/quote probes.
+    const row = await db.get('SELECT 1 AS hit FROM medicines_fts_docsize LIMIT 1');
+    return !!row?.hit;
   } catch (_) {
     return false;
   }
@@ -309,65 +306,59 @@ async function ensureOrderTimingSchema(db: any) {
  * Creates `medicines`, `catalog_jobs`, `processed_files`, `message_templates` and others if they are missing.
  */
 export async function ensureSchema(dbPath: string) {
-  const db = await dbManager.getConnection();
-
-  // Ensure app_settings and schema_migrations tables exist for schema version tracking
-  await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
-  await db.run('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
-
-  // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
+  dbManager.isBooting = true;
   try {
-    const versionRow = await db.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
-    const migrationRow = await db.get("SELECT MAX(version) as version FROM schema_migrations");
-    const tableCheck = await db.get("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name IN ('inventory_master', 'purchase_items', 'sale_items', 'distributors')");
-    if (versionRow && parseInt(versionRow.value, 10) >= CURRENT_SCHEMA_VERSION && tableCheck && tableCheck.c >= 4) {
-      if (!migrationRow || !migrationRow.version) {
-        await db.run('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)', [CURRENT_SCHEMA_VERSION]);
-      }
-      console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} already applied, skipping DDL (fast boot).`);
-      // Still verify the FTS index and performance composite indexes:
-      await db.run('CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active)');
-      // Bare-ORDER-BY list endpoints previously full-scanned these tables per request:
-      await db.run('CREATE INDEX IF NOT EXISTS idx_dispatch_orders_created ON dispatch_orders(created_at DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_date ON special_orders(date DESC)');
-      // Investigation timeline joins that previously had no index path
-      // (return_items had ZERO indexes; purchase bill join keyed med+batch):
-      await db.run('CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_return_items_medicine_id ON return_items(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_purchase_items_med_batch ON purchase_items(medicine_id, batch_no)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_purchase_items_history_lookup ON purchase_items(medicine_id, purchase_id, cost_price, mrp, batch_no)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_purchases_id_date_dist ON purchases(id, distributor_id, date DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicine_aliases_lookup ON medicine_aliases(alias_name, medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_name_nocase ON medicines(name COLLATE NOCASE)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicine_aliases_nocase ON medicine_aliases(alias_name COLLATE NOCASE)');
-      // Reports route date predicates wrap columns in COALESCE(date(...)) which
-      // defeats plain date indexes; these EXPRESSION indexes match that exact
-      // expression so SQLite can range-scan instead of full-scanning per request.
-      await db.run("CREATE INDEX IF NOT EXISTS idx_sales_report_day ON sales_invoices(COALESCE(date(business_date), date(date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))))");
-      await db.run("CREATE INDEX IF NOT EXISTS idx_purchases_report_day ON purchases(COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))))");
-      // Schedule Drugs hub: filter-by-schedule + name-ordered pages over the
-      // 291k master catalog (composite covers equality lookups on schedule_type)
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name)');
-      try {
-        await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id)');
-        await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id)');
-        await db.run('CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id)');
-        await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id)');
-        await db.run('CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id)');
-        await db.run('CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status)');
-      } catch (_) {}
+    const db = await dbManager.getConnection();
+
+    // Ensure app_settings and schema_migrations tables exist for schema version tracking
+    await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
+    await db.run('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+
+    // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
+    try {
+      const versionRow = await db.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
+      const migrationRow = await db.get("SELECT MAX(version) as version FROM schema_migrations");
+      const tableCheck = await db.get("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name IN ('inventory_master', 'purchase_items', 'sale_items', 'distributors')");
+      if (versionRow && parseInt(versionRow.value, 10) >= CURRENT_SCHEMA_VERSION && tableCheck && tableCheck.c >= 4) {
+        if (!migrationRow || !migrationRow.version) {
+          await db.run('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)', [CURRENT_SCHEMA_VERSION]);
+        }
+        console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} already applied, skipping DDL (fast boot).`);
+        // Batch index verification in a single atomic exec to avoid 30+ sequential await round-trips
+        await db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+          CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
+          CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
+          CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
+          CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
+          CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
+          CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
+          CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity);
+          CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type);
+          CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active);
+          CREATE INDEX IF NOT EXISTS idx_dispatch_orders_created ON dispatch_orders(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_date ON special_orders(date DESC);
+          CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id);
+          CREATE INDEX IF NOT EXISTS idx_return_items_medicine_id ON return_items(medicine_id);
+          CREATE INDEX IF NOT EXISTS idx_purchase_items_med_batch ON purchase_items(medicine_id, batch_no);
+          CREATE INDEX IF NOT EXISTS idx_purchase_items_history_lookup ON purchase_items(medicine_id, purchase_id, cost_price, mrp, batch_no);
+          CREATE INDEX IF NOT EXISTS idx_purchases_id_date_dist ON purchases(id, distributor_id, date DESC);
+          CREATE INDEX IF NOT EXISTS idx_medicine_aliases_lookup ON medicine_aliases(alias_name, medicine_id);
+          CREATE INDEX IF NOT EXISTS idx_medicines_name_nocase ON medicines(name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_medicine_aliases_nocase ON medicine_aliases(alias_name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_sales_report_day ON sales_invoices(COALESCE(date(business_date), date(date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))));
+          CREATE INDEX IF NOT EXISTS idx_purchases_report_day ON purchases(COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10))));
+          CREATE INDEX IF NOT EXISTS idx_medicines_schedule_type_name ON medicines(schedule_type, name);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_store ON special_orders(store_id);
+          CREATE INDEX IF NOT EXISTS idx_inventory_master_store ON inventory_master(store_id);
+          CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id);
+          CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id);
+          CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
+          CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
+        `);
 
       // Ensure multi-device & velocity metrics tables exist on fast-boot
       try {
@@ -719,12 +710,13 @@ export async function ensureSchema(dbPath: string) {
           await db.run('ALTER TABLE medicines ADD COLUMN barcode TEXT');
         }
 
-        // Backfill product_code if missing (MED-00001234)
-        await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
-        // Backfill canonical_name if missing
-        await db.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
-        // Backfill normalized_name if missing
-        await db.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
+        // Backfill product_code, canonical_name, normalized_name ONLY if any are missing
+        const needsMedBackfill = await db.get("SELECT 1 FROM medicines WHERE product_code IS NULL OR canonical_name IS NULL OR normalized_name IS NULL LIMIT 1");
+        if (needsMedBackfill) {
+          await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
+          await db.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
+          await db.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
+        }
       } catch (_) {}
 
       try {
@@ -3450,6 +3442,8 @@ export async function ensureSchema(dbPath: string) {
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
   await db.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
   console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
-
   // ponytail: don't close — we reuse the dbManager shared connection
+  } finally {
+    dbManager.isBooting = false;
+  }
 }

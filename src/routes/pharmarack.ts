@@ -977,12 +977,18 @@ async function loadLiveCartCore(): Promise<{ distributors: any[]; totalItems: nu
  * - Success → populate serverCartCache + markCartLoaded().
  * - Real failure (expired session / network) → sync stays pending so the UI toast stays truthful.
  */
+let isWarmingUpCart = false;
+let startupCartWarmedUp = false;
+
 export async function warmupStartupCart(): Promise<void> {
+  if (isWarmingUpCart || startupCartWarmedUp) return;
+  isWarmingUpCart = true;
   try {
     const settings = await getPharmarackSettings();
     const token = settings['pharmarack_session_token'] || '';
     if (!token) {
       console.log('[StartupSync] No Pharmarack token configured. Marking startup cart sync complete.');
+      startupCartWarmedUp = true;
       startupSyncCoordinator.markCartLoaded();
       return;
     }
@@ -996,11 +1002,14 @@ export async function warmupStartupCart(): Promise<void> {
 
     const { distributors, totalItems } = await loadLiveCartCore();
     serverCartCache = { distributors, totalItems, ts: Date.now() };
+    startupCartWarmedUp = true;
     startupSyncCoordinator.markCartLoaded();
     console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
   } catch (err: any) {
     // Deliberately leave sync pending on real failures — the startup toast is the honest signal.
     console.warn('[StartupSync] Boot cart warm-up could not load live cart:', err?.message || err);
+  } finally {
+    isWarmingUpCart = false;
   }
 }
 

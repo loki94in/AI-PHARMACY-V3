@@ -191,8 +191,26 @@ export async function rebuildAllExpiryCaches(force = false): Promise<void> {
   }
 
   activeRebuildPromise = (async () => {
-    console.log('[ExpiryCache] Rebuilding all month-wise expiry cache files...');
     try {
+      const cacheDir = path.resolve(getAppDataDir(), 'data', 'cache', 'expiry');
+      const manifestPath = path.join(cacheDir, 'manifest.json');
+
+      // Reuse existing cache if manifest exists and rebuild is not forced
+      if (!force && fs.existsSync(manifestPath)) {
+        try {
+          const rawManifest = await fs.promises.readFile(manifestPath, 'utf-8');
+          const manifest = JSON.parse(rawManifest);
+          if (manifest && typeof manifest.totalMonthFiles === 'number') {
+            console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
+            lastRebuildTime = Date.now();
+            return;
+          }
+        } catch (_) {
+          // Corrupt manifest, fall through to rebuild
+        }
+      }
+
+      console.log('[ExpiryCache] Rebuilding all month-wise expiry cache files...');
       const db = await dbManager.getConnection();
       // Only fetch items that still have stock — zero-qty = sold/returned
       const rows = await db.all(`
@@ -214,7 +232,6 @@ export async function rebuildAllExpiryCaches(force = false): Promise<void> {
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
 
-      const cacheDir = path.resolve(getAppDataDir(), 'data', 'cache', 'expiry');
       if (!fs.existsSync(cacheDir)) {
         await fs.promises.mkdir(cacheDir, { recursive: true });
       }
@@ -252,7 +269,6 @@ export async function rebuildAllExpiryCaches(force = false): Promise<void> {
       }
 
       // Persist initialization manifest marker file
-      const manifestPath = path.join(cacheDir, 'manifest.json');
       await fs.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), 'utf-8');
       lastRebuildTime = Date.now();
 
@@ -386,8 +402,8 @@ export function triggerExpiryCacheRebuildDebounced(inventoryIds?: number[]): voi
         await patchExpiryCacheForInventoryItem(id);
       }
     } else if (needFull) {
-      // Full rebuild — used on startup / bulk imports
-      await rebuildAllExpiryCaches();
+      // Full rebuild — used on bulk imports or data reset
+      await rebuildAllExpiryCaches(true);
     }
   }, 800);
 }

@@ -1,5 +1,6 @@
 import { fork, ChildProcess } from 'child_process';
 import { isPackagedApp } from '../config/index.js';
+import { activityTracker } from '../utils/activityTracker.js';
 
 interface WorkerConfig {
   name: string;
@@ -25,6 +26,7 @@ export class WorkerSupervisor {
     },
   };
   private healthCheckInterval: NodeJS.Timeout | null = null;
+  private isStarted = false;
 
   private constructor() {}
 
@@ -37,12 +39,14 @@ export class WorkerSupervisor {
 
   /** Starts all configured background workers */
   public start(): void {
+    if (this.isStarted) return;
     if (process.env.DISABLE_BACKGROUND_WORKERS !== 'false') {
       console.log('[WorkerSupervisor] ALL background workers are STOPPED and DISABLED.');
       this.stop();
       return;
     }
 
+    this.isStarted = true;
     console.log('[WorkerSupervisor] Starting background worker supervisor...');
     for (const key of Object.keys(this.workers)) {
       this.spawnWorker(key);
@@ -52,6 +56,7 @@ export class WorkerSupervisor {
 
   /** Gracefully stops all workers and loops */
   public stop(): void {
+    this.isStarted = false;
     console.log('[WorkerSupervisor] Stopping background workers...');
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
@@ -157,6 +162,9 @@ export class WorkerSupervisor {
     if (this.healthCheckInterval) return;
 
     this.healthCheckInterval = setInterval(() => {
+      // P3 gated worker: skip ping checks while the store PC is idle
+      if (activityTracker.isIdle()) return;
+
       const now = Date.now();
       for (const [key, config] of Object.entries(this.workers)) {
         if (!config.instance) continue;
