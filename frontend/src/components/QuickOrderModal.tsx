@@ -437,10 +437,33 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             });
           });
 
-          // Sort suggestions: Mapped (Sky Blue) on TOP, Unmapped (Purple) at the BOTTOM
+          // Helper to get stock tier: 2 = Green (High / >= 15), 1 = Yellow (Low / 1-14), 0 = Red (Out of Stock / 0)
+          const getStockTier = (stockStr: string | undefined | null): number => {
+            if (!stockStr) return 2;
+            const s = String(stockStr).toLowerCase().trim();
+            if (s === 'high') return 2;
+            if (s === 'low') return 1;
+            if (s === '0' || s === 'out of stock' || s === 'nil') return 0;
+            const num = parseInt(s, 10);
+            if (!isNaN(num)) {
+              if (num >= 15) return 2;
+              if (num > 0) return 1;
+              return 0;
+            }
+            return 2;
+          };
+
+          // Sort suggestions: All Green (High stock) on TOP, then Yellow (Low stock), then Red (0) at bottom
           if (prSuggestions.length > 1) {
             prSuggestions.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
+
+              // 1. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
+              const aStock = getStockTier(a.stock);
+              const bStock = getStockTier(b.stock);
+              if (aStock !== bStock) return bStock - aStock;
+
+              // 2. Within same stock tier: Mapped (Blue text-sky-400) first, Unmapped (Purple text-purple-400) second
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped && !bMapped) return -1;
