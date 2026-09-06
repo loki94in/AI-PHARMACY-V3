@@ -436,6 +436,18 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
               stock: item.stock,
             });
           });
+
+          // Sort suggestions: Mapped (Sky Blue) on TOP, Unmapped (Purple) at the BOTTOM
+          if (prSuggestions.length > 1) {
+            prSuggestions.sort((a, b) => {
+              if (a.isErrorMessage || b.isErrorMessage) return 0;
+              const aMapped = Boolean(a.mapped);
+              const bMapped = Boolean(b.mapped);
+              if (aMapped && !bMapped) return -1;
+              if (!aMapped && bMapped) return 1;
+              return 0;
+            });
+          }
         }
 
         if (isSelectingRef.current) return;
@@ -734,7 +746,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                 {/* Product / Medicine Autocomplete (No label header) */}
                 <div className="relative animate-in fade-in duration-200" ref={autocompleteRef}>
                   <div className="relative">
-                    <span className="absolute left-3.5 top-[13px] text-muted">
+                    <span className="absolute left-3.5 top-[13px] text-muted pointer-events-none">
                       {searchLoading ? <Loader2 size={16} className="animate-spin text-primary" /> : <Search size={16} />}
                     </span>
                     <input
@@ -743,7 +755,17 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                       value={product}
                       onChange={(e) => handleProductChange(e.target.value)}
                       onKeyDown={handleProductKeyDown}
-                      onFocus={() => api.warmupPharmarackSession()}
+                      onFocus={() => {
+                        api.warmupPharmarackSession();
+                        if (suggestions.length > 0 && product.trim().length >= 3) {
+                          setShowSuggestions(true);
+                        }
+                      }}
+                      onClick={() => {
+                        if (suggestions.length > 0 && product.trim().length >= 3) {
+                          setShowSuggestions(true);
+                        }
+                      }}
                       className="w-full premium-input pl-11 pr-5 py-3 text-sm font-semibold rounded-2xl"
                       placeholder="Search or enter medicine name..."
                       autoComplete="off"
