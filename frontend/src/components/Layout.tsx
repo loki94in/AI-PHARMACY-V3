@@ -1055,37 +1055,55 @@ const LiveCartCountdownPill: React.FC = memo(() => {
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => liveCartAddEvent.triggerOpen()}
-      onMouseEnter={() => api.warmupPharmarackSession()}
-      className={`px-3 py-1.5 rounded-xl border transition-all duration-200 flex items-center gap-2 text-xs font-bold cursor-pointer select-none shrink-0 ${pillCls}`}
-      title={`Live Cart (${cartCount} items) — ${countdownInfo.label}${missingPhoneCount > 0 ? ` (${missingPhoneCount} missing phone numbers)` : ''}`}
-      aria-label="Live Cart"
+    <div
+      className={`px-2.5 py-1 rounded-xl border transition-all duration-200 flex items-center gap-1.5 text-xs font-bold select-none shrink-0 ${pillCls}`}
     >
-      <div className="relative flex items-center">
-        <ShoppingCart size={15} className="shrink-0" />
+      {/* 1. Direct navigation to Pharmarack Cart Page */}
+      <button
+        type="button"
+        onClick={() => navigate('/pharmarack-cart')}
+        className="relative p-1 rounded-lg text-inherit hover:text-primary hover:bg-bg3/60 transition-all flex items-center justify-center cursor-pointer group shrink-0"
+        title={`Open Pharmarack Cart page (${cartCount} items)`}
+        aria-label="Open Pharmarack Cart page"
+      >
+        <ShoppingCart size={14} className="shrink-0 group-hover:scale-105 transition-transform" />
         {cartCount > 0 && (
-          <span className="absolute -top-1.5 -right-2 px-1 min-w-[14px] h-3.5 rounded-full text-[9px] bg-primary text-white font-mono font-black flex items-center justify-center leading-none shadow-xs">
+          <span className="absolute -top-1 -right-1.5 px-1 min-w-[13px] h-3.5 rounded-full text-[9px] bg-primary text-white font-mono font-black flex items-center justify-center leading-none shadow-xs pointer-events-none">
             {cartCount}
           </span>
         )}
-      </div>
-      <span className="font-mono text-xs font-black whitespace-nowrap">{countdownInfo.label}</span>
+      </button>
+
+      {/* Subtle separator */}
+      <span className="w-px h-3.5 bg-glass-border shrink-0" />
+
+      {/* 2. Open Add to Live Cart Modal */}
+      <button
+        type="button"
+        onClick={() => liveCartAddEvent.triggerOpen()}
+        onMouseEnter={() => api.warmupPharmarackSession()}
+        className="flex items-center gap-1.5 text-inherit hover:opacity-85 transition-opacity cursor-pointer"
+        title={`Add to Live Cart — Cutoff: ${countdownInfo.label}`}
+        aria-label="Add to Live Cart"
+      >
+        <span className="font-mono text-xs font-black whitespace-nowrap">{countdownInfo.label}</span>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-0.5 hover:bg-emerald-500/25 transition-colors">
+          <Plus size={10} className="stroke-[3]" /> Add
+        </span>
+      </button>
+
       {missingPhoneCount > 0 && (
-        <span 
-          onClick={(e) => {
-            e.stopPropagation();
-            navigate('/pharmarack-cart?filter=unmapped');
-          }}
-          className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 flex items-center gap-1 shadow-xs transition-colors"
+        <button
+          type="button"
+          onClick={() => navigate('/pharmarack-cart?filter=unmapped')}
+          className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30 flex items-center gap-1 shadow-xs transition-colors cursor-pointer shrink-0"
           title={`${missingPhoneCount} distributor(s) missing WhatsApp phone number — Click to view in Pharmarack Cart`}
         >
           <span>⚠️</span>
-          <span>{missingPhoneCount} Missing</span>
-        </span>
+          <span>{missingPhoneCount}</span>
+        </button>
       )}
-    </button>
+    </div>
   );
 });
 LiveCartCountdownPill.displayName = 'LiveCartCountdownPill';
