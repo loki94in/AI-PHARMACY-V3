@@ -129,6 +129,7 @@ export default function CustomerPortal() {
 
   const [stores, setStores] = useState<StoreItem[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number>(1);
+  const [portalPharmacyName, setPortalPharmacyName] = useState<string>('');
   const [refills, setRefills] = useState<RefillItem[]>([]);
   const [bills, setBills] = useState<PastBill[]>([]);
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
@@ -171,15 +172,26 @@ export default function CustomerPortal() {
 
   // Load stores & delivery configuration on mount
   useEffect(() => {
-    api.getStores().then(data => {
+    Promise.all([
+      api.getStores().catch(() => []),
+      api.getSettings().catch(() => ({}))
+    ]).then(([data, settings]) => {
+      const cfgName = (settings as any)?.medical_name || (settings as any)?.pharmacy_name || (settings as any)?.shop_name || (settings as any)?.store_name || '';
+      if (cfgName && String(cfgName).trim() && String(cfgName).trim().toLowerCase() !== 'main store') {
+        setPortalPharmacyName(String(cfgName).trim());
+      }
       const arr = Array.isArray(data) ? data : ((data as any)?.stores || []);
       if (arr.length > 0) {
-        const mapped = arr.map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          address: s.address || '',
-          phone: s.phone || ''
-        }));
+        const mapped = arr.map((s: any) => {
+          const isPlaceholder = !s.name || String(s.name).toLowerCase() === 'main store';
+          const resolvedName = isPlaceholder && cfgName && String(cfgName).trim() ? String(cfgName).trim() : s.name;
+          return {
+            id: s.id,
+            name: resolvedName,
+            address: s.address || '',
+            phone: s.phone || ''
+          };
+        });
         setStores(mapped);
         setSelectedStoreId(prev => (mapped.some((st: StoreItem) => st.id === prev) ? prev : mapped[0].id));
       }
@@ -662,7 +674,7 @@ export default function CustomerPortal() {
                 <StoreIcon className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-sm font-bold block leading-tight">Pune Pharmacy Web Portal</span>
+                <span className="text-sm font-bold block leading-tight">{portalPharmacyName || 'Pune Pharmacy'} Web Portal</span>
                 <span className="text-[11px] text-muted">
                   {session ? `Welcome, ${session.name}` : 'Live Medicine Catalog & Refills'}
                 </span>
@@ -760,7 +772,7 @@ export default function CustomerPortal() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+      <main className={`${activeTab === 'catalog' ? 'max-w-[1600px]' : 'max-w-6xl'} mx-auto px-3 sm:px-6 py-2 sm:py-3 space-y-2.5`}>
         {/* VIEW 1: PUBLIC CATALOG */}
         {activeTab === 'catalog' && (
           <PublicCatalogView
@@ -1532,7 +1544,7 @@ export default function CustomerPortal() {
                     </option>
                   ))
                 ) : (
-                  <option value={1}>Store #1 - Main Store</option>
+                  <option value={1}>Store #1 - {portalPharmacyName || 'Main Store'}</option>
                 )}
               </select>
             </div>

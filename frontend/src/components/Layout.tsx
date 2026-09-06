@@ -1304,10 +1304,6 @@ const Topbar = memo(({
 
   const fetchWhatsAppQueueStatus = useCallback(async () => {
     try {
-      const curServices = servicesStatusRef.current;
-      if (curServices && (!curServices.whatsapp?.connected || curServices.whatsapp?.isSyncing === false && !curServices.whatsapp?.connected)) {
-        return;
-      }
       const { api } = await import('../services/api.js');
       const qData = await api.getWhatsAppQueueStatus();
       if (qData) {

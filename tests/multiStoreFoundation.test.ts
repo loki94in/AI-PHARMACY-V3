@@ -47,6 +47,11 @@ describe('Multi-Store Foundation & Isolation', () => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+
       INSERT INTO stores (id, name, code, is_central, is_active) VALUES (1, 'Central Store', 'STORE-CENTRAL', 1, 1);
     `);
 
@@ -113,5 +118,17 @@ describe('Multi-Store Foundation & Isolation', () => {
 
     expect(store2Orders.length).toBe(1);
     expect(store2Orders[0].product).toBe('Amoxicillin 500mg');
+  });
+
+  it('automatically replaces "Main Store" placeholder with configured pharmacy name', async () => {
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('medical_name', 'TANMAY MEDICAL')");
+    await db.run("UPDATE stores SET name = 'Main Store' WHERE id = 1");
+
+    const stores = await service.listStores(db);
+    expect(stores[0].name).toBe('TANMAY MEDICAL');
+
+    // Verify it persisted to stores table in database
+    const row = await db.get("SELECT name FROM stores WHERE id = 1");
+    expect(row.name).toBe('TANMAY MEDICAL');
   });
 });

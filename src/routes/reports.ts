@@ -4,6 +4,7 @@ import { dbManager } from '../database/connection.js';
 import { exportToExcel, exportToPdf, exportToCsv } from '../utils/reportExporter.js';
 import { nonMovingReportService } from '../services/nonMovingReportService.js';
 import { getReportCutoverDate, effectiveReportFromDate } from '../utils/reportCutover.js';
+import { resolveStoreId } from '../services/storeContextService.js';
 
 const router = express.Router();
 
@@ -46,8 +47,12 @@ router.get('/', async (req, res) => {
   const { fromDate, toDate, type } = req.query;
   const reportType = type ? String(type) : 'sales';
 
+  // Tenant Scoping (MULTI-PHARMACY.md §8, §23): Scope to active pharmacy store unless all_stores=true
+  const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+  const allStores = req.query.all_stores === 'true';
+
   try {
-    const summarySig = `${reportType}|${fromDate || ''}|${toDate || ''}`;
+    const summarySig = `${reportType}|${allStores ? 'ALL' : targetStoreId}|${fromDate || ''}|${toDate || ''}`;
     const cachedSummary = reportsSummaryCache.get(summarySig);
     if (cachedSummary && Date.now() - cachedSummary.at < REPORTS_SUMMARY_TTL_MS) {
       cachedSummary.at = Date.now();
@@ -68,11 +73,15 @@ router.get('/', async (req, res) => {
     };
     
     if (reportType === 'sales') {
+      const salesStoreCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+      const salesParams = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       const salesRow = await db.get(
-        `SELECT IFNULL(SUM(total_amount), 0) as total FROM sales_invoices WHERE ${SALES_DATE_EXPR} >= date(?) AND ${SALES_DATE_EXPR} <= date(?)`,
-        [from, to]
+        `SELECT IFNULL(SUM(total_amount), 0) as total FROM sales_invoices WHERE ${SALES_DATE_EXPR} >= date(?) AND ${SALES_DATE_EXPR} <= date(?) ${salesStoreCond}`,
+        salesParams
       );
       
+      const marginStoreCond = allStores ? '' : 'AND (sinv.store_id = ? OR (sinv.store_id IS NULL AND ? = 1))';
+      const marginParams = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       const marginRow = await db.get(`
         SELECT IFNULL(SUM(si.quantity * si.unit_price), 0) as revenue,
                IFNULL(SUM(si.quantity * IFNULL(im.cost_price, 0)), 0) as cost,
@@ -80,8 +89,8 @@ router.get('/', async (req, res) => {
         FROM sale_items si
         JOIN sales_invoices sinv ON si.invoice_id = sinv.id
         JOIN inventory_master im ON si.inventory_id = im.id
-        WHERE ${SALES_INV_DATE_EXPR} >= date(?) AND ${SALES_INV_DATE_EXPR} <= date(?)
-      `, [from, to]);
+        WHERE ${SALES_INV_DATE_EXPR} >= date(?) AND ${SALES_INV_DATE_EXPR} <= date(?) ${marginStoreCond}
+      `, marginParams);
 
       const revenue = marginRow.revenue || 0;
       const cost = marginRow.cost || 0;
@@ -98,17 +107,21 @@ router.get('/', async (req, res) => {
     }
 
     if (reportType === 'purchases') {
+      const purStoreCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+      const purParams = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       const purchasesRow = await db.get(
-        `SELECT IFNULL(SUM(total_amount), 0) as total, COUNT(DISTINCT distributor_id) as suppliers FROM purchases WHERE ${PURCHASES_DATE_EXPR} >= date(?) AND ${PURCHASES_DATE_EXPR} <= date(?)`,
-        [from, to]
+        `SELECT IFNULL(SUM(total_amount), 0) as total, COUNT(DISTINCT distributor_id) as suppliers FROM purchases WHERE ${PURCHASES_DATE_EXPR} >= date(?) AND ${PURCHASES_DATE_EXPR} <= date(?) ${purStoreCond}`,
+        purParams
       );
 
+      const itemStoreCond = allStores ? '' : 'AND (p.store_id = ? OR (p.store_id IS NULL AND ? = 1))';
+      const itemParams = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       const itemsRow = await db.get(`
         SELECT IFNULL(SUM(quantity), 0) as qty
         FROM purchase_items pi
         JOIN purchases p ON pi.purchase_id = p.id
-        WHERE ${PURCHASES_P_DATE_EXPR} >= date(?) AND ${PURCHASES_P_DATE_EXPR} <= date(?)
-      `, [from, to]);
+        WHERE ${PURCHASES_P_DATE_EXPR} >= date(?) AND ${PURCHASES_P_DATE_EXPR} <= date(?) ${itemStoreCond}
+      `, itemParams);
 
       const total = purchasesRow.total || 0;
       const qty = itemsRow.qty || 0;
@@ -123,14 +136,16 @@ router.get('/', async (req, res) => {
     }
 
     if (reportType === 'inventory') {
+      const invStoreCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+      const invParams = allStores ? [] : [targetStoreId, targetStoreId];
       const invRow = await db.get(`
         SELECT IFNULL(SUM(quantity), 0) as qty,
                IFNULL(SUM(quantity * cost_price), 0) as cost_val,
                IFNULL(SUM(quantity * mrp), 0) as mrp_val,
                COUNT(DISTINCT medicine_id) as items
         FROM inventory_master
-        WHERE quantity > 0
-      `);
+        WHERE quantity > 0 ${invStoreCond}
+      `, invParams);
 
       return finishSummary({
         totalStock: invRow.qty || 0,
@@ -143,6 +158,9 @@ router.get('/', async (req, res) => {
     if (reportType === 'expiry') {
       let countQuery = '';
       let params: any[] = [];
+      const expStoreCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+      const storeParams = allStores ? [] : [targetStoreId, targetStoreId];
+
       if (fromDate || toDate) {
         countQuery = `
           SELECT COUNT(DISTINCT medicine_id) as items,
@@ -150,9 +168,9 @@ router.get('/', async (req, res) => {
                  IFNULL(SUM(quantity * cost_price), 0) as cost_val,
                  IFNULL(SUM(quantity * mrp), 0) as mrp_val
           FROM inventory_master
-          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND quantity > 0
+          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND quantity > 0 ${expStoreCond}
         `;
-        params = [from, to];
+        params = [from, to, ...storeParams];
       } else {
         countQuery = `
           SELECT COUNT(DISTINCT medicine_id) as items,
@@ -160,8 +178,9 @@ router.get('/', async (req, res) => {
                  IFNULL(SUM(quantity * cost_price), 0) as cost_val,
                  IFNULL(SUM(quantity * mrp), 0) as mrp_val
           FROM inventory_master
-          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) <= date('now', '+365 days') AND quantity > 0
+          WHERE COALESCE(date(expiry_date), date(substr(expiry_date, 1, 10))) <= date('now', '+365 days') AND quantity > 0 ${expStoreCond}
         `;
+        params = [...storeParams];
       }
 
       const expRow = await db.get(countQuery, params);
@@ -191,6 +210,10 @@ router.get('/', async (req, res) => {
 router.get('/data', async (req, res) => {
   const { type, fromDate, toDate } = req.query;
 
+  // Tenant Scoping (MULTI-PHARMACY.md §8, §23): Scope to active pharmacy store unless all_stores=true
+  const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+  const allStores = req.query.all_stores === 'true';
+
   try {
     const db = await dbManager.getConnection();
     const from = await resolveFromDate(fromDate ? String(fromDate) : '', db);
@@ -198,39 +221,48 @@ router.get('/data', async (req, res) => {
     let data: any[] = [];
 
     if (type === 'sales') {
+      const storeCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+      const params = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       data = await db.all(
-        `SELECT invoice_no, total_amount, COALESCE(date, business_date) as date FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY id DESC LIMIT 500`,
-        [from, to]
+        `SELECT invoice_no, total_amount, COALESCE(date, business_date) as date FROM sales_invoices WHERE ${SALES_DATE_EXPR} BETWEEN date(?) AND date(?) ${storeCond} ORDER BY id DESC LIMIT 500`,
+        params
       );
     } else if (type === 'purchases') {
+      const storeCond = allStores ? '' : 'AND (p.store_id = ? OR (p.store_id IS NULL AND ? = 1))';
+      const params = allStores ? [from, to] : [from, to, targetStoreId, targetStoreId];
       data = await db.all(
-        `SELECT p.invoice_no, p.total_amount, d.name as distributor, COALESCE(p.date, p.business_date) as date FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ORDER BY p.id DESC LIMIT 500`,
-        [from, to]
+        `SELECT p.invoice_no, p.total_amount, d.name as distributor, COALESCE(p.date, p.business_date) as date FROM purchases p LEFT JOIN distributors d ON p.distributor_id = d.id WHERE ${PURCHASES_P_DATE_EXPR} BETWEEN date(?) AND date(?) ${storeCond} ORDER BY p.id DESC LIMIT 500`,
+        params
       );
     } else if (type === 'inventory') {
+      const storeCond = allStores ? '' : 'WHERE (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))';
+      const params = allStores ? [] : [targetStoreId, targetStoreId];
       data = await db.all(`
         SELECT m.name as medicine_name, im.batch_no, im.quantity as stock, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value 
         FROM inventory_master im 
         JOIN medicines m ON im.medicine_id = m.id 
+        ${storeCond}
         ORDER BY stock DESC LIMIT 500
-      `);
+      `, params);
     } else if (type === 'expiry') {
+      const storeCond = allStores ? '' : 'AND (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))';
+      const storeParams = allStores ? [] : [targetStoreId, targetStoreId];
       if (fromDate || toDate) {
         data = await db.all(`
           SELECT m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity, im.cost_price, (im.quantity * im.cost_price) as value
           FROM inventory_master im 
           JOIN medicines m ON im.medicine_id = m.id 
-          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0
+          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) BETWEEN date(?) AND date(?) AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ${storeCond}
           ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC LIMIT 500
-        `, [from, to]);
+        `, [from, to, ...storeParams]);
       } else {
         data = await db.all(`
           SELECT m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity, im.cost_price, (im.quantity * im.cost_price) as value
           FROM inventory_master im 
           JOIN medicines m ON im.medicine_id = m.id 
-          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date('now', '+365 days') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0
+          WHERE COALESCE(date(im.expiry_date), date(substr(im.expiry_date, 1, 10))) <= date('now', '+365 days') AND COALESCE(im.is_active, 1) = 1 AND im.quantity > 0 ${storeCond}
           ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC LIMIT 500
-        `);
+        `, [...storeParams]);
       }
     }
 

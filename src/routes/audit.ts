@@ -1,6 +1,9 @@
 import express from 'express';
 import { dbManager } from '../database/connection.js';
 import { runAudit } from '../utils/auditEngine.js';
+import { getMutationAuditLogs } from '../services/auditLoggerService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
+import { eventService } from '../services/eventService.js';
 
 const router = express.Router();
 
@@ -19,6 +22,9 @@ router.post('/run', async (_req, res) => {
     const db = await dbManager.getConnection();
     const report = await runAudit(db);
     const id = await logAudit(db, report);
+    try {
+      eventService.broadcast('audit_updated', { at: Date.now(), id, status: report.status });
+    } catch (_) {}
     res.json({ id, ...report });
   } catch (err: any) {
     console.error('Audit run error:', err);
@@ -61,6 +67,33 @@ router.get('/history', async (_req, res) => {
     res.json(history);
   } catch (err: any) {
     console.error('Audit history error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Query mutation audit trail (§29)
+router.get('/mutations', async (req, res) => {
+  try {
+    const storeId = req.query.all_stores === 'true' ? undefined : resolveStoreId(req);
+    const userId = req.query.user_id ? Number(req.query.user_id) : undefined;
+    const entity = req.query.entity ? String(req.query.entity) : undefined;
+    const entityId = req.query.entity_id ? String(req.query.entity_id) : undefined;
+    const action = req.query.action ? String(req.query.action) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset ? Number(req.query.offset) : undefined;
+
+    const logs = await getMutationAuditLogs({
+      storeId,
+      userId,
+      entity,
+      entityId,
+      action,
+      limit,
+      offset
+    });
+    res.json(logs);
+  } catch (err: any) {
+    console.error('Mutation audit logs fetch error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

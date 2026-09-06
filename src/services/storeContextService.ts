@@ -75,10 +75,11 @@ export class StoreContextService {
       if (!r.phone || !r.phone.trim()) {
         r.phone = await getStorePhone(db, r.id);
       }
-      if (!r.name || r.name === 'Main Store') {
+      if (!r.name || r.name === 'Main Store' || r.name.toLowerCase() === 'main store') {
         const configuredName = await getStoreMedicalName(db, r.id);
-        if (configuredName && configuredName !== 'AI PHARMACY') {
+        if (configuredName && configuredName !== 'AI PHARMACY' && configuredName.toLowerCase() !== 'main store') {
           r.name = configuredName;
+          await db.run('UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)', [configuredName, r.id, 'Main Store', '']).catch(() => {});
         }
       }
     }
@@ -95,10 +96,11 @@ export class StoreContextService {
     if (!row.phone || !row.phone.trim()) {
       row.phone = await getStorePhone(db, row.id);
     }
-    if (!row.name || row.name === 'Main Store') {
+    if (!row.name || row.name === 'Main Store' || row.name.toLowerCase() === 'main store') {
       const configuredName = await getStoreMedicalName(db, row.id);
-      if (configuredName && configuredName !== 'AI PHARMACY') {
+      if (configuredName && configuredName !== 'AI PHARMACY' && configuredName.toLowerCase() !== 'main store') {
         row.name = configuredName;
+        await db.run('UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)', [configuredName, row.id, 'Main Store', '']).catch(() => {});
       }
     }
     return row;

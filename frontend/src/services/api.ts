@@ -511,6 +511,7 @@ export interface WhatsAppQueueStatus {
   // the boot restore window — neither is a real disconnection.
   sleeping?: boolean;
   initializing?: boolean;
+  hasSavedSession?: boolean;
   nextDispatchCountdownMs: number;
   nextDispatchTimestamp: number | null;
   currentPacingMinMs: number;

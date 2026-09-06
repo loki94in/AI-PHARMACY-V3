@@ -26,6 +26,7 @@ export interface QueueWorkerState {
   // send) and the boot restore window are NOT disconnections.
   sleeping: boolean;
   initializing: boolean;
+  hasSavedSession?: boolean;
   stalePendingCount?: number;
   oldestPendingWaitSeconds?: number;
   nextDispatchCountdownMs: number;
@@ -357,6 +358,7 @@ class WhatsAppQueueWorker {
     }
 
     const lastId = result.lastID || 0;
+    this.broadcastQueueState(true);
     try {
       eventService.broadcast('automation_hub_updated', { type: 'enqueued', id: lastId, targetName: resolvedTargetName, automationType: type });
     } catch (_) {}
@@ -1049,6 +1051,7 @@ class WhatsAppQueueWorker {
       // saved session as "Offline / Reconnecting".
       sleeping: waStatus.sleeping === true,
       initializing: waStatus.initializing === true,
+      hasSavedSession: waStatus.readiness?.hasSavedSession ?? true,
       stalePendingCount,
       oldestPendingWaitSeconds,
       nextDispatchCountdownMs: countdownSec * 1000,

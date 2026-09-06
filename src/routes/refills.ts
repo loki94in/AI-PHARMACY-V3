@@ -13,6 +13,7 @@ import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,10 +102,12 @@ export function buildRefillReminderMessage(
 
 // Register or add a medicine to patient refill schedule (Idempotent / Granular)
 router.post('/', async (req, res) => {
-  const { patient_name, patient_phone, medicine_id, refill_interval_days = 30, language = 'en' } = req.body;
+  const { patient_name, patient_phone, medicine_id, refill_interval_days = 30, language = 'en', store_id } = req.body;
   if (!patient_name || !patient_phone || !medicine_id) {
     return res.status(400).json({ error: 'patient_name, patient_phone, and medicine_id are required' });
   }
+
+  const targetStoreId = (req as any).tenant?.storeId || (store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req));
 
   let db;
   try {
@@ -152,16 +155,16 @@ router.post('/', async (req, res) => {
       refillId = existing.id;
       await db.run(
         `UPDATE patient_refills 
-         SET customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
+         SET store_id = ?, customer_id = ?, patient_name = ?, patient_phone = ?, refill_interval_days = ?, 
              quantity_needed = ?, language = ?, is_active = 1, status = 'pending'
          WHERE id = ?`,
-        [customerId, cleanName, cleanPhone, intervalDays, quantityNeeded, cleanLang, refillId]
+        [targetStoreId, customerId, cleanName, cleanPhone, intervalDays, quantityNeeded, cleanLang, refillId]
       );
     } else {
       const result = await db.run(
-        `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, language, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`,
-        [customerId, cleanName, cleanPhone, medicine_id, intervalDays, nextRefillStr, quantityNeeded, cleanLang]
+        `INSERT INTO patient_refills (store_id, customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, quantity_needed, language, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 1)`,
+        [targetStoreId, customerId, cleanName, cleanPhone, medicine_id, intervalDays, nextRefillStr, quantityNeeded, cleanLang]
       );
       refillId = Number(result.lastID || 0);
     }
@@ -374,12 +377,18 @@ router.get('/', async (req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    const whereClause = allStores ? '' : 'WHERE (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
+    const params = allStores ? [] : [targetStoreId, targetStoreId];
     const refills = await db.all(
       `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
        JOIN medicines m ON pr.medicine_id = m.id
-       ORDER BY pr.next_refill_date ASC LIMIT 1000`
+       ${whereClause}
+       ORDER BY pr.next_refill_date ASC LIMIT 1000`,
+      params
     );
-        res.json(refills);
+    res.json(refills);
   } catch (err) {
     console.error('Failed to fetch refills:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -519,6 +528,9 @@ router.get('/panel', async (req, res) => {
 
     // Optional upcoming_days query parameter (if omitted, returns all patient refills for CRM management)
     const upcomingDays = req.query.upcoming_days ? parseInt(req.query.upcoming_days as string, 10) : null;
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    const storeCond = allStores ? '' : '(pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
 
     // Perf: base refill rows first (cheap: patient_refills is small). Stock lookups are
     // resolved in a SECOND pass restricted to only the medicines on this page — the old
@@ -531,8 +543,12 @@ router.get('/panel', async (req, res) => {
         LEFT JOIN customers cp ON pr.customer_id IS NULL AND cp.phone = pr.patient_phone AND cp.phone IS NOT NULL AND cp.phone != ''`;
     const params: any[] = [];
     if (upcomingDays && !isNaN(upcomingDays) && upcomingDays > 0) {
-      query += ` WHERE pr.next_refill_date <= date('now', '+' || ? || ' days')`;
+      query += ` WHERE pr.next_refill_date <= date('now', '+' || ? || ' days') ${storeCond ? 'AND ' + storeCond : ''}`;
       params.push(upcomingDays);
+      if (!allStores) params.push(targetStoreId, targetStoreId);
+    } else if (storeCond) {
+      query += ` WHERE ${storeCond}`;
+      params.push(targetStoreId, targetStoreId);
     }
     query += ` ORDER BY pr.next_refill_date ASC LIMIT 1000`;
 
@@ -542,9 +558,11 @@ router.get('/panel', async (req, res) => {
     // soonest-expiry batch (single window pass instead of two full inventory scans).
     const medIds = Array.from(new Set(rows.map(r => Number(r.medicine_id)).filter(Boolean)));
     const stockByMedicine = new Map<number, any>();
+    const stockStoreCond = allStores ? '' : 'AND (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))';
     for (let i = 0; i < medIds.length; i += 500) {
       const chunk = medIds.slice(i, i + 500);
       const placeholders = chunk.map(() => '?').join(',');
+      const chunkParams = allStores ? chunk : [...chunk, targetStoreId, targetStoreId];
       const stockRows = await db.all(`
         SELECT w.medicine_id,
                SUM(w.qty) + COALESCE(SUM(w.lqty), 0) AS in_stock_qty,
@@ -567,8 +585,9 @@ router.get('/panel', async (req, res) => {
           WHERE im.medicine_id IN (${placeholders})
             AND COALESCE(im.is_active, 1) = 1
             AND (im.quantity > 0 OR COALESCE(im.loose_quantity, 0) > 0)
+            ${stockStoreCond}
         ) w
-        GROUP BY w.medicine_id`, chunk);
+        GROUP BY w.medicine_id`, chunkParams);
       for (const sr of stockRows) stockByMedicine.set(Number(sr.medicine_id), sr);
     }
 

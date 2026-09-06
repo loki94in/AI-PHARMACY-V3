@@ -1,8 +1,9 @@
+import crypto from 'crypto';
 import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 54;
+const CURRENT_SCHEMA_VERSION = 55;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -302,6 +303,168 @@ async function ensureOrderTimingSchema(db: any) {
 }
 
 /**
+ * Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
+ * Conforms to MULTI-PHARMACY.md Section 3, 5, 18, 19, 28
+ */
+async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
+  // 1. Staff users table
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pharmacy_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      role TEXT DEFAULT 'pharmacist',
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pharmacy_users_username ON pharmacy_users(username)');
+
+  // 2. Staff user tenant mappings
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS pharmacy_user_tenants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      store_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'pharmacist',
+      permissions_json TEXT DEFAULT '["*"]',
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES pharmacy_users(id),
+      FOREIGN KEY(store_id) REFERENCES stores(id),
+      UNIQUE(user_id, store_id)
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_user_tenants_lookup ON pharmacy_user_tenants(user_id, store_id)');
+
+  // 3. Ensure default Store #1 exists
+  await db.run(`
+    INSERT OR IGNORE INTO stores (id, name, code, is_central, is_active)
+    VALUES (1, 'AI Pharmacy', 'STORE-CENTRAL', 1, 1)
+  `);
+
+  // 4. Seed default admin user if pharmacy_users is empty (fallback credentials: admin / admin123)
+  try {
+    const userCount = await db.get('SELECT COUNT(*) as cnt FROM pharmacy_users');
+    if (!userCount || userCount.cnt === 0) {
+      const salt = crypto.randomBytes(16).toString('hex');
+      const hash = crypto.pbkdf2Sync('admin123', salt, 1000, 32, 'sha256').toString('hex');
+      await db.run(
+        `INSERT INTO pharmacy_users (id, username, password_hash, salt, full_name, role, is_active)
+         VALUES (1, 'admin', ?, ?, 'System Administrator', 'owner', 1)`,
+        [hash, salt]
+      );
+      await db.run(
+        `INSERT OR IGNORE INTO pharmacy_user_tenants (user_id, store_id, role, permissions_json, is_active)
+         VALUES (1, 1, 'owner', '["*"]', 1)`
+      );
+      console.log('[Schema v55] Default admin user initialized.');
+    }
+  } catch (err: any) {
+    console.warn('[Schema v55] Staff user seed skipped:', err.message);
+  }
+
+  // 5. Immutable snapshot columns on sales_invoices
+  try {
+    const invCols = await db.all('PRAGMA table_info(sales_invoices)');
+    const invNames = new Set(invCols.map((c: any) => c.name));
+    if (invCols.length > 0 && !invNames.has('customer_name_snapshot')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_name_snapshot TEXT DEFAULT NULL');
+    }
+    if (invCols.length > 0 && !invNames.has('customer_phone_snapshot')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_phone_snapshot TEXT DEFAULT NULL');
+    }
+    if (invCols.length > 0 && !invNames.has('customer_address_snapshot')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN customer_address_snapshot TEXT DEFAULT NULL');
+    }
+    if (invCols.length > 0 && !invNames.has('doctor_name_snapshot')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN doctor_name_snapshot TEXT DEFAULT NULL');
+    }
+    if (invCols.length > 0 && !invNames.has('pharmacy_name_snapshot')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN pharmacy_name_snapshot TEXT DEFAULT NULL');
+    }
+    if (invCols.length > 0 && !invNames.has('store_id')) {
+      await db.run('ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1');
+    }
+
+    // Backfill existing legacy invoices once so past bills freeze immediately
+    await db.run(`
+      UPDATE sales_invoices
+      SET customer_name_snapshot = (SELECT name FROM customers WHERE customers.id = sales_invoices.customer_id),
+          customer_phone_snapshot = (SELECT phone FROM customers WHERE customers.id = sales_invoices.customer_id),
+          customer_address_snapshot = (SELECT address FROM customers WHERE customers.id = sales_invoices.customer_id),
+          doctor_name_snapshot = (SELECT name FROM doctors WHERE doctors.id = sales_invoices.doctor_id)
+      WHERE customer_name_snapshot IS NULL AND customer_id IS NOT NULL
+    `);
+  } catch (err: any) {
+    console.warn('[Schema v55] sales_invoices snapshot migration note:', err.message);
+  }
+
+  // 6. Immutable snapshot columns on sale_items
+  try {
+    const itemCols = await db.all('PRAGMA table_info(sale_items)');
+    const itemNames = new Set(itemCols.map((c: any) => c.name));
+    if (itemCols.length > 0 && !itemNames.has('medicine_name_snapshot')) {
+      await db.run('ALTER TABLE sale_items ADD COLUMN medicine_name_snapshot TEXT DEFAULT NULL');
+    }
+    if (itemCols.length > 0 && !itemNames.has('batch_no_snapshot')) {
+      await db.run('ALTER TABLE sale_items ADD COLUMN batch_no_snapshot TEXT DEFAULT NULL');
+    }
+    if (itemCols.length > 0 && !itemNames.has('expiry_date_snapshot')) {
+      await db.run('ALTER TABLE sale_items ADD COLUMN expiry_date_snapshot TEXT DEFAULT NULL');
+    }
+    if (itemCols.length > 0 && !itemNames.has('mrp_snapshot')) {
+      await db.run('ALTER TABLE sale_items ADD COLUMN mrp_snapshot REAL DEFAULT NULL');
+    }
+    if (itemCols.length > 0 && !itemNames.has('tax_percent_snapshot')) {
+      await db.run('ALTER TABLE sale_items ADD COLUMN tax_percent_snapshot REAL DEFAULT NULL');
+    }
+
+    // Backfill existing legacy sale_items
+    await db.run(`
+      UPDATE sale_items
+      SET medicine_name_snapshot = (SELECT m.name FROM inventory_master im JOIN medicines m ON m.id = im.medicine_id WHERE im.id = sale_items.inventory_id),
+          batch_no_snapshot = (SELECT im.batch_no FROM inventory_master im WHERE im.id = sale_items.inventory_id),
+          expiry_date_snapshot = (SELECT im.expiry_date FROM inventory_master im WHERE im.id = sale_items.inventory_id),
+          mrp_snapshot = (SELECT im.mrp FROM inventory_master im WHERE im.id = sale_items.inventory_id)
+      WHERE medicine_name_snapshot IS NULL AND inventory_id IS NOT NULL
+    `);
+  } catch (err: any) {
+    console.warn('[Schema v55] sale_items snapshot migration note:', err.message);
+  }
+
+  // Indexes for snapshot queries
+  await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_snap ON sales_invoices(customer_name_snapshot)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot)');
+
+  // 7. Audit log tenant & entity columns on action_logs (§29)
+  try {
+    const actCols = await db.all('PRAGMA table_info(action_logs)');
+    const actNames = new Set(actCols.map((c: any) => c.name));
+    if (actCols.length > 0 && !actNames.has('store_id')) {
+      await db.run('ALTER TABLE action_logs ADD COLUMN store_id INTEGER DEFAULT 1');
+    }
+    if (actCols.length > 0 && !actNames.has('user_id')) {
+      await db.run('ALTER TABLE action_logs ADD COLUMN user_id INTEGER DEFAULT NULL');
+    }
+    if (actCols.length > 0 && !actNames.has('entity')) {
+      await db.run('ALTER TABLE action_logs ADD COLUMN entity TEXT DEFAULT NULL');
+    }
+    if (actCols.length > 0 && !actNames.has('entity_id')) {
+      await db.run('ALTER TABLE action_logs ADD COLUMN entity_id TEXT DEFAULT NULL');
+    }
+    await db.run('CREATE INDEX IF NOT EXISTS idx_action_logs_store_type ON action_logs(store_id, action_type, created_at DESC)');
+  } catch (err: any) {
+    console.warn('[Schema v55] action_logs audit column migration note:', err.message);
+  }
+}
+
+/**
  * Ensure required SQLite tables exist.
  * Creates `medicines`, `catalog_jobs`, `processed_files`, `message_templates` and others if they are missing.
  */
@@ -338,6 +501,7 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type);
+          CREATE INDEX IF NOT EXISTS idx_action_logs_store_type ON action_logs(store_id, action_type, created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active);
           CREATE INDEX IF NOT EXISTS idx_dispatch_orders_created ON dispatch_orders(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_special_orders_date ON special_orders(date DESC);
@@ -358,6 +522,10 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_store ON sales_invoices(store_id);
           CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
           CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
+          CREATE INDEX IF NOT EXISTS idx_pharmacy_users_username ON pharmacy_users(username);
+          CREATE INDEX IF NOT EXISTS idx_user_tenants_lookup ON pharmacy_user_tenants(user_id, store_id);
+          CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_snap ON sales_invoices(customer_name_snapshot);
+          CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot);
         `);
 
       // Ensure multi-device & velocity metrics tables exist on fast-boot
@@ -1158,6 +1326,10 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts (type);
     CREATE TABLE IF NOT EXISTS action_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER DEFAULT 1,
+      user_id INTEGER DEFAULT NULL,
+      entity TEXT,
+      entity_id TEXT,
       action_type TEXT,
       description TEXT,
       metadata TEXT,
@@ -1648,6 +1820,10 @@ export async function ensureSchema(dbPath: string) {
   // Safely add new columns to existing tables after pre-checking PRAGMA table_info
   const alterStatements: Array<[string, string, string]> = [
     ['action_logs', 'metadata', 'ALTER TABLE action_logs ADD COLUMN metadata TEXT'],
+    ['action_logs', 'store_id', 'ALTER TABLE action_logs ADD COLUMN store_id INTEGER DEFAULT 1'],
+    ['action_logs', 'user_id', 'ALTER TABLE action_logs ADD COLUMN user_id INTEGER DEFAULT NULL'],
+    ['action_logs', 'entity', 'ALTER TABLE action_logs ADD COLUMN entity TEXT DEFAULT NULL'],
+    ['action_logs', 'entity_id', 'ALTER TABLE action_logs ADD COLUMN entity_id TEXT DEFAULT NULL'],
     ['inventory_master', 'unit_price', 'ALTER TABLE inventory_master ADD COLUMN unit_price REAL DEFAULT 0'],
     ['inventory_master', 'cost_price', 'ALTER TABLE inventory_master ADD COLUMN cost_price REAL DEFAULT 0'],
     ['inventory_master', 'reorder_level', 'ALTER TABLE inventory_master ADD COLUMN reorder_level INTEGER DEFAULT 10'],
@@ -2309,6 +2485,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
     CREATE INDEX IF NOT EXISTS idx_medicines_enrichment ON medicines(enrichment_status);
     CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type);
+    CREATE INDEX IF NOT EXISTS idx_action_logs_store_type ON action_logs(store_id, action_type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
     CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity);
 
@@ -2931,6 +3108,29 @@ export async function ensureSchema(dbPath: string) {
         "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
       );
     }
+
+    // If store 1 has placeholder name 'Main Store', sync with configured pharmacy name from app_settings
+    const customNameRow = await db.get(
+      `SELECT value FROM app_settings 
+       WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
+         AND value IS NOT NULL 
+         AND TRIM(value) != '' 
+         AND TRIM(value) != 'XYZ MEDICAL' 
+         AND TRIM(value) != 'XYZ Pharmacy'
+       ORDER BY CASE key 
+         WHEN 'shop_name' THEN 1 
+         WHEN 'store_name' THEN 2 
+         WHEN 'pharmacy_name' THEN 3 
+         WHEN 'medical_name' THEN 4 
+         ELSE 5 END 
+       LIMIT 1`
+    ).catch(() => null);
+    if (customNameRow && customNameRow.value && customNameRow.value.trim()) {
+      await db.run(
+        "UPDATE stores SET name = ? WHERE id = 1 AND (name = 'Main Store' OR name IS NULL OR name = '')",
+        [customNameRow.value.trim()]
+      ).catch(() => {});
+    }
   } catch (err) {
     console.warn('[Database Schema] Default store seed warning:', err);
   }
@@ -3437,6 +3637,9 @@ export async function ensureSchema(dbPath: string) {
 
   // Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
   await ensureOrderTimingSchema(db);
+
+  // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
+  await ensureMultiPharmacyAndSnapshotSchema(db);
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

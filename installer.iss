@@ -116,10 +116,20 @@ Name: "{autodesktop}\Stop {#MyAppName}"; Filename: "{app}\STOP-PharmacyOS.bat"; 
 
 [Registry]
 Root: HKCU; Subkey: "Software\AIPharmacyOS"; Flags: uninsdeletekey
+; Guarantee the application never auto-starts on Windows PC boot
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AI Pharmacy OS"; Flags: deletevalue uninsdeletevalue
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AI Pharmacy OS"; Flags: deletevalue uninsdeletevalue
+
+[InstallDelete]
+; Strip any stray auto-start shortcuts from Windows Startup folder
+Type: files; Name: "{userstartup}\AI Pharmacy OS.lnk"
+Type: files; Name: "{userstartup}\PharmacyOS.lnk"
+Type: files; Name: "{commonstartup}\AI Pharmacy OS.lnk"
+Type: files; Name: "{commonstartup}\PharmacyOS.lnk"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Redistributable (if needed)..."; Check: VCRedistNeedsInstall and VCRedistFilePresent; Flags: waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "Launch {#MyAppName} server"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "Launch {#MyAppName} server"; Flags: nowait postinstall skipifsilent unchecked
 Filename: "http://localhost:{#MyAppPort}"; Description: "Open in browser (http://localhost:{#MyAppPort})"; Flags: shellexec postinstall skipifsilent unchecked
 
 [UninstallRun]

@@ -52,7 +52,7 @@ export async function getStoreMedicalName(dbInstance?: any, storeId?: number): P
 
     if (storeId && storeId > 0) {
       const storeRow = await db.get('SELECT name FROM stores WHERE id = ?', [storeId]).catch(() => null);
-      if (storeRow && storeRow.name && storeRow.name.trim()) {
+      if (storeRow && storeRow.name && storeRow.name.trim() && storeRow.name.trim().toLowerCase() !== 'main store') {
         return storeRow.name.trim();
       }
     }

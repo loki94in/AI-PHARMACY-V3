@@ -104,7 +104,13 @@ export default function WebsiteOrders() {
     fetchOrders();
     const handleInvalidate = () => fetchOrders(true);
     window.addEventListener('cache-invalidate', handleInvalidate);
-    return () => window.removeEventListener('cache-invalidate', handleInvalidate);
+    window.addEventListener('refresh-special-orders', handleInvalidate);
+    window.addEventListener('sse-website-order-created', handleInvalidate);
+    return () => {
+      window.removeEventListener('cache-invalidate', handleInvalidate);
+      window.removeEventListener('refresh-special-orders', handleInvalidate);
+      window.removeEventListener('sse-website-order-created', handleInvalidate);
+    };
   }, [fetchOrders]);
 
   // Status Actions

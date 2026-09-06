@@ -587,10 +587,12 @@ const RefillsSection: React.FC = () => {
     window.addEventListener('phone-numbers-updated', handleSync);
     window.addEventListener('contacts-updated', handleSync);
     window.addEventListener('distributors-updated', handleSync);
+    window.addEventListener('app-customers-updated', handleSync);
     return () => {
       window.removeEventListener('phone-numbers-updated', handleSync);
       window.removeEventListener('contacts-updated', handleSync);
       window.removeEventListener('distributors-updated', handleSync);
+      window.removeEventListener('app-customers-updated', handleSync);
     };
   }, [load]);
 

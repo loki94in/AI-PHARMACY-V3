@@ -58,6 +58,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     fetchStores();
+    const onStoresUpdated = () => { void fetchStores(); };
+    window.addEventListener('sse-stores-updated', onStoresUpdated);
+    return () => window.removeEventListener('sse-stores-updated', onStoresUpdated);
   }, [fetchStores]);
 
   const setActiveStoreId = (id: number) => {

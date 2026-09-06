@@ -19,8 +19,11 @@ import { applySaleDelta, getReorderWindowMonths, computeReorderSuggestion } from
 import { cleanupStagedRefillNotifications } from '../services/refillService.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
 import { returnWindowService } from '../services/returnWindowService.js';
+import { tenantAuthMiddleware } from '../middleware/tenantAuth.js';
+import { resolveStoreId, storeContextService } from '../services/storeContextService.js';
 
 const router = express.Router();
+router.use(tenantAuthMiddleware);
 
 // Helper to normalize numeric search terms (e.g., stripping trailing decimal zeros like "31.00" -> "31")
 // to align with SQLite CAST(value AS TEXT) representations.
@@ -327,9 +330,29 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Doctor name is required to save the bill. Please select or enter a doctor name.' });
     }
 
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const storeInfo = await storeContextService.getStoreById(targetStoreId, db).catch(() => null);
+    const pharmacyNameSnapshot = storeInfo?.name || 'AI Pharmacy';
+
+    const customerNameSnapshot = String(patient_name || 'Customer').trim();
+    const customerPhoneSnapshot = String(patient_phone || '').trim();
+    const customerAddressSnapshot = String(patient_address || '').trim();
+    const doctorNameSnapshot = String(doctor_name || '').trim();
+
     const result = await db.run(
-      'INSERT INTO sales_invoices (invoice_no, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value, payment_medium, payment_status, date, discount, subtotal, doctor_id, roff, online_order_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [invoice_no, customerId, total, tax, totalCgst, totalSgst, 0, paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal, resolvedDoctorId, roff, resolvedOnlineOrderId || null]
+      `INSERT INTO sales_invoices (
+        invoice_no, store_id, customer_id, total_amount, tax_amount, cgst_value, sgst_value, igst_value,
+        payment_medium, payment_status, date, discount, subtotal, doctor_id, roff, online_order_id,
+        customer_name_snapshot, customer_phone_snapshot, customer_address_snapshot,
+        doctor_name_snapshot, pharmacy_name_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        invoice_no, targetStoreId, customerId, total, tax, totalCgst, totalSgst, 0,
+        paymentMedium, paymentStatus, invoiceDateValue, Number(discount), subtotal,
+        resolvedDoctorId, roff, resolvedOnlineOrderId || null,
+        customerNameSnapshot, customerPhoneSnapshot, customerAddressSnapshot,
+        doctorNameSnapshot, pharmacyNameSnapshot
+      ]
     );
     const invoiceId = result.lastID;
     if (!invoiceId) {
@@ -483,9 +506,22 @@ router.post('/', async (req, res) => {
       const itemCgst = taxBreakdown ? taxBreakdown.cgst_value : 0;
       const itemSgst = taxBreakdown ? taxBreakdown.sgst_value : 0;
 
+      const medNameSnap = currentStock.db_medicine_name || medicine_name || 'Medicine';
+      const batchNoSnap = currentStock.batch_no || batch_no || '';
+      const expDateSnap = currentStock.expiry_date || expiry_date || '';
+      const mrpSnap = Number(mrp || item.mrp || currentStock.mrp || 0);
+      const taxPerSnap = Number(item.gst_per || item.tax_percent || (Number(item.cgst_per || 0) + Number(item.sgst_per || 0)) || 0);
+
       await db.run(
-        'INSERT INTO sale_items (invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty), Number(item.discount_per || item.discountPer || 0), itemCgst, itemSgst]
+        `INSERT INTO sale_items (
+          invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value,
+          medicine_name_snapshot, batch_no_snapshot, expiry_date_snapshot, mrp_snapshot, tax_percent_snapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty),
+          Number(item.discount_per || item.discountPer || 0), itemCgst, itemSgst,
+          medNameSnap, batchNoSnap, expDateSnap, mrpSnap, taxPerSnap
+        ]
       );
 
       // Decrement stock in inventory_master, auto-converting a strip to loose if the loose sale exceeds current loose stock.
@@ -1319,6 +1355,14 @@ router.get('/list', async (req, res) => {
       params.push(payment_medium);
     }
 
+    // Tenant Scoping: default to active store unless all_stores=true is explicitly requested
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    if (!allStores) {
+      whereClauses.push('si.store_id = ?');
+      params.push(targetStoreId);
+    }
+
     const where = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : 'WHERE 1=1';
 
     // Query invoices (only invoice-level fields; avoid heavy joins here)
@@ -1326,9 +1370,11 @@ router.get('/list', async (req, res) => {
       SELECT 
         si.id, si.invoice_no, si.date, si.total_amount, si.tax_amount,
         si.payment_medium, si.payment_status, si.roff, si.discount, si.subtotal,
-        si.cgst_value, si.sgst_value, si.igst_value,
-        c.name as customer_name, c.phone as customer_phone,
-        d.name as doctor_name
+        si.cgst_value, si.sgst_value, si.igst_value, si.store_id,
+        COALESCE(si.customer_name_snapshot, c.name, 'Customer') as customer_name,
+        COALESCE(si.customer_phone_snapshot, c.phone, '') as customer_phone,
+        COALESCE(si.doctor_name_snapshot, d.name, '') as doctor_name,
+        COALESCE(si.pharmacy_name_snapshot, '') as pharmacy_name
       FROM sales_invoices si
       LEFT JOIN customers c ON si.customer_id = c.id
       LEFT JOIN doctors d ON si.doctor_id = d.id
@@ -1358,11 +1404,16 @@ router.get('/list', async (req, res) => {
       // Prepare placeholders for IN clause
       const placeholders = invoiceIds.map(() => '?').join(',');
       const itemsSql = `
-        SELECT si.*, im.batch_no as batch_number, im.expiry_date, m.name as medicine_name,
-               m.mrp, m.id as medicine_id, COALESCE(m.pack_size, 1) as pack_size
+        SELECT si.*, 
+               COALESCE(si.batch_no_snapshot, im.batch_no, '') as batch_number,
+               COALESCE(si.batch_no_snapshot, im.batch_no, '') as batch_no,
+               COALESCE(si.expiry_date_snapshot, im.expiry_date, '') as expiry_date,
+               COALESCE(si.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
+               COALESCE(si.mrp_snapshot, m.mrp, 0) as mrp,
+               m.id as medicine_id, COALESCE(m.pack_size, 1) as pack_size
         FROM sale_items si
-        JOIN inventory_master im ON si.inventory_id = im.id
-        JOIN medicines m ON im.medicine_id = m.id
+        LEFT JOIN inventory_master im ON si.inventory_id = im.id
+        LEFT JOIN medicines m ON im.medicine_id = m.id
         WHERE si.invoice_id IN (${placeholders})
         ORDER BY si.invoice_id, si.id
       `;
@@ -2256,7 +2307,12 @@ router.get('/:id', async (req, res, next) => {
 
     const invoices = await queryAllWithRetry(
       db,
-      `SELECT si.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address, d.name as doctor_name
+      `SELECT si.*, 
+              COALESCE(si.customer_name_snapshot, c.name, '') as customer_name,
+              COALESCE(si.customer_phone_snapshot, c.phone, '') as customer_phone,
+              COALESCE(si.customer_address_snapshot, c.address, '') as customer_address,
+              COALESCE(si.doctor_name_snapshot, d.name, '') as doctor_name,
+              COALESCE(si.pharmacy_name_snapshot, '') as pharmacy_name
        FROM sales_invoices si
        LEFT JOIN customers c ON si.customer_id = c.id
        LEFT JOIN doctors d ON si.doctor_id = d.id
@@ -2269,16 +2325,24 @@ router.get('/:id', async (req, res, next) => {
     }
     const invoice = invoices[0];
 
+    // Tenant Isolation (MULTI-PHARMACY.md §8, §23): Verify active tenant ownership
+    const tenant = (req as any).tenant;
+    const isOwner = tenant?.role === 'owner' || tenant?.isDesktopFallback;
+    const requestedStoreId = tenant?.storeId || resolveStoreId(req);
+    if (!isOwner && invoice.store_id && requestedStoreId && invoice.store_id !== requestedStoreId) {
+      return res.status(403).json({ error: 'Access denied: Invoice belongs to a different pharmacy store' });
+    }
+
     invoice.items = await queryAllWithRetry(
       db,
       `SELECT si.*, 
-              COALESCE(im.batch_no, si.batch_no, '') as batch_number, 
-              COALESCE(im.batch_no, si.batch_no, '') as batch_no, 
-              im.expiry_date, 
-              COALESCE(im.mrp, si.mrp, m.mrp, si.unit_price, 0) as item_mrp, 
+              COALESCE(si.batch_no_snapshot, im.batch_no, si.batch_no, '') as batch_number, 
+              COALESCE(si.batch_no_snapshot, im.batch_no, si.batch_no, '') as batch_no, 
+              COALESCE(si.expiry_date_snapshot, im.expiry_date, '') as expiry_date, 
+              COALESCE(si.mrp_snapshot, im.mrp, si.mrp, m.mrp, si.unit_price, 0) as item_mrp, 
               COALESCE(m.pack_size, 1) as pack_size,
-              COALESCE(m.name, 'Medicine') as medicine_name, 
-              COALESCE(m.mrp, si.mrp, im.mrp, si.unit_price, 0) as medicine_mrp, 
+              COALESCE(si.medicine_name_snapshot, m.name, 'Medicine') as medicine_name, 
+              COALESCE(si.mrp_snapshot, m.mrp, si.mrp, im.mrp, si.unit_price, 0) as medicine_mrp, 
               COALESCE(m.id, im.medicine_id) as medicine_id,
               COALESCE(im.quantity, 0) as stock_qty,
               COALESCE(im.loose_quantity, 0) as loose_quantity

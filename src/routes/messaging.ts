@@ -16,7 +16,8 @@ import {
   prewarmWhatsApp,
   isWhatsAppExplicitlyDisabled,
   setLoginWindowActive,
-  isWhatsAppLoginWindowActive
+  isWhatsAppLoginWindowActive,
+  checkPhoneWhatsAppRegistered
 } from '../whatsappClient.js';
 import QRCode from 'qrcode';
 import { dbManager } from '../database/connection.js';
@@ -727,16 +728,71 @@ router.put('/templates/:id', async (req, res) => {
   }
 });
 
-// DELETE /messaging/templates/:id — Delete template
-router.delete('/templates/:id', async (req, res) => {
-  const { id } = req.params;
+// In-memory cache for phone WhatsApp capability (10-minute TTL)
+const phoneCapabilityCache = new Map<string, { status: 'AVAILABLE' | 'NOT_AVAILABLE' | 'UNABLE_TO_VERIFY'; at: number }>();
+const PHONE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+// GET /api/messaging/check-phone — Controlled background capability check (MULTI-PHARMACY.md §16)
+router.get('/check-phone', async (req, res) => {
+  const rawPhone = (req.query.phone as string || '').trim();
+  const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+
+  if (cleanPhone.length !== 10) {
+    return res.json({
+      phone: cleanPhone,
+      status: 'NOT_AVAILABLE',
+      reason: 'INVALID_FORMAT',
+      cached: false
+    });
+  }
+
+  // 1. Check in-memory cache
+  const cached = phoneCapabilityCache.get(cleanPhone);
+  if (cached && Date.now() - cached.at < PHONE_CACHE_TTL_MS) {
+    return res.json({
+      phone: cleanPhone,
+      status: cached.status,
+      cached: true
+    });
+  }
+
   try {
     const db = await dbManager.getConnection();
-    await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [id]);
-    res.json({ success: true, message: 'Template deleted' });
+
+    // 2. Check local database history (prior successful sends = confirmed available)
+    const prevDelivery = await db.get(
+      `SELECT id FROM whatsapp_message_queue 
+       WHERE (phone = ? OR phone = ?) AND status IN ('DELIVERED', 'SENT') 
+       LIMIT 1`,
+      [cleanPhone, `91${cleanPhone}`]
+    );
+
+    if (prevDelivery) {
+      phoneCapabilityCache.set(cleanPhone, { status: 'AVAILABLE', at: Date.now() });
+      return res.json({
+        phone: cleanPhone,
+        status: 'AVAILABLE',
+        cached: false,
+        source: 'local_history'
+      });
+    }
+
+    // 3. Query WhatsApp Client if ready (non-blocking, non-waking)
+    const status = await checkPhoneWhatsAppRegistered(cleanPhone);
+    phoneCapabilityCache.set(cleanPhone, { status, at: Date.now() });
+
+    res.json({
+      phone: cleanPhone,
+      status,
+      cached: false
+    });
   } catch (err: any) {
-    console.error('Failed to delete message template:', err);
-    res.status(500).json({ error: 'Failed to delete template' });
+    console.warn('[WhatsApp] Check phone error:', err.message);
+    res.json({
+      phone: cleanPhone,
+      status: 'UNABLE_TO_VERIFY',
+      cached: false
+    });
   }
 });
 

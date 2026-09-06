@@ -26,6 +26,7 @@ import { isValidDistributorName } from '../utils/nameNormalizer.js';
 import { extractDateFromText } from '../utils/dateExtractor.js';
 import { applyPurchaseDelta } from '../services/medicineSalesMetricsService.js';
 import { generateInvoiceBarcodeData } from '../services/barcodeService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
 
 
 
@@ -709,6 +710,14 @@ router.get('/', async (req, res) => {
     let filterQuery = '';
     const params: any[] = [];
     const conditions: string[] = [];
+
+    // Tenant Scoping (MULTI-PHARMACY.md §8, §23, §34): Scope to active pharmacy branch unless all_stores=true
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    if (!allStores) {
+      conditions.push('(p.store_id = ? OR (p.store_id IS NULL AND ? = 1))');
+      params.push(targetStoreId, targetStoreId);
+    }
     
     // Sargable pre-filters: let idx_purchases_date prune rows first (superset bounds,
     // ±1 day covers any timezone shift of date(p.date,'localtime')); the exact
@@ -975,11 +984,13 @@ router.post('/manual', async (req, res) => {
     const localTimeStr = `${String(nowLocal.getHours()).padStart(2, '0')}:${String(nowLocal.getMinutes()).padStart(2, '0')}:${String(nowLocal.getSeconds()).padStart(2, '0')}`;
     const purchaseDate = cleanDate.includes(':') ? cleanDate : `${cleanDate} ${localTimeStr}`;
 
+    const targetStoreId = (req as any).tenant?.storeId || (req.body.store_id !== undefined ? (parseInt(String(req.body.store_id), 10) || 1) : resolveStoreId(req));
+
     // 2. Insert into purchases
     const purchRes = await db.run(
-      `INSERT INTO purchases (distributor_id, invoice_no, app_invoice_no, date, total_amount, cgst_value, sgst_value, cn_amount, cn_number, original_amount) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [distId, invoice_no, appInvoiceNo, purchaseDate, grandTotal, totalCgst, totalSgst, totalDeductions, cnNumberVal, originalAmount]
+      `INSERT INTO purchases (store_id, distributor_id, invoice_no, app_invoice_no, date, total_amount, cgst_value, sgst_value, cn_amount, cn_number, original_amount) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [targetStoreId, distId, invoice_no, appInvoiceNo, purchaseDate, grandTotal, totalCgst, totalSgst, totalDeductions, cnNumberVal, originalAmount]
     );
     const purchaseId = purchRes.lastID;
 
@@ -1103,18 +1114,21 @@ router.post('/manual', async (req, res) => {
         sell_price: rawSellPrice || null
       });
 
-      // Update inventory_master (unified storage)
+      // Update inventory_master (unified storage scoped to store)
       const totalQty = rawQty + rawFreeQty;
-      const invRow = await db.get('SELECT id, quantity FROM inventory_master WHERE medicine_id = ? AND (batch_no = ? OR (batch_no IS NULL AND ? IS NULL))', [medId, rawBatch, rawBatch]);
+      const invRow = await db.get(
+        'SELECT id, quantity FROM inventory_master WHERE medicine_id = ? AND (batch_no = ? OR (batch_no IS NULL AND ? IS NULL)) AND (store_id = ? OR (store_id IS NULL AND ? = 1))',
+        [medId, rawBatch, rawBatch, targetStoreId, targetStoreId]
+      );
       if (invRow) {
         await db.run('UPDATE inventory_master SET quantity = quantity + ?, cost_price = ?, mrp = COALESCE(NULLIF(?, 0), mrp), expiry_date = COALESCE(?, expiry_date) WHERE id = ?',
           [totalQty, rawRate, rawMrp || 0, rawExpiry || null, invRow.id]);
         await refreshInventoryActiveStatus(db, invRow.id);
       } else {
         await db.run(`
-          INSERT INTO inventory_master (medicine_id, quantity, batch_no, expiry_date, cost_price, mrp, is_active)
-          VALUES (?, ?, ?, ?, ?, ?, 1)
-        `, [medId, totalQty, rawBatch, rawExpiry || null, rawRate, rawMrp || 0]);
+          INSERT INTO inventory_master (store_id, medicine_id, quantity, batch_no, expiry_date, cost_price, mrp, is_active)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+        `, [targetStoreId, medId, totalQty, rawBatch, rawExpiry || null, rawRate, rawMrp || 0]);
         await refreshInventoryActiveByBatch(db, medId, rawBatch);
       }
       await recordStockLedger(db, {
@@ -3499,6 +3513,14 @@ router.get('/:id', async (req, res) => {
     
     if (!purchase) {
       return res.status(404).json({ error: 'Purchase not found' });
+    }
+
+    // Tenant Isolation (MULTI-PHARMACY.md §8, §23): Disallow cross-store inspection unless owner or fallback
+    const tenant = (req as any).tenant;
+    const isOwner = tenant?.role === 'owner' || tenant?.isDesktopFallback;
+    const requestedStoreId = tenant?.storeId || resolveStoreId(req);
+    if (!isOwner && purchase.store_id && requestedStoreId && purchase.store_id !== requestedStoreId) {
+      return res.status(403).json({ error: 'Access denied: Purchase belongs to a different pharmacy store' });
     }
 
     const reconciledReturn = await db.get('SELECT id FROM expiry_returns_tracking WHERE reconciled_purchase_id = ?', [id]);

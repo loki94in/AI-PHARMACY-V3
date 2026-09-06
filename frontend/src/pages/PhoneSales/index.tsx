@@ -151,9 +151,11 @@ export default function PhoneSales() {
     };
     window.addEventListener('stock-write-completed', handleUpdate);
     window.addEventListener('price-updated', handleUpdate);
+    window.addEventListener('sse-sales-sync', handleUpdate);
     return () => {
       window.removeEventListener('stock-write-completed', handleUpdate);
       window.removeEventListener('price-updated', handleUpdate);
+      window.removeEventListener('sse-sales-sync', handleUpdate);
     };
   }, [fetchStagedSales, fetchDeviceData]);
 

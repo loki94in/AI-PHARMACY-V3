@@ -80,6 +80,20 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
     return () => clearTimeout(timer);
   }, [search]);
 
+  const [configuredPharmacyName, setConfiguredPharmacyName] = useState<string>('');
+
+  // Load configured pharmacy name on mount
+  useEffect(() => {
+    api.getSettings()
+      .then((s: any) => {
+        const name = s?.medical_name || s?.pharmacy_name || s?.shop_name || s?.store_name;
+        if (name && name.trim() && name.trim().toLowerCase() !== 'main store') {
+          setConfiguredPharmacyName(name.trim());
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Load category summary counts on mount
   useEffect(() => {
     api.getPublicCatalogSummary()
@@ -116,6 +130,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   }, [category, debouncedSearch, page]);
 
   const activeStore = stores.find(s => s.id === activeStoreId) || stores[0];
+  const displayStoreName = (activeStore?.name && activeStore.name.toLowerCase() !== 'main store')
+    ? activeStore.name
+    : (configuredPharmacyName || 'AI Pharmacy');
   const selectedCount = Object.keys(selectedItems).length;
   const totalAmount = Object.values(selectedItems).reduce((sum, it) => sum + (it.price * it.qty), 0);
 
@@ -127,7 +144,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
     const storePhone = activeStore?.phone ? activeStore.phone.replace(/\D/g, '') : '';
     const phoneToUse = storePhone.length === 10 ? `91${storePhone}` : storePhone;
     const msg = encodeURIComponent(
-      `Hello ${activeStore?.name || 'Pharmacy'}, I would like to inquire/order:\n\n` +
+      `Hello ${displayStoreName}, I would like to inquire/order:\n\n` +
       `*Medicine:* ${med.name}\n` +
       `*Pack:* ${med.pack}\n` +
       `*Price:* ₹${(med.sell_price || med.mrp || 0).toFixed(2)}\n\n` +
@@ -138,78 +155,85 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Hero Store Banner */}
-      <div className="bg-bg2 border border-border rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1.5">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 text-xs font-semibold">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Live Store Inventory Connected</span>
+    <div className="space-y-2.5">
+      {/* Compact Store Banner (Redesigned & space-efficient) */}
+      <div className="bg-bg2 border border-border rounded-xl px-3.5 py-2 sm:py-2.5 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+            <StoreIcon className="w-3.5 h-3.5" />
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold text-text">
-            {activeStore ? activeStore.name : 'Pune Pharmacy'} — Online Medicine & Refill Catalog
-          </h1>
-          <p className="text-xs sm:text-sm text-muted">
-            Browse verified clinical medicines for Diabetes, Blood Pressure, Thyroid, and Tuberculosis (TB) with live counter availability.
-          </p>
+          <div className="min-w-0 flex items-center gap-2 flex-wrap">
+            <h1 className="text-xs sm:text-sm font-bold text-text truncate">
+              {displayStoreName}
+            </h1>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[10px] font-semibold shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Live Store Inventory</span>
+            </span>
+            <span className="hidden xl:inline text-[11px] text-muted">
+              • Verified Chronic & Refill Medicines
+            </span>
+          </div>
         </div>
 
-        {/* Actions & Branch Selector */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 w-full md:w-auto shrink-0">
+        {/* Actions & Compact Branch Selector */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           <button
             type="button"
             onClick={() => {
               setPrescriptionPrefill(debouncedSearch || '');
               setIsPrescriptionModalOpen(true);
             }}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
           >
-            <Camera className="w-4 h-4" />
-            <span>Upload Prescription / Photo</span>
+            <Camera className="w-3.5 h-3.5" />
+            <span>Upload Rx</span>
           </button>
 
-          <div className="w-full sm:w-64 space-y-1 shrink-0">
-            <label htmlFor="pickup-branch-select" className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-primary" />
-              <span>Pickup Branch</span>
-            </label>
+          <div className="flex items-center gap-1 bg-bg border border-border rounded-lg px-2 py-1 shrink-0">
+            <MapPin className="w-3 h-3 text-primary shrink-0" />
             <select
               id="pickup-branch-select"
               aria-label="Pickup Branch"
               value={activeStoreId}
               onChange={e => onChangeStore(parseInt(e.target.value, 10))}
-              className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-text focus:outline-none focus:border-primary"
+              className="bg-transparent text-xs font-semibold text-text focus:outline-none cursor-pointer pr-1"
             >
-              {stores.map(st => (
-                <option key={st.id} value={st.id}>
-                  {st.name} {st.address ? `(${st.address})` : ''}
-                </option>
-              ))}
+              {stores.map(st => {
+                const optName = (st.name && st.name.toLowerCase() !== 'main store')
+                  ? st.name
+                  : (configuredPharmacyName || 'Main Store');
+                return (
+                  <option key={st.id} value={st.id}>
+                    {optName}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
       </div>
 
-      {/* Search & Category Filter Bar */}
-      <div className="space-y-3">
-        <div className="relative">
+      {/* Compact Search & Category Row */}
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2">
+        <div className="relative w-full lg:w-80 xl:w-96 shrink-0">
           <label htmlFor="portal-search-input" className="sr-only">Search medicines</label>
-          <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true" />
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true" />
           <input
             id="portal-search-input"
             aria-label="Search medicine name, salt or composition"
             type="text"
-            placeholder="Search medicine name, salt / composition, or brand (e.g., Metformin, Telmisartan, Thyronorm, R-Cinex)..."
+            placeholder="Search medicine, salt or brand..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-3 bg-bg2 border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm shadow-sm"
+            className="w-full pl-9 pr-8 py-1.5 bg-bg2 border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-xs sm:text-sm shadow-xs"
           />
           {search && (
             <button
               type="button"
               onClick={() => setSearch('')}
               aria-label="Clear search input"
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-muted hover:text-text px-1.5 py-0.5 rounded bg-bg"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted hover:text-text px-1 py-0.5 rounded bg-bg"
             >
               Clear
             </button>
@@ -217,7 +241,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
         </div>
 
         {/* Category Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0 scrollbar-none flex-1">
           {CATEGORIES.map(cat => {
             const Icon = cat.icon;
             const count = summary[cat.countKey];
@@ -229,16 +253,16 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                   setCategory(cat.key);
                   setPage(1);
                 }}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all shrink-0 ${
                   isSelected
-                    ? 'bg-primary text-white shadow-md'
+                    ? 'bg-primary text-white shadow-xs'
                     : 'bg-bg2 hover:bg-bg3 border border-border text-text'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3 h-3" />
                 <span>{cat.label}</span>
                 {typeof count === 'number' && count > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  <span className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
                     isSelected ? 'bg-primary-hover text-white' : 'bg-bg text-muted'
                   }`}>
                     {count}
@@ -251,9 +275,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       </div>
 
       {/* Results Header */}
-      <div className="flex items-center justify-between text-xs text-muted px-1">
+      <div className="flex items-center justify-between text-[11px] text-muted px-0.5">
         <span>
-          Showing <strong>{medicines.length}</strong> of <strong>{totalCount}</strong> verified medicines
+          Showing <strong>{medicines.length}</strong> of <strong>{totalCount}</strong> medicines
           {category !== 'all' && ` in ${CATEGORIES.find(c => c.key === category)?.label}`}
           {debouncedSearch && ` matching "${debouncedSearch}"`}
         </span>
@@ -264,23 +288,23 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
         )}
       </div>
 
-      {/* Medicines Grid */}
+      {/* Medicines Grid (4 columns on PC = exactly 8 medicines in 2 rows visible without scrolling!) */}
       {loading ? (
-        <div className="py-20 flex flex-col items-center justify-center gap-3 text-muted text-sm bg-bg2 border border-border rounded-2xl">
-          <RefreshCw className="w-6 h-6 animate-spin text-primary" />
-          <span>Searching live inventory & verified medicine photos...</span>
+        <div className="py-16 flex flex-col items-center justify-center gap-2 text-muted text-xs bg-bg2 border border-border rounded-xl">
+          <RefreshCw className="w-5 h-5 animate-spin text-primary" />
+          <span>Searching inventory & medicine photos...</span>
         </div>
       ) : medicines.length === 0 ? (
-        <div className="py-12 px-6 text-center bg-bg2 border border-dashed border-primary/40 rounded-3xl p-8 space-y-4 max-w-xl mx-auto shadow-sm">
-          <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
-            <Camera className="w-7 h-7" />
+        <div className="py-10 px-4 text-center bg-bg2 border border-dashed border-primary/40 rounded-2xl p-6 space-y-3 max-w-md mx-auto shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+            <Camera className="w-5 h-5" />
           </div>
           <div className="space-y-1">
-            <p className="text-base font-bold text-text">
+            <p className="text-sm font-bold text-text">
               {debouncedSearch ? `Couldn't find "${debouncedSearch}"?` : 'Looking for a specific medicine?'}
             </p>
-            <p className="text-xs text-muted max-w-md mx-auto leading-relaxed">
-              Don't worry! If your medicine isn't in our online catalog, take a quick photo of your prescription slip or medicine box. Our pharmacist will check counter availability and reply directly on WhatsApp with your price estimate and payment QR code.
+            <p className="text-xs text-muted max-w-sm mx-auto leading-relaxed">
+              Upload a prescription or box photo. Our pharmacist will check availability and reply directly on WhatsApp.
             </p>
           </div>
           <button
@@ -289,14 +313,14 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
               setPrescriptionPrefill(debouncedSearch || '');
               setIsPrescriptionModalOpen(true);
             }}
-            className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all inline-flex items-center gap-2 cursor-pointer"
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition-all inline-flex items-center gap-1.5 cursor-pointer"
           >
-            <Camera className="w-4 h-4" />
-            <span>Upload Prescription / Medicine Photo</span>
+            <Camera className="w-3.5 h-3.5" />
+            <span>Upload Prescription Photo</span>
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {medicines.map((med, idx) => {
             const gallery = (med.gallery && med.gallery.length > 0)
               ? med.gallery
@@ -311,23 +335,23 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             return (
               <div
                 key={`${med.name}-${idx}`}
-                className="bg-bg2 border border-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:border-primary/40 transition-all flex flex-col justify-between"
+                className="bg-bg2 border border-border rounded-xl overflow-hidden shadow-2xs hover:shadow-md hover:border-primary/40 transition-all flex flex-col justify-between group"
               >
                 <div>
-                  {/* Image Container with Multi-Angle View */}
-                  <div className="relative w-full h-44 bg-bg border-b border-border flex items-center justify-center p-3 group overflow-hidden">
+                  {/* Image Container (Compact 112px height) */}
+                  <div className="relative w-full h-28 bg-bg border-b border-border flex items-center justify-center p-2 group overflow-hidden">
                     {hasCustomImage ? (
                       <img
                         src={activeImgUrl!}
                         alt={med.name}
                         onError={() => handleImageError(activeImgUrl!)}
-                        className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                        className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-200"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="flex flex-col items-center justify-center gap-2 text-muted/40">
-                        <Pill className="w-12 h-12" />
-                        <span className="text-[10px] font-medium text-muted">Genuine Store Item</span>
+                      <div className="flex flex-col items-center justify-center gap-1 text-muted/40">
+                        <Pill className="w-8 h-8" />
+                        <span className="text-[9px] font-medium text-muted">Genuine Item</span>
                       </div>
                     )}
 
@@ -339,53 +363,47 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         setModalActiveImage(activeImgUrl);
                       }}
                       aria-label={`Inspect all product angles for ${med.name}`}
-                      className="absolute inset-0 bg-bg3/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-10"
+                      className="absolute inset-0 bg-bg3/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-10"
                       title="Inspect all product angles"
                     >
-                      <span className="px-3 py-1.5 rounded-xl bg-bg/95 backdrop-blur-md border border-border text-xs font-bold text-text shadow-xl flex items-center gap-1.5 hover:scale-105 transition-transform">
-                        <Eye size={13} className="text-sky" />
-                        <span>Quick View ({gallery.length || 1})</span>
+                      <span className="px-2 py-1 rounded-lg bg-bg/95 backdrop-blur-md border border-border text-[10px] font-bold text-text shadow-sm flex items-center gap-1 hover:scale-105 transition-transform">
+                        <Eye size={11} className="text-sky" />
+                        <span>Quick View</span>
                       </span>
                     </button>
 
                     {/* Category & Current Angle Badges */}
-                    <div className="absolute top-2 left-2 flex flex-col gap-1 z-10 pointer-events-none">
-                      <span className="px-2 py-0.5 bg-bg2/90 backdrop-blur-sm border border-border text-[10px] font-bold text-text rounded-md shadow-xs">
+                    <div className="absolute top-1.5 left-1.5 flex flex-col gap-0.5 z-10 pointer-events-none">
+                      <span className="px-1.5 py-0.5 bg-bg2/90 backdrop-blur-sm border border-border text-[9px] font-bold text-text rounded shadow-xs">
                         {med.category}
                       </span>
-                      {currentAngle && (
-                        <span className="px-1.5 py-0.5 bg-sky/20 backdrop-blur-sm border border-sky/40 text-[9px] font-bold text-sky rounded-md shadow-xs flex items-center gap-1">
+                      {currentAngle && gallery.length > 1 && (
+                        <span className="px-1 py-0.2 bg-sky/20 backdrop-blur-sm border border-sky/40 text-[8px] font-bold text-sky rounded shadow-xs flex items-center gap-0.5">
                           {currentAngle.is_primary && <span>⭐</span>}
                           <span>{currentAngle.label}</span>
                         </span>
                       )}
                     </div>
 
-                    {/* Stock Status & Angle Count Badges */}
-                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1 z-10 pointer-events-none">
+                    {/* Stock Status Badges */}
+                    <div className="absolute top-1.5 right-1.5 flex flex-col items-end gap-0.5 z-10 pointer-events-none">
                       {med.in_stock ? (
-                        <span className="px-2 py-0.5 bg-emerald-500/90 text-white text-[10px] font-bold rounded-md shadow-xs flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-100 animate-pulse" />
+                        <span className="px-1.5 py-0.5 bg-emerald-500/90 text-white text-[9px] font-bold rounded shadow-xs flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-emerald-100 animate-pulse" />
                           <span>In Stock ({med.stock_qty})</span>
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 bg-amber-500/90 text-white text-[10px] font-bold rounded-md shadow-xs">
-                          Available on Request
-                        </span>
-                      )}
-                      {gallery.length > 1 && (
-                        <span className="px-1.5 py-0.5 bg-bg/90 backdrop-blur-sm border border-border text-[9px] font-bold text-text rounded-md shadow-xs flex items-center gap-1">
-                          <Camera size={10} className="text-sky" />
-                          <span>{gallery.length} Views</span>
+                        <span className="px-1.5 py-0.5 bg-amber-500/90 text-white text-[9px] font-bold rounded shadow-xs">
+                          On Request
                         </span>
                       )}
                     </div>
                   </div>
 
-                  {/* 3-4 Angle Micro-Thumbnail Strip (shown when product has multiple angles) */}
+                  {/* Micro Thumbnail Strip (when product has multiple angles) */}
                   {gallery.length > 1 && (
-                    <div className="px-3 py-1.5 bg-bg border-b border-border flex items-center justify-between gap-1 overflow-x-auto">
-                      <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                    <div className="px-2 py-1 bg-bg border-b border-border flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1 overflow-x-auto py-0.5">
                         {gallery.slice(0, 4).map((ang, aIdx) => {
                           const isAngleSelected = (activeImgUrl === ang.url);
                           return (
@@ -401,9 +419,9 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                               }}
                               aria-label={`${med.name} ${ang.label} angle view`}
                               title={ang.label}
-                              className={`relative w-8 h-8 rounded-lg overflow-hidden border p-0.5 transition-all cursor-pointer shrink-0 ${
+                              className={`relative w-6 h-6 rounded overflow-hidden border p-0.5 transition-all cursor-pointer shrink-0 ${
                                 isAngleSelected
-                                  ? 'border-primary ring-2 ring-primary/40 bg-bg2 shadow-xs'
+                                  ? 'border-primary ring-1 ring-primary/40 bg-bg2 shadow-xs'
                                   : 'border-border/60 bg-bg hover:border-primary/50 opacity-70 hover:opacity-100'
                               }`}
                             >
@@ -413,9 +431,6 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                                 className="w-full h-full object-contain"
                                 onError={() => handleImageError(ang.url)}
                               />
-                              {ang.is_primary && (
-                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 border border-bg shadow-xs" title="Primary 2-in-1" />
-                              )}
                             </button>
                           );
                         })}
@@ -426,99 +441,87 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                           setQuickViewMed(med);
                           setModalActiveImage(activeImgUrl);
                         }}
-                        className="text-[10px] text-sky hover:underline font-bold shrink-0 flex items-center gap-0.5 cursor-pointer ml-1"
+                        className="text-[9px] text-sky hover:underline font-bold shrink-0 flex items-center gap-0.5 cursor-pointer"
                       >
                         <span>{gallery.length} Views</span>
-                        <ChevronRight size={11} />
+                        <ChevronRight size={9} />
                       </button>
                     </div>
                   )}
 
-                  {/* Card Content */}
-                  <div className="p-4 space-y-2">
+                  {/* Card Body */}
+                  <div className="p-2.5 space-y-1">
                     <div>
-                      <h3 className="text-sm font-bold text-text line-clamp-2 leading-snug" title={med.name}>
+                      <h3 className="text-xs font-bold text-text line-clamp-1 leading-snug" title={med.name}>
                         {med.name}
                       </h3>
-                      {med.pack && (
-                        <span className="text-[11px] text-muted font-medium block mt-0.5">
-                          Pack: {med.pack}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted truncate mt-0.5">
+                        {med.pack && <span>{med.pack}</span>}
+                        {med.pack && med.composition && <span>•</span>}
+                        {med.composition && <span className="truncate italic" title={med.composition}>{med.composition}</span>}
+                      </div>
                     </div>
 
-                    {med.composition && (
-                      <p className="text-[11px] text-muted line-clamp-2 font-mono bg-bg px-2 py-1 rounded-md border border-border/50">
-                        {med.composition}
-                      </p>
-                    )}
-
                     {med.manufacturer && (
-                      <p className="text-[10px] text-muted font-semibold uppercase tracking-wider truncate">
-                        By {med.manufacturer}
+                      <p className="text-[9px] text-muted/70 uppercase tracking-wider truncate">
+                        {med.manufacturer}
                       </p>
                     )}
                   </div>
                 </div>
 
-                {/* Pricing and Actions */}
-                <div className="p-4 pt-0 border-t border-border/60 mt-2 space-y-3">
-                  <div className="flex items-baseline justify-between pt-2">
+                {/* Pricing & Actions Row */}
+                <div className="p-2.5 pt-1 border-t border-border/50 flex flex-col gap-1.5">
+                  <div className="flex items-baseline justify-between">
                     <div>
                       {med.mrp > 0 || med.sell_price > 0 ? (
-                        <div className="space-y-0.5">
-                          {med.sell_price > 0 && hasDiscount ? (
-                            <>
-                              <div className="flex items-baseline gap-1.5">
-                                <span className="text-base font-extrabold text-primary">
-                                  ₹{med.sell_price.toFixed(2)}
-                                </span>
-                              </div>
-                              <span className="text-xs text-muted">
-                                MRP <span className="line-through">₹{med.mrp.toFixed(2)}</span>
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-base font-extrabold text-primary">
-                              MRP ₹{(med.mrp > 0 ? med.mrp : med.sell_price).toFixed(2)}
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-xs sm:text-sm font-extrabold text-primary">
+                            ₹{(med.sell_price > 0 ? med.sell_price : med.mrp).toFixed(2)}
+                          </span>
+                          {med.sell_price > 0 && hasDiscount && (
+                            <span className="text-[10px] text-muted line-through">
+                              ₹{med.mrp.toFixed(2)}
                             </span>
                           )}
                         </div>
                       ) : (
-                        <span className="text-xs font-semibold text-muted">
-                          Price on Request
+                        <span className="text-[10px] font-semibold text-muted">
+                          On Request
                         </span>
                       )}
                     </div>
 
                     {hasDiscount && (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 font-bold rounded">
+                      <span className="text-[9px] px-1 py-0.2 bg-emerald-500/10 text-emerald-600 font-bold rounded">
                         {discountPer}% OFF
                       </span>
                     )}
-                                  {/* Buttons */}
-                  <div className="flex items-center gap-2">
+                  </div>
+
+                  {/* Buttons */}
+                  <div className="flex items-center gap-1.5">
                     {selected ? (
-                      <div className="flex-1 flex items-center justify-between bg-primary/10 border border-primary/30 rounded-xl px-2 py-1.5">
+                      <div className="flex-1 flex items-center justify-between bg-primary/10 border border-primary/30 rounded-lg px-1.5 py-0.5">
                         <button
                           type="button"
                           onClick={() => onUpdateQuantity(med.name, -1)}
                           aria-label={selected.qty === 1 ? `Remove ${med.name} from refill` : `Decrease quantity for ${med.name}`}
                           title={selected.qty === 1 ? 'Remove from refill' : 'Decrease quantity'}
-                          className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3 hover:text-red-500 transition-colors"
+                          className="w-6 h-6 rounded bg-bg2 flex items-center justify-center text-text hover:bg-bg3 hover:text-red-500 transition-colors"
                         >
-                          {selected.qty === 1 ? <Trash2 className="w-3.5 h-3.5 text-red-500" /> : <Minus className="w-3.5 h-3.5" />}
+                          {selected.qty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
                         </button>
-                        <span className="text-xs font-bold text-primary px-2">
-                          Qty: {selected.qty}
+                        <span className="text-xs font-bold text-primary px-1">
+                          {selected.qty}
                         </span>
                         <button
                           type="button"
                           onClick={() => onUpdateQuantity(med.name, 1)}
                           aria-label={`Increase quantity for ${med.name}`}
-                          className="w-7 h-7 rounded-lg bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
+                          className="w-6 h-6 rounded bg-bg2 flex items-center justify-center text-text hover:bg-bg3"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3 h-3" />
                         </button>
                       </div>
                     ) : (
@@ -526,10 +529,10 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                         type="button"
                         onClick={() => onToggleItem(med.name, med.sell_price || med.mrp || 0)}
                         aria-label={`Add ${med.name} to refill`}
-                        className="flex-1 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:opacity-95 transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                        className="flex-1 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:opacity-90 transition-all flex items-center justify-center gap-1 shadow-xs"
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add to Refill</span>
+                        <Plus className="w-3 h-3" />
+                        <span>Add</span>
                       </button>
                     )}
 
@@ -538,13 +541,12 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                       type="button"
                       onClick={() => openWhatsAppOrder(med)}
                       aria-label={`Order or inquire about ${med.name} on WhatsApp`}
-                      title="Order or inquire on WhatsApp"
-                      className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 rounded-xl transition-colors shrink-0"
+                      title="Order on WhatsApp"
+                      className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 rounded-lg transition-colors shrink-0"
                     >
-                      <MessageSquare className="w-4 h-4" />
+                      <MessageSquare className="w-3.5 h-3.5" />
                     </button>
                   </div>
-     </div>
                 </div>
               </div>
             );

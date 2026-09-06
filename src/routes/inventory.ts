@@ -5,6 +5,8 @@ import { dbManager } from '../database/connection.js';
 import { cacheService } from '../services/cacheService.js';
 import { parsePackSizeFromPackaging } from '../utils/packaging.js';
 import { eventService } from '../services/eventService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
+import { logMutationAudit } from '../services/auditLoggerService.js';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -23,7 +25,7 @@ router.use((req, res, next) => {
     const origJson = res.json.bind(res);
     (res as any).json = (body: any) => {
       try {
-        if (res.statusCode < 400 && body && typeof body === 'object' && body.success) {
+        if (res.statusCode < 400 && (!body || typeof body !== 'object' || (!('error' in body) && body.success !== false))) {
           eventService.broadcast('inventory_changed', { reason: 'manual_edit', method: req.method, path: req.path });
           if (!req.path.startsWith('/bulk-sell-prices')) {
             // sell-price edits don't touch expiry data; stock/expiry edits do
@@ -96,6 +98,14 @@ router.get('/', async (req, res) => {
       WHERE 1=1
     `;
     const params: any[] = [];
+
+    // Tenant Scoping (MULTI-PHARMACY.md §8, §23, §34): Scope to active pharmacy branch unless all_stores=true
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    if (!allStores) {
+      baseQuery += ` AND (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))`;
+      params.push(targetStoreId, targetStoreId);
+    }
     
     if (search) {
       baseQuery += ` AND (m.name LIKE ? OR m.item_code = ? OR im.batch_no LIKE ?)`;
@@ -177,7 +187,7 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     let totalItems: number;
-    const countKey = JSON.stringify([search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter]);
+    const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter]);
     const cachedCount = inventoryCountCache.get(countKey);
     if (cachedCount && Date.now() - cachedCount.ts < INVENTORY_COUNT_TTL_MS) {
       totalItems = cachedCount.total;
@@ -236,12 +246,18 @@ router.post('/override', async (req, res) => {
       return res.status(400).json({ error: 'reason is required for stock override' });
     }
     db = await dbManager.getConnection();
+    const prevInv = await db.get('SELECT quantity, store_id, batch_no FROM inventory_master WHERE id = ?', [inventory_id]);
     await db.run('UPDATE inventory_master SET quantity = ? WHERE id = ?', [quantity, inventory_id]);
     
-    await db.run(
-      `INSERT INTO action_logs (action_type, description) VALUES ('STOCK_OVERRIDE', ?)`,
-      [`Override stock for inventory_id ${inventory_id} to ${quantity}. Reason: ${reason}`]
-    );
+    await logMutationAudit({
+      storeId: prevInv?.store_id ?? resolveStoreId(req),
+      action: 'STOCK_OVERRIDE',
+      entity: 'inventory_master',
+      entityId: inventory_id,
+      description: `Override stock for inventory_id ${inventory_id} from ${prevInv?.quantity ?? 'unknown'} to ${quantity}. Reason: ${reason}`,
+      beforeSnapshot: { quantity: prevInv?.quantity ?? null, batch_no: prevInv?.batch_no },
+      afterSnapshot: { quantity, reason }
+    });
 
     // Check if new stock triggers pending patient refills
     const invItem = await db.get('SELECT medicine_id FROM inventory_master WHERE id = ?', [inventory_id]);

@@ -284,6 +284,7 @@ app.use('/api/wa-business', lazyRoute(() => import('./routes/whatsappBusiness.js
 app.use('/api/automation', lazyRoute(() => import('./routes/automation.js')));
 app.use('/api/triggers', lazyRoute(() => import('./routes/triggers.js')));
 app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
+app.use('/api/auth', lazyRoute(() => import('./routes/auth.js'), 'hot'));
 app.use('/api/stores', lazyRoute(() => import('./routes/stores.js'), 'hot'));
 app.use('/api/website', lazyRoute(() => import('./routes/websiteOrders.js'), 'hot'));
 app.use('/api/customer-portal', lazyRoute(() => import('./routes/customerPortal.js'), 'hot'));

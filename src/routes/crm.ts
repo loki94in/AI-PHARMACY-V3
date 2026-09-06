@@ -10,6 +10,8 @@ import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { getMessage } from '../i18n/getMessage.js';
 import { sanitizeDoctorName } from '../utils/doctorUtils.js';
 import { getAppDataDir } from '../config/index.js';
+import { resolveStoreId } from '../services/storeContextService.js';
+import { eventService } from '../services/eventService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +49,10 @@ router.get('/patients', async (req, res) => {
     // Enrich with lightweight returning/refill signals (chunked to respect SQLite param limits).
     if (patients.length > 0) {
       try {
+        const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+        const allStores = req.query.all_stores === 'true';
+        const storeCond = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+
         const ids: number[] = patients.map((p: any) => p.id);
         const chunks: number[][] = [];
         for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
@@ -54,17 +60,18 @@ router.get('/patients', async (req, res) => {
         const refillSet = new Set<number>();
         for (const chunk of chunks) {
           const ph = chunk.map(() => '?').join(',');
+          const chunkParams = allStores ? chunk : [...chunk, targetStoreId, targetStoreId];
           const salesRows = await db.all(
             `SELECT customer_id, COUNT(*) AS purchase_count, MAX(date) AS last_sale_date
-             FROM sales_invoices WHERE customer_id IN (${ph}) GROUP BY customer_id`,
-            chunk
+             FROM sales_invoices WHERE customer_id IN (${ph}) ${storeCond} GROUP BY customer_id`,
+            chunkParams
           );
           for (const r of salesRows) {
             salesMap.set(r.customer_id, { purchase_count: r.purchase_count, last_sale_date: r.last_sale_date });
           }
           const refillRows = await db.all(
-            `SELECT DISTINCT customer_id FROM patient_refills WHERE is_active = 1 AND customer_id IN (${ph})`,
-            chunk
+            `SELECT DISTINCT customer_id FROM patient_refills WHERE is_active = 1 AND customer_id IN (${ph}) ${storeCond}`,
+            chunkParams
           );
           for (const r of refillRows) refillSet.add(r.customer_id);
         }
@@ -110,6 +117,9 @@ router.post('/patients', async (req, res) => {
       [name, phone || '', address || '', notes || '', language || 'en']
     );
     const newPatient = await db.get('SELECT * FROM customers WHERE id = ?', result.lastID);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: result.lastID, name });
+    } catch (_) {}
     res.status(201).json(newPatient);
   } catch (error) {
     console.error('Failed to create patient:', error);
@@ -143,6 +153,13 @@ router.put('/patients/:id', async (req, res) => {
     }
 
     const updated = await db.get('SELECT * FROM customers WHERE id = ?', id);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), name, phone });
+      if (phone || name) {
+        eventService.broadcast('refill_updated', { at: Date.now(), customer_id: Number(id) });
+        eventService.broadcast('order_updated', { at: Date.now(), customer_id: Number(id) });
+      }
+    } catch (_) {}
     res.json(updated);
   } catch (error) {
     console.error('Failed to update patient:', error);
@@ -204,21 +221,37 @@ router.get('/:id/history', async (req, res) => {
       }
     }
 
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    const storeCond = allStores ? '' : 'AND (si.store_id = ? OR (si.store_id IS NULL AND ? = 1))';
+    const queryParams = allStores ? [...matchingCustomerIds] : [...matchingCustomerIds, targetStoreId, targetStoreId];
+
     const placeholders = matchingCustomerIds.map(() => '?').join(',');
     const invoices = await db.all(
-      `SELECT si.*, c.name as customer_name, c.phone as customer_phone, d.name as doctor_name
+      `SELECT si.*, 
+              COALESCE(si.customer_name_snapshot, c.name, '') as customer_name, 
+              COALESCE(si.customer_phone_snapshot, c.phone, '') as customer_phone, 
+              COALESCE(si.doctor_name_snapshot, d.name, '') as doctor_name,
+              COALESCE(si.pharmacy_name_snapshot, '') as pharmacy_name
        FROM sales_invoices si
        LEFT JOIN customers c ON si.customer_id = c.id
        LEFT JOIN doctors d ON d.id = si.doctor_id
-       WHERE si.customer_id IN (${placeholders})
-          OR (c.legacy_id IS NOT NULL AND c.legacy_id != '' AND si.legacy_id = c.legacy_id)
+       WHERE (si.customer_id IN (${placeholders})
+          OR (c.legacy_id IS NOT NULL AND c.legacy_id != '' AND si.legacy_id = c.legacy_id))
+          ${storeCond}
        ORDER BY si.date DESC`,
-      [...matchingCustomerIds]
+      queryParams
     );
 
     for (const inv of invoices) {
       const items = await db.all(
-        `SELECT sli.*, COALESCE(m.name, 'Medicine') as medicine_name, im.batch_no as batch_number, im.expiry_date, im.mrp, COALESCE(m.pack_size, 10) as pack_size
+        `SELECT sli.*, 
+                COALESCE(sli.medicine_name_snapshot, m.name, 'Medicine') as medicine_name, 
+                COALESCE(sli.batch_no_snapshot, im.batch_no, '') as batch_number, 
+                COALESCE(sli.batch_no_snapshot, im.batch_no, '') as batch_no, 
+                COALESCE(sli.expiry_date_snapshot, im.expiry_date, '') as expiry_date, 
+                COALESCE(sli.mrp_snapshot, im.mrp, 0) as mrp, 
+                COALESCE(m.pack_size, 10) as pack_size
          FROM sale_items sli
          LEFT JOIN inventory_master im ON im.id = sli.inventory_id
          LEFT JOIN medicines m ON m.id = im.medicine_id
@@ -257,21 +290,36 @@ router.get('/history-by-phone/:phone', async (req, res) => {
       return res.json([]);
     }
 
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+    const storeCond = allStores ? '' : 'AND (si.store_id = ? OR (si.store_id IS NULL AND ? = 1))';
+    const queryParams = allStores ? matchingCustomerIds : [...matchingCustomerIds, targetStoreId, targetStoreId];
+
     const placeholders = matchingCustomerIds.map(() => '?').join(',');
     const query = `
-      SELECT si.*, c.name as customer_name, c.phone as customer_phone, d.name as doctor_name
+      SELECT si.*, 
+             COALESCE(si.customer_name_snapshot, c.name, '') as customer_name, 
+             COALESCE(si.customer_phone_snapshot, c.phone, '') as customer_phone, 
+             COALESCE(si.doctor_name_snapshot, d.name, '') as doctor_name,
+             COALESCE(si.pharmacy_name_snapshot, '') as pharmacy_name
       FROM sales_invoices si
       LEFT JOIN customers c ON si.customer_id = c.id
       LEFT JOIN doctors d ON d.id = si.doctor_id
-      WHERE si.customer_id IN (${placeholders})
+      WHERE si.customer_id IN (${placeholders}) ${storeCond}
       ORDER BY si.date DESC LIMIT 100
     `;
 
-    const invoices = await db.all(query, matchingCustomerIds);
+    const invoices = await db.all(query, queryParams);
 
     for (const inv of invoices) {
       const items = await db.all(
-        `SELECT sli.*, COALESCE(m.name, 'Medicine') as medicine_name, im.batch_no as batch_number, im.expiry_date, im.mrp, COALESCE(m.pack_size, 10) as pack_size
+        `SELECT sli.*, 
+                COALESCE(sli.medicine_name_snapshot, m.name, 'Medicine') as medicine_name, 
+                COALESCE(sli.batch_no_snapshot, im.batch_no, '') as batch_number, 
+                COALESCE(sli.batch_no_snapshot, im.batch_no, '') as batch_no, 
+                COALESCE(sli.expiry_date_snapshot, im.expiry_date, '') as expiry_date, 
+                COALESCE(sli.mrp_snapshot, im.mrp, 0) as mrp, 
+                COALESCE(m.pack_size, 10) as pack_size
          FROM sale_items sli
          LEFT JOIN inventory_master im ON im.id = sli.inventory_id
          LEFT JOIN medicines m ON m.id = im.medicine_id
@@ -543,6 +591,10 @@ router.post('/credit-customers/:id/clear', async (req, res) => {
       [id]
     );
     await db.run('COMMIT');
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id) });
+      eventService.broadcast('sale_created', { at: Date.now(), action: 'credit_cleared', customer_id: Number(id) });
+    } catch (_) {}
     res.json({ success: true, message: 'Customer credit cleared successfully' });
   } catch (error: any) {
     console.error('Failed to clear customer credit:', error);
@@ -561,6 +613,9 @@ router.put('/credit-customers/:id/due-date', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('UPDATE customers SET credit_due_date = ? WHERE id = ?', [due_date || null, id]);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), due_date });
+    } catch (_) {}
     res.json({ success: true, message: 'Credit due date updated successfully' });
   } catch (error: any) {
     console.error('Failed to update credit due date:', error);
@@ -714,6 +769,10 @@ router.post('/ledger/pay', async (req, res) => {
     }
 
     await db.run('COMMIT');
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), customer_id: Number(customer_id) });
+      eventService.broadcast('sale_created', { at: Date.now(), action: 'ledger_paid', customer_id: Number(customer_id) });
+    } catch (_) {}
 
     // Fetch updated customer info to send WhatsApp payment receipt ONLY IF user requested it
     const customer = await db.get('SELECT name, phone, credit_balance, language FROM customers WHERE id = ?', [customer_id]);

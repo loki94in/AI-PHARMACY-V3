@@ -81,7 +81,13 @@ export default function LiveCart() {
     fetchOrders();
     const onInvalidate = () => fetchOrders(true);
     window.addEventListener('cache-invalidate', onInvalidate);
-    return () => window.removeEventListener('cache-invalidate', onInvalidate);
+    window.addEventListener('refresh-special-orders', onInvalidate);
+    window.addEventListener('sse-website-order-created', onInvalidate);
+    return () => {
+      window.removeEventListener('cache-invalidate', onInvalidate);
+      window.removeEventListener('refresh-special-orders', onInvalidate);
+      window.removeEventListener('sse-website-order-created', onInvalidate);
+    };
   }, [fetchOrders]);
 
   const toggleExpand = (orderId: number) => {

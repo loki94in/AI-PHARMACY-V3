@@ -6,6 +6,8 @@ import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper
 import { eventService } from '../services/eventService.js';
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
+import { distributorRecommendationService } from '../services/distributorRecommendationService.js';
+import { resolveStoreId } from '../services/storeContextService.js';
 
 const router = express.Router();
 
@@ -202,6 +204,28 @@ router.get(['/distributors/:id/pending-returns', '/:id/pending-returns'], async 
   } catch (error) {
     console.error('Failed to fetch pending returns:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/distributors/recommendations — Intelligent Multi-Distributor Scoring Engine (MULTI-PHARMACY.md §14, §15)
+router.get(['/recommendations', '/distributors/recommendations'], async (req, res) => {
+  try {
+    const medicineId = req.query.medicine_id ? parseInt(req.query.medicine_id as string, 10) : undefined;
+    const medicineName = (req.query.medicine_name as string) || '';
+    const requestedQty = req.query.qty ? parseInt(req.query.qty as string, 10) : 1;
+    const targetStoreId = (req as any).tenant?.storeId || (req.query.store_id ? parseInt(req.query.store_id as string, 10) : resolveStoreId(req));
+
+    const result = await distributorRecommendationService.recommendDistributor({
+      medicineId,
+      medicineName,
+      requestedQty,
+      storeId: targetStoreId
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('Failed to get distributor recommendations:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
   }
 });
 

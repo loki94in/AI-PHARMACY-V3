@@ -1763,3 +1763,31 @@ export async function downloadMessageMediaById(serializedId: string): Promise<{ 
   if (!fresh) return undefined;
   return await fresh.downloadMedia();
 }
+
+/**
+ * Checks WhatsApp capability for a phone number.
+ * Conforms to MULTI-PHARMACY.md §16 (debounced, non-blocking, non-waking probe).
+ */
+export async function checkPhoneWhatsAppRegistered(cleanDigits10: string): Promise<'AVAILABLE' | 'NOT_AVAILABLE' | 'UNABLE_TO_VERIFY'> {
+  if (!cleanDigits10 || cleanDigits10.length !== 10) return 'NOT_AVAILABLE';
+  if (!isReady || !clientInstance) {
+    return 'UNABLE_TO_VERIFY';
+  }
+  try {
+    const formatted = cleanDigits10.startsWith('91') ? cleanDigits10 : `91${cleanDigits10}`;
+    const numberDetails = await Promise.race([
+      clientInstance.getNumberId(formatted),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+    ]);
+    if (numberDetails && (numberDetails as any)._serialized) {
+      return 'AVAILABLE';
+    }
+    if (numberDetails === null) {
+      return 'NOT_AVAILABLE';
+    }
+    return 'UNABLE_TO_VERIFY';
+  } catch (_) {
+    return 'UNABLE_TO_VERIFY';
+  }
+}
+

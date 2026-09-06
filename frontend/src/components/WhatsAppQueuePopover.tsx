@@ -400,8 +400,9 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const todayProgressPercent = todayAllCount > 0 ? Math.min(100, Math.round((todaySentCount / todayAllCount) * 100)) : 100;
 
   const counts = queueState?.counts || { pending: 0, sending: 0, sent: 0, failed_offline: 0, failed_perm: 0 };
-  const pendingTotal = todayPendingCount > 0 ? todayPendingCount : ((counts.pending || 0) + (counts.sending || 0));
-  const failedTotal = todayFailedCount > 0 ? todayFailedCount : ((counts.failed_offline || 0) + (counts.failed_perm || 0));
+  const allPendingCount = items.filter(i => i.status === 'pending' || i.status === 'sending').length;
+  const pendingTotal = (counts.pending || 0) + (counts.sending || 0) || allPendingCount;
+  const failedTotal = (counts.failed_offline || 0) + (counts.failed_perm || 0) || todayFailedCount;
 
   const renderTypeBadge = (type: string) => {
     if (isSpecialOrder(type)) {
@@ -609,24 +610,26 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   // Truthful connection state (status contract): idle RAM-sleep keeps the saved
   // session intact and auto-wakes on the next send; the boot restore window is
   // a normal connecting phase. Neither may be labeled "Offline".
-  const waConnState: 'online' | 'sleeping' | 'connecting' | 'offline' =
+  const waConnState: 'online' | 'sleeping' | 'connecting' | 'standby' | 'offline' =
     queueState?.isOnline
       ? 'online'
       : queueState?.sleeping
         ? 'sleeping'
         : queueState?.initializing
           ? 'connecting'
-          : 'offline';
+          : (queueState as any)?.hasSavedSession
+            ? 'standby'
+            : 'offline';
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-md transition-all duration-300 animate-in fade-in">
-      <div className="relative bg-bg3 border border-glass-border shadow-[0_25px_60px_rgba(0,0,0,0.6)] rounded-3xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh] animate-in zoom-in-95 duration-200">
+      <div className="relative bg-bg3 border border-glass-border shadow-[0_25px_60px_rgba(0,0,0,0.6)] rounded-3xl w-[820px] max-w-[95vw] h-[85vh] min-h-[580px] max-h-[820px] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
 
         {/* Header */}
         <div className="p-4 border-b border-glass-border/30 flex items-center justify-between gap-3 bg-bg2/80 shrink-0">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className={`p-2 rounded-xl border shrink-0 ${
-              waConnState === 'sleeping'
+              waConnState === 'sleeping' || waConnState === 'standby'
                 ? 'bg-sky-500/10 border-sky-500/20 text-sky-400'
                 : waConnState === 'connecting'
                   ? 'bg-sky-500/10 border-sky-500/20 text-sky-400'
@@ -636,7 +639,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                       ? 'bg-sky-500/10 border-sky-500/20 text-sky-400'
                       : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
             }`}>
-              {waConnState === 'sleeping' && <Moon size={18} />}
+              {(waConnState === 'sleeping' || waConnState === 'standby') && <Moon size={18} />}
               {waConnState === 'connecting' && <Loader2 size={18} className="animate-spin" />}
               {waConnState === 'offline' && <WifiOff size={18} />}
               {waConnState === 'online' && <Send size={18} />}
@@ -651,6 +654,9 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                 )}
                 {waConnState === 'sleeping' && (
                   <span className="text-[10px] bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-full shrink-0 font-semibold">Sleeping · Auto-wakes on send</span>
+                )}
+                {waConnState === 'standby' && (
+                  <span className="text-[10px] bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-full shrink-0 font-semibold">Standby · Auto-wakes on send</span>
                 )}
                 {waConnState === 'connecting' && (
                   <span className="text-[10px] bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-full shrink-0 font-semibold">Connecting…</span>
@@ -979,31 +985,33 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               <CheckCircle2 size={11} className="text-emerald-400" />
               <span>Sent ({todaySentCount})</span>
             </button>
-            {failedTotal > 0 && (
-              <button
-                onClick={() => setActiveTab('failed')}
-                className={`py-1.5 px-3 text-xs font-bold rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeTab === 'failed' 
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/35' 
+            <button
+              onClick={() => setActiveTab('failed')}
+              className={`py-1.5 px-3 text-xs font-bold rounded-xl transition-all whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
+                activeTab === 'failed' 
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/35' 
+                  : (todayFailedCount > 0 || failedTotal > 0)
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                     : 'bg-bg text-muted hover:text-text border border-glass-border'
-                }`}
-              >
-                Failed ({todayFailedCount > 0 ? todayFailedCount : failedTotal})
-              </button>
-            )}
+              }`}
+            >
+              <AlertTriangle size={11} className={todayFailedCount > 0 || failedTotal > 0 ? "text-rose-400" : "text-muted"} />
+              <span>Failed ({todayFailedCount > 0 ? todayFailedCount : failedTotal})</span>
+            </button>
           </div>
         </div>
 
         {/* Date-Grouped Queue Items List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
           {loading ? (
-            <div className="py-12 text-center text-xs text-muted flex items-center justify-center gap-2">
+            <div className="h-full min-h-[240px] py-12 text-center text-xs text-muted flex items-center justify-center gap-2">
               <RefreshCw className="animate-spin text-sky" size={16} /> Fetching queue details...
             </div>
           ) : filteredItems.length === 0 ? (
-            <div className="py-12 text-center text-xs text-muted flex flex-col items-center gap-2">
-              <CheckCircle2 size={24} className="text-emerald-400/40" />
-              No items match this queue category filter.
+            <div className="h-full min-h-[240px] py-16 text-center text-xs text-muted flex flex-col items-center justify-center gap-2">
+              <CheckCircle2 size={30} className="text-emerald-400/40" />
+              <span className="font-semibold text-text text-sm">No items in this queue category</span>
+              <span className="text-[11px] text-muted max-w-xs">All notifications in this section are up to date or none match the filter.</span>
             </div>
           ) : (
             <>

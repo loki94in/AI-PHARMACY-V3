@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Phone } from 'lucide-react';
+import { Phone, MessageSquare, Check, X, HelpCircle, Loader2 } from 'lucide-react';
 import { sanitizePhoneInput } from '../utils/phone';
+import { apiClient } from '../services/api';
 
 interface PhoneInputWithBadgeProps {
   value: string;
@@ -13,6 +14,7 @@ interface PhoneInputWithBadgeProps {
   disabled?: boolean;
   id?: string;
   shakeOnError?: boolean;
+  checkWhatsApp?: boolean;
   onValidationChange?: (isValid: boolean) => void;
 }
 
@@ -27,9 +29,11 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
   disabled = false,
   id,
   shakeOnError = false,
+  checkWhatsApp = true,
   onValidationChange
 }) => {
   const [isShaking, setIsShaking] = useState(false);
+  const [waStatus, setWaStatus] = useState<'idle' | 'checking' | 'available' | 'not_available' | 'unable_to_verify'>('idle');
 
   const cleanDigits = (value || '').replace(/\D/g, '');
   const isComplete = cleanDigits.length === 10;
@@ -43,6 +47,31 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
       onValidationChange(isValid);
     }
   }, [isValid, onValidationChange]);
+
+  // Debounced WhatsApp capability check (MULTI-PHARMACY.md §16)
+  useEffect(() => {
+    if (!checkWhatsApp || !isComplete) {
+      setWaStatus('idle');
+      return;
+    }
+
+    setWaStatus('checking');
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiClient.get('/messaging/check-phone', {
+          params: { phone: cleanDigits }
+        });
+        const status = res.data?.status;
+        if (status === 'AVAILABLE') setWaStatus('available');
+        else if (status === 'NOT_AVAILABLE') setWaStatus('not_available');
+        else setWaStatus('unable_to_verify');
+      } catch (_) {
+        setWaStatus('unable_to_verify');
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [checkWhatsApp, isComplete, cleanDigits]);
 
   useEffect(() => {
     if (shakeOnError || isPartial) {
@@ -102,9 +131,47 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
             <Phone size={13} className="text-muted" />
             {label} {required && <span className="text-rose-400">*</span>}
           </label>
-          <span className={`text-[10px] px-2 py-0.5 rounded-md border transition-all ${badgeColor}`}>
-            {badgeText}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {checkWhatsApp && isComplete && waStatus !== 'idle' && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-md border transition-all flex items-center gap-1 font-semibold ${
+                waStatus === 'available'
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : waStatus === 'checking'
+                  ? 'bg-sky-500/15 text-sky-400 border-sky-500/30 animate-pulse'
+                  : waStatus === 'not_available'
+                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                  : 'bg-bg2 text-muted border-border'
+              }`}>
+                {waStatus === 'checking' && (
+                  <>
+                    <Loader2 size={10} className="animate-spin" />
+                    Checking...
+                  </>
+                )}
+                {waStatus === 'available' && (
+                  <>
+                    <Check size={10} className="text-emerald-400" />
+                    WhatsApp Available
+                  </>
+                )}
+                {waStatus === 'not_available' && (
+                  <>
+                    <X size={10} className="text-rose-400" />
+                    WhatsApp Not Available
+                  </>
+                )}
+                {waStatus === 'unable_to_verify' && (
+                  <>
+                    <HelpCircle size={10} className="text-muted" />
+                    Unable to Verify
+                  </>
+                )}
+              </span>
+            )}
+            <span className={`text-[10px] px-2 py-0.5 rounded-md border transition-all ${badgeColor}`}>
+              {badgeText}
+            </span>
+          </div>
         </div>
       )}
 

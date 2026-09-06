@@ -18,8 +18,26 @@ const UPLOADS_DIR = path.resolve(getAppDataDir(), 'uploads');
 import { triggerSchedulerService } from '../services/triggerSchedulerService.js';
 import { reconcileAllMedicineSalesMetrics } from '../services/medicineSalesMetricsService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
+import { eventService } from '../services/eventService.js';
 
 const router = express.Router();
+
+// P1 push event: any successful non-GET mutation on this router broadcasts
+// settings_updated so Topbar, Settings, and Store headers reflect real-time changes
+router.use((req, res, next) => {
+  if (req.method !== 'GET') {
+    const origJson = res.json.bind(res);
+    (res as any).json = (body: any) => {
+      try {
+        if (res.statusCode < 400 && (!body || typeof body !== 'object' || !('error' in body))) {
+          eventService.broadcast('settings_updated', { at: Date.now(), method: req.method, path: req.path });
+        }
+      } catch (_) {}
+      return origJson(body);
+    };
+  }
+  next();
+});
 
 // Get all settings
 router.get('/', async (_req, res) => {
@@ -220,6 +238,7 @@ router.post('/save', async (req, res) => {
             await upsertStmt.run(['pharmacy_name', val]);
             await upsertStmt.run(['store_name', val]);
             await upsertStmt.run(['medical_name', val]);
+            await db.run('UPDATE stores SET name = ? WHERE is_central = 1 OR id = 1', [val]).catch(() => {});
           }
         }
 

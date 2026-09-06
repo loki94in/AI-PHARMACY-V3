@@ -22,6 +22,10 @@ export interface ActivityLogItem {
   description: string;
   metadata?: any;
   created_at?: string;
+  store_id?: number;
+  user_id?: number;
+  entity?: string;
+  entity_id?: string;
 }
 
 class ActivityLogger extends EventEmitter {
@@ -31,14 +35,25 @@ class ActivityLogger extends EventEmitter {
   async logActivity(
     actionType: ActivityActionType | string,
     description: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, any>,
+    options?: {
+      storeId?: number;
+      userId?: number;
+      entity?: string;
+      entityId?: string | number;
+    }
   ): Promise<number | null> {
     try {
       const db = await dbManager.getConnection();
       const metaStr = metadata ? JSON.stringify(metadata) : null;
+      const storeId = options?.storeId ?? 1;
+      const userId = options?.userId ?? null;
+      const entity = options?.entity ?? null;
+      const entityId = options?.entityId != null ? String(options.entityId) : null;
+
       const result = await db.run(
-        'INSERT INTO action_logs (action_type, description, metadata) VALUES (?, ?, ?)',
-        [actionType, description, metaStr]
+        'INSERT INTO action_logs (action_type, description, metadata, store_id, user_id, entity, entity_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [actionType, description, metaStr, storeId, userId, entity, entityId]
       );
       const insertedId = result.lastID ?? null;
 
@@ -47,7 +62,11 @@ class ActivityLogger extends EventEmitter {
         action_type: actionType,
         description,
         metadata: metadata || null,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        store_id: storeId,
+        user_id: userId ?? undefined,
+        entity: entity ?? undefined,
+        entity_id: entityId ?? undefined
       };
 
       this.emit('activity_logged', logItem);

@@ -639,10 +639,11 @@ router.post('/auth/verify-otp', async (req, res) => {
   }
 });
 
-// GET /api/website/customer/bills — Past Store Bills for Customer
+// GET /api/website/customer/bills & /api/customer-portal/customer/bills — Past Store Bills for Customer
 router.get('/customer/bills', async (req, res) => {
   const customerId = parseInt(req.query.customer_id as string, 10);
   const phone = normalizePhone(req.query.phone as string);
+  const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 200);
 
   // Authorization check (Test 8: User A cannot access User B's invoices)
   const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -658,7 +659,11 @@ router.get('/customer/bills', async (req, res) => {
     const db = await dbManager.getConnection();
 
     if (!custId && phone) {
-      const cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phone]);
+      const digits10 = phone.slice(-10);
+      const cust = await db.get(
+        `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+        [phone, `%${digits10}`]
+      );
       if (cust) custId = cust.id;
     }
 
@@ -666,29 +671,29 @@ router.get('/customer/bills', async (req, res) => {
       return res.status(400).json({ error: 'customer_id or phone required' });
     }
 
-    // Fetch past sales_invoices with items
+    // Fetch past sales_invoices with items (MULTI-PHARMACY.md §5, §7, §28)
     const sales = await db.all(
       `SELECT si.id, si.invoice_no, si.invoice_no as invoice_number, si.store_id,
               si.total_amount, si.total_amount as net_amount, si.date, si.date as created_at,
-              COALESCE(st.name, 'Pharmacy') as store_name
+              COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
        FROM sales_invoices si
        LEFT JOIN stores st ON st.id = si.store_id
-       WHERE si.customer_id = ?
-       ORDER BY si.date DESC LIMIT 50`,
-      [custId]
+       WHERE si.customer_id = ? AND (si.status IS NULL OR si.status != 'cancelled')
+       ORDER BY si.date DESC LIMIT ?`,
+      [custId, limit]
     ).catch(() => []);
 
     const enrichedBills = [];
     for (const sale of sales) {
-      // Historical item snapshots from sale_items (Rule 6, 7 & Test 4: price changes do NOT modify past bills)
+      // Historical item snapshots from sale_items (MULTI-PHARMACY.md §5, §28: frozen bill snapshots)
       const items = await db.all(
         `SELECT sit.id,
                 sit.quantity,
                 sit.unit_price,
-                sit.mrp,
+                COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
                 sit.discount_per,
                 (sit.quantity * sit.unit_price) as total_price,
-                COALESCE(m.name, 'Medicine') as medicine_name,
+                COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
                 COALESCE(m.generic_name, '') as generic_name,
                 im.medicine_id
          FROM sale_items sit
@@ -1429,73 +1434,7 @@ router.get('/standalone-catalog', (req, res) => {
   res.status(404).send('Live catalog website file not found');
 });
 
-// ─── Customer Bills for Portal Dashboard (spec §12, §13) ─────────────────────
-// GET /api/customer-portal/customer/bills
-router.get('/customer/bills', async (req, res) => {
-  try {
-    const customerId = parseInt((req.query.customer_id as string) || '0', 10);
-    const phone = ((req.query.phone as string) || '').trim().replace(/\D/g, '');
-    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 200);
 
-    const db = await dbManager.getConnection();
-    let resolvedCustomerId = customerId;
-    if (!resolvedCustomerId && phone) {
-      const digits10 = phone.slice(-10);
-      const cust = await db.get(
-        `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-        [phone, `%${digits10}`]
-      );
-      if (cust) resolvedCustomerId = cust.id;
-    }
-
-    if (!resolvedCustomerId) {
-      return res.json({ success: true, count: 0, bills: [] });
-    }
-
-    const invoices = await db.all(
-      `SELECT
-         si.id,
-         si.invoice_no as invoice_number,
-         COALESCE(si.date, si.business_date, si.created_at) as created_at,
-         COALESCE(si.total_amount, si.grand_total, 0) as total_amount,
-         si.online_order_id,
-         si.payment_medium,
-         COALESCE(st.name, 'Main Branch') as store_name
-       FROM sales_invoices si
-       LEFT JOIN stores st ON st.id = si.store_id
-       WHERE si.customer_id = ?
-         AND (si.status IS NULL OR si.status != 'cancelled')
-       ORDER BY si.id DESC
-       LIMIT ?`,
-      [resolvedCustomerId, limit]
-    ).catch(() => []);
-
-    const bills = await Promise.all(invoices.map(async (inv: any) => {
-      const items = await db.all(
-        `SELECT
-           sit.id,
-           COALESCE(m.name, sit.medicine_name, 'Medicine') as medicine_name,
-           sit.quantity,
-           COALESCE(sit.unit_price, sit.sell_price, sit.mrp, 0) as unit_price,
-           COALESCE(sit.mrp, 0) as mrp
-         FROM sale_items sit
-         LEFT JOIN medicines m ON m.id = sit.medicine_id
-         WHERE sit.invoice_id = ?
-         ORDER BY sit.id ASC`,
-        [inv.id]
-      ).catch(() => []);
-      return {
-        ...inv,
-        items
-      };
-    }));
-
-    res.json({ success: true, count: bills.length, bills });
-  } catch (err: any) {
-    console.error('[CustomerPortal] customer/bills error:', err);
-    res.status(500).json({ error: 'Failed to fetch customer bills' });
-  }
-});
 
 // ─── Fetch Customer's Created Online & Website Orders ────────────────────────
 // GET /api/customer-portal/customer/orders
