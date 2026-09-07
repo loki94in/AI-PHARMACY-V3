@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
+import { config } from '../config/index.js';
 import { dbManager } from '../database/connection.js';
 import { ensureSchema } from '../database.js';
 import { extractFromPdf, ExtractedMedicine } from '../extractor.js';
@@ -15,7 +17,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const getDbPath = () => process.env.DB_PATH || path.resolve(__dirname, '..', '..', 'data', 'app.db');
+const getDbPath = () => config.dbPath;
 
 // Owner rule 2026-08 (empty-catalog poll stretch) — module-level state shared
 // between the exported nudge hook and the job-poll closure at the file bottom.
@@ -156,14 +158,65 @@ export async function preScanCsv(filePath: string, onProgress?: (rowIdx: number)
   });
 }
 
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+// Helper to extract raw lines for interactive human-in-the-loop header selection
+async function readCsvRawRows(filePath: string, maxRows = 20): Promise<string[][]> {
+  return new Promise((resolve) => {
+    const rawRows: string[][] = [];
+    if (!fs.existsSync(filePath)) return resolve(rawRows);
+
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath),
+      crlfDelay: Infinity,
+    });
+
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (trimmed) {
+        if (rawRows.length < maxRows) {
+          rawRows.push(parseCsvLine(trimmed));
+        } else {
+          rl.close();
+        }
+      }
+    });
+
+    rl.on('close', () => resolve(rawRows));
+    rl.on('error', () => resolve(rawRows));
+  });
+}
+
 // Helper to parse CSV headers and preview rows
-async function readCsvPreview(filePath: string, maxRows = 10): Promise<{ headers: string[], rows: any[] }> {
+async function readCsvPreview(filePath: string, maxRows = 10, skipRows = 0): Promise<{ headers: string[], rows: any[] }> {
   return new Promise((resolve, reject) => {
     const rows: any[] = [];
     let headers: string[] = [];
     if (!fs.existsSync(filePath)) return resolve({ headers, rows });
 
-    const stream = fs.createReadStream(filePath).pipe(csvParser());
+    const stream = fs.createReadStream(filePath).pipe(csvParser({ skipLines: skipRows }));
 
     stream.on('headers', (h: string[]) => {
       headers = h;
@@ -282,6 +335,7 @@ export async function runCatalogAnalysis(jobId: number) {
     const ext = path.extname(job.file_path).toLowerCase();
     let headers: string[] = [];
     let previewData: any[] = [];
+    let rawRows: string[][] = [];
     let totalCount = 0;
     let newCount = 0;
     let existingCount = 0;
@@ -303,6 +357,7 @@ export async function runCatalogAnalysis(jobId: number) {
     }
 
     if (ext === '.csv') {
+      rawRows = await readCsvRawRows(job.file_path, 20);
       const csvPreview = await readCsvPreview(job.file_path, 100);
       headers = csvPreview.headers;
       
@@ -349,6 +404,7 @@ export async function runCatalogAnalysis(jobId: number) {
     } else if (ext === '.xlsx' || ext === '.xls') {
       const sheetData = await parseXlsxSheetData(job.file_path);
       if (sheetData.length > 0) {
+        rawRows = sheetData.slice(0, 20).map((r: any[]) => Array.isArray(r) ? r.map((c: any) => c !== undefined && c !== null ? String(c).trim() : '') : []);
         headers = sheetData[0].map((h: any, idx: number) => h ? String(h).trim() : `Column_${idx + 1}`);
 
         const nameColIdx = sheetData[0].findIndex((c: any) =>
@@ -520,7 +576,8 @@ export async function runCatalogAnalysis(jobId: number) {
       previewData, 
       suggestedMapping,
       matchedPreviousJobId,
-      newlyDetectedColumns
+      newlyDetectedColumns,
+      rawRows
     });
 
     await db.run(
@@ -607,15 +664,17 @@ export async function runCatalogImport(jobId: number) {
   try {
     const ext = path.extname(job.file_path).toLowerCase();
     
-    // Parse mappings configuration
+    // Parse mappings configuration and data_filters
     const mapping = JSON.parse(job.mapping_config || '{}');
+    const filters = JSON.parse(job.data_filters || '{}');
+    const skipRows = Math.max(0, parseInt(filters.skipRows || '0', 10));
 
     // --- Header-presence guard ---
     // Verify every mapped CSV column is actually present in this file's headers.
     // If any are missing the distributor may have renamed columns — route to
     // waiting_for_mapping so the user can re-map, rather than silently mis-importing.
     if (ext === '.csv') {
-      const preview = await readCsvPreview(job.file_path, 1);
+      const preview = await readCsvPreview(job.file_path, 1, skipRows);
       const actualHeaders = new Set(preview.headers);
       const missingMappedColumns = Object.keys(mapping).filter(col => col && !actualHeaders.has(col));
       if (missingMappedColumns.length > 0) {
@@ -678,9 +737,9 @@ export async function runCatalogImport(jobId: number) {
     const rows: any[] = [];
     if (ext === '.xlsx' || ext === '.xls') {
       const sheetData = await parseXlsxSheetData(job.file_path);
-      if (sheetData.length > 0) {
-        const headers = sheetData[0].map((h: any, idx: number) => h ? String(h).trim() : `Column_${idx + 1}`);
-        const excelRows = sheetData.slice(1).map((row: any[]) => {
+      if (sheetData.length > skipRows) {
+        const headers = sheetData[skipRows].map((h: any, idx: number) => h ? String(h).trim() : `Column_${idx + 1}`);
+        const excelRows = sheetData.slice(skipRows + 1).map((row: any[]) => {
           const rowObj: Record<string, any> = {};
           headers.forEach((header, idx) => {
             rowObj[header] = row[idx] !== undefined ? row[idx] : '';
@@ -709,7 +768,7 @@ export async function runCatalogImport(jobId: number) {
         let count = 0;
         const countStream = fs.createReadStream(job.file_path);
         countStream
-          .pipe(csvParser())
+          .pipe(csvParser({ skipLines: skipRows }))
           .on('data', () => { count++; })
           .on('end', () => {
             countStream.destroy();
@@ -916,7 +975,7 @@ export async function runCatalogImport(jobId: number) {
 
     if (ext === '.csv') {
       const readStream = fs.createReadStream(job.file_path);
-      const csvStream = readStream.pipe(csvParser());
+      const csvStream = readStream.pipe(csvParser({ skipLines: skipRows }));
       readStream.on('error', (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
       });

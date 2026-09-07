@@ -623,8 +623,11 @@ class WhatsAppQueueWorker {
             [sentAt, item.id]
           );
           await db.run(
-            "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
-            [`queue_${item.id}`, String(item.id)]
+            `UPDATE automation_notifications 
+             SET status = 'sent', error_message = NULL 
+             WHERE reference_id = ? OR reference_id = ? 
+                OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending'))`,
+            [`queue_${item.id}`, String(item.id), `%${last10}%`]
           ).catch(() => {});
 
           if (item.type === 'pharmarack_distributor_order') {
@@ -655,14 +658,18 @@ class WhatsAppQueueWorker {
             // Puppeteer detached-frame errors can occur after delivery — verify outbox before failing
             const outboxMatch = await this.hasRecentOutboxMatch(db, item.number, item.message);
             if (outboxMatch) {
+              const fallbackLast10 = item.number.replace(/\D/g, '').slice(-10);
               const sentAt = Date.now();
               await db.run(
                 "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
                 [sentAt, item.id]
               );
               await db.run(
-                "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
-                [`queue_${item.id}`, String(item.id)]
+                `UPDATE automation_notifications 
+                 SET status = 'sent', error_message = NULL 
+                 WHERE reference_id = ? OR reference_id = ? 
+                    OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending'))`,
+                [`queue_${item.id}`, String(item.id), `%${fallbackLast10}%`]
               ).catch(() => {});
 
               if (item.type === 'pharmarack_distributor_order') {
@@ -780,6 +787,7 @@ class WhatsAppQueueWorker {
     import('../services/eventService.js')
       .then(({ eventService }) => {
         eventService.broadcast('wa_queue_update', { active, at: Date.now() });
+        eventService.broadcast('automation_hub_updated', { type: active ? 'active' : 'idle', at: Date.now() });
       })
       .catch(() => {});
   }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight } from 'lucide-react';
+import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
 import { formatDisplayDate } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
@@ -1046,7 +1046,30 @@ export default function PharmarackCart() {
   };
 
   // Distributor filter sub-tab state ('active' | 'all' | 'success' | 'failed' | 'unmapped')
-  const [distributorFilterTab, setDistributorFilterTab] = useState<'active' | 'unsent' | 'sent' | 'all' | 'success' | 'failed' | 'unmapped'>('active');
+  const [distributorFilterTab, setDistributorFilterTab] = useState<'active' | 'unsent' | 'sent' | 'all' | 'success' | 'failed' | 'unmapped'>(() => {
+    const f = searchParams.get('filter');
+    if (f === 'unmapped' || f === 'active' || f === 'unsent' || f === 'sent' || f === 'all' || f === 'success' || f === 'failed') {
+      return f;
+    }
+    return 'active';
+  });
+
+  // Synchronize distributorFilterTab with URL search params (e.g. ?filter=unmapped)
+  useEffect(() => {
+    const f = searchParams.get('filter');
+    if (f === 'unmapped' || f === 'active' || f === 'unsent' || f === 'sent' || f === 'all' || f === 'success' || f === 'failed') {
+      setDistributorFilterTab(f);
+      if (f === 'unmapped') {
+        setIsResolutionHubCollapsed(false);
+      }
+    }
+  }, [searchParams]);
+
+  // Inline Fast-Fill Phone Resolution Hub state (Concept 2)
+  const [inlinePhones, setInlinePhones] = useState<Record<number, string>>({});
+  const [inlineSavingStoreId, setInlineSavingStoreId] = useState<number | null>(null);
+  const [isResolutionHubCollapsed, setIsResolutionHubCollapsed] = useState(false);
+  const [sessionResolvedCount, setSessionResolvedCount] = useState(0);
 
   // Distributor search & contact edit modal state
   const [editingDistributor, setEditingDistributor] = useState<Distributor | null>(null);
@@ -2015,6 +2038,95 @@ export default function PharmarackCart() {
       console.warn('Background save distributor contact error:', err);
     } finally {
       setIsSavingContact(false);
+    }
+  };
+
+  const handleInlineSavePhone = async (dist: Distributor) => {
+    const rawExisting = (getDistributorPhoneNumber(dist) || '').replace(/\D/g, '').slice(-10);
+    const rawVal = inlinePhones[dist.storeId] !== undefined ? inlinePhones[dist.storeId] : rawExisting;
+    const cleanPhone = (rawVal || '').replace(/\D/g, '');
+    if (!isValidPhoneNumber(cleanPhone)) {
+      toastEvent.trigger('Please enter a valid 10-digit mobile number (starts with 6, 7, 8, or 9)', 'error');
+      return;
+    }
+    if (inlineSavingStoreId === dist.storeId) return;
+    setInlineSavingStoreId(dist.storeId);
+
+    const distName = dist.storeName;
+    const storeId = dist.storeId;
+
+    // 1. Immediately update UI state for instant zero-latency feedback
+    setCustomDistributorPhones(prev => ({
+      ...prev,
+      [storeId]: cleanPhone
+    }));
+    if (distName) {
+      const normName = distName.toLowerCase().trim();
+      setDistributorMappings(prev => ({
+        ...prev,
+        [normName]: {
+          distributorId: null,
+          phone: cleanPhone
+        }
+      }));
+    }
+    setSessionResolvedCount(prev => prev + 1);
+    toastEvent.trigger(`✓ Saved WhatsApp contact for ${distName}`, 'success');
+
+    // 2. Persist to database in background
+    try {
+      let targetDistId: number | null = null;
+      const matched = findSavedDistributorMatch(distName);
+      if (matched?.id) {
+        targetDistId = matched.id;
+        try {
+          await apiClient.put(`/distributors/${matched.id}`, {
+            name: matched.name || distName,
+            phone: cleanPhone
+          });
+        } catch (_) {
+          await apiClient.post('/distributors', {
+            name: matched.name || distName,
+            phone: cleanPhone
+          });
+        }
+      } else {
+        const createRes = await apiClient.post('/distributors', {
+          name: distName,
+          phone: cleanPhone
+        });
+        if (createRes?.data?.id) {
+          targetDistId = createRes.data.id;
+        }
+      }
+
+      // Save persistent store-to-distributor mapping in SQLite
+      if (distName) {
+        await apiClient.post('/pharmarack/distributor-mappings', {
+          store_name: distName,
+          distributor_id: targetDistId || null,
+          phone: cleanPhone
+        });
+      }
+
+      // Save to unified contacts master table
+      try {
+        await api.saveContact({
+          name: distName,
+          type: 'distributor',
+          phone: cleanPhone
+        });
+      } catch (_) { }
+
+      await broadcastContactDataChanged();
+
+      // Dispatch refresh so topbar countdown & cache update
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+    } catch (err) {
+      console.error('Failed to persist distributor contact inline:', err);
+      toastEvent.trigger('Failed to persist contact to database', 'error');
+    } finally {
+      setInlineSavingStoreId(null);
     }
   };
 
@@ -3408,47 +3520,211 @@ export default function PharmarackCart() {
                   {/* ── Scrollable Distributor Cards Panel ── */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-5 min-h-0 custom-scrollbar">
 
-                    {/* ── Missing Distributor Phone Alert Banner ── */}
-                    {unmappedDistributors.length > 0 && (
-                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 shadow-xs">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 font-black text-xs">
-                            ⚠️
+                    {/* ── Missing Distributor Phone Alert: Concept 2 Inline Fast-Fill Resolution Hub ── */}
+                    {unmappedDistributors.length > 0 && (() => {
+                      const totalUnmappedInitially = unmappedDistributors.length + sessionResolvedCount;
+                      const progressPercent = totalUnmappedInitially > 0 ? Math.round((sessionResolvedCount / totalUnmappedInitially) * 100) : 0;
+
+                      return (
+                        <div id="missing-distributors-hub" className="rounded-2xl border border-amber-500/30 bg-bg2/80 backdrop-blur-md shadow-md overflow-hidden transition-all duration-300">
+                          {/* Header Bar */}
+                          <div className="px-4 py-3 bg-gradient-to-r from-amber-500/15 via-bg2 to-amber-500/10 border-b border-amber-500/20 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 font-bold text-sm shadow-xs">
+                                <Phone size={15} className="animate-pulse" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-extrabold text-xs text-text">
+                                    Distributor Phone Resolution Hub
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono">
+                                    {unmappedDistributors.length} Missing
+                                  </span>
+                                  {sessionResolvedCount > 0 && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                                      <CheckCircle2 size={10} /> {sessionResolvedCount} Resolved
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-muted text-[11px] block truncate">
+                                  Type 10-digit WhatsApp numbers and press <kbd className="px-1 py-0.5 rounded bg-bg3 border border-border text-[10px] font-mono text-text">Enter</kbd> to save & link instantly.
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {totalUnmappedInitially > 1 && (
+                                <div className="hidden sm:flex items-center gap-2 pr-2 border-r border-border/50">
+                                  <div className="w-24 h-2 rounded-full bg-bg3 overflow-hidden border border-border/40">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-500"
+                                      style={{ width: `${progressPercent}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] font-mono font-bold text-muted">
+                                    {sessionResolvedCount}/{totalUnmappedInitially}
+                                  </span>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setIsResolutionHubCollapsed(!isResolutionHubCollapsed)}
+                                className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3 border border-border/60 transition-all cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                                title={isResolutionHubCollapsed ? 'Expand Resolution Hub' : 'Collapse Resolution Hub'}
+                              >
+                                {isResolutionHubCollapsed ? (
+                                  <>
+                                    <span className="text-[11px]">Show</span>
+                                    <ChevronDown size={14} />
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-[11px]">Hide</span>
+                                    <ChevronUp size={14} />
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
-                          <div className="min-w-0 text-xs">
-                            <span className="font-extrabold text-amber-400 block">
-                              {unmappedDistributors.length} {unmappedDistributors.length === 1 ? 'distributor' : 'distributors'} missing WhatsApp number
-                            </span>
-                            <span className="text-muted text-[11px] block truncate">
-                              Click numbered badges below [{unmappedDistributors.map((_, i) => i + 1).join(', ')}] to add phones before auto-send cutoff.
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {unmappedDistributors.slice(0, 3).map((d, i) => (
-                            <button
-                              key={d.storeId}
-                              onClick={() => handleOpenEditModal(d)}
-                              className="px-2.5 py-1 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-all cursor-pointer flex items-center gap-1"
-                              title={`Add phone for ${d.storeName}`}
-                            >
-                              <span className="w-4 h-4 rounded-full bg-amber-500 text-bg text-[10px] font-black flex items-center justify-center">
-                                {i + 1}
-                              </span>
-                              <span>{d.storeName.length > 12 ? d.storeName.slice(0, 10) + '…' : d.storeName}</span>
-                            </button>
-                          ))}
-                          {unmappedDistributors.length > 3 && (
-                            <button
-                              onClick={() => setDistributorFilterTab('unmapped')}
-                              className="px-2 py-1 rounded text-[11px] font-bold bg-bg2 text-muted border border-border hover:text-text cursor-pointer"
-                            >
-                              +{unmappedDistributors.length - 3} more
-                            </button>
+
+                          {/* Table Body (Expanded) */}
+                          {!isResolutionHubCollapsed && (
+                            <div className="p-3">
+                              {/* Desktop Header */}
+                              <div className="hidden md:grid grid-cols-12 gap-3 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-muted select-none border-b border-glass-border/40 mb-2">
+                                <div className="col-span-5">Distributor & Cart Items</div>
+                                <div className="col-span-5">10-Digit Mobile Number</div>
+                                <div className="col-span-2 text-right">Actions</div>
+                              </div>
+
+                              <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                                {unmappedDistributors.map((d, index) => {
+                                  const rawExisting = (getDistributorPhoneNumber(d) || '').replace(/\D/g, '').slice(-10);
+                                  const currentInput = inlinePhones[d.storeId] !== undefined
+                                    ? inlinePhones[d.storeId]
+                                    : rawExisting;
+                                  const digitsOnly = currentInput.replace(/\D/g, '');
+                                  const isValid = /^[6789]\d{9}$/.test(digitsOnly);
+                                  const isSavingThis = inlineSavingStoreId === d.storeId;
+                                  const itemsCount = (d.items || []).length;
+                                  const cartTotal = getDistributorFullTotal(d);
+
+                                  return (
+                                    <div
+                                      key={d.storeId}
+                                      className="grid grid-cols-1 md:grid-cols-12 gap-2.5 md:gap-3 items-center p-2.5 rounded-xl bg-bg3/30 hover:bg-bg3/60 border border-glass-border/60 transition-all"
+                                    >
+                                      {/* Column 1: Distributor Info */}
+                                      <div className="md:col-span-5 flex items-center gap-2.5 min-w-0">
+                                        <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 font-black text-xs flex items-center justify-center shrink-0">
+                                          {d.storeName ? d.storeName.charAt(0).toUpperCase() : `#${index + 1}`}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <span
+                                            className="text-xs font-extrabold text-text truncate block leading-tight hover:underline cursor-pointer"
+                                            title={d.storeName}
+                                            onClick={() => handleOpenEditModal(d)}
+                                          >
+                                            {d.storeName}
+                                          </span>
+                                          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted">
+                                            <span className="flex items-center gap-1 font-mono">
+                                              <Package size={10} /> {itemsCount} {itemsCount === 1 ? 'item' : 'items'}
+                                            </span>
+                                            <span>•</span>
+                                            <span className="font-mono font-bold text-text">
+                                              ₹{cartTotal.toLocaleString('en-IN')}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Column 2: Phone Input */}
+                                      <div className="md:col-span-5">
+                                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-bg border transition-all ${
+                                          isValid
+                                            ? 'border-emerald-500/50 ring-1 ring-emerald-500/20'
+                                            : digitsOnly.length > 0
+                                            ? 'border-amber-500/50 ring-1 ring-amber-500/20'
+                                            : 'border-border focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20'
+                                        }`}>
+                                          <span className="text-xs font-mono font-bold text-muted select-none">
+                                            +91
+                                          </span>
+                                          <input
+                                            type="tel"
+                                            maxLength={10}
+                                            value={currentInput}
+                                            onChange={(e) => {
+                                              const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                                              setInlinePhones(prev => ({ ...prev, [d.storeId]: val }));
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter' && isValid && !isSavingThis) {
+                                                e.preventDefault();
+                                                handleInlineSavePhone(d);
+                                              }
+                                            }}
+                                            placeholder="Enter 10-digit number"
+                                            className="flex-1 bg-transparent border-none outline-none text-xs font-mono font-semibold text-text placeholder:text-muted/40"
+                                            disabled={isSavingThis}
+                                          />
+                                          {isValid && (
+                                            <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                                          )}
+                                          {digitsOnly.length > 0 && !isSavingThis && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setInlinePhones(prev => ({ ...prev, [d.storeId]: '' }))}
+                                              className="text-muted hover:text-text cursor-pointer p-0.5"
+                                              title="Clear input"
+                                            >
+                                              <X size={12} />
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Column 3: Actions */}
+                                      <div className="md:col-span-2 flex items-center justify-end gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleInlineSavePhone(d)}
+                                          disabled={!isValid || isSavingThis}
+                                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1 shadow-xs shrink-0"
+                                          title="Save and link phone number"
+                                        >
+                                          {isSavingThis ? (
+                                            <>
+                                              <RotateCw size={12} className="animate-spin" />
+                                              <span>Saving</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Check size={12} />
+                                              <span>Save</span>
+                                            </>
+                                          )}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenEditModal(d)}
+                                          className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg2/80 border border-border/50 transition-all cursor-pointer"
+                                          title="Advanced Directory Search / Match"
+                                        >
+                                          <Search size={13} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* ── Top KPI Stat Cards ── */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2 shrink-0">

@@ -42,6 +42,17 @@ export const prefetchAutomationHub = async () => {
   }
 };
 
+// Auto-sync module cache in the background on any automation or queue event even while popover is closed
+if (typeof window !== 'undefined') {
+  const syncCache = () => {
+    isHydrated = false;
+    void prefetchAutomationHub();
+  };
+  window.addEventListener('app-automation-hub-updated', syncCache);
+  window.addEventListener('app-wa-queue-updated', syncCache);
+  window.addEventListener('sse-wa-queue-updated', syncCache);
+}
+
 export default function AutomationHubPopover({ onClose }: AutomationHubPopoverProps) {
   useModalEscape(true, onClose);
   const [catalog, setCatalog] = useState<CatalogEntry[]>(() => cachedCatalog);

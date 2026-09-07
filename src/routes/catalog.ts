@@ -16,6 +16,7 @@ router.get('/catalog/job/:id', async (req, res) => {
     
     let previewData: any[] = [];
     let headers: string[] = [];
+    let rawRows: string[][] = [];
     let suggestedMapping = {};
     
     if (job.extracted_data) {
@@ -23,6 +24,7 @@ router.get('/catalog/job/:id', async (req, res) => {
         const extracted = JSON.parse(job.extracted_data);
         if (extracted.previewData) previewData = extracted.previewData;
         if (extracted.headers) headers = extracted.headers;
+        if (extracted.rawRows) rawRows = extracted.rawRows;
         if (extracted.suggestedMapping) suggestedMapping = extracted.suggestedMapping;
       } catch (e) {
         console.error('Failed to parse extracted_data JSON', e);
@@ -44,8 +46,10 @@ router.get('/catalog/job/:id', async (req, res) => {
       extractedData: job.extracted_data ? JSON.parse(job.extracted_data) : [],
       previewData,
       headers,
+      rawRows,
       suggestedMapping,
       mappingConfig: job.mapping_config ? JSON.parse(job.mapping_config) : null,
+      dataFilters: job.data_filters ? JSON.parse(job.data_filters) : null,
       matchedPreviousJobId: job.matched_previous_job_id || null,
       newlyDetectedColumns: job.newly_detected_columns ? JSON.parse(job.newly_detected_columns) : []
     });

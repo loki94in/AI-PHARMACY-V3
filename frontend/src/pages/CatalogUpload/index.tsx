@@ -528,7 +528,42 @@ const CatalogUpload = () => {
   const [showExistingColor, setShowExistingColor] = useState<boolean>(true);
   const [showNewColor, setShowNewColor] = useState<boolean>(true);
 
-  const initMappingModal = (mappings: Record<string, string>, headers: string[], preview: LocalPreviewRow[]) => {
+  // Human-In-The-Loop Header Selection States
+  const [rawRows, setRawRows] = useState<string[][]>([]);
+  const [headerRowIndex, setHeaderRowIndex] = useState<number>(0);
+  const [showRawInspector, setShowRawInspector] = useState<boolean>(false);
+
+  const suggestMappingForHeader = (h: string): string => {
+    const norm = h.toLowerCase().trim();
+    if (/name|brand/i.test(norm)) return 'name';
+    if (/product|item|title/i.test(norm) && !/code|id/i.test(norm)) return 'name';
+    if (/comp|generic|api|molecule|salt/i.test(norm)) return 'api_reference';
+    if (/strength|potency/i.test(norm)) return 'strength';
+    if (/pack/i.test(norm)) return 'packaging';
+    if (/mfg|manuf|company/i.test(norm)) return 'manufacturer';
+    if (/mkt|market/i.test(norm)) return 'marketed_by';
+    if (/hsn/i.test(norm)) return 'hsn_code';
+    if (/sch/i.test(norm)) return 'schedule_type';
+    if (/mrp|price/i.test(norm)) return 'mrp';
+    if (/cgst/i.test(norm)) return 'cgst';
+    if (/sgst/i.test(norm)) return 'sgst';
+    if (/qty|stock|quantity/i.test(norm)) return 'quantity';
+    if (/batch/i.test(norm)) return 'batch_no';
+    if (/exp/i.test(norm)) return 'expiry_date';
+    if (/rack|shelf/i.test(norm)) return 'rack';
+    return '';
+  };
+
+  const initMappingModal = (
+    mappings: Record<string, string>,
+    headers: string[],
+    preview: LocalPreviewRow[],
+    raw: string[][] = [],
+    initialSkipRows = 0
+  ) => {
+    setRawRows(raw);
+    setHeaderRowIndex(initialSkipRows);
+    setShowRawInspector(false);
     setFileHeaders(headers);
     setPreviewRows(preview);
     
@@ -551,6 +586,35 @@ const CatalogUpload = () => {
     setHistoryIndex(0);
     
     setShowMappingModal(true);
+  };
+
+  const handleSelectHeaderRow = (rowIdx: number) => {
+    if (!rawRows || !rawRows[rowIdx]) return;
+    setHeaderRowIndex(rowIdx);
+
+    const selectedRow = rawRows[rowIdx];
+    const newHeaders = selectedRow.map((c, i) => (c && String(c).trim()) ? String(c).trim() : `Column_${i + 1}`);
+
+    setFileHeaders(newHeaders);
+    setPreviewHeaders(newHeaders);
+
+    // Remaining raw rows become preview data
+    const dataRows = rawRows.slice(rowIdx + 1);
+    const newPreviewRows: LocalPreviewRow[] = dataRows.map((r) => {
+      const rowObj: Record<string, unknown> = {};
+      newHeaders.forEach((h, i) => {
+        rowObj[h] = r[i] !== undefined ? r[i] : '';
+      });
+      return rowObj;
+    });
+    setPreviewRows(newPreviewRows);
+
+    // Recompute auto-suggest mappings for newly promoted headers
+    const newMappings: Record<string, string> = {};
+    newHeaders.forEach(h => {
+      newMappings[h] = suggestMappingForHeader(h);
+    });
+    updateMappingsWithHistory(newMappings);
   };
 
   const updateMappingsWithHistory = (newMappings: Record<string, string>) => {
@@ -701,7 +765,9 @@ const CatalogUpload = () => {
                 api.getCatalogJobStatus(payload.id).then(data => {
                   const headers = Array.isArray(data.headers) && data.headers.length > 0 ? data.headers : [];
                   const preview = Array.isArray(data.previewData) ? data.previewData : [];
-                  initMappingModal(data.suggestedMapping || {}, headers, preview);
+                  const raw = Array.isArray(data.rawRows) ? data.rawRows : [];
+                  const initialSkip = data.dataFilters?.skipRows || 0;
+                  initMappingModal(data.suggestedMapping || {}, headers, preview, raw, initialSkip);
                 }).catch(err => {
                   console.error('Failed to load mapping details:', err);
                   setError('Failed to load mapping details.');
@@ -1565,7 +1631,9 @@ const CatalogUpload = () => {
                                     const data = await api.getCatalogJobStatus(job.id);
                                     const headers = Array.isArray(data.headers) && data.headers.length > 0 ? data.headers : [];
                                     const preview = Array.isArray(data.previewData) ? data.previewData : [];
-                                    initMappingModal(data.mappingConfig || data.suggestedMapping || {}, headers, preview);
+                                    const raw = Array.isArray(data.rawRows) ? data.rawRows : [];
+                                    const initialSkip = data.dataFilters?.skipRows || 0;
+                                    initMappingModal(data.mappingConfig || data.suggestedMapping || {}, headers, preview, raw, initialSkip);
                                   } catch (err) {
                                     console.error('Configure Mappings Error:', err);
                                     setError('Failed to load mapping details.');
@@ -1637,6 +1705,116 @@ const CatalogUpload = () => {
                     Cancel
                   </button>
                 </div>
+
+                {/* HITL Header Row & Junk Skip Toolbar */}
+                <div className="bg-bg2 border-b border-border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-text">Header Row:</span>
+                      <div className="flex items-center border border-border rounded-lg bg-bg3 overflow-hidden">
+                        <button
+                          type="button"
+                          disabled={headerRowIndex <= 0}
+                          onClick={() => handleSelectHeaderRow(headerRowIndex - 1)}
+                          className="px-2.5 py-1 text-muted hover:text-text hover:bg-bg disabled:opacity-30 disabled:pointer-events-none font-bold cursor-pointer"
+                          title="Move header up one row"
+                        >
+                          -
+                        </button>
+                        <span className="px-3 py-1 font-mono font-bold text-primary bg-bg2">
+                          Row {headerRowIndex + 1}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!rawRows.length || headerRowIndex >= rawRows.length - 1}
+                          onClick={() => handleSelectHeaderRow(headerRowIndex + 1)}
+                          className="px-2.5 py-1 text-muted hover:text-text hover:bg-bg disabled:opacity-30 disabled:pointer-events-none font-bold cursor-pointer"
+                          title="Move header down one row"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    {headerRowIndex > 0 ? (
+                      <span className="text-[11px] font-semibold text-amber-500 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-md">
+                        Skipping first {headerRowIndex} junk/metadata row{headerRowIndex > 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-muted">
+                        Row 1 is set as Column Header
+                      </span>
+                    )}
+                  </div>
+
+                  {rawRows.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRawInspector(prev => !prev)}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        showRawInspector
+                          ? 'bg-primary text-white border-primary shadow-sm'
+                          : 'bg-bg3 border-border text-muted hover:text-text hover:bg-bg'
+                      }`}
+                      title="Inspect raw rows and pick the header visually"
+                    >
+                      <FileText size={13} />
+                      <span>{showRawInspector ? 'Hide Raw Matrix' : 'Inspect & Pick Header Row'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Optional Expandable Raw Rows Matrix */}
+                {showRawInspector && rawRows.length > 0 && (
+                  <div className="bg-bg border-b border-border p-3.5 max-h-[220px] overflow-auto shrink-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold text-muted uppercase tracking-wider">
+                        Click any row below to make it the Header Row:
+                      </span>
+                      <span className="text-[10px] text-muted">
+                        (Rows above will be skipped as file titles/metadata)
+                      </span>
+                    </div>
+                    <table className="w-full text-left text-xs border-collapse font-mono">
+                      <tbody>
+                        {rawRows.map((rowCells, rIdx) => {
+                          const isHeader = rIdx === headerRowIndex;
+                          const isSkipped = rIdx < headerRowIndex;
+                          return (
+                            <tr
+                              key={rIdx}
+                              onClick={() => handleSelectHeaderRow(rIdx)}
+                              className={`cursor-pointer transition-all border-b border-border/40 ${
+                                isHeader
+                                  ? 'bg-primary/15 text-primary font-bold border-primary/40'
+                                  : isSkipped
+                                  ? 'opacity-40 line-through bg-red-500/5 text-muted hover:opacity-70'
+                                  : 'hover:bg-bg3/60 text-text'
+                              }`}
+                            >
+                              <td className="p-1.5 w-24 shrink-0 select-none">
+                                <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-sans font-bold ${
+                                  isHeader
+                                    ? 'bg-primary text-white shadow-sm'
+                                    : isSkipped
+                                    ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                    : 'bg-bg3 text-muted'
+                                }`}>
+                                  {isHeader ? '★ Header' : isSkipped ? 'Skipped' : `Row ${rIdx + 1}`}
+                                </span>
+                              </td>
+                              {rowCells.map((cell, cIdx) => (
+                                <td key={cIdx} className="p-1.5 truncate max-w-[180px]" title={cell}>
+                                  {cell || <span className="opacity-30 italic font-sans">[empty]</span>}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Modal Body */}
                 <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
@@ -1883,7 +2061,7 @@ const CatalogUpload = () => {
                       setActiveTab('upload');
                       
                       try {
-                        const res = await api.importCatalogJob(jobId, columnMappings, {});
+                        const res = await api.importCatalogJob(jobId, columnMappings, { skipRows: headerRowIndex });
                         if (res.success) {
                           setSuccess('Mapping confirmed. Background ingestion started successfully.');
                         } else {
