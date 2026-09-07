@@ -337,6 +337,31 @@ export function isRepeatRequest(text: string): boolean {
   return repeatWords.some(w => lower.includes(w));
 }
 
+/**
+ * Checks if a patient message is an affirmative refill confirmation
+ * (e.g. "REFILL", "YES", "CONFIRM", "HAAN", "HO", "भेज दो", etc.)
+ */
+export function isRefillConfirmationResponse(text: string): boolean {
+  if (!text) return false;
+  const cleaned = text.trim();
+  const lower = cleaned.toLowerCase().replace(/[.,!?;:()_~#*`]/g, ' ').replace(/\s+/g, ' ').trim();
+  const confirmationTokens = [
+    'refill', 'yes', 'confirm', 'confirmed', 'send', 'ok', 'okay',
+    'ha', 'haan', 'haa', 'ho', 'hoye', 'chalel',
+    'bhej do', 'bhejo', 'dedo', 'de do', 'chahiye',
+    'pathva', 'pathav', 'dya', 'daya', 'lagta', 'lagte', 'lagtan',
+    'ready rakho', 'pack kar do', 'pack kardo'
+  ];
+  if (confirmationTokens.some(t => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
+    return true;
+  }
+  const devanagariTokens = [
+    'हाँ', 'हां', 'हा', 'हो', 'होय', 'पाठवा', 'द्या', 'लागतं',
+    'भेज दो', 'भेजो', 'दे दो', 'चाहिए', 'औषध'
+  ];
+  return devanagariTokens.some(t => cleaned.includes(t));
+}
+
 // ─── Scan Gate: is an OCR'd image actually a medicine? ──────────────────
 // Runs on EVERY OCR result BEFORE any search/escalation, so booking
 // screenshots, tickets, bank/finance docs, food packets and random photos

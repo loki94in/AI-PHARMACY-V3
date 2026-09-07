@@ -21,7 +21,9 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true))
 }));
 
 jest.unstable_mockModule('../src/telegramBot.js', () => ({
@@ -119,6 +121,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
         patient_name: 'John Doe',
         patient_phone: '1234567890',
         patient_address: '123 Test St',
+        doctor_name: 'Dr. Test',
         items: [{ inventory_id: 1, quantity: 1, unit_price: 10 }]
       });
 
@@ -160,7 +163,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
 
     // 3. Verify Telegram out-of-stock notification was triggered
     expect(mockTelegramBotService.sendDefaultNotification).toHaveBeenCalledWith(
-      expect.stringContaining('Alice Smith')
+      expect.stringMatching(/Alice Smith/i)
     );
     expect(mockTelegramBotService.sendDefaultNotification).toHaveBeenCalledWith(
       expect.stringContaining('TestMeds')
@@ -198,7 +201,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
 
     // 3. Verify that the refill is marked as ready for manual send, and no auto WhatsApp is sent
     const dbVerify = await open({ filename: dbPath, driver: sqlite3.default.Database });
-    const refill = await dbVerify.get('SELECT is_ready FROM patient_refills WHERE patient_name = ?', 'Alice Smith');
+    const refill = await dbVerify.get('SELECT is_ready FROM patient_refills WHERE LOWER(patient_name) = LOWER(?)', 'Alice Smith');
     await dbVerify.close();
 
     expect(refill.is_ready).toBe(1);
@@ -490,6 +493,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
         .send({
           patient_name: 'POS Checkout Patient',
           patient_phone: phone,
+          doctor_name: 'Dr. Test',
           refill_id: refillId,
           items: [{ inventory_id: 10, quantity: 1, unit_price: 10 }]
         });
@@ -758,6 +762,7 @@ describe('Patient Refills & POS Auto-Save Integration', () => {
       const salePayload = {
         patient_name: 'POS Sale Patient',
         patient_phone: '9555544444',
+        doctor_name: 'Dr. Test',
         payment_type: 'CASH',
         items: [
           {

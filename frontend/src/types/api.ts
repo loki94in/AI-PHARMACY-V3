@@ -118,6 +118,8 @@ export interface Refill {
   reminder_sent_at?: string | null;
   reminder_job_id?: number | null;
   reminder_occurrence_date?: string | null;
+  patient_confirmed?: number;
+  confirmed_at?: string | null;
 }
 
 export interface AutomationNotification {

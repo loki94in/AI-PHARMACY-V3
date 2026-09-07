@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { parseMessage, isRepeatRequest, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
@@ -262,6 +262,77 @@ export async function handleInbound(msg: any): Promise<void> {
     // 2. CUSTOMER LOOKUP
     const customer = await lookupCustomer(phone);
     const isNewCustomer = !customer;
+
+    // 2b. REFILL CONFIRMATION CHECK — "refill", "yes", "confirm", "haan", "ho", "bhej do", etc.
+    if (isRefillConfirmationResponse(body)) {
+      const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+      if (cleanDigits) {
+        const db = await dbManager.getConnection();
+        const pendingRefills = await db.all(
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+           FROM patient_refills pr
+           JOIN medicines m ON m.id = pr.medicine_id
+           WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
+             AND pr.is_active = 1
+             AND pr.status NOT IN ('completed', 'canceled')
+           ORDER BY pr.id DESC`,
+          [`%${cleanDigits}`, `%${cleanDigits}%`]
+        );
+
+        if (pendingRefills && pendingRefills.length > 0) {
+          const primaryRefill = pendingRefills[0];
+          const refillIds = pendingRefills.map((r: any) => r.id);
+          const placeholders = refillIds.map(() => '?').join(',');
+
+          await db.run(
+            `UPDATE patient_refills 
+             SET patient_confirmed = 1, confirmed_at = datetime('now')
+             WHERE id IN (${placeholders})`,
+            refillIds
+          );
+
+          // P1 push event: updates Quick Assist and CRM without page reload
+          eventService.broadcast('refill_updated', {
+            at: Date.now(),
+            confirmed_id: primaryRefill.id,
+            confirmed_phone: cleanDigits,
+            patient_phone: primaryRefill.patient_phone,
+            patient_name: primaryRefill.patient_name,
+            refill_count: pendingRefills.length
+          });
+
+          // Optional acknowledgement to patient via queue worker
+          try {
+            const { getPharmacyOperatingSchedule, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+            const sched = await getPharmacyOperatingSchedule(db);
+            const storeName = await getStoreMedicalName(db);
+            const storePhone = await getStorePhone(db);
+            const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+            const medListText = pendingRefills.length === 1 
+              ? `*${primaryRefill.medicine_name}*` 
+              : pendingRefills.map((r: any) => `• ${r.medicine_name}`).join('\n');
+
+            const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
+              `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
+              `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n` +
+              `Our team will keep your medicines ready for collection.${phoneSuffix}`;
+
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(
+              phone,
+              ackMsg,
+              'refill_reminder',
+              primaryRefill.patient_name
+            );
+          } catch (ackErr) {
+            console.warn('[Intent Service] Refill confirmation acknowledgment note:', ackErr);
+          }
+
+          console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);
+          return;
+        }
+      }
+    }
 
     // 3. TEXT PARSE
     const parsed = parseMessage(body);

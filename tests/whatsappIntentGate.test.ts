@@ -80,3 +80,42 @@ describe('OCR Stage-0 Scan Gate — must never fail open on an empty api_substan
     expect(decision).toBe('identify');
   });
 });
+
+describe('Multilingual Two-Way Refill Confirmation Detection', () => {
+  let isRefillConfirmationResponse: (text: string) => boolean;
+
+  beforeAll(async () => {
+    isRefillConfirmationResponse = (await import('../src/services/intentKeywords.js')).isRefillConfirmationResponse;
+  });
+
+  test('English confirmation keywords match correctly', () => {
+    expect(isRefillConfirmationResponse('REFILL')).toBe(true);
+    expect(isRefillConfirmationResponse('yes')).toBe(true);
+    expect(isRefillConfirmationResponse('confirm')).toBe(true);
+    expect(isRefillConfirmationResponse('send')).toBe(true);
+    expect(isRefillConfirmationResponse('okay')).toBe(true);
+    expect(isRefillConfirmationResponse('Yes, please!')).toBe(true);
+    expect(isRefillConfirmationResponse('confirmed.')).toBe(true);
+  });
+
+  test('Hindi confirmation keywords match correctly', () => {
+    expect(isRefillConfirmationResponse('हाँ')).toBe(true);
+    expect(isRefillConfirmationResponse('हां')).toBe(true);
+    expect(isRefillConfirmationResponse('भेज दो')).toBe(true);
+    expect(isRefillConfirmationResponse('दे दो')).toBe(true);
+    expect(isRefillConfirmationResponse('दवाई चाहिए')).toBe(true);
+  });
+
+  test('Marathi confirmation keywords match correctly', () => {
+    expect(isRefillConfirmationResponse('हो')).toBe(true);
+    expect(isRefillConfirmationResponse('पाठवा')).toBe(true);
+    expect(isRefillConfirmationResponse('द्या')).toBe(true);
+    expect(isRefillConfirmationResponse('औषध लागतं')).toBe(true);
+  });
+
+  test('Non-confirmation chatter is rejected', () => {
+    expect(isRefillConfirmationResponse('')).toBe(false);
+    expect(isRefillConfirmationResponse('How much is the total?')).toBe(false);
+    expect(isRefillConfirmationResponse('Where is your pharmacy located?')).toBe(false);
+  });
+});

@@ -441,6 +441,80 @@ export async function buildMultiOrderNotificationMessage(
   return msg;
 }
 
+/**
+ * Returns the configured pharmacy store hours and weekly off days.
+ */
+export async function getPharmacyOperatingSchedule(dbInstance?: any): Promise<{
+  openTime: string;
+  closeTime: string;
+  weeklyOff: string;
+  closedDates: string[];
+}> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const rows = await db.all(
+      `SELECT key, value FROM app_settings 
+       WHERE key IN ('pharmacy_open_time', 'pharmacy_close_time', 'pharmacy_weekly_off', 'pharmacy_closed_dates')`
+    );
+    const map = new Map<string, string>(rows.map((r: any) => [String(r.key), String(r.value)]));
+    let closedDates: string[] = [];
+    try {
+      const rawDates = map.get('pharmacy_closed_dates');
+      if (rawDates) {
+        closedDates = JSON.parse(rawDates);
+      }
+    } catch {}
 
+    return {
+      openTime: map.get('pharmacy_open_time') || '09:00',
+      closeTime: map.get('pharmacy_close_time') || '22:00',
+      weeklyOff: map.get('pharmacy_weekly_off') || 'Monday',
+      closedDates: Array.isArray(closedDates) ? closedDates : []
+    };
+  } catch (err) {
+    console.warn('[StoreSettings] Failed to fetch operating schedule:', err);
+    return {
+      openTime: '09:00',
+      closeTime: '22:00',
+      weeklyOff: 'Monday',
+      closedDates: []
+    };
+  }
+}
 
-
+/**
+ * Persists the pharmacy store hours and weekly off days to app_settings.
+ */
+export async function savePharmacyOperatingSchedule(
+  schedule: {
+    openTime?: string;
+    closeTime?: string;
+    weeklyOff?: string;
+    closedDates?: string[];
+  },
+  dbInstance?: any
+): Promise<void> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const stmt = await db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+    try {
+      if (schedule.openTime !== undefined) {
+        await stmt.run(['pharmacy_open_time', schedule.openTime]);
+      }
+      if (schedule.closeTime !== undefined) {
+        await stmt.run(['pharmacy_close_time', schedule.closeTime]);
+      }
+      if (schedule.weeklyOff !== undefined) {
+        await stmt.run(['pharmacy_weekly_off', schedule.weeklyOff]);
+      }
+      if (schedule.closedDates !== undefined) {
+        await stmt.run(['pharmacy_closed_dates', JSON.stringify(schedule.closedDates)]);
+      }
+    } finally {
+      await stmt.finalize();
+    }
+  } catch (err) {
+    console.warn('[StoreSettings] Failed to save operating schedule:', err);
+    throw err;
+  }
+}

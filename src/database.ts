@@ -273,6 +273,12 @@ async function ensureOrderTimingSchema(db: any) {
     if (refCols.length > 0 && !refNames.has('refill_schedule_version')) {
       await db.run('ALTER TABLE patient_refills ADD COLUMN refill_schedule_version INTEGER DEFAULT 1');
     }
+    if (refCols.length > 0 && !refNames.has('patient_confirmed')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0');
+    }
+    if (refCols.length > 0 && !refNames.has('confirmed_at')) {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
+    }
   } catch (_) {}
 
   const defaultTimingSettings: [string, string][] = [
@@ -1390,6 +1396,8 @@ export async function ensureSchema(dbPath: string) {
       reminder_sent_at DATETIME DEFAULT NULL,
       reminder_job_id INTEGER DEFAULT NULL,
       reminder_occurrence_date DATETIME DEFAULT NULL,
+      patient_confirmed INTEGER DEFAULT 0,
+      confirmed_at DATETIME DEFAULT NULL,
       FOREIGN KEY(medicine_id) REFERENCES medicines(id),
       FOREIGN KEY(customer_id) REFERENCES customers(id)
     );
@@ -1932,6 +1940,8 @@ export async function ensureSchema(dbPath: string) {
     ['patient_refills', 'reminder_sent_at', 'ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL'],
     ['patient_refills', 'reminder_job_id', 'ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL'],
     ['patient_refills', 'reminder_occurrence_date', 'ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL'],
+    ['patient_refills', 'patient_confirmed', 'ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0'],
+    ['patient_refills', 'confirmed_at', 'ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL'],
     ['special_orders', 'customer_id', 'ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL'],
     ['special_orders', 'date', 'ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
     ['special_orders', 'product', 'ALTER TABLE special_orders ADD COLUMN product TEXT'],
@@ -3198,6 +3208,12 @@ export async function ensureSchema(dbPath: string) {
   // Google Maps store location link default
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
 
+  // Pharmacy Timetable & Schedule Defaults
+  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_open_time', '09:00')");
+  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_close_time', '22:00')");
+  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_weekly_off', 'Monday')");
+  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_closed_dates', '[]')");
+
   // Safely add legacy_id/speciality to doctors if the table already existed without them
   const doctorAlters = [
     `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
@@ -3457,6 +3473,14 @@ export async function ensureSchema(dbPath: string) {
   } catch {
     // Column already exists — no action needed
   }
+
+  // Add patient_confirmed & confirmed_at to patient_refills (idempotent migration)
+  try {
+    await db.run('ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0');
+  } catch {}
+  try {
+    await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
+  } catch {}
 
   // Consolidate legacy 'contact' into 'phone' if 'phone' is empty, then ensure 'phone' is the single source of truth
 

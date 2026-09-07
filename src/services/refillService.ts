@@ -24,28 +24,41 @@ export async function checkAllRefills(db: Database): Promise<void> {
   );
 
   let noticeDays = 3;
+  let operatingSchedule = { openTime: '09:00', closeTime: '22:00', weeklyOff: 'Monday', closedDates: [] as string[] };
   try {
     const setting = await db.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
     if (setting && setting.value) {
       noticeDays = parseInt(setting.value, 10) || 3;
     }
+    const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
+    operatingSchedule = await getPharmacyOperatingSchedule(db);
   } catch (err) {
-    console.error('Failed to load refill_notice_days setting:', err);
+    console.error('Failed to load refill notice settings:', err);
   }
 
   const outOfStockRefills: any[] = [];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
+
   for (const refill of activeRefills) {
     const nextDate = new Date(refill.next_refill_date);
     nextDate.setHours(0, 0, 0, 0);
     const diffTime = nextDate.getTime() - today.getTime();
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+    const dueDayName = dayNames[nextDate.getDay()];
+    const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : '';
+    const isDueOnClosedDay = dueDayName === weeklyOffLower || operatingSchedule.closedDates.includes(dateYmd);
     
+    // If due on a closed day, trigger notice 1 day earlier so patient can prepare
+    const effectiveNoticeDays = isDueOnClosedDay ? noticeDays + 1 : noticeDays;
+
     // Check if within the notice lead time
-    const highlightTrigger = diffDays <= noticeDays;
-    const orderTrigger = diffDays <= noticeDays;
+    const highlightTrigger = diffDays <= effectiveNoticeDays;
+    const orderTrigger = diffDays <= effectiveNoticeDays;
 
     if (!orderTrigger && !highlightTrigger) {
       continue;

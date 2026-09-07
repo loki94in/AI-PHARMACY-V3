@@ -1,4 +1,4 @@
-import { parseMessage, isPlausibleMedicineName, extractMedicineCandidates } from '../src/services/intentKeywords.js';
+import { parseMessage, isPlausibleMedicineName, extractMedicineCandidates, isRefillConfirmationResponse } from '../src/services/intentKeywords.js';
 
 describe('WhatsApp Intent Keywords Parsing Tests', () => {
   test('Filters out greetings and conversational noise', () => {
@@ -130,6 +130,42 @@ describe('WhatsApp Intent Keywords Parsing Tests', () => {
     test('deduplicates repeated names case-insensitively', () => {
       const res = extractMedicineCandidates('dolo 650 aur DOLO 650');
       expect(res).toHaveLength(1);
+    });
+  });
+
+  describe('Refill Confirmation Intent Keyword Detection', () => {
+    test('identifies English refill confirmations', () => {
+      expect(isRefillConfirmationResponse('refill')).toBe(true);
+      expect(isRefillConfirmationResponse('REFILL')).toBe(true);
+      expect(isRefillConfirmationResponse('yes')).toBe(true);
+      expect(isRefillConfirmationResponse('yes please')).toBe(true);
+      expect(isRefillConfirmationResponse('confirm')).toBe(true);
+      expect(isRefillConfirmationResponse('ok send')).toBe(true);
+      expect(isRefillConfirmationResponse('please send refill')).toBe(true);
+    });
+
+    test('identifies Hindi refill confirmations', () => {
+      expect(isRefillConfirmationResponse('हाँ')).toBe(true);
+      expect(isRefillConfirmationResponse('हा')).toBe(true);
+      expect(isRefillConfirmationResponse('haan')).toBe(true);
+      expect(isRefillConfirmationResponse('bhejo')).toBe(true);
+      expect(isRefillConfirmationResponse('dawai bhej do')).toBe(true);
+    });
+
+    test('identifies Marathi refill confirmations', () => {
+      expect(isRefillConfirmationResponse('हो')).toBe(true);
+      expect(isRefillConfirmationResponse('होय')).toBe(true);
+      expect(isRefillConfirmationResponse('pathva')).toBe(true);
+      expect(isRefillConfirmationResponse('aushadh pathva')).toBe(true);
+    });
+
+    test('rejects negative, cancellation, and irrelevant phrases', () => {
+      expect(isRefillConfirmationResponse('no')).toBe(false);
+      expect(isRefillConfirmationResponse('nahi')).toBe(false);
+      expect(isRefillConfirmationResponse('cancel')).toBe(false);
+      expect(isRefillConfirmationResponse('stop')).toBe(false);
+      expect(isRefillConfirmationResponse('hello')).toBe(false);
+      expect(isRefillConfirmationResponse('what is the price of paracetamol?')).toBe(false);
     });
   });
 });

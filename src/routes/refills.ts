@@ -8,7 +8,7 @@ import { sendMessage, normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 import { getMessage } from '../i18n/getMessage.js';
-import { getConfiguredPharmacyName } from '../services/storeSettingsService.js';
+import { getConfiguredPharmacyName, getPharmacyOperatingSchedule } from '../services/storeSettingsService.js';
 import { eventService } from '../services/eventService.js';
 import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
@@ -74,29 +74,50 @@ export function buildRefillReminderMessage(
   items: Array<{ medicine_name?: string; quantity_needed?: number }>,
   pharmacyName: string,
   lang: string = 'en',
-  dueDateStr?: string
+  dueDateStr?: string,
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean }
 ): string {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
 
+  const openT = scheduleOpts?.openTime || '09:00';
+  const closeT = scheduleOpts?.closeTime || '22:00';
+  const weeklyOff = scheduleOpts?.weeklyOff || 'Monday';
+  const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+
   if (cleanLang === 'hi') {
     const medList = items
-      .map(m => `â€¢ ${m.medicine_name || 'à¤¦à¤µà¤¾à¤ˆ'} (à¤®à¤¾à¤¤à¥à¤°à¤¾: ${m.quantity_needed || 1})`)
+      .map(m => `• ${m.medicine_name || 'दवाई'} (मात्रा: ${m.quantity_needed || 1})`)
       .join('\n');
-    const dueSuffix = dueDateStr ? `\n\nà¤¤à¤¾à¤°à¥€à¤–: ${dueDateStr}` : '';
-    return `ðŸ”” *à¤¦à¤µà¤¾à¤ˆ à¤°à¤¿à¤«à¤¿à¤² à¤°à¤¿à¤®à¤¾à¤‡à¤‚à¤¡à¤° â€” ${pharmacyName}*\n\nà¤¨à¤®à¤¸à¥à¤¤à¥‡ ${pName},\nà¤†à¤ªà¤•à¥€ à¤¨à¤¿à¤¯à¤®à¤¿à¤¤ à¤¦à¤µà¤¾à¤ˆ à¤•à¤¾ à¤°à¤¿à¤«à¤¿à¤² à¤¸à¤®à¤¯ à¤† à¤—à¤¯à¤¾ à¤¹à¥ˆ:\n\n${medList}${dueSuffix}\n\n*à¤•à¥ƒà¤ªà¤¯à¤¾ à¤¡à¤¿à¤²à¥€à¤µà¤°à¥€ à¤¯à¤¾ à¤ªà¤¿à¤•à¤…à¤ª à¤•à¥€ à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤•à¥‡ à¤²à¤¿à¤ à¤‰à¤¤à¥à¤¤à¤° à¤¦à¥‡à¤‚à¥¤*`;
+    const dueSuffix = dueDateStr ? `\n\nतारीख: ${dueDateStr}` : '';
+    let timingSection = `\n🕒 दुकान का समय: ${openT} से ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
+    }
+    const cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "REFILL" या "हाँ" लिखकर उत्तर दें।*`;
+    return `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
     const medList = items
-      .map(m => `â€¢ ${m.medicine_name || 'à¤”à¤·à¤§'} (à¤ªà¥à¤°à¤®à¤¾à¤£: ${m.quantity_needed || 1})`)
+      .map(m => `• ${m.medicine_name || 'औषध'} (प्रमाण: ${m.quantity_needed || 1})`)
       .join('\n');
-    const dueSuffix = dueDateStr ? `\n\nà¤¦à¤¿à¤¨à¤¾à¤‚à¤•: ${dueDateStr}` : '';
-    return `ðŸ”” *à¤”à¤·à¤§ à¤°à¤¿à¤«à¤¿à¤² à¤¸à¥à¤®à¤°à¤£à¤ªà¤¤à¥à¤° â€” ${pharmacyName}*\n\nà¤¨à¤®à¤¸à¥à¤•à¤¾à¤° ${pName},\nà¤†à¤ªà¤²à¥à¤¯à¤¾ à¤¨à¤¿à¤¯à¤®à¤¿à¤¤ à¤”à¤·à¤§à¤¾à¤‚à¤šà¥€ à¤°à¤¿à¤«à¤¿à¤² à¤•à¤°à¤£à¥à¤¯à¤¾à¤šà¥€ à¤µà¥‡à¤³ à¤à¤¾à¤²à¥€ à¤†à¤¹à¥‡:\n\n${medList}${dueSuffix}\n\n*à¤•à¥ƒà¤ªà¤¯à¤¾ à¤¡à¤¿à¤²à¤¿à¤µà¥à¤¹à¤°à¥€ à¤•à¤¿à¤‚à¤µà¤¾ à¤ªà¤¿à¤•à¤…à¤ª à¤¨à¤¿à¤¶à¥à¤šà¤¿à¤¤ à¤•à¤°à¤£à¥à¤¯à¤¾à¤¸à¤¾à¤ à¥€ à¤‰à¤¤à¥à¤¤à¤° à¤¦à¥à¤¯à¤¾.*`;
+    const dueSuffix = dueDateStr ? `\n\nदिनांक: ${dueDateStr}` : '';
+    let timingSection = `\n🕒 दुकानाची वेळ: ${openT} ते ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
+    }
+    const cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "REFILL" किंवा "हो" लिहून उत्तर द्या।*`;
+    return `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
     const medList = items
-      .map(m => `â€¢ ${m.medicine_name || 'Medicine'} (Qty: ${m.quantity_needed || 1})`)
+      .map(m => `• ${m.medicine_name || 'Medicine'} (Qty: ${m.quantity_needed || 1})`)
       .join('\n');
     const dueSuffix = dueDateStr ? `\n\nDue Date: ${dueDateStr}` : '';
-    return `ðŸ”” *MEDICINE REFILL REMINDER â€” ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}\n\n*Please reply to confirm delivery or pickup.*`;
+    let timingSection = `\n🕒 Store Hours: ${openT} to ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+    }
+    const cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "REFILL" or "YES" to confirm.*\n*(Store open ${openT} - ${closeT})*`;
+    return `🔔 *MEDICINE REFILL REMINDER — ${pharmacyName}*\n\nDear ${pName},\nYour regular prescription is due for refill:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   }
 }
 
@@ -642,7 +663,9 @@ router.get('/panel', async (req, res) => {
           packaging: row.packaging || null,
           pack_size: row.pack_size || 1,
           batch_quantity: stock?.batch_quantity || 0,
-          batch_loose_quantity: stock?.batch_loose_quantity || 0
+          batch_loose_quantity: stock?.batch_loose_quantity || 0,
+          patient_confirmed: row.patient_confirmed || 0,
+          confirmed_at: row.confirmed_at || null
         });
       }
     }
@@ -1390,11 +1413,20 @@ router.post('/:id/send', async (req, res) => {
       return res.status(409).json({ error: 'Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
     }
 
+    const sched = await getPharmacyOperatingSchedule(db);
+    const nextRefillDateObj = refill.next_refill_date ? new Date(refill.next_refill_date) : new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dueDayName = dayNames[nextRefillDateObj.getDay()];
+    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
+      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+
     const msg = buildRefillReminderMessage(
       patientName,
       [{ medicine_name: refill.medicine_name || 'Prescribed Medicine', quantity_needed: refill.quantity_needed || 1 }],
       medicalName,
-      lang
+      lang,
+      undefined,
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
     );
 
     let pdfPath: string | undefined = undefined;
@@ -1529,11 +1561,20 @@ router.post('/send-grouped', async (req, res) => {
       return res.status(409).json({ error: 'Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
     }
 
+    const sched = await getPharmacyOperatingSchedule(db);
+    const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dueDayName = dayNames[earliestDue.getDay()];
+    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
+      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+
     const msg = buildRefillReminderMessage(
       patientName,
       unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
       medicalName,
-      lang
+      lang,
+      undefined,
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
     );
 
     const queueId = await whatsappQueueWorker.enqueue(
@@ -1642,12 +1683,20 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
       return res.status(409).json({ error: 'Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
     }
 
+    const sched = await getPharmacyOperatingSchedule(db);
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const tomorrowDayName = dayNames[tomorrowDate.getDay()];
+    const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase();
+
     const msg = buildRefillReminderMessage(
       patientName,
       unsent.map(r => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
       medicalName,
       lang,
-      tomorrowDateStr
+      tomorrowDateStr,
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
     );
 
     const queueId = await whatsappQueueWorker.enqueue(
@@ -1746,12 +1795,20 @@ router.post('/send-reminder-now', async (req, res) => {
       return res.status(409).json({ error: 'Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
     }
 
+    const sched = await getPharmacyOperatingSchedule(db);
+    const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dueDayName = dayNames[earliestDue.getDay()];
+    const isOffDayUpcoming = (dueDayName.toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase()) || 
+      (dayNames[(new Date().getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || 'Monday').toLowerCase());
+
     const msg = buildRefillReminderMessage(
       patientName,
       unsentRows.map((r: any) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
       medicalName,
       lang,
-      refillDate
+      refillDate,
+      { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
     );
 
     const queueId = await whatsappQueueWorker.enqueue(

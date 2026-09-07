@@ -70,6 +70,8 @@ interface RefillPatient {
     stock_verified_override?: number;
     reminder_status?: string;
     reminder_sent_at?: string | null;
+    patient_confirmed?: number;
+    confirmed_at?: string | null;
   }[];
 }
 
@@ -1128,8 +1130,13 @@ const RefillsSection: React.FC = () => {
                         {patient.patient_name?.[0]?.toUpperCase() || '?'}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-xs font-bold text-text truncate flex items-center gap-1.5">
+                        <div className="text-xs font-bold text-text truncate flex items-center gap-1.5 flex-wrap">
                           <span className="truncate">{patient.patient_name || 'Unnamed Patient'}</span>
+                          {patient.medicines?.some(m => m.patient_confirmed === 1) && (
+                            <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold shrink-0" title="Patient confirmed refill via WhatsApp">
+                              WA Confirmed ✅
+                            </span>
+                          )}
                           <span className="text-[9px] px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/60 shrink-0 font-normal">
                             {patient.language === 'hi' ? '🇮🇳 HI' : patient.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
                           </span>

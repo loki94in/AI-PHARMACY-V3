@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Calendar as Clock, Pause, Play, ChevronLeft, ChevronRight, ShoppingCart, Send } from 'lucide-react';
+import { Clock, Pause, Play, ChevronLeft, ChevronRight, ShoppingCart, Send, Store } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
 
@@ -33,6 +33,7 @@ interface DateCardItem {
   isSunday: boolean;
   holidayName?: string;
   isPaused: boolean;
+  isShopClosed?: boolean;
 }
 
 interface PharmarackCartCalendarProps {
@@ -65,6 +66,12 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   // Timer Pacing state (seconds)
   const [timerSec, setTimerSec] = useState<number>(10);
 
+  // Pharmacy Operating Hours & Weekly Off Day state
+  const [shopWeeklyOff, setShopWeeklyOff] = useState<string>('Monday');
+  const [shopOpenTime, setShopOpenTime] = useState<string>('09:00');
+  const [shopCloseTime, setShopCloseTime] = useState<string>('22:00');
+  const [pharmacyClosedDates, setPharmacyClosedDates] = useState<string[]>([]);
+
   // Fetch current pacing and schedule settings
   useEffect(() => {
     let mounted = true;
@@ -73,6 +80,20 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         const data = await api.getWhatsAppQueueStatus();
         if (mounted && data?.currentPacingMinMs) {
           setTimerSec(Math.round(data.currentPacingMinMs / 1000));
+        }
+      } catch (_) {}
+
+      try {
+        const res = await apiClient.get('/settings');
+        if (mounted && res?.data) {
+          if (res.data.pharmacy_weekly_off) setShopWeeklyOff(res.data.pharmacy_weekly_off);
+          if (res.data.pharmacy_open_time) setShopOpenTime(res.data.pharmacy_open_time);
+          if (res.data.pharmacy_close_time) setShopCloseTime(res.data.pharmacy_close_time);
+          if (res.data.pharmacy_closed_dates) {
+            try {
+              setPharmacyClosedDates(JSON.parse(res.data.pharmacy_closed_dates));
+            } catch (_) {}
+          }
         }
       } catch (_) {}
     })();
@@ -88,6 +109,24 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
     apiClient.post('/settings/save', {
       pharmarack_paused_dispatch_dates: JSON.stringify(newDates)
+    }).catch(() => {});
+  };
+
+  const handleShopWeeklyOffChange = (val: string) => {
+    setShopWeeklyOff(val);
+    apiClient.post('/settings/save', { pharmacy_weekly_off: val }).then(() => {
+      toastEvent.trigger(`Shop weekly off set to ${val}`, 'info');
+    }).catch(() => {});
+  };
+
+  const handleTimeChange = (open: string, close: string) => {
+    setShopOpenTime(open);
+    setShopCloseTime(close);
+    apiClient.post('/settings/save', {
+      pharmacy_open_time: open,
+      pharmacy_close_time: close
+    }).then(() => {
+      toastEvent.trigger(`Store hours set: ${open} - ${close}`, 'info');
     }).catch(() => {});
   };
 
@@ -123,6 +162,10 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       const isToday = dateStr === todayStr;
       const holidayName = INDIAN_HOLIDAYS_2026[dateStr];
       const isPaused = pausedDates.includes(dateStr);
+      const dayFullName = d.toLocaleDateString('en-US', { weekday: 'long' });
+      const isShopWeeklyOff = shopWeeklyOff.toLowerCase() !== 'none' && dayFullName.toLowerCase() === shopWeeklyOff.toLowerCase();
+      const isCustomShopClosed = pharmacyClosedDates.includes(dateStr);
+      const isShopClosed = isShopWeeklyOff || isCustomShopClosed;
 
       cards.push({
         dateStr,
@@ -132,11 +175,12 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         isToday,
         isSunday,
         holidayName,
-        isPaused
+        isPaused,
+        isShopClosed
       });
     }
     return cards;
-  }, [pausedDates]);
+  }, [pausedDates, shopWeeklyOff, pharmacyClosedDates]);
 
   // Center scroll on today's card on initial load
   useEffect(() => {
@@ -277,13 +321,64 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
       </div>
 
+      {/* Pharmacy Schedule & Operating Hours Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1 bg-bg3/30 rounded-xl border border-glass-border/30 text-xs">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Shop Weekly Off */}
+          <div className="flex items-center gap-1.5">
+            <Store size={13} className="text-emerald-400 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Shop Off Day:</span>
+            <select
+              value={shopWeeklyOff}
+              onChange={(e) => handleShopWeeklyOffChange(e.target.value)}
+              className="bg-bg border border-glass-border rounded-lg px-2 py-0.5 text-[11px] font-bold text-text focus:outline-none focus:border-primary cursor-pointer"
+            >
+              {['None', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(d => (
+                <option key={d} value={d} className="bg-bg text-text">{d}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Shop Hours: Open - Close */}
+          <div className="flex items-center gap-1.5">
+            <Clock size={13} className="text-emerald-400 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Store Hours:</span>
+            <input
+              type="time"
+              value={shopOpenTime}
+              onChange={(e) => handleTimeChange(e.target.value, shopCloseTime)}
+              className="bg-bg border border-glass-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary"
+            />
+            <span className="text-muted text-[10px] font-bold">to</span>
+            <input
+              type="time"
+              value={shopCloseTime}
+              onChange={(e) => handleTimeChange(shopOpenTime, e.target.value)}
+              className="bg-bg border border-glass-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+
+        {/* Legend / Status Info */}
+        <div className="flex items-center gap-3 text-[10px] text-muted font-medium">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+            <span>Distributor Paused</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block"></span>
+            <span>Shop Closed / Holiday</span>
+          </span>
+        </div>
+      </div>
+
       {/* Date Strip: High Contrast & Crystal Clear Text */}
       <div
         ref={scrollContainerRef}
         className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-0.5 px-0.5 min-w-0"
       >
         {dateCards.map((card) => {
-          const isRed = card.isSunday || Boolean(card.holidayName);
+          const isRed = card.isSunday || Boolean(card.holidayName) || card.isShopClosed;
 
           return (
             <button
@@ -295,13 +390,15 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
                 shrink-0 px-2 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 text-left select-none bg-bg
                 ${card.isPaused
                   ? 'border-amber-500/60 ring-1 ring-amber-500/40 text-amber-400'
-                  : isRed
-                    ? 'border-rose-500/40 hover:border-rose-500/70 text-rose-400 font-bold'
-                    : card.isToday
-                      ? 'border-sky-400 text-sky-300 font-black'
-                      : 'border-glass-border hover:border-border text-text'}
+                  : card.isShopClosed
+                    ? 'border-rose-500/60 text-rose-400 font-bold'
+                    : isRed
+                      ? 'border-rose-500/40 hover:border-rose-500/70 text-rose-400 font-bold'
+                      : card.isToday
+                        ? 'border-sky-400 text-sky-300 font-black'
+                        : 'border-glass-border hover:border-border text-text'}
               `}
-              title={`${card.dayName} ${card.dateNum} ${card.monthName} ${card.holidayName ? `(${card.holidayName})` : card.isSunday ? '(Sunday)' : ''} - Click to ${card.isPaused ? 'resume' : 'pause'}`}
+              title={`${card.dayName} ${card.dateNum} ${card.monthName} ${card.isShopClosed ? '(Shop Closed)' : card.holidayName ? `(${card.holidayName})` : card.isSunday ? '(Sunday)' : ''} - Click to ${card.isPaused ? 'resume' : 'pause auto-dispatch'}`}
             >
               {/* Day + Date Num */}
               <div className="flex items-center gap-1">
@@ -317,6 +414,10 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
               {card.isPaused ? (
                 <span className="text-[9px] font-black px-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-0.5 shrink-0">
                   <Pause size={8} /> Paused
+                </span>
+              ) : card.isShopClosed ? (
+                <span className="text-[9px] font-black px-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 truncate max-w-[65px] shrink-0">
+                  Shop Off
                 </span>
               ) : isRed ? (
                 <span className="text-[9px] font-black px-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 truncate max-w-[65px] shrink-0">

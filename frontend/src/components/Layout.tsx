@@ -2685,6 +2685,7 @@ const QuickAssistSidebar = memo(({
       diffDays: number;
       timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days';
       hasHoldStock: boolean;
+      isPatientConfirmed: boolean;
       reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
       reminder_sent_at?: string | null;
       medicines: Array<{
@@ -2697,6 +2698,8 @@ const QuickAssistSidebar = memo(({
         diffDays: number;
         reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
         reminder_sent_at?: string | null;
+        patient_confirmed?: number;
+        confirmed_at?: string | null;
       }>;
     }> = [];
 
@@ -2718,6 +2721,7 @@ const QuickAssistSidebar = memo(({
           diffDays,
           timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days',
           hasHoldStock: false,
+          isPatientConfirmed: false,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
           medicines: [],
@@ -2726,6 +2730,7 @@ const QuickAssistSidebar = memo(({
         list.push(existing);
       }
       if (r.hold_for_stock === 1) existing.hasHoldStock = true;
+      if ((r as any).patient_confirmed === 1) existing.isPatientConfirmed = true;
       if (r.next_refill_date && (!existing.next_refill_date || new Date(r.next_refill_date) < new Date(existing.next_refill_date))) {
         existing.next_refill_date = r.next_refill_date;
         existing.diffDays = diffDays;
@@ -2742,6 +2747,8 @@ const QuickAssistSidebar = memo(({
         diffDays,
         reminder_status: medReminderStatus,
         reminder_sent_at: r.reminder_sent_at || null,
+        patient_confirmed: (r as any).patient_confirmed || 0,
+        confirmed_at: (r as any).confirmed_at || null,
       });
     }
 
@@ -3133,6 +3140,14 @@ const QuickAssistSidebar = memo(({
                             {group.medicines.length} med{group.medicines.length > 1 ? 's' : ''}
                           </span>
                           {timingBadge}
+                          {group.isPatientConfirmed && (
+                            <span
+                              className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold shrink-0 flex items-center gap-0.5 animate-pulse"
+                              title="Patient confirmed via WhatsApp!"
+                            >
+                              Confirmed via WhatsApp ✅
+                            </span>
+                          )}
                         </div>
                         {group.patient_phone && (
                           <span className="text-[10px] text-muted truncate font-mono">{group.patient_phone}</span>
@@ -3179,7 +3194,7 @@ const QuickAssistSidebar = memo(({
                           Due: {group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                         {group.hasHoldStock && (
                           <button
                             onClick={(e) => {
@@ -3190,6 +3205,37 @@ const QuickAssistSidebar = memo(({
                             title="Mark all held items as checked / resolved"
                           >
                             Ack
+                          </button>
+                        )}
+                        {group.isPatientConfirmed && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toastEvent.trigger(`Opening POS to bill refills for "${group.patient_name}"...`, 'info', '/pos');
+                              navigate('/pos', {
+                                state: {
+                                  prefill: {
+                                    patientName: group.patient_name,
+                                    patientPhone: group.patient_phone,
+                                    refillPatient: true,
+                                    refillIds: group.medicines.map(m => m.id),
+                                    medicines: group.medicines.map(m => ({
+                                      id: m.id,
+                                      medicine_id: m.id,
+                                      medicineName: m.medicine_name,
+                                      medicine_name: m.medicine_name,
+                                      quantity_needed: m.quantity_needed
+                                    }))
+                                  }
+                                }
+                              });
+                            }}
+                            className="py-0.5 px-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold uppercase transition-colors flex items-center gap-1 shadow-sm cursor-pointer"
+                            title={`Load ${group.patient_name}'s confirmed refill items into POS for manual verification and billing`}
+                          >
+                            <ShoppingCart size={10} />
+                            <span>Bill in POS</span>
                           </button>
                         )}
                         {group.reminder_status === 'SENT' ? (
