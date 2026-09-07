@@ -188,6 +188,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
   const [formData, setFormData] = useState({
     pharmacyName: rawSettings.pharmacy_name || rawSettings.shop_name || rawSettings.store_name || '',
     address: rawSettings.address || '',
+    googleMapsUrl: rawSettings.google_maps_url || rawSettings.store_map_link || rawSettings.maps_url || '',
     phone: rawSettings.phone || rawSettings.shop_phone || '',
     gstin: rawSettings.gstin || '',
     drugLicense: rawSettings.drug_license || rawSettings.license_number || '',
@@ -437,6 +438,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         shop_name: formData.pharmacyName,
         store_name: formData.pharmacyName,
         address: formData.address,
+        google_maps_url: formData.googleMapsUrl,
         phone: formData.phone,
         shop_phone: formData.phone,
         gstin: formData.gstin,
@@ -479,6 +481,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
         shop_name: formData.pharmacyName,
         store_name: formData.pharmacyName,
         address: formData.address,
+        google_maps_url: formData.googleMapsUrl,
         phone: formData.phone,
         shop_phone: formData.phone,
         gstin: formData.gstin,
@@ -544,6 +547,7 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
     setFormData({
       pharmacyName: rawSettings.pharmacy_name || rawSettings.shop_name || rawSettings.store_name || '',
       address: rawSettings.address || '',
+      googleMapsUrl: rawSettings.google_maps_url || rawSettings.store_map_link || rawSettings.maps_url || '',
       phone: rawSettings.phone || rawSettings.shop_phone || '',
       gstin: rawSettings.gstin || '',
       drugLicense: rawSettings.drug_license || rawSettings.license_number || '',
@@ -674,6 +678,22 @@ function StoreProfileTab({ rawSettings, refetchSettings }: { rawSettings: Record
                 className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
                 placeholder="Street address, City, Pin code"
               />
+            </div>
+
+            <div className="md:col-span-2 lg:col-span-3">
+              <label className="block text-xs font-semibold text-text mb-1 flex items-center gap-1.5">
+                <MapPin size={13} className="text-primary" /> Google Maps Location / Directions URL
+              </label>
+              <input
+                type="url"
+                value={formData.googleMapsUrl}
+                onChange={(e) => setFormData({ ...formData, googleMapsUrl: e.target.value.trim() })}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                placeholder="https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8"
+              />
+              <p className="text-[10px] text-muted mt-1">
+                Customers will receive this direct navigation link in WhatsApp order arrival &amp; pickup messages.
+              </p>
             </div>
           </div>
         </div>

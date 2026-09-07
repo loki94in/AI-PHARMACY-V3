@@ -3195,6 +3195,9 @@ export async function ensureSchema(dbPath: string) {
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
 
+  // Google Maps store location link default
+  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
+
   // Safely add legacy_id/speciality to doctors if the table already existed without them
   const doctorAlters = [
     `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
@@ -3424,12 +3427,23 @@ export async function ensureSchema(dbPath: string) {
       { name: 'Refill Reminder', category: 'Patients', body: 'Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery.' },
       { name: 'Payment Dues Reminder', category: 'Patients', body: 'Dear {{name}}, your bill invoice #{{invoice}} of ₹{{amount}} is due. Kindly let us know if you need assistance with payment.' },
       { name: 'Stock Availability Inquiry', category: 'Distributors', body: 'Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you.' },
-      { name: 'General Reply', category: 'General', body: 'Hello! Thank you for contacting AI Pharmacy. How can we help you today?' }
+      { name: 'General Reply', category: 'General', body: 'Hello! Thank you for contacting AI Pharmacy. How can we help you today?' },
+      { name: 'Store Location & Directions', category: 'General', body: 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!' }
     ];
     for (const t of seedTemplates) {
       await db.run(
         'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
         [t.name, t.category, t.body, now, now]
+      );
+    }
+  } else {
+    // Ensure Store Location & Directions template exists even if templates table was already populated
+    const locTmpl = await db.get("SELECT id FROM whatsapp_message_templates WHERE name = 'Store Location & Directions'");
+    if (!locTmpl) {
+      const now = Date.now();
+      await db.run(
+        'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        ['Store Location & Directions', 'General', 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!', now, now]
       );
     }
   }

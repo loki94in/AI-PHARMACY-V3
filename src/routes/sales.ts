@@ -1300,7 +1300,8 @@ router.get('/list', async (req, res) => {
     db = await dbManager.getConnection();
     
     // Parse filters
-    const search = (req.query.search as string) || '';
+    const rawSearch = (req.query.search as string) || '';
+    const search = rawSearch.trim().replace(/\s+/g, ' ');
     const date_from = (req.query.date_from as string) || '';
     const date_to = (req.query.date_to as string) || '';
     const batch = (req.query.batch as string) || '';
@@ -1325,9 +1326,10 @@ router.get('/list', async (req, res) => {
     const isStrictDate = req.query.strict_date === 'true';
 
     if (search) {
+      const searchTokens = search.split(/\s+/).filter(Boolean);
+      const tokenLike = searchTokens.length > 1 ? `%${searchTokens.join('%')}%` : `%${search}%`;
       whereClauses.push('(si.invoice_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR d.name LIKE ? OR EXISTS (SELECT 1 FROM sale_items sale_it JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id JOIN medicines m_search ON inv_m.medicine_id = m_search.id WHERE sale_it.invoice_id = si.id AND (inv_m.batch_no LIKE ? OR m_search.name LIKE ?)))');
-      const s = `%${search}%`;
-      params.push(s, s, s, s, s, s);
+      params.push(tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike);
     }
     // Constrain by date: if search is active, bypass date_from/date_to unless strict_date=true is explicitly requested
     if (date_from && (!search || isStrictDate)) {
@@ -1555,8 +1557,11 @@ router.get('/search-medicine', async (req, res) => {
   let db;
   try {
     db = await dbManager.getConnection();
-    const cleanQuery = query.trim();
+    const cleanQuery = query.trim().replace(/\s+/g, ' ');
     const isNumeric = /^\d+(\.\d+)?$/.test(cleanQuery);
+    const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
+    const tokenPrefixQuery = queryTokens.length > 1 ? `${queryTokens.join('%')}%` : `${cleanQuery}%`;
+    const tokenLikeQuery = queryTokens.length > 1 ? `%${queryTokens.join('%')}%` : `%${cleanQuery}%`;
     
     let rows = [];
     if (isNumeric) {
@@ -1655,7 +1660,7 @@ router.get('/search-medicine', async (req, res) => {
       }
     } else {
       // Alphabetical query: try fast index prefix search on m.name first
-      const prefixQuery = `${cleanQuery}%`;
+      const prefixQuery = tokenPrefixQuery;
       const prefixSql = `
         SELECT 
           m.id AS medicine_id, 
@@ -1698,7 +1703,7 @@ router.get('/search-medicine', async (req, res) => {
  
       // Fall back to general name/item_code infix search if we got fewer than 15 rows and term is >= 3 chars
       if (rows.length < 15 && cleanQuery.length >= 3) {
-        const likeQuery = `%${cleanQuery}%`;
+        const likeQuery = tokenLikeQuery;
         const fallbackSql = `
           SELECT 
             m.id AS medicine_id, 

@@ -998,7 +998,7 @@ export const api = {
   holdBill: (data: SalePayload) => apiClient.post('/sales/hold', data).then(res => res.data),
   getHeldBills: () => apiClient.get('/sales/hold').then(res => res.data),
   // ponytail: restoreHeldBill removed — never called; restore flow uses getHeldBills() + DELETE /hold/:id
-  searchMedicine: (q: string) => apiClient.get('/sales/search-medicine', { params: { q } }).then(res => res.data),
+  searchMedicine: (q: string) => apiClient.get('/sales/search-medicine', { params: { q: (q || '').trim().replace(/\s+/g, ' ') } }).then(res => res.data),
   getMedicineRefillInfo: (medicineId: number) => apiClient.get(`/sales/medicine-refill-info/${medicineId}`).then(res => res.data),
   getPatientRefillMedicines: (params: { customerId?: number; phone?: string; name?: string }) => apiClient.get('/sales/patient-refill-medicines', { params }).then(res => res.data),
   
@@ -1053,7 +1053,7 @@ export const api = {
   historyPrefill: (name: string) =>
     apiClient.get<HistoryPrefillResult>('/purchases/history-prefill', { params: { name } }).then(res => res.data),
   catalogSearch: (q: string, signal?: AbortSignal) =>
-    apiClient.get('/inventory/catalog-search', { params: { q }, signal, timeout: 8000 }).then(res => res.data),
+    apiClient.get('/inventory/catalog-search', { params: { q: (q || '').trim().replace(/\s+/g, ' ') }, signal, timeout: 8000 }).then(res => res.data),
   getBatchInfo: (medicineId: number, batchNo: string) => apiClient.get('/inventory/batch-info', { params: { medicine_id: medicineId, batch_no: batchNo } }).then(res => res.data),
   createMedicineAlias: (aliasName: string, medicineId: number) => apiClient.post('/inventory/medicines/alias', { alias_name: aliasName, medicine_id: medicineId }).then(res => res.data),
   getLearnedMapping: (name: string) => apiClient.get('/learning/mapping', { params: { name } }).then(res => res.data),
@@ -1321,8 +1321,8 @@ export const api = {
   createReturn: (data: ReturnPayload) => apiClient.post('/returns', data).then(res => res.data),
   getNearExpiry: (months: number = 6) => apiClient.get('/returns/near-expiry', { params: { months } }).then(res => res.data),
   lookupPurchases: (name: string, batch?: string) => {
-    const params: { name: string; batch?: string } = { name };
-    if (batch) params.batch = batch;
+    const params: { name: string; batch?: string } = { name: (name || '').trim().replace(/\s+/g, ' ') };
+    if (batch) params.batch = (batch || '').trim();
     return apiClient.get('/returns/lookup-purchases', { params }).then(res => res.data);
   },
   processReturns: (items: SupplierReturnProcessItem[], lossPercentage?: number) => apiClient.post('/returns/process-returns', { items, loss_percentage: lossPercentage }).then(res => res.data),

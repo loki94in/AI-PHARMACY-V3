@@ -541,7 +541,8 @@ const EMPTY_ARRAY: never[] = [];
 
 const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatchItem[] => {
   if (!query || query.trim().length < 2) return [];
-  const term = query.trim().toLowerCase();
+  const rawTerm = query.trim().toLowerCase();
+  const term = rawTerm.replace(/\s+/g, ' ');
   const tokens = term.split(/\s+/).filter(Boolean);
   const compactTerm = term.replace(/[^a-z0-9]/g, '');
   const index = getCompactInventoryIndex();
@@ -567,6 +568,8 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
     if (!isValid) continue;
 
     const name = useIndex ? index[i].nameLower : (item.medicine_name || item.name || '').toLowerCase();
+    const normName = name.replace(/\s+/g, ' ');
+    const compactName = name.replace(/[^a-z0-9]/g, '');
     const code = useIndex ? index[i].itemCodeLower : (item.item_code || '').toLowerCase();
     const batch = useIndex ? index[i].batchNoLower : (item.batch_no || '').toLowerCase();
     const mrpNum = Number(item.mrp || 0);
@@ -578,8 +581,8 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
 
     let tier = 0;
 
-    // 1. Direct Prefix on Name, Item Code, or Batch
-    if (name.startsWith(term) || code.startsWith(term) || batch.startsWith(term)) {
+    // 1. Direct Prefix on Name, Item Code, Batch, or Space-compact Name
+    if (name.startsWith(term) || normName.startsWith(term) || (compactTerm.length >= 2 && compactName.startsWith(compactTerm)) || code.startsWith(term) || batch.startsWith(term)) {
       tier = 1;
     }
     // 2. Acronym / Shorthand (e.g. "cd 12" or "cd12" matching "crocin ds 12")
@@ -595,7 +598,7 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
       let allMatch = true;
       for (const t of tokens) {
         const wordMatch = words.some(w => w.startsWith(t) || w === t);
-        const nameMatch = name.includes(t);
+        const nameMatch = name.includes(t) || normName.includes(t);
         const batchMatch = batch.includes(t);
         const mrpMatch = (mrpStr && mrpStr.startsWith(t)) || (mrpIntStr && mrpIntStr === t);
         if (!wordMatch && !nameMatch && !batchMatch && !mrpMatch) {
@@ -607,8 +610,8 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
         tier = 3;
       }
     }
-    // 4. Infix / Contains on Name or Code
-    if (!tier && (name.includes(term) || code.includes(term))) {
+    // 4. Infix / Contains on Name, Code, or Space-compact Name
+    if (!tier && (name.includes(term) || normName.includes(term) || (compactTerm.length >= 3 && compactName.includes(compactTerm)) || code.includes(term))) {
       tier = 4;
     }
     // 5. Batch or MRP search (e.g. typing "625", "AX99", or "30")

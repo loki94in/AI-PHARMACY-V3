@@ -294,13 +294,13 @@ const Inventory = () => {
     const list: Array<{ lower: string; order: SpecialOrder }> = [];
     for (const o of specialOrders) {
       if (!o.product) continue;
-      const lower = o.product.toLowerCase().trim();
+      const lower = o.product.toLowerCase().trim().replace(/\s+/g, ' ');
       directMap.set(lower, o);
       list.push({ lower, order: o });
     }
     return {
       findMatch: (itemName: string): SpecialOrder | null => {
-        const lower = (itemName || '').toLowerCase().trim();
+        const lower = (itemName || '').toLowerCase().trim().replace(/\s+/g, ' ');
         if (!lower) return null;
         const exact = directMap.get(lower);
         if (exact) return exact;
@@ -319,14 +319,14 @@ const Inventory = () => {
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedFilters({
-        medicine: colFilters.medicine,
-        id: colFilters.id,
-        batch: colFilters.batch,
-        expiry: colFilters.expiry,
-        packs: colFilters.packs,
-        loose: colFilters.loose,
-        mrp: colFilters.mrp,
-        rack: colFilters.rack
+        medicine: (colFilters.medicine || '').trim().replace(/\s+/g, ' '),
+        id: (colFilters.id || '').trim(),
+        batch: (colFilters.batch || '').trim(),
+        expiry: (colFilters.expiry || '').trim(),
+        packs: (colFilters.packs || '').trim(),
+        loose: (colFilters.loose || '').trim(),
+        mrp: (colFilters.mrp || '').trim(),
+        rack: (colFilters.rack || '').trim()
       });
     }, 300);
     return () => clearTimeout(handler);

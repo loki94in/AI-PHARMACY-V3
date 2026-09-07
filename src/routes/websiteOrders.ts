@@ -7,7 +7,7 @@ import { returnWindowService } from '../services/returnWindowService.js';
 import { eventService } from '../services/eventService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
-import { getStoreMedicalName, getStorePhone } from '../services/storeSettingsService.js';
+import { getStoreMedicalName, getStorePhone, getStoreGoogleMapsUrl } from '../services/storeSettingsService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
@@ -26,7 +26,8 @@ const broadcastOrdersChanged = () => {
 // Customer-facing safe medicine search — never leaks distributor names, cost prices, or internal mappings.
 router.get('/medicines/search', async (req, res) => {
   try {
-    const query = ((req.query.query as string) || '').trim();
+    const rawQuery = ((req.query.query as string) || '').trim();
+    const query = rawQuery.replace(/\s+/g, ' ');
     const storeId = parseInt((req.query.store_id as string) || '1', 10) || 1;
     const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 50);
 
@@ -37,6 +38,9 @@ router.get('/medicines/search', async (req, res) => {
     const db = await dbManager.getConnection();
     const normalizedQuery = normalizeProductName(query);
     const prefix = getThreeWordPrefix(query);
+    const tokens = query.split(/\s+/).filter(Boolean);
+    const tokenPrefix = tokens.length > 1 ? `${tokens.join('%')}%` : `${query}%`;
+    const tokenLike = tokens.length > 1 ? `%${tokens.join('%')}%` : `%${query}%`;
 
     // Pass 1: 3-word prefix or normalized name match (index scan)
     const medicines: any[] = await db.all(
@@ -48,7 +52,7 @@ router.get('/medicines/search', async (req, res) => {
          AND (m.status IS NULL OR m.status = 'ACTIVE')
        ORDER BY m.name ASC
        LIMIT ?`,
-      [`${prefix || normalizedQuery}%`, `${query}%`, limit]
+      [`${prefix || normalizedQuery}%`, tokenPrefix, limit]
     ).catch(() => []);
 
     // Pass 2: Middle-word token containment if Pass 1 returned too few results
@@ -63,7 +67,7 @@ router.get('/medicines/search', async (req, res) => {
            AND (m.status IS NULL OR m.status = 'ACTIVE')
          ORDER BY m.name ASC
          LIMIT ?`,
-        [`%${normalizedQuery}%`, `%${query}%`, limit]
+        [`%${normalizedQuery}%`, tokenLike, limit]
       ).catch(() => []);
 
       for (const f of fallbackRows) {
@@ -342,6 +346,10 @@ router.post('/orders', async (req, res) => {
         confirmMsg += `\n\n💳 Payment Instructions (${allocatedQr.label}):\nUPI ID: ${allocatedQr.upi_id}\nPayee: ${allocatedQr.payee_name}\nUPI Pay Link:\n${upiUri}\n\n*Important:* After paying via UPI, click "I HAVE PAID" on the website to notify the pharmacy to prepare your order.`;
       } else {
         confirmMsg += `\n\n🏢 Fulfillment: In-Store Pickup\nPlease collect and pay at our pharmacy counter.`;
+        const mapUrl = await getStoreGoogleMapsUrl(db);
+        if (mapUrl) {
+          confirmMsg += `\n🗺️ Navigation Link: ${mapUrl}`;
+        }
       }
 
       try {
@@ -872,7 +880,12 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
         const cleanPhone = String(order.phone).replace(/\D/g, '');
         const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
         const medicalName = await getStoreMedicalName(db);
-        const readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!\n\nThank you for your payment.`;
+        const mapUrl = await getStoreGoogleMapsUrl(db);
+        let readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!`;
+        if (mapUrl) {
+          readyMsg += `\n🗺️ Navigation Link: ${mapUrl}`;
+        }
+        readyMsg += `\n\nThank you for your payment.`;
         await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, 'order_ready_notification', order.requester);
       } catch (_) {}
     }

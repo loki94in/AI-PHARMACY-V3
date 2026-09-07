@@ -1667,7 +1667,7 @@ const Purchases: React.FC = () => {
     setActiveSearchIndex(index);
     setActiveMedicineIndex(index);
 
-    const cleanTerm = (term || '').trim();
+    const cleanTerm = (term || '').trim().replace(/\s+/g, ' ');
     if (!cleanTerm || cleanTerm.length < 2) {
       searchSeqRef.current += 1;
       setSearchResults([]);

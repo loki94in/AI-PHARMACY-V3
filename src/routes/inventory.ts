@@ -72,9 +72,9 @@ export function invalidateInventoryCountCache() {
 router.get('/', async (req, res) => {
   let db;
   const page = parseInt(req.query.page as string) || 1;
-  const search = (req.query.search as string || '').trim();
+  const search = (req.query.search as string || '').trim().replace(/\s+/g, ' ');
   
-  const medicine = (req.query.medicine as string || '').trim();
+  const medicine = (req.query.medicine as string || '').trim().replace(/\s+/g, ' ');
   const id = (req.query.id as string || '').trim();
   const batch = (req.query.batch as string || '').trim();
   const expiry = (req.query.expiry as string || '').trim();
@@ -108,12 +108,16 @@ router.get('/', async (req, res) => {
     }
     
     if (search) {
+      const searchTokens = search.split(/\s+/).filter(Boolean);
+      const tokenLike = searchTokens.length > 1 ? `%${searchTokens.join('%')}%` : `%${search}%`;
       baseQuery += ` AND (m.name LIKE ? OR m.item_code = ? OR im.batch_no LIKE ?)`;
-      params.push(`%${search}%`, search, `%${search}%`);
+      params.push(tokenLike, search, tokenLike);
     }
     if (medicine) {
+      const medTokens = medicine.split(/\s+/).filter(Boolean);
+      const tokenLike = medTokens.length > 1 ? `%${medTokens.join('%')}%` : `%${medicine}%`;
       baseQuery += ` AND m.name LIKE ?`;
-      params.push(`%${medicine}%`);
+      params.push(tokenLike);
     }
     if (batch) {
       baseQuery += ` AND im.batch_no LIKE ?`;
@@ -557,7 +561,8 @@ router.post('/medicines/alias', async (req, res) => {
 router.get('/catalog-search', async (req, res) => {
   let db;
   try {
-    const q = (req.query.q as string || '').trim();
+    const rawQ = (req.query.q as string || '').trim();
+    const q = rawQ.replace(/\s+/g, ' ');
     db = await dbManager.getConnection();
 
     if (!q || q.length < 2) {
@@ -572,7 +577,8 @@ router.get('/catalog-search', async (req, res) => {
       return res.json(defaultRows);
     }
 
-    const prefixQ = `${q}%`;
+    const qTokens = q.split(/\s+/).filter(Boolean);
+    const prefixQ = qTokens.length > 1 ? `${qTokens.join('%')}%` : `${q}%`;
     const rows: any[] = [];
     const seenIds = new Set<number>();
 
@@ -638,12 +644,13 @@ router.get('/catalog-search', async (req, res) => {
         }
       } catch (_) {
         // Fallback to indexed prefix or limited like if FTS5 is not ready
+        const fallbackLike = qTokens.length > 1 ? `%${qTokens.join('%')}%` : `%${q}%`;
         const fallbackRows = await db.all(
           `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
            FROM medicines
            WHERE name LIKE ?
            ORDER BY name ASC LIMIT 30`,
-          [`%${q}%`]
+          [fallbackLike]
         ).catch(() => []);
         for (const r of fallbackRows) {
           if (!seenIds.has(r.id)) {

@@ -294,14 +294,18 @@ router.get('/lookup-purchases', async (req, res) => {
     }
     db = await dbManager.getConnection();
 
-    const cleanName = String(name).trim();
+    const cleanName = String(name).trim().replace(/\s+/g, ' ');
+    const tokens = cleanName.split(/\s+/).filter(Boolean);
+    const prefixQ = tokens.length > 1 ? `${tokens.join('%')}%` : `${cleanName}%`;
+    const infixQ = tokens.length > 1 ? `%${tokens.join('%')}%` : `%${cleanName}%`;
+
     // Prefix matches first, then infix matches, ordered prefix-first and alphabetically
     const medicines = await db.all(
       `SELECT id, name FROM medicines 
        WHERE name LIKE ? OR name LIKE ? 
        ORDER BY CASE WHEN name LIKE ? THEN 0 ELSE 1 END ASC, name ASC 
        LIMIT 15`,
-      [`${cleanName}%`, `%${cleanName}%`, `${cleanName}%`]
+      [prefixQ, infixQ, prefixQ]
     );
     if (medicines.length === 0) {
       return res.json([]);
@@ -330,11 +334,14 @@ router.get('/lookup-purchases', async (req, res) => {
     
     // Sort prefix medicine names first, then strictly alphabetically A-Z
     const cleanLower = cleanName.toLowerCase();
+    const compactClean = cleanLower.replace(/[^a-z0-9]/g, '');
     purchaseRecords.sort((a: any, b: any) => {
       const nameA = String(a.medicine_name || '').toLowerCase();
       const nameB = String(b.medicine_name || '').toLowerCase();
-      const aStarts = nameA.startsWith(cleanLower);
-      const bStarts = nameB.startsWith(cleanLower);
+      const compactA = nameA.replace(/[^a-z0-9]/g, '');
+      const compactB = nameB.replace(/[^a-z0-9]/g, '');
+      const aStarts = nameA.startsWith(cleanLower) || (compactClean.length > 0 && compactA.startsWith(compactClean));
+      const bStarts = nameB.startsWith(cleanLower) || (compactClean.length > 0 && compactB.startsWith(compactClean));
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
       const nameCmp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });

@@ -708,21 +708,23 @@ const Returns: React.FC = () => {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    if (term.length < 2) {
+    const cleanTerm = (term || '').trim().replace(/\s+/g, ' ');
+
+    if (cleanTerm.length < 2) {
       setSearchResults([]);
       setActiveSearchIndex(null);
       setSearchHighlightIndex(-1);
       return;
     }
 
-    if (term.length === 2) {
+    if (cleanTerm.length === 2) {
       // Prefetch 2 characters in background, no dropdown
       setActiveSearchIndex(null);
       searchTimeoutRef.current = setTimeout(async () => {
         try {
-          const response = await api.lookupPurchases(term);
+          const response = await api.lookupPurchases(cleanTerm);
           const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
-          setSearchResults(rankAndSortMedicines(raw, term));
+          setSearchResults(rankAndSortMedicines(raw, cleanTerm));
           setSearchHighlightIndex(-1);
         } catch (error) {
           console.error('Error prefetching medicines:', error);
@@ -736,9 +738,9 @@ const Returns: React.FC = () => {
 
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const response = await api.lookupPurchases(term);
+        const response = await api.lookupPurchases(cleanTerm);
         const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
-        setSearchResults(rankAndSortMedicines(raw, term));
+        setSearchResults(rankAndSortMedicines(raw, cleanTerm));
         setSearchHighlightIndex(-1);
       } catch (error) {
         console.error('Error searching medicines:', error);

@@ -256,21 +256,33 @@ const Sells = () => {
   // Amount range and Pay Via are enforced server-side (serverFilters below) so they apply to the
   // full dataset rather than only whatever page(s) have loaded into memory so far.
   const clientFilterFn = useCallback((inv: SaleInvoice) => {
-    if (colFilterNo && !(inv.invoice_no || '').toLowerCase().includes(colFilterNo.toLowerCase())) {
-      return false;
+    if (colFilterNo) {
+      const cleanNo = colFilterNo.trim().replace(/\s+/g, ' ').toLowerCase();
+      if (!(inv.invoice_no || '').toLowerCase().includes(cleanNo)) {
+        return false;
+      }
     }
     if (colFilterName) {
-      const searchLower = colFilterName.toLowerCase();
-      const nameMatch = (inv.customer_name || 'Walk-in').toLowerCase().includes(searchLower);
-      const phoneMatch = (inv.customer_phone || '').includes(colFilterName);
-      const medicineMatch = inv.items?.some(it =>
-        (it.medicine_name || '').toLowerCase().includes(searchLower) ||
-        (it.batch_number || '').toLowerCase().includes(searchLower)
-      );
+      const searchLower = colFilterName.trim().replace(/\s+/g, ' ').toLowerCase();
+      const compactClean = searchLower.replace(/[^a-z0-9]/g, '');
+      const rawPhone = colFilterName.replace(/\D/g, '');
+      const nameMatch = (inv.customer_name || 'Walk-in').toLowerCase().includes(searchLower) ||
+        (compactClean.length > 1 && (inv.customer_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactClean));
+      const phoneMatch = rawPhone.length > 0 && (inv.customer_phone || '').replace(/\D/g, '').includes(rawPhone);
+      const medicineMatch = inv.items?.some(it => {
+        const itName = (it.medicine_name || '').toLowerCase();
+        const itBatch = (it.batch_number || '').toLowerCase();
+        return itName.includes(searchLower) ||
+          (compactClean.length > 1 && itName.replace(/[^a-z0-9]/g, '').includes(compactClean)) ||
+          itBatch.includes(searchLower);
+      });
       if (!nameMatch && !phoneMatch && !medicineMatch) return false;
     }
-    if (colFilterDrName && !((inv.doctor_name || '').toLowerCase().includes(colFilterDrName.toLowerCase()))) {
-      return false;
+    if (colFilterDrName) {
+      const cleanDr = colFilterDrName.trim().replace(/\s+/g, ' ').toLowerCase();
+      if (!((inv.doctor_name || '').toLowerCase().includes(cleanDr))) {
+        return false;
+      }
     }
 
     return true;
@@ -292,7 +304,7 @@ const Sells = () => {
     serverFilters: {
       date_from: dateRangeHelper.dateRange.from,
       date_to: dateRangeHelper.dateRange.to,
-      search: (colFilterNo || colFilterName || colFilterDrName || '').trim(),
+      search: (colFilterNo || colFilterName || colFilterDrName || '').trim().replace(/\s+/g, ' '),
       min_amount: colFilterMinAmount,
       max_amount: colFilterMaxAmount,
       payment_medium: colFilterPayVia,

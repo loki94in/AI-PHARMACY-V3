@@ -75,10 +75,13 @@ export function matchMedicineSearch(
   item: SearchableMedicineItem,
   searchTerm: string
 ): { matched: boolean; tier: number } {
-  const q = (searchTerm || '').trim().toLowerCase();
-  if (!q) return { matched: true, tier: 1 };
+  const rawQ = (searchTerm || '').trim().toLowerCase();
+  if (!rawQ) return { matched: true, tier: 1 };
+  const q = rawQ.replace(/\s+/g, ' ');
 
   const name = String(item.medicine_name || item.name || '').toLowerCase();
+  const normName = name.replace(/\s+/g, ' ');
+  const compactName = name.replace(/[^a-z0-9]/g, '');
   const code = String(item.item_code || '').toLowerCase();
   const batch = String(item.batch_no || item.batch || '').toLowerCase();
   const strength = String(item.strength || '').toLowerCase();
@@ -87,13 +90,20 @@ export function matchMedicineSearch(
   const mrpStr = mrpNum > 0 ? String(mrpNum) : '';
   const mrpIntStr = mrpNum > 0 ? String(Math.round(mrpNum)) : '';
 
-  // Tier 1: Direct Prefix on Name, Item Code, or Batch
-  if (name.startsWith(q) || (code && code.startsWith(q)) || (batch && batch.startsWith(q))) {
+  const compactQ = q.replace(/[^a-z0-9]/g, '');
+
+  // Tier 1: Direct Prefix on Name, Item Code, Batch, or Space-compact Name
+  if (
+    name.startsWith(q) ||
+    normName.startsWith(q) ||
+    (compactQ.length >= 2 && compactName.startsWith(compactQ)) ||
+    (code && code.startsWith(q)) ||
+    (batch && batch.startsWith(q))
+  ) {
     return { matched: true, tier: 1 };
   }
 
   const tokens = q.split(/\s+/).filter(Boolean);
-  const compactQ = q.replace(/[^a-z0-9]/g, '');
 
   // Extract words from medicine name
   const words = name.split(/[^a-z0-9]+/).filter(Boolean);
@@ -125,7 +135,7 @@ export function matchMedicineSearch(
     let allTokensMatch = true;
     for (const token of tokens) {
       const tokenMatchesWord = words.some(w => w.startsWith(token) || w === token);
-      const tokenMatchesName = name.includes(token);
+      const tokenMatchesName = name.includes(token) || normName.includes(token);
       const tokenMatchesStrength = strength.includes(token);
       const tokenMatchesBatch = batch.includes(token);
       const tokenMatchesGeneric = generic.includes(token);
@@ -141,9 +151,11 @@ export function matchMedicineSearch(
     }
   }
 
-  // Tier 4: Infix / Contains on Name, Strength, Item Code, or Generic
+  // Tier 4: Infix / Contains on Name, Strength, Item Code, Generic, or Space-compact Name
   if (
     name.includes(q) ||
+    normName.includes(q) ||
+    (compactQ.length >= 3 && compactName.includes(compactQ)) ||
     (strength && strength.includes(q)) ||
     (code && code.includes(q)) ||
     (generic && generic.includes(q))

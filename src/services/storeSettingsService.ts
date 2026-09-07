@@ -269,6 +269,33 @@ export async function getEmailRetentionLimit(dbInstance?: any): Promise<number> 
 }
 
 /**
+ * Resolves the configured Google Maps store location / directions link from app_settings.
+ */
+export async function getStoreGoogleMapsUrl(dbInstance?: any): Promise<string> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get(
+      `SELECT value FROM app_settings 
+       WHERE key IN ('google_maps_url', 'store_map_link', 'maps_url', 'google_map_url') 
+         AND value IS NOT NULL 
+         AND TRIM(value) != '' 
+       ORDER BY CASE key 
+         WHEN 'google_maps_url' THEN 1 
+         WHEN 'store_map_link' THEN 2 
+         WHEN 'maps_url' THEN 3 
+         ELSE 4 END 
+       LIMIT 1`
+    );
+    if (row && row.value && row.value.trim()) {
+      return row.value.trim();
+    }
+  } catch (err) {
+    console.warn('[StoreSettings] Error resolving Google Maps URL:', err);
+  }
+  return '';
+}
+
+/**
  * Formats standard customer notification message for ready/fulfilled special order.
  */
 export async function buildOrderReadyNotificationMessage(
@@ -280,35 +307,51 @@ export async function buildOrderReadyNotificationMessage(
 ): Promise<string> {
   const storeName = await getStoreMedicalName(dbInstance);
   const storePhone = await getStorePhone(dbInstance);
+  const mapUrl = await getStoreGoogleMapsUrl(dbInstance);
   const name = formatCustomerName(requesterName);
   const phone = storePhone ? storePhone.trim() : '';
 
   if (lang === 'hi') {
-    let msg = `नमस्ते ${name}, 👋\n\nखुशखबरी! 🎉 आपकी मांगी गई दवाई ${storeName} पर लेने के लिए तैयार है।\n\nआपका ऑर्डर:\n• ${productName} × ${qty || 1}\n\n📍 कृपया अपनी सुविधानुसार हमारी दुकान पर आकर अपनी दवाई प्राप्त करें।`;
-    if (phone) {
-      msg += `\n\n📞 सहायता के लिए, हमें ${phone} पर कॉल करें।`;
+    let msg = `नमस्ते ${name}, 👋\n\nखुशखबरी! 🎉 आपकी मांगी गई दवाई ${storeName} पर लेने के लिए तैयार है।\n\nआपका ऑर्डर:\n• ${productName} × ${qty || 1}\n\n`;
+    if (mapUrl) {
+      msg += `🗺️ दुकान का पता और मैप डायरेक्शन: ${mapUrl}\n\n`;
+    } else {
+      msg += `📍 कृपया अपनी सुविधानुसार हमारी दुकान पर आकर अपनी दवाई प्राप्त करें।\n\n`;
     }
-    msg += `\n\n${storeName} को चुनने के लिए धन्यवाद!`;
-    return msg;
+    if (phone) {
+      msg += `📞 सहायता के लिए, हमें ${phone} पर कॉल करें।\n\n`;
+    }
+    msg += `${storeName} को चुनने के लिए धन्यवाद!`;
+    return msg.trim();
   }
 
   if (lang === 'mr') {
-    let msg = `नमस्कार ${name}, 👋\n\nआनंदाची बातमी! 🎉 आपली मागवलेली औषध ${storeName} येथे मिळण्यास तयार आहे.\n\nआपली ऑर्डर:\n• ${productName} × ${qty || 1}\n\n📍 कृपया आपल्या सोयीनुसार आमच्या दुकानाला भेट देऊन औषध घेऊन जावे।`;
-    if (phone) {
-      msg += `\n\n📞 मदतीसाठी, आम्हाला ${phone} वर कॉल करा.`;
+    let msg = `नमस्कार ${name}, 👋\n\nआनंदाची बातमी! 🎉 आपली मागवलेली औषध ${storeName} येथे मिळण्यास तयार आहे.\n\nआपली ऑर्डर:\n• ${productName} × ${qty || 1}\n\n`;
+    if (mapUrl) {
+      msg += `🗺️ दुकानाचा पत्ता आणि मॅप डायरेक्शन: ${mapUrl}\n\n`;
+    } else {
+      msg += `📍 कृपया आपल्या सोयीनुसार आमच्या दुकानाला भेट देऊन औषध घेऊन जावे।\n\n`;
     }
-    msg += `\n\n${storeName} ची निवड केल्याबद्दल धन्यवाद!`;
-    return msg;
+    if (phone) {
+      msg += `📞 मदतीसाठी, आम्हाला ${phone} वर कॉल करा.\n\n`;
+    }
+    msg += `${storeName} ची निवड केल्याबद्दल धन्यवाद!`;
+    return msg.trim();
   }
 
-  let msg = `Hi ${name}, 👋\n\nGreat news! 🎉 Your requested medicine is now ready for pickup at ${storeName}.\n\nYour Order:\n• ${productName} × ${qty || 1}\n\n📍 Please visit our store at your convenience to collect your medicine.`;
-  
-  if (phone) {
-    msg += `\n\n📞 For any assistance, call us at ${phone}.`;
+  let msg = `Hi ${name}, 👋\n\nGreat news! 🎉 Your requested medicine is now ready for pickup at ${storeName}.\n\nYour Order:\n• ${productName} × ${qty || 1}\n\n`;
+  if (mapUrl) {
+    msg += `🗺️ Store Location & Directions: ${mapUrl}\n\n`;
+  } else {
+    msg += `📍 Please visit our store at your convenience to collect your medicine.\n\n`;
   }
   
-  msg += `\n\nThank you for choosing ${storeName}. We look forward to serving you!`;
-  return msg;
+  if (phone) {
+    msg += `📞 For any assistance, call us at ${phone}.\n\n`;
+  }
+  
+  msg += `Thank you for choosing ${storeName}!`;
+  return msg.trim();
 }
 
 export interface MultiOrderItemArrival {
@@ -331,6 +374,7 @@ export async function buildMultiOrderNotificationMessage(
 ): Promise<string> {
   const storeName = await getStoreMedicalName(dbInstance);
   const storePhone = await getStorePhone(dbInstance);
+  const mapUrl = await getStoreGoogleMapsUrl(dbInstance);
   const name = formatCustomerName(requesterName);
   const phone = storePhone ? storePhone.trim() : '';
 
@@ -342,12 +386,20 @@ export async function buildMultiOrderNotificationMessage(
     if (arrivedItems.length > 0 && delayedItems.length === 0) {
       msg += `खुशखबरी! 🎉 आपकी मांगी गई दवाइयां ${storeName} पर लेने के लिए तैयार हैं:\n\n`;
       msg += `📦 तैयार दवाइयां:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
-      msg += `\n\n📍 कृपया अपनी सुविधानुसार हमारी दुकान पर आकर अपनी दवाइयां प्राप्त करें।`;
+      if (mapUrl) {
+        msg += `\n\n🗺️ दुकान का पता और मैप डायरेक्शन: ${mapUrl}`;
+      } else {
+        msg += `\n\n📍 कृपया अपनी सुविधानुसार हमारी दुकान पर आकर अपनी दवाइयां प्राप्त करें।`;
+      }
     } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
       msg += `आपके ऑर्डर का अपडेट (${storeName}):\n\n`;
       msg += `✅ तैयार दवाइयां (दुकान से प्राप्त करें):\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
       msg += `\n\n⏳ आने में थोड़ा समय (आते ही सूचित करेंगे):\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (अपेक्षित: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
-      msg += `\n\n📍 तैयार दवाइयां आप दुकान से कभी भी ले सकते हैं। बाकी दवाइयां पहुंचते ही हम तुरंत सूचित करेंगे!`;
+      if (mapUrl) {
+        msg += `\n\n🗺️ दुकान का पता और मैप डायरेक्शन: ${mapUrl}`;
+      } else {
+        msg += `\n\n📍 तैयार दवाइयां आप दुकान से कभी भी ले सकते हैं। बाकी दवाइयां पहुंचते ही हम तुरंत सूचित करेंगे!`;
+      }
     } else {
       msg += `आपके ऑर्डर का अपडेट (${storeName}):\n\n`;
       msg += `⏳ निम्नलिखित दवाइयों में थोड़ा समय लग रहा है:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (अपेक्षित: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
@@ -364,12 +416,20 @@ export async function buildMultiOrderNotificationMessage(
   if (arrivedItems.length > 0 && delayedItems.length === 0) {
     msg += `Great news! 🎉 Your requested medicines are now ready for pickup at ${storeName}:\n\n`;
     msg += `📦 Ready for Pickup:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
-    msg += `\n\n📍 Please visit our store at your convenience to collect your medicines.`;
+    if (mapUrl) {
+      msg += `\n\n🗺️ Store Location & Directions: ${mapUrl}`;
+    } else {
+      msg += `\n\n📍 Please visit our store at your convenience to collect your medicines.`;
+    }
   } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
     msg += `Order status update from ${storeName}:\n\n`;
     msg += `✅ Ready for Pickup:\n` + arrivedItems.map(i => `• ${i.productName} × ${i.qty || 1}`).join('\n');
     msg += `\n\n⏳ Slightly Delayed / In Transit:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (Exp: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
-    msg += `\n\n📍 You can collect the ready medicines anytime. We will notify you as soon as the rest arrive!`;
+    if (mapUrl) {
+      msg += `\n\n🗺️ Store Location & Directions: ${mapUrl}`;
+    } else {
+      msg += `\n\n📍 You can collect the ready medicines anytime. We will notify you as soon as the rest arrive!`;
+    }
   } else {
     msg += `Order status update from ${storeName}:\n\n`;
     msg += `⏳ The following medicines are slightly delayed:\n` + delayedItems.map(i => `• ${i.productName} × ${i.qty || 1}${i.expectedDate ? ` (Exp: ${i.expectedDate})` : ''}${i.delayReason ? ` - ${i.delayReason}` : ''}`).join('\n');
