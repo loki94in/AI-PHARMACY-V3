@@ -379,24 +379,53 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
     let invoiceNo = '';
     let invoiceDate = '';
     let total_amount = 0;
+    let global_cd_per = 0;
     let extractedItems = [];
     
     const headerLine = lines.find(l => l.startsWith('H,'));
     if (headerLine) {
       const parts = headerLine.split(',');
-      if (parts[19]) distributorName = parts[19].trim();
-      if (parts[18] && parts[18].trim().length > 0) {
+      // Marg EDI format: parts[5] or parts[19] for distributorName
+      if (parts[5] && isNaN(Number(parts[5])) && parts[5].trim().length > 1) {
+        distributorName = parts[5].trim();
+      } else if (parts[19] && isNaN(Number(parts[19])) && parts[19].trim().length > 1) {
+        distributorName = parts[19].trim();
+      }
+
+      // Invoice No: parts[3] (e.g. "CC/24860") or parts[18] or parts[2]
+      if (parts[3] && !/^\d{2}[\/\-]\d{2}[\/\-]\d{2,4}$/.test(parts[3].trim()) && parts[3].trim().length > 0) {
+        invoiceNo = parts[3].trim();
+      } else if (parts[18] && parts[18].trim().length > 0 && parts[18].trim() !== '0' && parts[18].trim() !== '0.000000') {
         invoiceNo = parts[18].trim();
-      } else if (parts[2]) {
+      } else if (parts[2] && !/^\d{2}[\/\-]\d{2}[\/\-]\d{2,4}$/.test(parts[2].trim())) {
         invoiceNo = parts[2].trim();
       }
-      if (parts[16]) total_amount = parseFloat(parts[16]) || 0;
+
+      // Total Net Amount: parts[19] (e.g. 797.00) or parts[16]
+      const p19 = parseFloat(parts[19] || '0');
+      const p16 = parseFloat(parts[16] || '0');
+      if (!isNaN(p19) && p19 > 0) {
+        total_amount = p19;
+      } else if (!isNaN(p16) && p16 > 0) {
+        total_amount = p16;
+      }
+
+      // Cash Discount (CD %): parts[12] (e.g. 3.00)
+      const p12 = parseFloat(parts[12] || '0');
+      if (!isNaN(p12) && p12 > 0 && p12 <= 100) {
+        global_cd_per = p12;
+      }
       
-      const rawDate = parts[3];
-      if (rawDate && rawDate.length === 8) {
-        const d = rawDate.substring(0, 2);
-        const m = rawDate.substring(2, 4);
-        const y = rawDate.substring(4, 8);
+      const rawDate2 = parts[2] ? parts[2].trim() : '';
+      const rawDate3 = parts[3] ? parts[3].trim() : '';
+      if (/^\d{2}[\/\-]\d{2}[\/\-]\d{2,4}$/.test(rawDate2)) {
+        invoiceDate = normalizeDateToYYYYMMDD(rawDate2);
+      } else if (/^\d{2}[\/\-]\d{2}[\/\-]\d{2,4}$/.test(rawDate3)) {
+        invoiceDate = normalizeDateToYYYYMMDD(rawDate3);
+      } else if (rawDate3.length === 8 && /^\d+$/.test(rawDate3)) {
+        const d = rawDate3.substring(0, 2);
+        const m = rawDate3.substring(2, 4);
+        const y = rawDate3.substring(4, 8);
         invoiceDate = `${y}-${m}-${d}`;
       }
     }
@@ -408,22 +437,57 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
       // Marg format uses 'I' or 'T' for item rows
       if (parts[0] !== 'I' && parts[0] !== 'T') continue;
       
-      const offset = parts[0] === 'T' ? 1 : 0;
-      let name = parts[4 + offset] || '';
-      const pack = parts[5 + offset] || '';
-      if (pack.trim() && name.trim()) {
-        name = name.trim() + ' ' + pack.trim();
+      let name = '';
+      let mfg = '';
+      let pack = '';
+      let qty = 0;
+      let free_qty = 0;
+      let rate = 0;
+      let mrp = 0;
+      let batch = '';
+      let rawExp = '';
+      let expiry = '';
+      let hsn = '';
+      let gst = 0;
+      let cd_rs = 0;
+      let row_cd_per = global_cd_per;
+
+      // Check if parts[2] has medicine name (standard Marg EDI format: parts[2]="AVIL 50", parts[3]="SANOFI", parts[4]="15 TAB")
+      if (parts[2] && isNaN(Number(parts[2])) && parts[2].trim().length >= 2 && !/^\d{2}[\/\-]\d{2}/.test(parts[2].trim())) {
+        name = parts[2].trim();
+        mfg = (parts[3] && isNaN(Number(parts[3]))) ? parts[3].trim() : '';
+        pack = parts[4] ? parts[4].trim() : '';
+        if (pack && !name.toLowerCase().includes(pack.toLowerCase())) {
+          name = `${name} ${pack}`;
+        }
+        qty = parseFloat(parts[6] || '0') || 0;
+        free_qty = parseFloat(parts[7] || '0') || 0;
+        mrp = parseFloat(parts[8] || '0') || 0;
+        rate = parseFloat(parts[9] || '0') || 0;
+        batch = (parts[10] || '').trim();
+        rawExp = (parts[11] || '').trim();
+        gst = parseFloat(parts[16] || parts[17] || '0') || 0;
+      } else {
+        // Fallback to alternate Marg indexing
+        const offset = parts[0] === 'T' ? 1 : 0;
+        name = parts[4 + offset] || '';
+        const legacyPack = parts[5 + offset] || '';
+        if (legacyPack.trim() && name.trim()) {
+          name = name.trim() + ' ' + legacyPack.trim();
+        }
+        qty = parseInt(parts[19 + offset] || parts[20], 10) || 0;
+        free_qty = parseInt(parts[14 + offset] || parts[15], 10) || 0;
+        rate = parseFloat(parts[13 + offset] || parts[13]) || 0;
+        mrp = parseFloat(parts[15 + offset] || parts[16]) || 0;
+        batch = (parts[7 + offset] || parts[8] || '').trim();
+        rawExp = (parts[8 + offset] || parts[9] || '').trim();
+        mfg = (parts[2] && isNaN(Number(parts[2])) && parts[2].trim().length >= 2) ? parts[2].trim() : (parts[1] ? parts[1].trim() : '');
+        hsn = (parts[26] || parts[25 + offset] || parts[25] || '').trim();
+        gst = parseFloat(parts[11 + offset] || parts[12]) || 0;
+        cd_rs = parseFloat(parts[25]) || 0;
       }
       
       if (name && name.trim()) {
-        const qty = parseInt(parts[19 + offset] || parts[20], 10) || 0;
-        const free_qty = parseInt(parts[14 + offset] || parts[15], 10) || 0;
-        const rate = parseFloat(parts[13 + offset] || parts[13]) || 0;
-        const mrp = parseFloat(parts[15 + offset] || parts[16]) || 0;
-        const batch = (parts[7 + offset] || parts[8] || '').trim();
-        const rawExp = (parts[8 + offset] || parts[9] || '').trim();
-        let expiry = '';
-        
         if (rawExp && rawExp.length >= 6) {
           if (rawExp.length === 8) {
             // DDMMYYYY -> MM/YY
@@ -435,13 +499,15 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
             const m = rawExp.substring(0, 2);
             const y = rawExp.substring(4, 6);
             expiry = `${m}/${y}`;
+          } else if (rawExp.includes('/') || rawExp.includes('-')) {
+            const expParts = rawExp.split(/[\/\-]/);
+            if (expParts.length === 3) {
+              const m = expParts[1].padStart(2, '0');
+              const y = expParts[2].length === 4 ? expParts[2].substring(2, 4) : expParts[2];
+              expiry = `${m}/${y}`;
+            }
           }
         }
-        
-        const mfg = (parts[2] && isNaN(Number(parts[2])) && parts[2].trim().length >= 2) ? parts[2].trim() : (parts[1] ? parts[1].trim() : '');
-        const hsn = (parts[26] || parts[25 + offset] || parts[25] || '').trim();
-        const gst = parseFloat(parts[11 + offset] || parts[12]) || 0;
-        const cd_rs = parseFloat(parts[25]) || 0;
         
         extractedItems.push({
           name: name.trim(),
@@ -456,7 +522,7 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
           hsn_code: hsn,
           cgst_per: gst / 2,
           sgst_per: gst / 2,
-          cd_per: 0,
+          cd_per: row_cd_per,
           cd_rs: cd_rs,
           _extracted_data: {
             name: name.trim(),
@@ -470,7 +536,7 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
             expiry_date: expiry,
             cgst_per: gst / 2,
             sgst_per: gst / 2,
-            cd_per: 0,
+            cd_per: row_cd_per,
             cd_rs: cd_rs
           }
         });
@@ -482,7 +548,7 @@ async function parseInvoiceBuffer(fileBuffer: Buffer, filename: string): Promise
       invoice_no: invoiceNo,
       invoice_date: invoiceDate,
       total_amount,
-      global_cd_per: 0,
+      global_cd_per: global_cd_per,
       data: extractedItems
     };
   }

@@ -2855,15 +2855,13 @@ const Purchases: React.FC = () => {
           totalSgst += sgstAmount;
         });
 
-        const calculatedGrandTotal = subtotal + totalCgst + totalSgst;
         const parsedCnAmt = parseFloat(response.data.cn_amount);
         if (!isNaN(parsedCnAmt) && parsedCnAmt > 0) {
           setCnAmount(parsedCnAmt);
           setCnNumber(response.data.cn_number || (response.data.invoice_no ? `CN-${response.data.invoice_no}` : ''));
         } else {
-          const diff = calculatedGrandTotal - response.data.total_amount;
-          setCnAmount(diff === 0 ? '' : parseFloat(diff.toFixed(2)));
-          setCnNumber(response.data.invoice_no ? `CN-${response.data.invoice_no}` : '');
+          setCnAmount('');
+          setCnNumber('');
         }
       } else {
         setCnAmount('');

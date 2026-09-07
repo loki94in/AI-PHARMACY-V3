@@ -50,6 +50,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   wa_status_changed: ['sse-wa-status-changed'],
   wa_readiness_progress: ['sse-wa-readiness-progress', 'sse-wa-status-changed'],
   wa_queue_update: ['sse-wa-status-changed', 'sse-wa-queue-updated', 'app-wa-queue-updated', 'app-automation-hub-updated'],
+  automation_hub_updated: ['app-automation-hub-updated', 'app-wa-queue-updated', 'sse-wa-queue-updated', 'sse-wa-status-changed'],
   wa_new_message: ['sse-wa-new-message'],
   wa_medicine_match: ['sse-wa-medicine-match'],
   ocr_scan_complete: ['sse-ocr-scan-complete'],
@@ -75,7 +76,6 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   google_verification_required: ['sse-google-verification'],
   google_verification_solved: ['sse-google-verification'],
   toast_alert: ['app-show-toast'],
-  automation_hub_updated: ['app-automation-hub-updated'],
   message_send_progress: ['app-message-send-progress'],
 };
 

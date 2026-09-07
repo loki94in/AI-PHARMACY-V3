@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle, Zap, RefreshCw, Moon } from 'lucide-react';
+import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle, Zap, RefreshCw, Moon, Trash2 } from 'lucide-react';
 import { api } from '../services/api';
 import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
 import { whatsappQueueEvent, automationHubEvent, messageSendEvent, whatsappReadinessEvent } from '../services/events';
@@ -63,6 +63,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   const [loading, setLoading] = useState<boolean>(() => !isHydrated && cachedCatalog.length === 0);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Live in-flight animation state for currently sending WhatsApp message
   const [activeSending, setActiveSending] = useState<{
@@ -234,6 +235,29 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
       console.error('Failed to resolve all failures:', err);
     } finally {
       setResolvingId(null);
+    }
+  };
+
+  const handleDeleteItem = async (item: AutomationHubActivityItem) => {
+    const itemKey = item.id || String(item.rawId);
+    setDeletingId(itemKey);
+    try {
+      const targetId = item.source === 'notification'
+        ? (900000 + (item.rawId || 0))
+        : (item.rawId || (typeof item.id === 'string' ? Number(item.id.replace(/\D/g, '')) : 0));
+
+      if (targetId) {
+        await api.deleteWhatsAppQueueItem(targetId);
+      }
+      const updatedActivity = activity.filter(a => a.id !== item.id && (!item.rawId || a.rawId !== item.rawId));
+      setActivity(updatedActivity);
+      cachedActivity = updatedActivity;
+      automationHubEvent.triggerUpdated();
+      whatsappQueueEvent.triggerUpdated();
+    } catch (err) {
+      console.error('Failed to delete queue item:', err);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -449,6 +473,17 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {statusPill(item.status)}
+                        {item.status === 'pending' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item)}
+                            disabled={deletingId === (item.id || String(item.rawId))}
+                            className="p-1 text-muted hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                            title="Delete / Cancel pending message"
+                          >
+                            <Trash2 size={13} className={deletingId === (item.id || String(item.rawId)) ? "animate-spin" : ""} />
+                          </button>
+                        )}
                       </div>
                     </div>
 

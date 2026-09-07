@@ -335,12 +335,24 @@ interface ProcessedEmail {
   }>;
 }
 
-// Shared billing-amount pattern: grand total / net amount / bill amount / total amount /
-// bare "Total:" / currency-prefixed numbers. Single source reused for subject+body AND
-// text-based attachments so every surface extracts identically.
-const BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*amount|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
+// High-priority final net payable / grand total pattern:
+const NET_BILL_AMOUNT_PATTERN = /(?:(?:net\s*(?:amt|amount|payable|value)|grand\s*total|final\s*(?:bill|amount)|bill\s*amount|inv(?:oice)?\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?))/i;
+
+// Shared billing-amount pattern fallback: generic total / currency-prefixed numbers.
+const BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*(?:amt|amount|payable|value)|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
 
 function extractBillAmount(text: string): string {
+  // First, check explicit final net payable / grand total amount
+  const netMatch = (text || '').match(NET_BILL_AMOUNT_PATTERN);
+  if (netMatch && netMatch[1]) {
+    const rawNum = netMatch[1].replace(/,/g, '').trim();
+    const parsed = parseFloat(rawNum);
+    if (!isNaN(parsed) && parsed > 0) {
+      return `₹${parsed.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+  }
+
+  // Fallback: general pattern
   const amtMatch = (text || '').match(BILL_AMOUNT_PATTERN);
   if (!amtMatch) return '';
   const rawNum = (amtMatch[1] || amtMatch[2] || amtMatch[3] || amtMatch[4] || '').replace(/,/g, '').trim();
@@ -427,16 +439,29 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
   invoice_no: string;
   invoice_date: string;
   total_amount: number;
+  global_cd_per: number;
   items: any[];
 } {
   let distributor_name = '';
   let invoice_no = '';
   let invoice_date = '';
   let total_amount = 0;
+  let global_cd_per = 0;
+  let cd_amount = 0;
   const items: any[] = [];
 
   const headerRow = csvRecords.find(row => row[0]?.trim() === 'H');
   if (headerRow) {
+    // CD% (headerRow[12]) and CD ₹ (headerRow[13]) in Marg EDI
+    const p12 = parseFloat(headerRow[12] || '0');
+    if (!isNaN(p12) && p12 > 0 && p12 <= 100) {
+      global_cd_per = p12;
+    }
+    const p13 = parseFloat(headerRow[13] || '0');
+    if (!isNaN(p13) && p13 > 0) {
+      cd_amount = p13;
+    }
+
     if (headerRow[5] && isNaN(Number(headerRow[5])) && headerRow[5].trim().length > 3 && !headerRow[5].includes('/') && !headerRow[5].includes('-')) {
       distributor_name = headerRow[5].trim();
       invoice_no = headerRow[3] ? headerRow[3].trim() : '';
@@ -485,7 +510,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
           expiry_date: expiry,
           cgst_per: gst / 2,
           sgst_per: gst / 2,
-          cd_per: 0,
+          cd_per: global_cd_per,
           cd_rs: 0,
           manufacturer: mfgB,
           hsn_code: hsnB,
@@ -501,7 +526,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
             expiry_date: expiry,
             cgst_per: gst / 2,
             sgst_per: gst / 2,
-            cd_per: 0,
+            cd_per: global_cd_per,
             cd_rs: 0
           }
         });
@@ -536,7 +561,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
           expiry_date: expiry,
           cgst_per: gst / 2,
           sgst_per: gst / 2,
-          cd_per: 0,
+          cd_per: global_cd_per,
           cd_rs: cd_rs,
           manufacturer: mfg,
           hsn_code: hsn,
@@ -552,7 +577,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
             expiry_date: expiry,
             cgst_per: gst / 2,
             sgst_per: gst / 2,
-            cd_per: 0,
+            cd_per: global_cd_per,
             cd_rs: cd_rs
           }
         });
@@ -572,6 +597,7 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
     invoice_no,
     invoice_date,
     total_amount,
+    global_cd_per,
     items
   };
 }
@@ -2225,6 +2251,7 @@ export class EmailService {
             invoice_no = recordData.invoice_no;
             invoice_date = recordData.invoice_date;
             total_amount = recordData.total_amount;
+            global_cd_per = recordData.global_cd_per || 0;
             items = recordData.items;
           } else {
             records = parse(fileBuffer, { columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
@@ -2244,6 +2271,7 @@ export class EmailService {
               invoice_no = recordData.invoice_no;
               invoice_date = recordData.invoice_date;
               total_amount = recordData.total_amount;
+              global_cd_per = recordData.global_cd_per || 0;
               items = recordData.items;
             } else {
               records = XLSX.utils.sheet_to_json(sheet);

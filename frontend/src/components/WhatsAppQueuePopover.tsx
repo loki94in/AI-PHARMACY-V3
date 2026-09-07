@@ -47,8 +47,8 @@ let cachedDelayDeliveryBoy = 0;
 
 export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onClose }) => {
   useModalEscape(true, onClose);
-  const [queueState, setQueueState] = useState<LocalQueueState | null>(() => cachedQueueState);
-  const [loading, setLoading] = useState(() => !cachedQueueState);
+  const [queueState, setQueueState] = useState<LocalQueueState | null>(() => cachedQueueState || peekWhatsAppQueueStatusCache(10000));
+  const [loading, setLoading] = useState(() => !cachedQueueState && !peekWhatsAppQueueStatusCache(10000));
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
@@ -117,7 +117,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sanctioned SSE queue-event refresh flow per AGENTS.md
-    fetchStatus(true);
+    fetchStatus(false);
     const unsub = whatsappQueueEvent.subscribeUpdated(() => fetchStatus(true));
     const handleSse = () => fetchStatus(true);
     window.addEventListener('sse-wa-queue-updated', handleSse);
@@ -231,6 +231,8 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
       setDeletingId(id);
       await api.deleteWhatsAppQueueItem(id);
       toastEvent.trigger('Notification removed permanently', 'success');
+      whatsappQueueEvent.triggerUpdated();
+      automationHubEvent.triggerUpdated();
       await fetchStatus();
     } catch (err) {
       const e = err as LocalApiError;
@@ -245,6 +247,8 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
       setClearingFailed(true);
       const res = await api.clearFailedWhatsAppQueue();
       toastEvent.trigger(res.message || 'Cleared failed notifications permanently', 'success');
+      whatsappQueueEvent.triggerUpdated();
+      automationHubEvent.triggerUpdated();
       await fetchStatus();
     } catch (err) {
       const e = err as LocalApiError;
@@ -666,7 +670,9 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                 )}
               </div>
               <p className="text-[11px] text-muted truncate">
-                {waConnState === 'sleeping' && pendingTotal > 0
+                {loading && !queueState
+                  ? 'Loading queue details...'
+                  : waConnState === 'sleeping' && pendingTotal > 0
                   ? `${pendingTotal} message(s) queued — dispatch wakes WhatsApp automatically`
                   : pendingTotal > 0
                     ? `${pendingTotal} message(s) queued for paced dispatch`
@@ -695,11 +701,11 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               <div className="flex items-center gap-2">
                 <span className="text-text">Queue Dispatch Progress:</span>
                 <span className="text-sky font-mono">
-                  {todaySentCount} / {todayAllCount}
+                  {loading && !queueState ? '...' : `${todaySentCount} / ${todayAllCount}`}
                 </span>
               </div>
               <span className="text-sky font-mono font-extrabold text-sm">
-                {todayProgressPercent}%
+                {loading && !queueState ? '...' : `${todayProgressPercent}%`}
               </span>
             </div>
 
