@@ -495,11 +495,15 @@ const Dispatch = () => {
       setDistributorReminders(prev => prev.map(r => r.id === item.id ? { ...r, distributor_phone: finalPhone } : r));
       setEditingDistPhoneId(null);
 
-      // Auto-dispatch reminder message to this newly added distributor only
-      try {
-        await api.sendDistributorReminderNow(item.id);
-        showNotif(`Phone saved & reminder dispatched to ${item.distributor_name}!`);
-      } catch {
+      // Only auto-dispatch reminder if status is Pending and has not been reminded yet today
+      if (item.status === 'Pending' && !item.last_reminded_at) {
+        try {
+          await api.sendDistributorReminderNow(item.id);
+          showNotif(`Phone saved & reminder dispatched to ${item.distributor_name}!`);
+        } catch {
+          showNotif(`Phone number saved for ${item.distributor_name}`);
+        }
+      } else {
         showNotif(`Phone number saved for ${item.distributor_name}`);
       }
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useQueryClient } from '@tanstack/react-query';
-import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart } from 'lucide-react';
+import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart, Globe, Eye, EyeOff } from 'lucide-react';
 import { api, type InventoryItem, type SpecialOrder } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { parsePackSizeFromPackaging } from '../../utils/packagingMatcher';
@@ -112,9 +112,13 @@ const Inventory = () => {
     medicine: '', id: '', batch: '', expiry: '', packs: '', loose: '', mrp: '', rack: ''
   });
   const [stockFilter, setStockFilter] = useState<string>('all');
+  const [onlineFilter, setOnlineFilter] = useState<string>('all');
+  const [selectedMedIds, setSelectedMedIds] = useState<Set<number>>(new Set());
+  const [isBulkToggling, setIsBulkToggling] = useState(false);
 
   // Column Visibility — persisted in localStorage
   const COL_KEYS = [
+    { key: 'online',     label: 'Online' },
     { key: 'id',         label: 'ID' },
     { key: 'batch',      label: 'Batch' },
     { key: 'expiry',     label: 'Expiry' },
@@ -151,6 +155,7 @@ const Inventory = () => {
   const handleExport = (type: 'csv' | 'pdf') => {
     const columns = [
       { key: 'name', label: 'Medicine' },
+      ...(col('online') ? [{ key: 'is_online', label: 'Online' }] : []),
       ...(col('id') ? [{ key: 'id', label: 'ID' }] : []),
       ...(col('batch') ? [{ key: 'batch_number', label: 'Batch' }] : []),
       ...(col('expiry') ? [{ key: 'expiry_date', label: 'Expiry' }] : []),
@@ -163,6 +168,7 @@ const Inventory = () => {
 
     const formattedData = items.map(item => ({
       ...item,
+      is_online: item.is_online ? 'ONLINE' : 'OFFLINE',
       expiry_date: formatExpiryToMMYY(item.expiry_date) || '—'
     }));
 
@@ -355,6 +361,7 @@ const Inventory = () => {
       mrp: debouncedFilters.mrp,
       rack: debouncedFilters.rack,
       stock_filter: stockFilter,
+      online_filter: onlineFilter,
     },
     fetchPage: async (pageParam, filters) => {
       const res = await api.getInventory({
@@ -369,6 +376,7 @@ const Inventory = () => {
         mrp: filters.mrp,
         rack: filters.rack,
         stock_filter: filters.stock_filter,
+        online_filter: (filters as any).online_filter,
       });
       const data = res && res.data ? res.data : res;
       const totalPages = res && res.totalPages ? res.totalPages : 1;
@@ -405,6 +413,54 @@ const Inventory = () => {
       window.removeEventListener('price-updated', handleStockUpdate);
     };
   }, [refetch]);
+
+  const handleToggleOnline = async (medId: number, currentOnline: boolean) => {
+    try {
+      await api.toggleOnlineStatus({ medicine_id: medId, is_online: !currentOnline });
+      toastEvent.trigger(
+        !currentOnline ? '🌐 Medicine is now ONLINE on website & portal' : '📴 Medicine is now OFFLINE (hidden)',
+        'success'
+      );
+      refetch();
+    } catch (err: any) {
+      toastEvent.trigger(err.message || 'Failed to update online status', 'error');
+    }
+  };
+
+  const handleBulkOnline = async (isOnline: boolean) => {
+    if (selectedMedIds.size === 0) return;
+    setIsBulkToggling(true);
+    try {
+      await api.toggleOnlineStatus({ medicine_ids: Array.from(selectedMedIds), is_online: isOnline });
+      toastEvent.trigger(
+        `${selectedMedIds.size} medicines set to ${isOnline ? 'ONLINE' : 'OFFLINE'}`,
+        'success'
+      );
+      setSelectedMedIds(new Set());
+      refetch();
+    } catch (err: any) {
+      toastEvent.trigger(err.message || 'Failed to update online status', 'error');
+    } finally {
+      setIsBulkToggling(false);
+    }
+  };
+
+  const toggleMedSelection = (medId: number) => {
+    setSelectedMedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(medId)) next.delete(medId); else next.add(medId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedMedIds.size === items.length && items.length > 0) {
+      setSelectedMedIds(new Set());
+    } else {
+      const allIds = items.map(i => i.medicine_id || i.id).filter(Boolean);
+      setSelectedMedIds(new Set(allIds));
+    }
+  };
 
 
 
@@ -493,6 +549,27 @@ const Inventory = () => {
               <option value="negative">Negative Stock</option>
             </select>
 
+            {/* Online / Visibility Filter */}
+            <select
+              value={onlineFilter}
+              onChange={(e) => setOnlineFilter(e.target.value)}
+              className="h-8 px-3 rounded-lg border bg-bg3 border-glass-border text-muted hover:text-text text-[13px] font-semibold transition-all cursor-pointer focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 appearance-none"
+            >
+              <option value="all">All Channels</option>
+              <option value="online">🌐 Online Only</option>
+              <option value="offline">📴 Offline Only</option>
+            </select>
+
+            {/* Direct button to Online Catalog */}
+            <button
+              onClick={() => navigate('/online-catalog')}
+              className="h-8 flex items-center gap-1.5 px-3 rounded-lg border bg-primary/15 border-primary/40 text-primary hover:bg-primary hover:text-white text-[13px] font-bold transition-all shadow-xs"
+              title="Open full Online Store Catalog Manager"
+            >
+              <Globe size={14} />
+              Online Catalog
+            </button>
+
             {/* Export CSV */}
             <button
               onClick={() => handleExport('csv')}
@@ -577,12 +654,57 @@ const Inventory = () => {
           </div>
         </div>
 
+        {/* ── Bulk Action Bar (When medicines are selected) ──────────────── */}
+        {selectedMedIds.size > 0 && (
+          <div className="px-4 py-2 bg-primary/10 border-b border-primary/30 flex items-center justify-between shrink-0 animate-in fade-in slide-in-from-top-1">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-black tracking-wide text-primary">
+                {selectedMedIds.size} medicine{selectedMedIds.size > 1 ? 's' : ''} selected
+              </span>
+              <button
+                onClick={() => setSelectedMedIds(new Set())}
+                className="text-xs text-muted hover:text-text underline cursor-pointer"
+              >
+                Clear Selection
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                disabled={isBulkToggling}
+                onClick={() => handleBulkOnline(true)}
+                className="h-7 flex items-center gap-1.5 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition-all disabled:opacity-50 shadow-xs"
+              >
+                {isBulkToggling ? <RefreshCw size={12} className="animate-spin" /> : <Globe size={12} />}
+                🌐 Go Online (Publish)
+              </button>
+              <button
+                disabled={isBulkToggling}
+                onClick={() => handleBulkOnline(false)}
+                className="h-7 flex items-center gap-1.5 px-3 rounded-lg bg-bg3 hover:bg-red-500/20 text-muted hover:text-red-400 border border-border text-xs font-bold transition-all disabled:opacity-50"
+              >
+                <EyeOff size={12} />
+                📴 Go Offline (Hide)
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── Virtual Table ─────────────────────────────────────────────── */}
         <InfiniteTable
           totalSize={rowVirtualizer.getTotalSize()}
           containerRef={parentRef}
           header={
             <tr className="flex items-stretch w-full bg-bg2/95 border-b border-glass-border select-none">
+              {/* Checkbox Select All */}
+              <th className="p-2.5 w-9 shrink-0 flex items-end justify-center pb-3">
+                <input
+                  type="checkbox"
+                  checked={selectedMedIds.size === items.length && items.length > 0}
+                  onChange={toggleSelectAll}
+                  className="rounded border-glass-border cursor-pointer w-4 h-4"
+                  title="Select all loaded medicines"
+                />
+              </th>
               {/* Medicine */}
               <th className="p-2.5 text-left flex-1 align-bottom">
                 <div className="flex flex-col gap-1">
@@ -596,6 +718,16 @@ const Inventory = () => {
                   />
                 </div>
               </th>
+              {col('online') && (
+                <th className="p-2.5 text-center w-28 shrink-0 align-bottom">
+                  <div className="flex flex-col gap-1 items-center">
+                    <span className="text-xs font-black uppercase tracking-widest text-muted/70 flex items-center gap-1">
+                      <Globe size={11} className="text-primary" /> Online
+                    </span>
+                    <span className="text-[10px] text-muted font-normal">Click toggle</span>
+                  </div>
+                </th>
+              )}
               {col('id') && (
                 <th className="p-2.5 text-left w-16 shrink-0 align-bottom">
                   <div className="flex flex-col gap-1">
@@ -708,6 +840,15 @@ const Inventory = () => {
                     size={virtualRow.size}
                     onClick={() => handleRowClick(item)}
                   >
+                    {/* Checkbox */}
+                    <td className="px-2 py-0 w-9 shrink-0 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedMedIds.has(item.medicine_id || item.id)}
+                        onChange={() => toggleMedSelection(item.medicine_id || item.id)}
+                        className="rounded border-glass-border cursor-pointer w-4 h-4"
+                      />
+                    </td>
                     {/* Medicine name */}
                     <td className="px-3 py-0 text-[15px] font-semibold flex-1 flex items-center gap-2 truncate min-w-0">
                       <span className="truncate text-text">{item.name || item.medicine_name || item.batch_number || 'Unnamed Item'}</span>
@@ -717,6 +858,23 @@ const Inventory = () => {
                         </span>
                       )}
                     </td>
+                    {col('online') && (
+                      <td className="px-2 py-0 w-28 shrink-0 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleOnline(item.medicine_id || item.id, !!item.is_online)}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all border ${
+                            item.is_online
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/25'
+                              : 'bg-bg3 border-border text-muted hover:text-text hover:border-primary/40'
+                          }`}
+                          title={item.is_online ? '🌐 Online (visible to customers) — click to set Offline' : '📴 Offline (hidden from customers) — click to set Online'}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${item.is_online ? 'bg-emerald-400 animate-pulse' : 'bg-muted/40'}`} />
+                          <span>{item.is_online ? 'Online' : 'Offline'}</span>
+                        </button>
+                      </td>
+                    )}
                     {col('id') && <td className="px-3 py-0 text-sm text-muted w-16 shrink-0 font-mono">{item.id}</td>}
                     {col('batch') && <td className="px-3 py-0 text-sm text-muted w-28 shrink-0 font-mono truncate">{item.batch_number || '—'}</td>}
                     {col('expiry') && (

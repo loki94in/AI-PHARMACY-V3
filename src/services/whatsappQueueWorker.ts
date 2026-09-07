@@ -326,6 +326,22 @@ class WhatsAppQueueWorker {
 
     const fileJsonStr = file ? JSON.stringify(file) : null;
 
+    // Defense-in-depth: Short-window deduplication guard for distributor orders and reminders.
+    // If a distributor order was enqueued to this number in the last 15 minutes, suppress duplicate enqueue.
+    const isDistributorOrder = type === 'pharmarack_distributor_order' || type === 'distributor_cart_order';
+    if (!options?.skipDedupe && isDistributorOrder) {
+      const fifteenMinsAgo = now - (15 * 60 * 1000);
+      const recentDistQueue = await db.get(
+        `SELECT id, status FROM whatsapp_send_queue
+         WHERE number = ? AND type IN ('pharmarack_distributor_order', 'distributor_cart_order') AND created_at >= ? LIMIT 1`,
+        [cleanPhone, fifteenMinsAgo]
+      );
+      if (recentDistQueue?.id) {
+        console.log(`[Queue Safeguard] Suppressed duplicate distributor order enqueue for ${cleanPhone} (last enqueued within 15m, queue ID: ${recentDistQueue.id}, status: ${recentDistQueue.status}).`);
+        return recentDistQueue.id;
+      }
+    }
+
     // Atomic dedup + insert: the WHERE NOT EXISTS runs inside the same statement as the INSERT,
     // so two near-simultaneous enqueue() calls for the same number+message can't both pass a
     // separate SELECT check and both insert (that race caused duplicate WhatsApp sends).

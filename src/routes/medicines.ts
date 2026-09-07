@@ -650,6 +650,144 @@ router.get('/medicines/:id/quick-details', async (req, res) => {
   }
 });
 
+// GET full composition intelligence, live in-stock substitutes, purchase and sales history
+router.get('/medicines/:id/composition-intelligence', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await dbManager.getConnection();
+    const medicine = await db.get(
+      'SELECT id, name, generic_name, manufacturer, api_reference, mrp, sell_price FROM medicines WHERE id = ?',
+      [id]
+    );
+
+    if (!medicine) {
+      await dbManager.close();
+      return res.status(404).json({ error: 'Medicine not found' });
+    }
+
+    const apiRef = medicine.api_reference || medicine.generic_name || '';
+
+    let inStockAlts: any[] = [];
+    let purchaseHistory: any[] = [];
+    const salesSummary: { total_units_sold: number; last_sold_date: string | null } = { total_units_sold: 0, last_sold_date: null };
+    let masterBrandsCount = 0;
+    let masterBrandsSample: any[] = [];
+
+    // Fetch verified packaging images for this medicine
+    const images = await db.all(
+      `SELECT id, image_type, image_path, thumbnail_path, verification_status, confidence_score, is_primary
+       FROM catalog_images
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY is_primary DESC,
+         CASE COALESCE(image_type, 'combined')
+           WHEN 'front' THEN 1
+           WHEN 'combined' THEN 2
+           WHEN 'back' THEN 3
+           WHEN 'box' THEN 4
+           WHEN 'tablet' THEN 5
+           ELSE 6 END,
+         id DESC`,
+      [id]
+    );
+
+    if (apiRef) {
+      inStockAlts = await db.all(
+        `SELECT im.id as inventory_id, m.id as medicine_id, m.name as medicine_name, m.manufacturer,
+                im.batch_no, im.expiry_date, im.quantity, im.loose_quantity,
+                COALESCE(im.mrp, m.mrp, 0) as mrp, im.unit_price, im.rack_location
+         FROM inventory_master im
+         JOIN medicines m ON im.medicine_id = m.id
+         WHERE im.quantity > 0 AND (
+           (m.api_reference IS NOT NULL AND m.api_reference != '' AND LOWER(m.api_reference) = LOWER(?))
+           OR (m.generic_name IS NOT NULL AND m.generic_name != '' AND LOWER(m.generic_name) = LOWER(?))
+         )
+         ORDER BY im.quantity DESC
+         LIMIT 20`,
+        [apiRef, apiRef]
+      );
+
+      // Attach primary packaging thumbnail for each in-stock substitute
+      for (const alt of inStockAlts) {
+        const img = await db.get(
+          `SELECT image_path, thumbnail_path, image_type
+           FROM catalog_images
+           WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+           ORDER BY is_primary DESC, id ASC LIMIT 1`,
+          [alt.medicine_id]
+        );
+        if (img) {
+          alt.primary_image_path = img.thumbnail_path || img.image_path;
+          alt.image_type = img.image_type;
+        }
+      }
+
+      purchaseHistory = await db.all(
+        `SELECT pi.id, p.id as purchase_id, p.invoice_no, p.date as purchase_date,
+                COALESCE(d.name, 'Direct / Unknown') as distributor_name,
+                m.name as medicine_name, pi.batch_no, pi.expiry_date, pi.quantity, pi.cost_price, pi.mrp
+         FROM purchase_items pi
+         JOIN purchases p ON pi.purchase_id = p.id
+         LEFT JOIN distributors d ON p.distributor_id = d.id
+         JOIN medicines m ON pi.medicine_id = m.id
+         WHERE (
+           pi.medicine_id = ?
+           OR (m.api_reference IS NOT NULL AND m.api_reference != '' AND LOWER(m.api_reference) = LOWER(?))
+         )
+         ORDER BY p.date DESC
+         LIMIT 20`,
+        [id, apiRef]
+      );
+
+      const salesData = await db.get(
+        `SELECT SUM(si.quantity) as total_qty, MAX(s.date) as last_date
+         FROM sale_items si
+         JOIN sales_invoices s ON si.invoice_id = s.id
+         LEFT JOIN inventory_master im ON si.inventory_id = im.id
+         LEFT JOIN medicines m ON im.medicine_id = m.id
+         WHERE im.medicine_id = ? OR (m.api_reference IS NOT NULL AND LOWER(m.api_reference) = LOWER(?))`,
+        [id, apiRef]
+      );
+      if (salesData) {
+        salesSummary.total_units_sold = salesData.total_qty || 0;
+        salesSummary.last_sold_date = salesData.last_date || null;
+      }
+
+      const countRow = await db.get(
+        `SELECT count(*) as c FROM medicines
+         WHERE (api_reference IS NOT NULL AND LOWER(api_reference) = LOWER(?))
+            OR (generic_name IS NOT NULL AND LOWER(generic_name) = LOWER(?))`,
+        [apiRef, apiRef]
+      );
+      masterBrandsCount = countRow ? countRow.c : 0;
+
+      masterBrandsSample = await db.all(
+        `SELECT id, name, manufacturer, mrp FROM medicines
+         WHERE (api_reference IS NOT NULL AND LOWER(api_reference) = LOWER(?))
+            OR (generic_name IS NOT NULL AND LOWER(generic_name) = LOWER(?))
+         ORDER BY name ASC
+         LIMIT 40`,
+        [apiRef, apiRef]
+      );
+    }
+
+    await dbManager.close();
+    res.json({
+      medicine,
+      api_reference: apiRef,
+      images,
+      in_stock_alternatives: inStockAlts,
+      purchase_history: purchaseHistory,
+      sales_history: salesSummary,
+      master_brands_count: masterBrandsCount,
+      master_brands_sample: masterBrandsSample
+    });
+  } catch (error) {
+    await dbManager.close();
+    console.error('Failed to get composition intelligence:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/medicines/seed-master - seed master reference catalog
 router.post('/medicines/seed-master', async (req, res) => {
   try {

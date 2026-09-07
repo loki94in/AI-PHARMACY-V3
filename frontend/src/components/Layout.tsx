@@ -46,6 +46,7 @@ import {
   Globe,
   Image as ImageIcon,
   Power,
+  Store as StoreIcon,
 } from 'lucide-react';
 import { shortcutEvent, SHORTCUT_DIRECTORY, modalManager, useModalEscape } from '../services/keyboardShortcuts';
 import {
@@ -210,6 +211,7 @@ const Sidebar = memo(({
     { path: '/learning', label: 'AI Learning', icon: <Brain size={18} /> },
     { path: '/dispatch', label: 'Dispatch', icon: <Truck size={18} /> },
     { path: '/website-orders', label: 'Website Orders', icon: <Globe size={18} /> },
+    { path: '/online-catalog', label: 'Online Store Catalog', icon: <StoreIcon size={18} /> },
     { path: '/live-cart', label: 'Pharmacy Live Cart', icon: <ShoppingCart size={18} /> },
     { path: '/portal', label: 'Customer Portal', icon: <Globe size={18} /> },
     { path: '/crm', label: 'CRM & Messages', icon: <Users size={18} /> },
@@ -3709,7 +3711,7 @@ export const Layout = ({
   const location = useLocation();
   const queryClient = useQueryClient();
   const isPortalPage = ['/portal', '/refill-portal', '/customer-login', '/customer/login', '/my-bills', '/customer-bills'].includes(location.pathname);
-  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration'].includes(location.pathname);
+  const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration', '/online-catalog'].includes(location.pathname);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {

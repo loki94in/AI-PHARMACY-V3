@@ -3,16 +3,22 @@
 /**
  * scripts/cross-check-images-aicamera.ts
  * 
- * Uses the app's AI Camera OCR engine (aiCameraService) to cross-check downloaded images
- * against the store inventory Catalog Name and the Frontend Name.
+ * Uses the app's upgraded AI Camera engine (aiCameraService) to cross-check downloaded images
+ * against the store inventory Catalog Name, Frontend Name, and SQLite medicines database.
+ * 
+ * Flags:
+ *   --all            Test all available downloaded product images
+ *   --limit=<N>      Test up to N products (default: 30)
+ *   --batch-size=<N> Batch report size (default: 10)
  */
 
 import fs from 'fs';
 import path from 'path';
-import { aiCameraService } from '../src/services/aiCameraService.ts';
+import { aiCameraService } from '../src/services/aiCameraService.js';
 
 const STATE_FILE = path.resolve('data/image_download_state.json');
 const PRODUCTS_DIR = path.resolve('frontend/public/products');
+const AUDIT_OUT_FILE = path.resolve('data/image_audit_results.json');
 
 interface CheckResult {
   index: number;
@@ -22,8 +28,12 @@ interface CheckResult {
   imageFileName: string;
   ocrConfidence: number;
   ocrText: string;
+  detectedDbMatches: string[];
+  detectedDosageForm?: string | null;
+  detectedManufacturer?: string | null;
   catalogFrontendMatch: boolean;
   imageCatalogMatch: boolean;
+  dbMatchFound: boolean;
   matchScore: number;
   isWrong: boolean;
   verdict: string;
@@ -42,9 +52,10 @@ function extractCoreBrand(raw: string): string {
   return words[0] ? words[0].toUpperCase() : '';
 }
 
-function computeSimilarity(catalogName: string, frontendName: string, ocrText: string): {
+function computeSimilarity(catalogName: string, frontendName: string, ocrText: string, dbMatches: string[] = []): {
   catalogFrontendMatch: boolean;
   imageCatalogMatch: boolean;
+  dbMatchFound: boolean;
   matchScore: number;
   isWrong: boolean;
   verdict: string;
@@ -55,40 +66,37 @@ function computeSimilarity(catalogName: string, frontendName: string, ocrText: s
   const normOcr = ocrText.toUpperCase();
 
   // 1. Catalog vs Frontend Match
-  const brandInFrontend = brand && normFrontend.includes(brand);
+  const brandInFrontend = Boolean(brand && normFrontend.includes(brand));
 
-  // Check if frontend is completely different brand
-  let catalogFrontendMatch = Boolean(brandInFrontend);
-
-  // 2. Image vs Catalog Match
-  // Does OCR text on the image contain the brand or key tokens?
-  const brandInOcr = brand && normOcr.includes(brand);
+  // 2. Image vs Catalog Match (brand found in OCR text or DB matches)
+  const brandInOcr = Boolean(brand && normOcr.includes(brand));
+  const brandInDbMatch = Boolean(brand && dbMatches.some(m => m.toUpperCase().includes(brand)));
+  const imageCatalogMatch = brandInOcr || brandInDbMatch;
+  const dbMatchFound = dbMatches.length > 0;
 
   // Check for strength match if catalog specifies numbers
   const strengthMatch = catalogName.match(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/i);
   let strengthInOcr = false;
   if (strengthMatch) {
     const num = strengthMatch[0].match(/\d+/)?.[0];
-    if (num && normOcr.includes(num)) {
+    if (num && (normOcr.includes(num) || dbMatches.some(m => m.includes(num)))) {
       strengthInOcr = true;
     }
   }
 
   let matchScore = 0;
-  if (brandInFrontend && brandInOcr) {
-    matchScore = strengthInOcr ? 99 : 92;
-  } else if (brandInFrontend && !brandInOcr) {
-    // Brand in frontend, but OCR missed or partial
+  if (brandInFrontend && imageCatalogMatch) {
+    matchScore = (strengthInOcr || brandInDbMatch) ? 99 : 92;
+  } else if (brandInFrontend && !imageCatalogMatch) {
     matchScore = 70;
   } else if (!brandInFrontend) {
-    // Frontend itself downloaded a completely different product
     matchScore = 15;
   }
 
-  const isWrong = !brandInFrontend || (!brandInOcr && normOcr.length > 30 && matchScore < 50);
+  const isWrong = !brandInFrontend || (!imageCatalogMatch && normOcr.length > 30 && matchScore < 50);
 
   let verdict = '99% MATCH (VERIFIED)';
-  let reason = 'Exact brand verified in both frontend name and image label.';
+  let reason = 'Exact brand verified in frontend name and packaging label.';
 
   if (isWrong) {
     verdict = 'WRONG IMAGE (MISMATCH)';
@@ -103,8 +111,9 @@ function computeSimilarity(catalogName: string, frontendName: string, ocrText: s
   }
 
   return {
-    catalogFrontendMatch,
-    imageCatalogMatch: Boolean(brandInOcr),
+    catalogFrontendMatch: brandInFrontend,
+    imageCatalogMatch,
+    dbMatchFound,
     matchScore,
     isWrong,
     verdict,
@@ -113,8 +122,15 @@ function computeSimilarity(catalogName: string, frontendName: string, ocrText: s
 }
 
 async function runAudit() {
+  const args = process.argv.slice(2);
+  const runAll = args.includes('--all');
+  const limitArg = args.find(a => a.startsWith('--limit='));
+  const limitVal = limitArg ? parseInt(limitArg.split('=')[1], 10) : (args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1], 10) : null);
+  const batchSizeArg = args.find(a => a.startsWith('--batch-size='));
+  const BATCH_SIZE = batchSizeArg ? parseInt(batchSizeArg.split('=')[1], 10) : 10;
+
   console.log('='.repeat(80));
-  console.log('   AI PHARMACY — IMAGE CROSS-CHECK AUDIT VIA AI CAMERA OCR');
+  console.log('   AI PHARMACY — IMAGE CROSS-CHECK AUDIT VIA AI CAMERA OCR & DB MATCH');
   console.log('='.repeat(80));
 
   const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
@@ -124,87 +140,77 @@ async function runAudit() {
       catalogName: k,
       frontendName: v.matched_name || '',
       imageFileName: (v.images.front || v.images.default).fileName
-    }));
+    }))
+    .filter(item => fs.existsSync(path.join(PRODUCTS_DIR, item.imageFileName)));
 
-  console.log(`Loaded ${allProds.length} products with downloadable images.\n`);
+  console.log(`Loaded ${allProds.length} valid downloaded product images on disk.\n`);
 
-  const NUM_BATCHES = 3;
-  const BATCH_SIZE = 10;
-  const totalToTest = NUM_BATCHES * BATCH_SIZE;
-
+  const totalToTest = runAll ? allProds.length : (limitVal || 30);
   const testItems = allProds.slice(0, totalToTest);
+  console.log(`Auditing ${testItems.length} products (Batch size: ${BATCH_SIZE}, Run all: ${runAll})...\n`);
+
   const results: CheckResult[] = [];
 
   for (let i = 0; i < testItems.length; i++) {
     const item = testItems[i];
     const imagePath = path.join(PRODUCTS_DIR, item.imageFileName);
 
-    if (!fs.existsSync(imagePath)) {
-      continue;
-    }
-
     const buf = fs.readFileSync(imagePath);
-    let ocrRes = { text: '', confidence: 0 };
+    let processRes: any = { text: '', confidence: 0, matches: [], medicineInfo: {} };
     try {
-      ocrRes = await aiCameraService.extractTextFromImage(buf);
+      processRes = await aiCameraService.processImage(buf, true);
     } catch (e: any) {
       console.error(`Error processing image ${item.imageFileName}:`, e.message);
     }
 
-    const sim = computeSimilarity(item.catalogName, item.frontendName, ocrRes.text);
+    const sim = computeSimilarity(item.catalogName, item.frontendName, processRes.text, processRes.matches);
 
-    results.push({
+    const checkItem: CheckResult = {
       index: i + 1,
       catalogName: item.catalogName,
       cleanCatalogName: cleanName(item.catalogName),
       frontendName: item.frontendName,
       imageFileName: item.imageFileName,
-      ocrConfidence: ocrRes.confidence,
-      ocrText: ocrRes.text.replace(/\s+/g, ' ').trim(),
+      ocrConfidence: processRes.confidence,
+      ocrText: (processRes.text || '').replace(/\s+/g, ' ').trim(),
+      detectedDbMatches: processRes.matches || [],
+      detectedDosageForm: processRes.medicineInfo?.dosageForm || null,
+      detectedManufacturer: processRes.medicineInfo?.manufacturer || null,
       ...sim
-    });
+    };
+
+    results.push(checkItem);
+
+    // Save incrementally after each item
+    fs.writeFileSync(AUDIT_OUT_FILE, JSON.stringify(results, null, 2), 'utf-8');
+
+    // Progress print
+    const statusIcon = checkItem.isWrong ? '❌' : (checkItem.matchScore >= 90 ? '✅' : '⚠️');
+    console.log(`[${i + 1}/${testItems.length}] ${statusIcon} ${checkItem.cleanCatalogName} -> ${checkItem.verdict} (${checkItem.matchScore}%) | DB Matches: [${checkItem.detectedDbMatches.slice(0, 2).join(', ')}]`);
+
+    // Batch report at boundary
+    if ((i + 1) % BATCH_SIZE === 0 || i === testItems.length - 1) {
+      const batchNum = Math.ceil((i + 1) / BATCH_SIZE);
+      const startIdx = (batchNum - 1) * BATCH_SIZE;
+      const batch = results.slice(startIdx, i + 1);
+      const wrongInBatch = batch.filter(x => x.isWrong).length;
+      console.log(`>>> Batch ${batchNum} Complete: ${batch.length - wrongInBatch}/${batch.length} Verified Correct\n`);
+    }
   }
 
   await aiCameraService.terminate();
-
-  // Save audit results to JSON
-  fs.writeFileSync('data/image_audit_results.json', JSON.stringify(results, null, 2), 'utf-8');
-
-  // Print results batch by batch
-  for (let b = 0; b < NUM_BATCHES; b++) {
-    const startIdx = b * BATCH_SIZE;
-    const endIdx = startIdx + BATCH_SIZE;
-    const batch = results.slice(startIdx, endIdx);
-
-    console.log('\n' + '#'.repeat(80));
-    console.log(`                BATCH ${b + 1} (Products ${startIdx + 1} to ${endIdx})`);
-    console.log('#'.repeat(80));
-
-    for (const r of batch) {
-      const statusIcon = r.isWrong ? '❌ [WRONG IMAGE]' : (r.matchScore >= 90 ? '✅ [99% MATCH]' : '⚠️ [PARTIAL]');
-      console.log(`\nItem #${r.index}: ${statusIcon}`);
-      console.log(`  📋 Catalog Name:   ${r.catalogName}`);
-      console.log(`  🌐 Frontend Name:  ${r.frontendName}`);
-      console.log(`  🖼️  Image File:     ${r.imageFileName}`);
-      console.log(`  📸 AI Camera OCR:  "${r.ocrText.slice(0, 90)}${r.ocrText.length > 90 ? '...' : ''}" (Confidence: ${r.ocrConfidence}%)`);
-      console.log(`  ⚖️  Verdict:        ${r.verdict} (Score: ${r.matchScore}%)`);
-      if (r.isWrong) {
-        console.log(`  🚨 Failure Reason: ${r.reason}`);
-      }
-    }
-
-    const wrongInBatch = batch.filter(x => x.isWrong);
-    console.log(`\n>>> Batch ${b + 1} Summary: ${batch.length - wrongInBatch.length} Correct Matches, ${wrongInBatch.length} Wrong Images.`);
-  }
 
   console.log('\n' + '='.repeat(80));
   console.log('                        AUDIT RUN SUMMARY');
   console.log('='.repeat(80));
   const totalWrong = results.filter(x => x.isWrong).length;
   const totalCorrect = results.length - totalWrong;
-  console.log(`Total Tested:          ${results.length}`);
-  console.log(`Verified Matches:      ${totalCorrect} (${((totalCorrect / results.length) * 100).toFixed(1)}%)`);
-  console.log(`Wrong/Mismatched:      ${totalWrong} (${((totalWrong / results.length) * 100).toFixed(1)}%)`);
+  const totalWithDbMatches = results.filter(x => x.dbMatchFound).length;
+  console.log(`Total Images Tested:    ${results.length}`);
+  console.log(`Verified Matches:       ${totalCorrect} (${((totalCorrect / results.length) * 100).toFixed(1)}%)`);
+  console.log(`Database Matches Found: ${totalWithDbMatches} (${((totalWithDbMatches / results.length) * 100).toFixed(1)}%)`);
+  console.log(`Mismatched/Wrong:       ${totalWrong} (${((totalWrong / results.length) * 100).toFixed(1)}%)`);
+  console.log(`Results Saved To:       ${AUDIT_OUT_FILE}`);
   console.log('='.repeat(80) + '\n');
 }
 

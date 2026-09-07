@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-15 — Distributor messages sent twice / duplicate distributor order & reminder dispatches when order already sent or generated
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the installed app, sometimes the same message is sent to the distributor twice if the order was already sent, or if the app generated the message twice. |
+| **Root cause** | Compounding gaps across 5 trigger points: (1) In `handleSendWhatsAppOrder` (`PharmarackCart/index.tsx`), single order send called `POST /messaging/send` and then called `POST /pharmarack/cart/notify-manual` with default `targetMode = 'both'` to notify delivery boys, but `notify-manual` called `notifyDistributorCartOrder()` which formatted and enqueued a SECOND message to the distributor. String differences caused exact dedupe to miss. (2) Empty-cart transition auto-notifications in `routes/pharmarack.ts` lacked same-day order check, re-sending orders already sent from the UI. (3) Auto reminder worker in `distributorDispatchReminderWorker.ts` queried `WHERE r.status != 'No Order Today'`, which included `Dispatched` (e.g. distributor already sent invoice by email) and `Collected`, causing reminders to be sent to distributors who had already dispatched. (4) Inline phone edits on Dispatch table triggered an immediate reminder send even on completed/reminded rows. (5) `whatsapp_send_queue` only matched exact string equality, allowing near-duplicate order sends. |
+| **How it was fixed** | 1. Added `skipDistributor: true` option in `notifyDistributorCartOrder` and `POST /pharmarack/cart/notify-manual`; `handleSendWhatsAppOrder` now passes `skipDistributor: true` so the distributor is only messaged once while delivery boys are recorded for batch dispatch.<br>2. Added same-day order deduplication in `notifyDistributorCartOrder` suppressing duplicate sends within 2 hours or same day.<br>3. Changed reminder worker queries and `sendDistributorDispatchReminder` to strictly gate on `status = 'Pending'`, completely skipping already `Dispatched` or `Collected` orders.<br>4. Guarded Dispatch table phone edits to only auto-send if status is `Pending` and not yet reminded today.<br>5. Added 15-minute duplicate guard in `whatsappQueueWorker.enqueue` for distributor orders and deduplicated identical same-day batch orders in `whatsappQueue.ts`. |
+| **Priority** | P1 |
+| **What not to touch** | Safe anti-ban pacing rules (10-15s); single-flight processor lock; delivery boy daily batch dispatch mechanism. |
+| **Verified by** | `tests/distributorNotification.test.ts` (9/9 PASS); backend `npx tsc --noEmit` clean; frontend build clean; `npm run guardrails` PASS. |
+
 ### [Fixed] P1-14 — Customer past bills failed to load and WhatsApp OTP login was blocked for unprovisioned users
 
 | Field | Content |

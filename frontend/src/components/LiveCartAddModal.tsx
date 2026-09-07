@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap } from 'lucide-react';
+import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap, WifiOff } from 'lucide-react';
 import { api, type SpecialOrder, type Refill } from '../services/api';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -25,6 +25,7 @@ interface SuggestionMedicine {
   company?: string;
   manufacturer?: string;
   mrp?: number | null;
+  isOffline?: boolean;
 }
 
 type LocalApiError = { response?: { data?: { error?: string; details?: string } }; message?: string };
@@ -47,6 +48,7 @@ interface LocalPharmarackSearchItem {
   storeId?: string | number;
   productCode?: string;
   company?: string;
+  isOffline?: boolean;
 }
 
 interface LocalReconOrder {
@@ -1051,7 +1053,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               productId: item.productId,
               storeId: item.storeId,
               productCode: item.productCode,
-              company: item.company
+              company: item.company,
+              isOffline: item.isOffline
             });
           });
 
@@ -1059,6 +1062,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           const getStockTier = (stockStr: string | undefined | null): number => {
             if (!stockStr) return 2;
             const s = String(stockStr).toLowerCase().trim();
+            if (s === 'offline') return 1;
             if (s === 'high') return 2;
             if (s === 'low') return 1;
             if (s === '0' || s === 'out of stock' || s === 'nil') return 0;
@@ -2347,15 +2351,21 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                                   <span className="text-muted font-mono font-semibold">{med.packaging}</span>
                                 )}
                                 {med.stock !== undefined && (
-                                  <span className={`font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 ${
-                                    (med.stock.toLowerCase() === 'high' || parseInt(med.stock) >= 15)
-                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                      : (med.stock.toLowerCase() === 'low' || parseInt(med.stock) > 0)
-                                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                      : 'bg-red-500/10 text-red border border-red-500/20'
-                                  }`}>
-                                    <Package size={10} /> {med.stock}
-                                  </span>
+                                  (med.isOffline || String(med.stock).toLowerCase() === 'offline') ? (
+                                    <span className="font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 bg-bg3 text-muted border border-border" title="Saved Offline History">
+                                      <WifiOff size={10} className="text-muted" /> Offline
+                                    </span>
+                                  ) : (
+                                    <span className={`font-bold font-mono px-1.5 py-0.5 rounded-md text-[10px] flex items-center gap-1 ${
+                                      (med.stock.toLowerCase() === 'high' || parseInt(med.stock) >= 15)
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                        : (med.stock.toLowerCase() === 'low' || parseInt(med.stock) > 0)
+                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                        : 'bg-red-500/10 text-red border border-red-500/20'
+                                    }`}>
+                                      <Package size={10} /> {med.stock}
+                                    </span>
+                                  )
                                 )}
                               </div>
                             )}

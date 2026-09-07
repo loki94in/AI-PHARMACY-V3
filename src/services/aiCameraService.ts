@@ -48,12 +48,18 @@ class AICameraService {
    * Load all API composition and drug generic words from the database
    * dynamically to ignore them during OCR fuzzy matching.
    */
+  public readonly KNOWN_APIS = new Set<string>();
+
+  /**
+   * Load all API composition and drug generic words from the database
+   * dynamically to track known active ingredients.
+   */
   public async loadDatabaseIgnoreList(): Promise<void> {
     if (this.ignoreListLoaded) return;
     try {
       const db = await dbManager.getConnection();
       
-      // 1. Fetch api_reference from medicines
+      // 1. Fetch api_reference from medicines into KNOWN_APIS
       const medicineApis = await db.all('SELECT DISTINCT api_reference FROM medicines WHERE api_reference IS NOT NULL AND api_reference <> ""');
       for (const row of medicineApis) {
         if (row.api_reference) {
@@ -61,13 +67,13 @@ class AICameraService {
           for (const word of words) {
             const cleanWord = word.trim().toLowerCase();
             if (cleanWord.length > 2) {
-              this.STOP_WORDS.add(cleanWord);
+              this.KNOWN_APIS.add(cleanWord);
             }
           }
         }
       }
 
-      // 2. Fetch compositions from medicine_reference
+      // 2. Fetch compositions from medicine_reference into KNOWN_APIS
       try {
         const refApis = await db.all('SELECT DISTINCT composition1, composition2 FROM medicine_reference');
         for (const row of refApis) {
@@ -76,7 +82,7 @@ class AICameraService {
             for (const word of words) {
               const cleanWord = word.trim().toLowerCase();
               if (cleanWord.length > 2) {
-                this.STOP_WORDS.add(cleanWord);
+                this.KNOWN_APIS.add(cleanWord);
               }
             }
           }
@@ -85,7 +91,7 @@ class AICameraService {
             for (const word of words) {
               const cleanWord = word.trim().toLowerCase();
               if (cleanWord.length > 2) {
-                this.STOP_WORDS.add(cleanWord);
+                this.KNOWN_APIS.add(cleanWord);
               }
             }
           }
@@ -94,7 +100,7 @@ class AICameraService {
         console.warn('[AiCamera] Could not load from medicine_reference table:', refErr);
       }
 
-      // 3. Fetch user permanently ignored words
+      // 3. Fetch user permanently ignored words into STOP_WORDS
       try {
         const userIgnored = await db.all('SELECT word FROM permanently_ignored_words');
         for (const row of userIgnored) {
@@ -108,7 +114,7 @@ class AICameraService {
       }
 
       this.ignoreListLoaded = true;
-      console.log(`[AiCamera] Dynamically loaded drug generic/API ignore list from DB. Total stop words: ${this.STOP_WORDS.size}`);
+      console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}`);
     } catch (err) {
       console.error('[AiCamera] Failed to load database ignore list:', err);
     }
@@ -160,6 +166,14 @@ class AICameraService {
     'mrp','mfg','exp','batch','lot','no','nos','each','qty',
     'manufactured','marketed','distributed','by','pvt','ltd','inc',
     'pharma','pharmaceuticals','laboratories','lab','labs','care',
+    // Pharmacopoeia standards & Rx markers (often read with dots or OCR misread as 1.p., etc.)
+    'ip', 'bp', 'usp', '1p', 'ep', 'nf', 'rx',
+    // Package and storage filler words
+    'flavour', 'flavor', 'flav', 'taste', 'sugar', 'free', 'contains', 'composition',
+    'keep', 'out', 'reach', 'children', 'store', 'cool', 'dry', 'place', 'protect',
+    'light', 'storage', 'warning', 'caution', 'schedule', 'prescription',
+    'physician', 'directed', 'dosage', 'shake', 'well', 'before', 'use', 'external', 'only',
+    'net', 'weight', 'vol', 'volume', 'bottle', 'carton', 'box', 'pack', 'packings',
     // Route / administration descriptors (NOT brand names)
     'ophthalmic','oral','topical','intravenous','subcutaneous','nasal','rectal',
     'vaginal','otic','dermal','buccal','sublingual','inhaled','iv','im',
@@ -170,14 +184,21 @@ class AICameraService {
   /**
    * Returns candidate search tokens from an OCR text line by:
    * 1. Splitting into words
-   * 2. Removing stop words, single-char tokens, and pure-numeric tokens
+   * 2. Stripping leading/trailing punctuation and non-alphanumeric noise (e.g. 3%% -> 3, (baclof) -> baclof)
+   * 3. Removing stop words, single-char tokens, pure-numeric tokens, and pharmacopoeia markers
    * Only the remaining "uncertain" / unknown words are worth fuzzy-matching.
    */
   private extractCandidateTokens(line: string): string[] {
     return line
       .split(/[\s,;:|()\[\]{}\/\\]+/)
-      .map(w => w.trim().toLowerCase())
-      .filter(w => w.length > 2 && !this.STOP_WORDS.has(w) && !/^\d+$/.test(w));
+      .map(w => w.trim().toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, ''))
+      .filter(w => {
+        if (w.length < 3) return false;
+        if (this.STOP_WORDS.has(w)) return false;
+        if (/^\d+[%a-z]*$/i.test(w)) return false;
+        if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
+        return true;
+      });
   }
 
   /**
@@ -274,19 +295,19 @@ class AICameraService {
   detectDosageForm(text: string): string | null {
     if (!text) return null;
     const patterns: [RegExp, string][] = [
-      [/\b(?:tab(?:let)?s?)\b/i, 'Tablet'],
+      [/\b(?:tab(?:let)?s?|caplets?)\b/i, 'Tablet'],
       [/\b(?:cap(?:sule)?s?)\b/i, 'Capsule'],
-      [/\b(?:syp|syrup)\b/i, 'Syrup'],
-      [/\b(?:susp(?:ension)?)\b/i, 'Suspension'],
-      [/\b(?:inj(?:ection)?)\b/i, 'Injection'],
+      [/\b(?:liquid|oral\s*solution|solution|syrup|syp|elixir)\b/i, 'Syrup'],
+      [/\b(?:susp(?:ension)?|oral\s*suspension)\b/i, 'Suspension'],
+      [/\b(?:inj(?:ection)?|infusion)\b/i, 'Injection'],
       [/\b(?:gel)\b/i, 'Gel'],
       [/\b(?:cream)\b/i, 'Cream'],
-      [/\b(?:drops?|eye\s*drops?|ear\s*drops?)\b/i, 'Drops'],
+      [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, 'Drops'],
       [/\b(?:oint(?:ment)?)\b/i, 'Ointment'],
       [/\b(?:lotion)\b/i, 'Lotion'],
       [/\b(?:powder)\b/i, 'Powder'],
       [/\b(?:spray)\b/i, 'Spray'],
-      [/\b(?:inh(?:aler)?)\b/i, 'Inhaler'],
+      [/\b(?:inh(?:aler)?|respules?)\b/i, 'Inhaler'],
       [/\b(?:sachet)\b/i, 'Sachet'],
     ];
     for (const [regex, form] of patterns) {
@@ -392,33 +413,52 @@ class AICameraService {
           .map(line => ({ original: line, tokens: this.extractCandidateTokens(line) }))
           .filter(item => item.tokens.length > 0);
 
+        const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
+        let bestLineMatches: string[] = [];
+        let bestLineScore = 0;
+
         for (const item of candidateLines) {
           const cleanedLine = item.tokens.join(' ');
           // Try the full cleaned line first (best for multi-word names)
           const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
             minConfidenceThreshold: 0.65,
+            dosageForm: detectedDosageForm || undefined,
             rawOcrText: localOcrResult.text
           });
 
-          if (filterResult.matches.length > 0) {
-            matches = filterResult.matches;
-            break;
-          }
-
-          // If the line-level query found nothing, try individual uncertain tokens
-          // (handles cases where only one word in the line is the product name)
-          for (const token of item.tokens) {
-            if (token.length < 4) continue; // skip very short tokens
-            const tokenResult = await productNameFilterService.filterProductNames(token, {
-              minConfidenceThreshold: 0.7,
-              rawOcrText: localOcrResult.text
-            });
-            if (tokenResult.matches.length > 0) {
-              matches = tokenResult.matches;
+          const lineScore = filterResult.topScore ?? 0;
+          if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
+            bestLineScore = lineScore;
+            bestLineMatches = filterResult.matches;
+            if (bestLineScore >= 0.88) {
               break;
             }
           }
-          if (matches.length > 0) break;
+        }
+
+        if (bestLineMatches.length > 0) {
+          matches = bestLineMatches;
+        } else {
+          // If the line-level query found nothing, try individual uncertain tokens
+          // (handles cases where only one word in the line is the product name)
+          for (const item of candidateLines) {
+            for (const token of item.tokens) {
+              if (token.length < 4) continue; // skip very short tokens
+              const tokenResult = await productNameFilterService.filterProductNames(token, {
+                minConfidenceThreshold: 0.7,
+                dosageForm: detectedDosageForm || undefined,
+                rawOcrText: localOcrResult.text
+              });
+              const tokenScore = tokenResult.topScore ?? 0;
+              if (tokenResult.matches.length > 0 && tokenScore > bestLineScore) {
+                bestLineScore = tokenScore;
+                bestLineMatches = tokenResult.matches;
+                if (bestLineScore >= 0.88) break;
+              }
+            }
+            if (bestLineMatches.length > 0) break;
+          }
+          matches = bestLineMatches;
         }
       } catch (err: any) {
         console.error('[AiCamera] Fuzzy match failed:', err);

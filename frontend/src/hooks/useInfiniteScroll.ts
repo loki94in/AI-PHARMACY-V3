@@ -17,6 +17,7 @@ export interface InfiniteScrollFilters {
   mrp?: string;
   rack?: string;
   stock_filter?: string;
+  online_filter?: string;
   date_from?: string;
   date_to?: string;
   min_amount?: string;

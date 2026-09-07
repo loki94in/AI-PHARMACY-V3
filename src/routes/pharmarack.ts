@@ -144,12 +144,13 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
             rate: p.distributorPrice !== null && p.distributorPrice !== undefined ? Number(p.distributorPrice) : null,
             mrp: p.mrp !== null && p.mrp !== undefined ? Number(p.mrp) : null,
             mapped: p.isMapped,
-            stock: p.availability || 'High',
+            stock: 'Offline',
             scheme: '',
             productId: p.storeId ? (p.storeId * 100000 + 1) : 1,
             productCode: '',
             company: p.manufacturer || '',
-            storeId: p.storeId || 1
+            storeId: p.storeId || 1,
+            isOffline: true
           });
         }
       }
@@ -217,13 +218,14 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
                 rate: lp.rate !== null && lp.rate !== undefined ? Number(lp.rate) : null,
                 mrp: lp.mrp !== null && lp.mrp !== undefined ? Number(lp.mrp) : null,
                 mapped: mappedStatus,
-                stock: stockDisplay,
+                stock: 'Offline',
                 scheme: lp.scheme ? `${lp.scheme}%` : '',
                 productId: lp.medicineId || 1,
                 productCode: String(lp.medicineId || ''),
                 company: lp.company || '',
                 storeId: lp.distributorId || 1,
-                isLocalPharmacy: true
+                isLocalPharmacy: true,
+                isOffline: true
               });
             }
           }
@@ -258,13 +260,14 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
                   rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
                   mrp: bm.mrp ? Number(bm.mrp) : null,
                   mapped: true,
-                  stock: bm.currentStock > 0 ? (bm.currentStock >= 10 ? 'High' : String(bm.currentStock)) : 'Low',
+                  stock: 'Offline',
                   scheme: '',
                   productId: bm.medicineId || 1,
                   productCode: String(bm.medicineId || ''),
                   company: bm.company || '',
                   storeId: defaultDistributor?.id || 1,
-                  isLocalPharmacy: true
+                  isLocalPharmacy: true,
+                  isOffline: true
                 });
               }
             }
@@ -1780,15 +1783,21 @@ async function verifyOrderPlacedInPharmarack(storeId: number): Promise<boolean> 
 
 // Manual notification trigger
 router.post('/cart/notify-manual', async (req, res) => {
-  const { storeId, storeName, deliveryPersons, items } = req.body;
+  const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;
   if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Missing distributor info or items list' });
   }
 
   try {
-    const result = await notificationService.notifyDistributorCartOrder(storeName, Number(storeId), items, deliveryPersons || []);
+    const result = await notificationService.notifyDistributorCartOrder(
+      storeName,
+      Number(storeId),
+      items,
+      deliveryPersons || [],
+      { skipDistributor: !!skipDistributor }
+    );
     if (result.ok) {
-      res.json({ success: true, message: 'Notifications sent successfully via WhatsApp!', sentCount: result.sentCount, suppressedCount: result.suppressedCount });
+      res.json({ success: true, message: 'Notifications processed successfully via WhatsApp!', sentCount: result.sentCount, suppressedCount: result.suppressedCount });
     } else {
       res.status(500).json({ error: 'Failed to send WhatsApp messages.' });
     }

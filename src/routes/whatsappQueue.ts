@@ -155,10 +155,26 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
 
       // Same-day check: Check if this distributor order with identical items was already enqueued/placed today
       const alreadyPlacedToday = await db.get(
-        `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND store_name = ? LIMIT 1`,
+        `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND store_name = ? ORDER BY id DESC LIMIT 1`,
         [today, order.storeName]
       );
       if (alreadyPlacedToday) {
+        let isSameItems = false;
+        try {
+          const placedItems = typeof alreadyPlacedToday.items_json === 'string' ? JSON.parse(alreadyPlacedToday.items_json) : alreadyPlacedToday.items_json;
+          if (Array.isArray(placedItems) && Array.isArray(order.items) && placedItems.length === order.items.length) {
+            const placedCodes = placedItems.map((it: any) => it.productCode || it.productName || it.name || '').sort().join(',');
+            const orderCodes = order.items.map((it: any) => it.productCode || it.productName || it.name || '').sort().join(',');
+            if (placedCodes && placedCodes === orderCodes) {
+              isSameItems = true;
+            }
+          }
+        } catch (_) {}
+
+        if (isSameItems) {
+          console.log(`[Queue Safeguard] Exact identical order for ${order.storeName} was already placed today (${today}). Suppressing duplicate batch enqueue.`);
+          continue;
+        }
         console.log(`[Queue Safeguard] Order for ${order.storeName} was already placed today (${today}). Enqueuing fresh items delta.`);
       }
 

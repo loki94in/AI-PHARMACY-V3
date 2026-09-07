@@ -16,6 +16,8 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   isWhatsAppExplicitlyDisabled: jest.fn(() => Promise.resolve(false)),
   markWhatsAppActivity: jest.fn(),
   waitForWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true)),
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
@@ -216,5 +218,72 @@ describe('Distributor WhatsApp Notification Automation Tests', () => {
     expect(notifs.length).toBe(1);
     const sentMessage = notifs[0].message;
     expect(sentMessage).toContain("Rahul Sharma");
+  });
+
+  test('Safeguard: notifyDistributorCartOrder honors skipDistributor option', async () => {
+    const db = await dbManager.getConnection();
+    await db.run("INSERT INTO distributors (id, name, phone) VALUES (?, ?, ?)", [2, "XYZ Pharma", "9876543222"]);
+
+    const res = await notificationService.notifyDistributorCartOrder(
+      "XYZ Pharma",
+      2,
+      [{ productName: "Amoxicillin 500mg", qty: 5 }],
+      [],
+      { skipDistributor: true }
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.sentCount).toBe(0);
+    expect(res.suppressedCount).toBe(1);
+
+    const notifs = await db.all("SELECT * FROM automation_notifications WHERE recipient_name = 'XYZ Pharma'");
+    expect(notifs.length).toBe(0);
+  });
+
+  test('Safeguard: notifyDistributorCartOrder suppresses duplicate send on same day', async () => {
+    const db = await dbManager.getConnection();
+    await db.run("INSERT INTO distributors (id, name, phone) VALUES (?, ?, ?)", [3, "MedLife Dist", "9876543333"]);
+
+    // First send
+    const res1 = await notificationService.notifyDistributorCartOrder(
+      "MedLife Dist",
+      3,
+      [{ productName: "Dolo 650", qty: 10 }],
+      []
+    );
+    expect(res1.ok).toBe(true);
+    expect(res1.sentCount).toBe(1);
+
+    // Second send attempt for same distributor on same day
+    const res2 = await notificationService.notifyDistributorCartOrder(
+      "MedLife Dist",
+      3,
+      [{ productName: "Dolo 650", qty: 10 }],
+      []
+    );
+    expect(res2.ok).toBe(true);
+    expect(res2.sentCount).toBe(0);
+    expect(res2.suppressedCount).toBe(1);
+  });
+
+  test('Safeguard: sendDistributorDispatchReminder skips when status is Dispatched or Collected', async () => {
+    const db = await dbManager.getConnection();
+    await db.run("INSERT INTO distributors (id, name, phone) VALUES (?, ?, ?)", [4, "Apex Pharma", "9876543444"]);
+    
+    // Insert a reminder with status 'Dispatched' (distributor already sent invoice/delivery)
+    const ins = await db.run(
+      `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind)
+       VALUES (?, ?, ?, DATE('now'), 'Dispatched', 1)`,
+      [4, "Apex Pharma", "9876543444"]
+    );
+    const reminderId = ins.lastID;
+
+    // Trigger reminder
+    const res = await notificationService.sendDistributorDispatchReminder(reminderId);
+    expect(res).toBe(false);
+
+    // Verify no reminder notification was created
+    const notifs = await db.all("SELECT * FROM automation_notifications WHERE recipient_name = 'Apex Pharma'");
+    expect(notifs.length).toBe(0);
   });
 });

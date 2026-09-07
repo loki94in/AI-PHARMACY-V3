@@ -36,6 +36,34 @@ function stringSimilarity(a: string, b: string): number {
   return 1 - distance / maxLen;
 }
 
+export function getCompatibleItemTypes(dosageForm?: string): string[] {
+  if (!dosageForm) return [];
+  const df = dosageForm.toUpperCase().trim();
+  if (df === 'SYRUP' || df === 'LIQUID' || df === 'SUSPENSION') {
+    return ['BOTTLE', 'LIQUID', 'SYP', 'SUSP', 'DROP', 'SOLUTION', 'ELIXIR'];
+  }
+  if (df === 'TABLET' || df === 'CAPSULE') {
+    return ['STRIP', 'TAB', 'CAP', 'BOX', 'PACK', 'STRIP OF', 'TABLET', 'CAPSULE'];
+  }
+  if (df === 'DROPS') {
+    return ['BOTTLE', 'DROP', 'DROPS', 'EYE DROP', 'EAR DROP'];
+  }
+  if (df === 'INJECTION' || df === 'INFUSION') {
+    return ['INJECTION', 'VIAL', 'AMPOULE', 'INFUSION', 'PRE-FILLED SYRINGE', 'I V VIAL', 'I V AMPOULE', 'DRY VIAL'];
+  }
+  if (df === 'CREAM' || df === 'OINTMENT' || df === 'GEL' || df === 'LOTION') {
+    return ['TUBE', 'CREAM', 'OINT', 'GEL', 'LOTION'];
+  }
+  return [df];
+}
+
+export function isItemTypeCompatible(dosageForm?: string, itemType?: string): boolean {
+  if (!dosageForm || !itemType) return false;
+  const compatible = getCompatibleItemTypes(dosageForm);
+  const it = itemType.toUpperCase().trim();
+  return compatible.some(c => it.includes(c) || c.includes(it));
+}
+
 // Helper function to calculate similarity using Levenshtein distance
 function levenshteinSimilarity(s1: string, s2: string): number {
   const maxLen = Math.max(s1.length, s2.length);
@@ -157,16 +185,26 @@ export function enhancedSimilarity(s1: string, s2: string): number {
   // Prefix & Substring match boost
   if (clean2.startsWith(clean1) || clean1.startsWith(clean2)) {
     const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = 0.75 + 0.25 * ratio;
+    levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
   } else if (clean2.includes(clean1) || clean1.includes(clean2)) {
     const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.70 + 0.20 * ratio);
+    levSim = Math.max(levSim, 0.75 + 0.20 * ratio);
+  }
+
+  // Token containment boost (e.g. "baclof liquid" tokens all in "baclof liquid strawberry flav 100ml")
+  const words1 = norm1.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  const words2 = norm2.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  if (words1.length > 0 && words2.length > 0) {
+    const containedCount = words1.filter(w => words2.some(w2 => w2.startsWith(w) || w.startsWith(w2))).length;
+    if (containedCount === words1.length) {
+      levSim = Math.max(levSim, 0.90);
+    }
   }
 
   const phoneSim = phoneticSimilarity(clean1, clean2);
   const ngramSim = ngramSimilarity(clean1, clean2, 2); // Bigrams
 
-  let score = (levSim * 0.5) + (phoneSim * 0.3) + (ngramSim * 0.2);
+  let score = (levSim * 0.6) + (phoneSim * 0.2) + (ngramSim * 0.2);
 
   // Strength & Number alignment check (e.g. 500mg vs 200mg)
   const nums1: string[] = norm1.match(/\d+/g) || [];
@@ -213,6 +251,7 @@ export interface FilterResult {
 
 export class ProductNameFilterService {
   private medicineNames: string[] = [];
+  public getMedicineNames(): string[] { return this.medicineNames; }
   private initialized: boolean = false;
   private dbPath: string;
   private readonly DEFAULT_THRESHOLD = 0.8; // 80% similarity threshold
@@ -429,34 +468,47 @@ export class ProductNameFilterService {
       const fts5SafeQuery = `"${normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().replace(/\s+/g, ' ')}"`;
       const fts5Params: any[] = [fts5SafeQuery];
 
-      if (dosageForm) {
-        fts5Sql += ' AND m.item_type = ?';
-        fts5Params.push(dosageForm);
-      }
       if (mrp && mrp > 0) {
         const low = mrp * (1 - mrpTolerance);
         const high = mrp * (1 + mrpTolerance);
         fts5Sql += ' AND m.mrp BETWEEN ? AND ?';
         fts5Params.push(low, high);
       }
-      fts5Sql += ' LIMIT 20';
+      fts5Sql += ' LIMIT 30';
 
       const ftsRows = await db.all(fts5Sql, fts5Params);
       if (ftsRows && ftsRows.length > 0) {
         fts5Used = true;
         for (const row of ftsRows) {
           const nameSim = enhancedSimilarity(normalizedOcr, row.name.toLowerCase());
-          const dosageMatch = dosageForm && row.item_type ? (row.item_type === dosageForm ? 1 : 0) : 0.5;
-          const mrpMatch = mrp && row.mrp ? (1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp)) : 0.5;
+          const dosageMatch = dosageForm && row.item_type
+            ? (isItemTypeCompatible(dosageForm, row.item_type) ? 1.0 : 0.2)
+            : null;
+          const mrpMatch = mrp && row.mrp ? (1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp)) : null;
           
-          let apiMatch = 0.5;
+          let apiMatch: number | null = null;
           if (rawOcrText && row.api_reference) {
             const apiTokens = row.api_reference.toLowerCase().split(/[^a-z0-9]+/);
             const hasTokenMatch = apiTokens.some((token: string) => token.length > 3 && rawOcrText.toLowerCase().includes(token));
-            apiMatch = hasTokenMatch ? 1.0 : 0.2;
+            apiMatch = hasTokenMatch ? 1.0 : 0.4;
           }
 
-          const combinedScore = 0.4 * nameSim + 0.2 * dosageMatch + 0.2 * mrpMatch + 0.2 * apiMatch;
+          // Dynamic weighting: if mrp/dosage are unknown (normal for front-of-pack camera scan),
+          // do NOT penalize the name match with false 0.5/0.2 baseline weights.
+          let combinedScore: number;
+          if (dosageMatch !== null && mrpMatch !== null) {
+            combinedScore = 0.45 * nameSim + 0.25 * dosageMatch + 0.20 * mrpMatch + 0.10 * (apiMatch ?? 0.5);
+          } else if (dosageMatch !== null) {
+            combinedScore = 0.70 * nameSim + 0.20 * dosageMatch + 0.10 * (apiMatch ?? 0.5);
+          } else if (mrpMatch !== null) {
+            combinedScore = 0.70 * nameSim + 0.20 * mrpMatch + 0.10 * (apiMatch ?? 0.5);
+          } else {
+            // Front-of-pack OCR query: primary decision is name similarity
+            combinedScore = (apiMatch !== null && apiMatch > 0.5)
+              ? 0.85 * nameSim + 0.15 * apiMatch
+              : nameSim;
+          }
+
           if (combinedScore >= minConfidenceThreshold) {
             scoredMatches.push({ name: row.name, score: combinedScore });
           }

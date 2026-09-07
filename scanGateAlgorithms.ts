@@ -46,12 +46,12 @@ const STRONG_DOC_SIGNS = [
 
 const DOSE_FORMS = [
   'tablet', 'tablets', 'tab', 'capsule', 'capsules', 'cap', 'syrup', 'syp',
-  'suspension', 'susp', 'injection', 'inj', 'drops', 'drop', 'eye drop',
-  'ear drop', 'ointment', 'oint', 'cream', 'gel', 'lotion', 'powder', 'spray',
-  'inhaler', 'sachet', 'solution', 'tonic',
+  'liquid', 'oral solution', 'solution', 'suspension', 'susp', 'injection', 'inj',
+  'drops', 'drop', 'eye drop', 'ear drop', 'ointment', 'oint', 'cream', 'gel',
+  'lotion', 'powder', 'spray', 'inhaler', 'sachet', 'tonic', 'elixir',
 ];
 
-const STRENGTH_RE = /\b\d+\s?(mg|mcg|g|ml|iu|%|w\/v|wv|gm)\b/i;
+const STRENGTH_RE = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|%|w\/v|wv|gm)(?:\s*\/\s*(?:ml|g|gm))?\b/i;
 
 function countDocSigns(t: string): number {
   let n = 0;
@@ -99,7 +99,10 @@ export const GATE_VARIANTS: GateVariant[] = [
       const name = (potentialName || '').trim();
       if (!name || !isPlausibleMedicineName(name)) return 'skip';
       const t = ocrText.toLowerCase();
-      const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx);
+      if (hasStrongDoc(t)) return 'skip';
+      const nameLower = name.toLowerCase();
+      const isKnownName = Boolean(ctx?.knownApis && (ctx.knownApis.has(nameLower) || hasKnownApi(nameLower, ctx)));
+      const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName;
       return hasSignal ? 'identify' : 'skip';
     },
   },

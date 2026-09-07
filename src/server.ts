@@ -224,6 +224,8 @@ app.use(express.json({ limit: '15mb' }));
 
 
 app.use('/uploads', express.static(UPLOAD_DIR));
+app.use('/products', express.static(path.resolve(process.cwd(), 'frontend/public/products')));
+app.use('/products', express.static(path.resolve(process.cwd(), 'uploads/products')));
 app.use('/data/search_screenshots', express.static(path.join(getAppDataDir(), 'data', 'search_screenshots')));
 app.use('/data/inbound_media', express.static(path.resolve(process.cwd(), 'data', 'inbound_media')));
 

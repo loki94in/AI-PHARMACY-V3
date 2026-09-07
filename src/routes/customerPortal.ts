@@ -1193,175 +1193,94 @@ function loadCatalogAndImages() {
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
 
-// GET /api/customer-portal/public-catalog — Public live medicine catalog connected to inventory
+// GET /api/customer-portal/public-catalog — Public live medicine catalog (pharmacist-controlled visibility)
 router.get('/public-catalog', async (req, res) => {
   try {
     const category = (String(req.query.category || 'all')).toLowerCase();
-    const search = (String(req.query.search || '')).trim().toLowerCase();
+    const search = (String(req.query.search || '')).trim();
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
     const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || '40'), 10)));
+    const offset = (page - 1) * limit;
 
-    const { catalog, images } = loadCatalogAndImages();
+    const { images } = loadCatalogAndImages();
     const db = await dbManager.getConnection();
 
-    // Restrict catalog strictly to the 4 approved categories:
-    // 1. Diabetic Care
-    // 2. Blood Pressure & Cardiac
-    // 3. Thyroid Care
-    // 4. Tuberculosis (TB)
-    const isApprovedRefillCategory = (item: CachedCatalogItem) => {
-      const c = (item.category || '').toLowerCase();
-      const n = (item.name || '').toUpperCase();
-      return (
-        c.includes('diabet') ||
-        c.includes('bp') ||
-        c.includes('cardiac') ||
-        c.includes('heart') ||
-        c.includes('thyroid') ||
-        c.includes('tb') ||
-        c.includes('tuber') ||
-        n.includes('R-CINEX') ||
-        n.includes('PYZINA') ||
-        n.includes('COMBUTOL')
-      );
-    };
-
-    let filtered = catalog.filter(isApprovedRefillCategory);
-
-    if (category && category !== 'all') {
-      if (category.includes('diabet')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('diabet'));
-      } else if (
-        category.includes('bp') ||
-        category.includes('cardiac') ||
-        category.includes('heart') ||
-        category.includes('blood') ||
-        category.includes('pressure')
-      ) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('cardiac') || i.category.toLowerCase().includes('bp'));
-      } else if (category.includes('thyroid')) {
-        filtered = filtered.filter(i => i.category.toLowerCase().includes('thyroid'));
-      } else if (category.includes('tb') || category.includes('tuber')) {
-        filtered = filtered.filter(i =>
-          i.category.toLowerCase().includes('tb') ||
-          i.category.toLowerCase().includes('tuber') ||
-          i.name.toUpperCase().includes('R-CINEX') ||
-          i.name.toUpperCase().includes('PYZINA') ||
-          i.name.toUpperCase().includes('COMBUTOL')
-        );
-      }
-    }
+    // Build WHERE from pharmacist-controlled product_channel_visibility
+    const conditions: string[] = ['pcv.is_portal_visible = 1'];
+    const params: any[] = [];
 
     if (search) {
-      filtered = filtered.filter(i =>
-        i.name.toLowerCase().includes(search) ||
-        i.composition.toLowerCase().includes(search) ||
-        i.manufacturer.toLowerCase().includes(search)
-      );
-
-      // Expand search into live pharmacy medicines table if CSV has fewer results
-      if (filtered.length < 30) {
-        const existingNames = new Set(filtered.map(f => f.name.toUpperCase().trim()));
-        const dbMatches = await db.all(
-          `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category, m.mrp, m.sell_price
-           FROM medicines m
-           WHERE m.name LIKE ? OR m.generic_name LIKE ?
-           ORDER BY m.name ASC
-           LIMIT 30`,
-          [`%${search}%`, `%${search}%`]
-        ).catch(() => []);
-
-        for (const dbm of dbMatches) {
-          const key = (dbm.name || '').toUpperCase().trim();
-          if (key && !existingNames.has(key)) {
-            filtered.push({
-              category: dbm.category || 'General Medicine',
-              name: dbm.name,
-              pack: dbm.packaging || '',
-              schedule: '',
-              composition: dbm.generic_name || '',
-              manufacturer: dbm.manufacturer || '',
-              mrp: Number(dbm.mrp || 0),
-              sell_price: Number(dbm.sell_price || dbm.mrp || 0)
-            });
-            existingNames.add(key);
-          }
-        }
-      }
+      conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    if (category && category !== 'all') {
+      conditions.push(`LOWER(m.category) LIKE ?`);
+      params.push(`%${category}%`);
     }
 
-    const totalCount = filtered.length;
-    const startIndex = (page - 1) * limit;
-    const paginated = filtered.slice(startIndex, startIndex + limit);
+    const where = conditions.join(' AND ');
 
-    // Enrich with live database inventory (stock, price, mrp) and verified active catalogue images
+    const totalRow = await db.get(
+      `SELECT COUNT(*) as n FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE ${where}`,
+      params
+    ).catch(() => ({ n: 0 }));
+
+    const rows = await db.all(
+      `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
+              m.packaging, m.strength, m.pack_size,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty,
+              COALESCE(pcv.featured_rank, 0) as featured_rank
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE ${where}
+       ORDER BY pcv.featured_rank DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    ).catch(() => []);
+
     const enriched = [];
-    for (const item of paginated) {
-      const dbMed = await db.get(
-        `SELECT m.id, m.mrp, m.sell_price, m.generic_name, m.strength, m.pack_size,
-                COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
-         FROM medicines m
-         WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
-        [item.name, `${item.name.split(' ')[0]}%`]
-      ).catch(() => null);
-
+    for (const med of rows) {
       let imageUrl: string | null = null;
       let allImages: Record<string, any> = {};
       let gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }> = [];
 
-      if (dbMed && dbMed.id) {
-        // Multi-Angle Image Resolver (Combined, Front, Back, Box, Tablet)
-        const resolved = await catalogImageService.resolveProductImages(dbMed.id);
-        if (resolved && resolved.primaryUrl) {
-          imageUrl = resolved.primaryUrl;
-          allImages = resolved.images;
-          gallery = resolved.gallery;
-        }
+      const resolved = await catalogImageService.resolveProductImages(med.id);
+      if (resolved && resolved.primaryUrl) {
+        imageUrl = resolved.primaryUrl;
+        allImages = resolved.images;
+        gallery = resolved.gallery;
       }
 
-      // If fewer than 2 angles resolved from DB, complement from imageStateCache if present
-      const imgData = images[item.name];
-      if (imgData && imgData.images) {
+      // Complement from imageStateCache if fewer than 2 angles resolved
+      const imgData = images[med.name];
+      if (imgData && imgData.images && gallery.length < 2) {
         const stateGallery = catalogImageService.extractGalleryFromState(imgData);
-        if (stateGallery.length > 0) {
-          if (gallery.length === 0) {
-            gallery = stateGallery;
-            const primaryItem = stateGallery.find(g => g.is_primary) || stateGallery[0];
-            imageUrl = primaryItem?.url || null;
-            stateGallery.forEach(g => {
-              allImages[g.type] = g;
-            });
-          } else if (gallery.length < 4) {
-            const existingTypes = new Set(gallery.map(g => g.type));
-            for (const sg of stateGallery) {
-              if (!existingTypes.has(sg.type) && gallery.length < 4) {
-                gallery.push(sg);
-                existingTypes.add(sg.type);
-                allImages[sg.type] = sg;
-              }
-            }
-          }
+        if (stateGallery.length > 0 && gallery.length === 0) {
+          gallery = stateGallery;
+          const primary = stateGallery.find(g => g.is_primary) || stateGallery[0];
+          imageUrl = primary?.url || null;
+          stateGallery.forEach(g => { allImages[g.type] = g; });
         }
       }
-
-      const stockQty = Number(dbMed?.stock_qty || 0);
-      const resolvedMrp = Number(dbMed?.mrp || item.mrp || 0);
-      const resolvedSellPrice = Number(dbMed?.sell_price || item.sell_price || resolvedMrp || 0);
 
       enriched.push({
-        id: dbMed?.id,
-        name: item.name,
-        category: item.category,
-        pack: item.pack || dbMed?.pack_size || '',
-        composition: item.composition || dbMed?.generic_name || '',
-        manufacturer: item.manufacturer,
-        mrp: resolvedMrp,
-        sell_price: resolvedSellPrice,
-        stock_qty: stockQty,
-        in_stock: stockQty > 0,
+        id: med.id,
+        name: med.name,
+        category: med.category || 'General',
+        pack: med.packaging || med.pack_size || '',
+        composition: med.generic_name || '',
+        manufacturer: med.manufacturer || '',
+        mrp: Number(med.mrp || 0),
+        sell_price: Number(med.sell_price || med.mrp || 0),
+        stock_qty: Number(med.stock_qty || 0),
+        in_stock: Number(med.stock_qty || 0) > 0,
+        featured_rank: med.featured_rank || 0,
         image_url: imageUrl,
         images: allImages,
-        gallery: gallery
+        gallery
       });
     }
 
@@ -1371,8 +1290,8 @@ router.get('/public-catalog', async (req, res) => {
       search,
       page,
       limit,
-      total_count: totalCount,
-      total_pages: Math.ceil(totalCount / limit),
+      total_count: totalRow?.n || 0,
+      total_pages: Math.ceil((totalRow?.n || 0) / limit),
       medicines: enriched
     });
   } catch (err: any) {
@@ -1381,48 +1300,26 @@ router.get('/public-catalog', async (req, res) => {
   }
 });
 
-// GET /api/customer-portal/categories-summary — Returns count summary for the 4 approved refill categories
-router.get('/categories-summary', (req, res) => {
-  const { catalog } = loadCatalogAndImages();
-  const summary: Record<string, number> = {
-    all: 0,
-    diabetic: 0,
-    bp_cardiac: 0,
-    thyroid: 0,
-    tb: 0
-  };
 
-  catalog.forEach(item => {
-    const c = (item.category || '').toLowerCase();
-    const n = (item.name || '').toUpperCase();
-    let isAllowed = false;
+// GET /api/customer-portal/categories-summary — Live count by category for portal-visible medicines
+router.get('/categories-summary', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(
+      `SELECT m.category, COUNT(*) as n
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE pcv.is_portal_visible = 1
+       GROUP BY m.category
+       ORDER BY n DESC`
+    ).catch(() => []);
 
-    if (c.includes('diabet')) {
-      summary.diabetic++;
-      isAllowed = true;
-    } else if (c.includes('cardiac') || c.includes('bp')) {
-      summary.bp_cardiac++;
-      isAllowed = true;
-    } else if (c.includes('thyroid')) {
-      summary.thyroid++;
-      isAllowed = true;
-    } else if (
-      c.includes('tb') ||
-      c.includes('tuber') ||
-      n.includes('R-CINEX') ||
-      n.includes('PYZINA') ||
-      n.includes('COMBUTOL')
-    ) {
-      summary.tb++;
-      isAllowed = true;
-    }
-
-    if (isAllowed) {
-      summary.all++;
-    }
-  });
-
-  res.json({ success: true, summary });
+    const totalEnabled = rows.reduce((s: number, r: any) => s + (r.n || 0), 0);
+    res.json({ success: true, total: totalEnabled, by_category: rows });
+  } catch (err: any) {
+    console.error('[CustomerPortal] categories-summary error:', err);
+    res.status(500).json({ error: 'Failed to load category summary' });
+  }
 });
 
 // GET /api/customer-portal/standalone-catalog — Serves the standalone responsive website
@@ -1772,6 +1669,211 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
   } catch (err: any) {
     console.error('[CustomerPortal] Refill error:', err);
     res.status(500).json({ error: 'Failed to create refill order' });
+  }
+});
+
+// ─── Admin: Catalog Visibility Management ────────────────────────────────────
+
+// GET /api/customer-portal/admin/catalog-visibility
+// Returns paginated medicines with their portal visibility state
+router.get('/admin/catalog-visibility', async (req, res) => {
+  try {
+    const search = (String(req.query.search || '')).trim();
+    const filter = (String(req.query.filter || 'all')).toLowerCase(); // all | enabled | disabled | with_image
+    const category = (String(req.query.category || '')).trim();
+    const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
+    const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || '50'), 10)));
+    const offset = (page - 1) * limit;
+
+    const db = await dbManager.getConnection();
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (search) {
+      conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    if (category) {
+      conditions.push(`LOWER(m.category) LIKE ?`);
+      params.push(`%${category.toLowerCase()}%`);
+    }
+    if (filter === 'enabled' || filter === 'online') {
+      conditions.push(`pcv.is_portal_visible = 1`);
+    } else if (filter === 'disabled' || filter === 'offline') {
+      conditions.push(`(pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`);
+    } else if (filter === 'with_image') {
+      conditions.push(`EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1)`);
+    } else if (filter === 'in_stock') {
+      conditions.push(`EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0))`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const totalRow = await db.get(
+      `SELECT COUNT(*) as n
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}`,
+      params
+    ).catch(() => ({ n: 0 }));
+
+    const rows = await db.all(
+      `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price, m.packaging,
+              COALESCE(pcv.is_portal_visible, 0) as is_portal_visible,
+              COALESCE(pcv.is_website_visible, 0) as is_website_visible,
+              COALESCE(pcv.featured_rank, 0) as featured_rank,
+              pcv.updated_at as visibility_updated_at,
+              (SELECT ci.image_path FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1 LIMIT 1) as primary_image,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}
+       ORDER BY pcv.featured_rank DESC, is_portal_visible DESC, stock_qty DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    ).catch(() => []);
+
+    // Count totals for UI badges
+    const countsRow = await db.get(
+      `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN pcv.is_portal_visible = 1 THEN 1 ELSE 0 END) as enabled_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) THEN 1 ELSE 0 END) as with_image_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0)) THEN 1 ELSE 0 END) as in_stock_count
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id`
+    ).catch(() => ({ total: 0, enabled_count: 0, with_image_count: 0, in_stock_count: 0 }));
+
+    res.json({
+      success: true,
+      page, limit,
+      total_count: totalRow?.n || 0,
+      total_pages: Math.ceil((totalRow?.n || 0) / limit),
+      stats: {
+        total_medicines: countsRow?.total || 0,
+        portal_enabled: countsRow?.enabled_count || 0,
+        with_image: countsRow?.with_image_count || 0,
+        in_stock: countsRow?.in_stock_count || 0
+      },
+      medicines: rows
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] admin/catalog-visibility error:', err);
+    res.status(500).json({ error: 'Failed to load catalog visibility' });
+  }
+});
+
+// PUT /api/customer-portal/admin/catalog-visibility/:medicineId
+// Toggle portal / website visibility for a single medicine
+router.put('/admin/catalog-visibility/:medicineId', async (req, res) => {
+  try {
+    const medicineId = parseInt(req.params.medicineId, 10);
+    if (isNaN(medicineId)) return res.status(400).json({ error: 'Invalid medicine ID' });
+
+    const { is_portal_visible, is_website_visible, featured_rank } = req.body;
+    const db = await dbManager.getConnection();
+
+    const portalVal = is_portal_visible != null ? (is_portal_visible ? 1 : 0) : null;
+    const websiteVal = is_website_visible != null ? (is_website_visible ? 1 : 0) : portalVal;
+
+    // Upsert into product_channel_visibility
+    await db.run(
+      `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, featured_rank, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = COALESCE(excluded.is_portal_visible, is_portal_visible),
+         is_website_visible = COALESCE(excluded.is_website_visible, is_website_visible),
+         featured_rank = COALESCE(excluded.featured_rank, featured_rank),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        medicineId,
+        portalVal,
+        websiteVal,
+        featured_rank != null ? parseInt(String(featured_rank), 10) : null
+      ]
+    );
+
+    const updated = await db.get(
+      `SELECT m.id, m.name, pcv.is_portal_visible, pcv.is_website_visible, pcv.featured_rank
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE m.id = ?`,
+      [medicineId]
+    );
+
+    res.json({ success: true, medicine: updated });
+  } catch (err: any) {
+    console.error('[CustomerPortal] admin/catalog-visibility PUT error:', err);
+    res.status(500).json({ error: 'Failed to update visibility' });
+  }
+});
+
+// POST /api/customer-portal/admin/catalog-visibility/bulk
+// Bulk enable / disable portal visibility for a set of medicine IDs
+router.post('/admin/catalog-visibility/bulk', async (req, res) => {
+  try {
+    const { medicine_ids, is_portal_visible, is_website_visible } = req.body;
+    if (!Array.isArray(medicine_ids) || medicine_ids.length === 0) {
+      return res.status(400).json({ error: 'medicine_ids array is required' });
+    }
+    if (medicine_ids.length > 500) {
+      return res.status(400).json({ error: 'Max 500 medicines per bulk operation' });
+    }
+
+    const db = await dbManager.getConnection();
+    const portalVal = is_portal_visible ? 1 : 0;
+    const websiteVal = is_website_visible != null ? (is_website_visible ? 1 : 0) : portalVal;
+
+    const placeholders = medicine_ids.map(() => '(?, ?, ?, CURRENT_TIMESTAMP)').join(', ');
+    const values: any[] = [];
+    medicine_ids.forEach((id: number) => values.push(id, portalVal, websiteVal));
+
+    await db.run(
+      `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+       VALUES ${placeholders}
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = excluded.is_portal_visible,
+         is_website_visible = excluded.is_website_visible,
+         updated_at = CURRENT_TIMESTAMP`,
+      values
+    );
+
+    res.json({
+      success: true,
+      updated_count: medicine_ids.length,
+      is_portal_visible: portalVal === 1
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] admin/catalog-visibility bulk error:', err);
+    res.status(500).json({ error: 'Failed to bulk update visibility' });
+  }
+});
+
+// POST /api/customer-portal/admin/catalog-visibility/publish-in-stock
+// 1-Click: Publish all currently in-stock medicines to Online
+router.post('/admin/catalog-visibility/publish-in-stock', async (req, res) => {
+  try {
+    const { is_online = true } = req.body;
+    const onlineVal = is_online ? 1 : 0;
+    const db = await dbManager.getConnection();
+
+    await db.run(`
+      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
+      FROM inventory_master im
+      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        is_portal_visible = excluded.is_portal_visible,
+        is_website_visible = excluded.is_website_visible,
+        updated_at = CURRENT_TIMESTAMP
+    `, [onlineVal, onlineVal]);
+
+    res.json({ success: true, is_online: onlineVal === 1 });
+  } catch (err: any) {
+    console.error('[CustomerPortal] admin/catalog-visibility publish-in-stock error:', err);
+    res.status(500).json({ error: 'Failed to publish in-stock medicines' });
   }
 });
 

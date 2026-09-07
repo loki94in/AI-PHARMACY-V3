@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback } fro
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
+import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
   getCompactInventoryIndex, type SpecialOrder, type CompactInventoryItem } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
@@ -2268,6 +2269,9 @@ const POS = () => {
 
   // Universal Edit state
   const [editMedicineId, setEditMedicineId] = useState<number | null>(null);
+  const [intelligenceMedicineId, setIntelligenceMedicineId] = useState<number | null>(null);
+  const [showIntelligenceModal, setShowIntelligenceModal] = useState<boolean>(false);
+  const [expandedSubstitutes, setExpandedSubstitutes] = useState<Record<number, boolean>>({});
 
   // Keyboard shortcut listeners (e.g. 'X' for camera, 'Alt+E' or 'F8' for quick edit medicine)
   useEffect(() => {
@@ -4546,6 +4550,18 @@ const POS = () => {
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      setIntelligenceMedicineId(Number(item.medicine_id));
+                                      setShowIntelligenceModal(true);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-bg border border-border/40 text-muted hover:text-sky hover:bg-bg3 transition-all"
+                                    title="Composition Intelligence & History"
+                                  >
+                                    <Sparkles size={14} className="text-sky" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setEditMedicineId(Number(item.medicine_id));
                                     }}
                                     className="p-1.5 rounded-lg bg-bg border border-border/40 text-muted hover:text-text hover:bg-bg3 transition-all"
@@ -4570,35 +4586,97 @@ const POS = () => {
 
                         if (isOutOfStock) {
                           return (
-                            <div key={`oos_${med.medicine_id}`} className="flex flex-col border-b border-border/10">
+                            <div key={`oos_${med.medicine_id}`} className="flex flex-col border-b border-border/10 animate-in fade-in duration-200">
                               <div className="p-3 bg-red-500/5 text-[18px] w-full flex flex-col gap-1 border-l-2 border-red-500">
                                  <div className="flex items-center justify-between">
                                    <div>
                                      <span className="font-bold text-red-400 line-through mr-2">{med.medicine_name}</span>
                                      <span className="text-[15px] text-red-400 font-bold uppercase border border-red-500/20 px-1.5 py-0.5 rounded bg-red-500/10">Out of Stock</span>
                                    </div>
+                                   <button
+                                     type="button"
+                                     onClick={(e) => {
+                                       e.stopPropagation();
+                                       setIntelligenceMedicineId(Number(med.medicine_id));
+                                       setShowIntelligenceModal(true);
+                                     }}
+                                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky/10 border border-sky/20 text-sky text-xs font-bold hover:bg-sky hover:text-white transition-all cursor-pointer"
+                                     title="View full composition history and alternative brands"
+                                   >
+                                     <Sparkles size={13} />
+                                     <span>History & All Brands</span>
+                                   </button>
                                  </div>
                                  {med.alternatives && med.alternatives.length > 0 && (
-                                   <div className="text-[15px] text-sky font-bold flex items-center gap-1.5 mt-1">
-                                     <span className="h-1.5 w-1.5 bg-sky rounded-full animate-ping"></span> 
-                                     Alternatives in stock (same composition):
+                                   <div className="text-[14px] text-emerald-400 font-bold flex items-center gap-1.5 mt-1.5 animate-pulse">
+                                     <span className="h-2 w-2 bg-emerald-400 rounded-full animate-ping"></span> 
+                                     ⚡ In-Stock Alternatives Ready to Sell (Same Formula):
                                    </div>
                                  )}
                               </div>
-                              {med.alternatives && med.alternatives.map(alt => renderMedicineItem(alt, true))}
+                              {med.alternatives && med.alternatives.length > 0 && (
+                                <div className="flex flex-col border-l-2 border-emerald-500/40 ml-2 bg-bg3/40 animate-in slide-in-from-top-2 duration-300">
+                                  {med.alternatives.map(alt => renderMedicineItem(alt, true))}
+                                </div>
+                              )}
                             </div>
                           );
                         }
 
+                        const medKey = Number(med.medicine_id || med.inventory_id || 0);
+                        const isExpanded = !!expandedSubstitutes[medKey];
+                        const alternatives = (med.alternatives && med.alternatives.length > 0) ? med.alternatives : [];
+                        const hasAlternatives = alternatives.length > 0;
+
                         return (
-                          <div key={`in_stock_${med.inventory_id}`} className="flex flex-col">
+                          <div key={`in_stock_${med.inventory_id || medKey}`} className="flex flex-col border-b border-border/10">
                             {renderMedicineItem(med, false)}
-                            {med.alternatives && med.alternatives.length > 0 && (
-                              <div className="flex flex-col border-l-2 border-sky/30 ml-2 bg-bg3/30">
-                                <div className="px-6 py-1.5 bg-sky/5 text-[15px] text-sky font-bold uppercase tracking-wider flex items-center gap-1">
-                                  <span className="rotate-90">↳</span> Substitutes Available:
+                            
+                            {hasAlternatives && (
+                              <div className="px-4 py-1.5 bg-bg3/30 border-b border-border/10 flex items-center justify-between">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedSubstitutes(prev => ({
+                                      ...prev,
+                                      [medKey]: !prev[medKey]
+                                    }));
+                                  }}
+                                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer border ${
+                                    isExpanded 
+                                      ? 'bg-sky text-white border-sky shadow-sm' 
+                                      : 'bg-sky/10 text-sky border-sky/20 hover:bg-sky/20'
+                                  }`}
+                                  title="Toggle in-stock alternatives on demand"
+                                >
+                                  <Sparkles size={12} className={isExpanded ? 'rotate-180 transition-transform' : 'animate-pulse'} />
+                                  <span>⚡ {alternatives.length} In-Stock Substitute{alternatives.length > 1 ? 's' : ''} Available</span>
+                                  <span className="text-[11px] font-mono">{isExpanded ? '▲ Hide' : '▼ Show'}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIntelligenceMedicineId(Number(med.medicine_id || medKey));
+                                    setShowIntelligenceModal(true);
+                                  }}
+                                  className="text-xs text-sky hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>Full History & Master Brands ↗</span>
+                                </button>
+                              </div>
+                            )}
+
+                            {hasAlternatives && isExpanded && (
+                              <div className="flex flex-col border-l-2 border-sky/40 ml-4 my-1 bg-bg3/40 rounded-r-xl overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                                <div className="px-4 py-1.5 bg-sky/10 text-xs text-sky font-bold uppercase tracking-wider flex items-center justify-between border-b border-sky/10">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="rotate-90">↳</span> In-Stock Substitutes (Same Active Salt):
+                                  </span>
                                 </div>
-                                {med.alternatives.map(alt => renderMedicineItem(alt, true))}
+                                {alternatives.map(alt => renderMedicineItem(alt, true))}
                               </div>
                             )}
                           </div>
@@ -5502,6 +5580,21 @@ const POS = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                if (item.medicine_id) {
+                                  setIntelligenceMedicineId(Number(item.medicine_id));
+                                  setShowIntelligenceModal(true);
+                                }
+                              }}
+                              disabled={!item.medicine_id}
+                              className={`p-1 rounded-md transition-all ${item.medicine_id ? 'hover:bg-sky/10 text-muted hover:text-sky' : 'opacity-30 cursor-not-allowed text-muted'}`}
+                              title="Packaging Visuals, Formula & Substitutes"
+                            >
+                              <Sparkles size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 if (item.medicine_id) setEditMedicineId(Number(item.medicine_id));
                               }}
                               disabled={!item.medicine_id}
@@ -6226,6 +6319,24 @@ const POS = () => {
           />
         </Suspense>
       )}
+
+      {/* Composition Intelligence & Substitute History Modal */}
+      <CompositionIntelligenceModal
+        medicineId={intelligenceMedicineId}
+        isOpen={showIntelligenceModal}
+        onClose={() => {
+          setShowIntelligenceModal(false);
+          setIntelligenceMedicineId(null);
+        }}
+        onSelectAlternative={(alt) => {
+          fetchDetailsAndAddToCart(alt);
+          setSearchTerm('');
+          setSearchResults([]);
+          setShowSearchDropdown(false);
+          setShowIntelligenceModal(false);
+          setIntelligenceMedicineId(null);
+        }}
+      />
 
       {/* Floating Staged Order Queue Widget */}
       <StagedQueueFloatingWidget onLoadIntoPOS={handleLoadStagedItemIntoPOS} />

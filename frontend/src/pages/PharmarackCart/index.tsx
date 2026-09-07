@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
+import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, CheckCircle2, WifiOff } from 'lucide-react';
 import { formatDisplayDate } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
@@ -1633,7 +1633,8 @@ export default function PharmarackCart() {
       const res = await apiClient.post('/messaging/send', {
         number: cleanPhone,
         message: msg,
-        target_name: dist.storeName
+        target_name: dist.storeName,
+        type: 'pharmarack_distributor_order'
       });
 
       if (res?.status === 202 || res?.data?.queued) {
@@ -1658,13 +1659,15 @@ export default function PharmarackCart() {
       }
 
       // Also trigger backend notification to Delivery Boys ONLY if targetMode is 'both'
+      // Pass skipDistributor: true to avoid sending a duplicate order message to the distributor
       if (targetMode === 'both') {
         try {
           await apiClient.post('/pharmarack/cart/notify-manual', {
             storeId: dist.storeId,
             storeName: dist.storeName,
             deliveryPersons: dist.deliveryPersons,
-            items: itemsToOrder
+            items: itemsToOrder,
+            skipDistributor: true
           });
         } catch (distErr) {
           console.warn('Could not notify delivery boys via backend route:', distErr);
@@ -4341,11 +4344,15 @@ export default function PharmarackCart() {
                                         )}
                                       </td>
                                       <td className="px-3 py-2.5 text-center font-mono text-[10px]">
-                                        {item.stock !== null ? (
+                                        {item.stock !== null && item.stock !== undefined && String(item.stock).toLowerCase() !== 'offline' ? (
                                           <span className={item.stock > 10 ? 'text-emerald-400' : item.stock > 0 ? 'text-amber-400' : 'text-red'}>
                                             {item.stock}
                                           </span>
-                                        ) : '—'}
+                                        ) : (
+                                          <span className="text-muted inline-flex items-center justify-center" title="Offline / Saved Rate">
+                                            <WifiOff size={11} className="text-muted" />
+                                          </span>
+                                        )}
                                       </td>
                                       <td className="px-4 py-2.5 text-right font-mono font-black text-text text-[11px]">
                                         ₹{getCartItemAmount(item).toFixed(2)}

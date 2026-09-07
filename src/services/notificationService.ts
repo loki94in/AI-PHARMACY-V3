@@ -293,6 +293,18 @@ export class NotificationService {
         return false;
       }
 
+      // Deduplicate: check if this invoice order was already sent or queued for this distributor
+      const alreadySentInv = await db.get(
+        `SELECT id FROM automation_notifications 
+         WHERE reference_id = ? AND type = 'distributor_invoice_order' AND status IN ('sent', 'pending')
+         LIMIT 1`,
+        [`inv_${purchase.invoice_no}`]
+      );
+      if (alreadySentInv) {
+        console.log(`[DistributorNotif] Distributor notification for invoice ${purchase.invoice_no} was already sent/queued. Suppressing duplicate.`);
+        return true;
+      }
+
       // If distributor has no phone number, we can't send WhatsApp
       const rawPhone = purchase.distributor_phone || '';
       if (!rawPhone.trim()) {
@@ -429,7 +441,8 @@ export class NotificationService {
     storeName: string,
     storeId: number,
     items: any[],
-    deliveryPersons?: any[]
+    deliveryPersons?: any[],
+    options?: { skipDistributor?: boolean }
   ): Promise<CartOrderNotifyResult> {
     let db = null;
     try {
@@ -571,34 +584,55 @@ export class NotificationService {
       let sentCount = 0;
       let suppressedCount = 0;
 
-      // Send to distributor
-      if (uniqueDistPhones.length > 0) {
-        for (const phone of uniqueDistPhones) {
-          try {
-            const queueId = await whatsappQueueWorker.enqueue(
-              phone,
-              message,
-              'distributor_cart_order',
-              storeName
-            );
-            sentCount++;
-            await db.run(
-              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-              ['distributor_cart_order', storeName, phone, message, 'sent', `store_${storeId}`]
-            );
-          } catch (err: any) {
-            console.error(`[CartOrderNotif] Failed to notify distributor ${storeName} at ${phone}:`, err);
-            await db.run(
-              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              ['distributor_cart_order', storeName, phone, message, 'failed', err.message || 'Unknown error', `store_${storeId}`]
-            );
+      // Send to distributor (unless skipDistributor is explicitly requested or already sent today)
+      if (options?.skipDistributor) {
+        console.log(`[CartOrderNotif] skipDistributor requested for ${storeName} (order already dispatched from UI). Skipping second distributor message.`);
+        suppressedCount++;
+      } else if (uniqueDistPhones.length > 0) {
+        // Same-day deduplication check: avoid duplicate orders to distributor if already enqueued/sent in the last 2 hours or today
+        const todayDate = new Date().toISOString().split('T')[0];
+        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+        const alreadySentRow = await db.get(
+          `SELECT id FROM automation_notifications 
+           WHERE (recipient_name = ? OR reference_id = ?) 
+             AND type = 'distributor_cart_order' 
+             AND status IN ('sent', 'pending')
+             AND (DATE(created_at) = ? OR created_at >= ?)
+           LIMIT 1`,
+          [storeName, `store_${storeId}`, todayDate, new Date(twoHoursAgo).toISOString()]
+        );
+
+        if (alreadySentRow) {
+          console.log(`[CartOrderNotif] Order message for ${storeName} was already queued/sent today. Suppressing duplicate distributor WhatsApp send.`);
+          suppressedCount++;
+        } else {
+          for (const phone of uniqueDistPhones) {
+            try {
+              const queueId = await whatsappQueueWorker.enqueue(
+                phone,
+                message,
+                'distributor_cart_order',
+                storeName
+              );
+              sentCount++;
+              await db.run(
+                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                ['distributor_cart_order', storeName, phone, message, 'sent', `store_${storeId}`]
+              );
+            } catch (err: any) {
+              console.error(`[CartOrderNotif] Failed to notify distributor ${storeName} at ${phone}:`, err);
+              await db.run(
+                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                ['distributor_cart_order', storeName, phone, message, 'failed', err.message || 'Unknown error', `store_${storeId}`]
+              );
+            }
           }
         }
       }
 
-      return { ok: sentCount > 0, sentCount, suppressedCount: 0 };
+      return { ok: sentCount > 0 || suppressedCount > 0, sentCount, suppressedCount };
     } catch (err) {
       console.error('[CartOrderNotif] Error sending cart order notifications:', err);
       return { ok: false, sentCount: 0, suppressedCount: 0 };
@@ -789,6 +823,12 @@ export class NotificationService {
 
       if (!reminder) {
         console.warn(`[DistributorReminder] Reminder ID ${reminderId} not found.`);
+        return false;
+      }
+
+      // Safeguard: if distributor already dispatched, collected, or has no order, do not send reminder
+      if (reminder.status && reminder.status !== 'Pending' && !customMessage) {
+        console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
         return false;
       }
 

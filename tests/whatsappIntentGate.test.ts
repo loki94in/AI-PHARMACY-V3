@@ -24,7 +24,9 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true))
 }));
 
 describe('WhatsApp Intent Confidence Gate', () => {

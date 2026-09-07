@@ -83,8 +83,9 @@ router.get('/', async (req, res) => {
   const mrp = (req.query.mrp as string || '').trim();
   const rack = (req.query.rack as string || '').trim();
   const stock_filter = (req.query.stock_filter as string || '').trim();
+  const online_filter = (req.query.online_filter as string || '').trim().toLowerCase();
 
-  const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter);
+  const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter || online_filter);
   const limit = req.query.limit !== undefined 
     ? parseInt(req.query.limit as string) 
     : (hasFilters ? 200 : 100);
@@ -95,6 +96,7 @@ router.get('/', async (req, res) => {
     let baseQuery = `
       FROM inventory_master im
       LEFT JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -167,6 +169,12 @@ router.get('/', async (req, res) => {
     } else if (stock_filter === 'positive') {
       baseQuery += ` AND COALESCE(im.is_active, 1) = 1 AND (im.quantity > 0 OR im.loose_quantity > 0)`;
     }
+
+    if (online_filter === 'online') {
+      baseQuery += ` AND pcv.is_portal_visible = 1`;
+    } else if (online_filter === 'offline') {
+      baseQuery += ` AND (pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`;
+    }
     
     // If limit is 0, fetch all (warning: can cause frontend lag)
     if (limit === 0) {
@@ -180,7 +188,9 @@ router.get('/', async (req, res) => {
                m.sell_price as sell_price,
                m.cgst_per as cgst_per,
                m.sgst_per as sgst_per,
-               m.pack_size as pack_size
+               m.pack_size as pack_size,
+               COALESCE(pcv.is_portal_visible, 0) as is_online,
+               COALESCE(pcv.is_website_visible, 0) as is_website_visible
         ${baseQuery}
         ORDER BY COALESCE(m.name, im.batch_no) ASC, im.id DESC
       `, params);
@@ -191,7 +201,7 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     let totalItems: number;
-    const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter]);
+    const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter, online_filter]);
     const cachedCount = inventoryCountCache.get(countKey);
     if (cachedCount && Date.now() - cachedCount.ts < INVENTORY_COUNT_TTL_MS) {
       totalItems = cachedCount.total;
@@ -212,7 +222,9 @@ router.get('/', async (req, res) => {
              m.sell_price as sell_price,
              m.cgst_per as cgst_per,
              m.sgst_per as sgst_per,
-             m.pack_size as pack_size
+             m.pack_size as pack_size,
+             COALESCE(pcv.is_portal_visible, 0) as is_online,
+             COALESCE(pcv.is_website_visible, 0) as is_website_visible
       ${baseQuery}
       ORDER BY COALESCE(m.name, im.batch_no) ASC, im.id DESC
       LIMIT ? OFFSET ?
@@ -1197,6 +1209,68 @@ router.patch('/medicines/:id/allow-loose-sale', async (req, res) => {
   } catch (err: any) {
     console.error('Error toggling allow_loose_sale:', err);
     res.status(500).json({ error: err.message || 'Failed to toggle allow_loose_sale' });
+  }
+});
+
+// Fast Toggle for Online / Offline Medicine Status (single or bulk)
+router.post('/toggle-online', async (req, res) => {
+  try {
+    const { medicine_id, medicine_ids, is_online } = req.body;
+    const onlineVal = is_online ? 1 : 0;
+    const ids: number[] = Array.isArray(medicine_ids)
+      ? medicine_ids.map(Number).filter(n => !isNaN(n))
+      : (medicine_id != null && !isNaN(Number(medicine_id))) ? [Number(medicine_id)] : [];
+
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'medicine_id or medicine_ids array is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const placeholders = ids.map(() => '(?, ?, ?, CURRENT_TIMESTAMP)').join(', ');
+    const values: any[] = [];
+    ids.forEach(id => values.push(id, onlineVal, onlineVal));
+
+    await db.run(
+      `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+       VALUES ${placeholders}
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = excluded.is_portal_visible,
+         is_website_visible = excluded.is_website_visible,
+         updated_at = CURRENT_TIMESTAMP`,
+      values
+    );
+
+    inventoryCache.invalidate();
+    res.json({ success: true, count: ids.length, is_online: onlineVal === 1 });
+  } catch (err: any) {
+    console.error('Error toggling online visibility:', err);
+    res.status(500).json({ error: err.message || 'Failed to toggle online status' });
+  }
+});
+
+// 1-Click: Publish all currently in-stock medicines to Online
+router.post('/publish-all-in-stock', async (req, res) => {
+  try {
+    const { is_online = true } = req.body;
+    const onlineVal = is_online ? 1 : 0;
+    const db = await dbManager.getConnection();
+
+    await db.run(`
+      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
+      FROM inventory_master im
+      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        is_portal_visible = excluded.is_portal_visible,
+        is_website_visible = excluded.is_website_visible,
+        updated_at = CURRENT_TIMESTAMP
+    `, [onlineVal, onlineVal]);
+
+    inventoryCache.invalidate();
+    res.json({ success: true, is_online: onlineVal === 1 });
+  } catch (err: any) {
+    console.error('Error publishing in-stock medicines:', err);
+    res.status(500).json({ error: err.message || 'Failed to publish in-stock medicines' });
   }
 });
 

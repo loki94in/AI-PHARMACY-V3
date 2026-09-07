@@ -306,21 +306,20 @@ export function extractMedicineCandidates(text: string): MedicineCandidate[] {
 export function detectDosageForm(text: string): string | null {
   if (!text) return null;
   const patterns: [RegExp, string][] = [
-    [/\b(?:tab(?:let)?s?)\b/i, 'Tablet'],
+    [/\b(?:tab(?:let)?s?|caplets?)\b/i, 'Tablet'],
     [/\b(?:cap(?:sule)?s?)\b/i, 'Capsule'],
-    [/\b(?:syp|syrup)\b/i, 'Syrup'],
-    [/\b(?:susp(?:ension)?)\b/i, 'Suspension'],
-    [/\b(?:inj(?:ection)?)\b/i, 'Injection'],
+    [/\b(?:liquid|oral\s*solution|solution|syrup|syp|elixir)\b/i, 'Syrup'],
+    [/\b(?:susp(?:ension)?|oral\s*suspension)\b/i, 'Suspension'],
+    [/\b(?:inj(?:ection)?|infusion)\b/i, 'Injection'],
     [/\b(?:gel)\b/i, 'Gel'],
     [/\b(?:cream)\b/i, 'Cream'],
-    [/\b(?:drops?|eye\s*drops?|ear\s*drops?)\b/i, 'Drops'],
+    [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, 'Drops'],
     [/\b(?:oint(?:ment)?)\b/i, 'Ointment'],
     [/\b(?:lotion)\b/i, 'Lotion'],
     [/\b(?:powder)\b/i, 'Powder'],
     [/\b(?:spray)\b/i, 'Spray'],
-    [/\b(?:inh(?:aler)?)\b/i, 'Inhaler'],
+    [/\b(?:inh(?:aler)?|respules?)\b/i, 'Inhaler'],
     [/\b(?:sachet)\b/i, 'Sachet'],
-    [/\b(?:solution)\b/i, 'Solution'],
   ];
   for (const [regex, form] of patterns) {
     if (regex.test(text)) return form;

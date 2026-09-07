@@ -498,11 +498,11 @@ export async function allocateDynamicReminderTimes(db: any, todayStr: string): P
 
     const windowDuration = Math.max(10, endMinutesTotal - startMinutesTotal);
 
-    // 2. Fetch today's active reminders that need scheduling
+    // 2. Fetch today's pending reminders that need scheduling
     const reminders = await db.all(
       `SELECT id, distributor_name, scheduled_send_time, last_reminded_at, status
        FROM distributor_dispatch_reminders
-       WHERE date = ? AND status != 'No Order Today'
+       WHERE date = ? AND status = 'Pending'
        ORDER BY id ASC`,
       [todayStr]
     );
@@ -683,13 +683,13 @@ export async function checkAndSendAutoReminders() {
     await syncTodayActiveDistributors();
     await allocateDynamicReminderTimes(db, todayStr);
 
-    // 1. Fetch all active reminders for today that have not been reminded today
+    // 1. Fetch all pending reminders for today that have not been reminded today (skip Dispatched/Collected/No Order)
     const activeReminders = await db.all(
       `SELECT r.id, r.distributor_name, r.distributor_phone, r.scheduled_send_time, d.phone as master_phone
        FROM distributor_dispatch_reminders r
        LEFT JOIN distributors d ON r.distributor_id = d.id
-       WHERE r.date = ? AND r.status != 'No Order Today'
-         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at) != ?)`,
+       WHERE r.date = ? AND r.status = 'Pending'
+         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at, 'localtime') != ?)`,
       [todayStr, todayStr]
     );
 

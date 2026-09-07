@@ -383,11 +383,32 @@ router.post('/', async (req, res) => {
 
 // Shared helper: queue the localized "order ready / medicine arrived" WhatsApp for a special order.
 // Used by notify-arrival (explicit button) and status transitions to 'Ready' (Mark Ready / Resend click).
-async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedupe?: boolean }): Promise<boolean> {
+async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedupe?: boolean; forceResend?: boolean }): Promise<boolean> {
   const cleanPhone = String(order.phone || '').replace(/\D/g, '');
   if (!cleanPhone) return false;
 
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const last10 = cleanPhone.slice(-10);
+  const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
+
+  // 60-minute duplicate safeguard: suppress duplicate arrival messages within 60 minutes unless forceResend is set
+  if (!options?.forceResend) {
+    const recentQueue = await db.get(
+      `SELECT id, created_at FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+    );
+
+    if (recentQueue) {
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (already queued within 60m, queue ID: ${recentQueue.id}).`);
+      return false;
+    }
+  }
+
   const custRow = await db.get('SELECT language FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
   const lang = custRow?.language || 'en';
 
@@ -430,6 +451,46 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
   return true;
 }
 
+// Check if an arrival message was queued for this customer in the last 60 minutes
+router.get('/check-arrival-notified', async (req, res) => {
+  try {
+    const rawPhone = String(req.query.phone || '').replace(/\D/g, '');
+    if (!rawPhone || rawPhone.length < 7) {
+      return res.json({ recentlyNotified: false });
+    }
+
+    const last10 = rawPhone.slice(-10);
+    const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+    const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
+
+    const db = await dbManager.getConnection();
+    const recent = await db.get(
+      `SELECT id, created_at, status FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+    );
+
+    if (recent) {
+      const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recent.created_at)) / 60000));
+      return res.json({
+        recentlyNotified: true,
+        minutesAgo,
+        queueId: recent.id,
+        status: recent.status
+      });
+    }
+
+    return res.json({ recentlyNotified: false });
+  } catch (err: any) {
+    console.error('Check arrival notified error:', err);
+    res.json({ recentlyNotified: false });
+  }
+});
+
 // Trigger WhatsApp Arrival / Status Notification for a special order
 router.post('/:id/notify-arrival', async (req, res) => {
   const { id } = req.params;
@@ -446,8 +507,9 @@ router.post('/:id/notify-arrival', async (req, res) => {
       return res.status(400).json({ error: 'Order has no associated phone number' });
     }
 
+    const isForce = req.body?.force_resend === true;
     const isResend = Number(order.notified) === 1 || Number(order.notification_count) > 0;
-    const queued = await enqueueArrivalWhatsApp(db, order, { skipDedupe: isResend });
+    const queued = await enqueueArrivalWhatsApp(db, order, { skipDedupe: isResend, forceResend: isForce });
     
     // Update order status to 'Ready', mark notified, and increment notification_count
     let newCount = Number(order.notification_count || 0);
@@ -461,7 +523,7 @@ router.post('/:id/notify-arrival', async (req, res) => {
       success: true,
       whatsapp_queued: queued,
       notification_count: newCount,
-      message: queued ? 'Arrival notification queued successfully via WhatsApp' : 'No phone stored for this order; nothing was sent'
+      message: queued ? 'Arrival notification queued successfully via WhatsApp' : 'Arrival message was already queued in the last 60 minutes (or no phone stored)'
     });
   } catch (err: any) {
     console.error('Notify arrival error:', err);
@@ -471,7 +533,7 @@ router.post('/:id/notify-arrival', async (req, res) => {
 
 // Trigger consolidated WhatsApp Arrival / Status Notification for multiple special orders of the same customer
 router.post('/batch-notify-arrival', async (req, res) => {
-  const { order_ids, items, custom_message, lang: reqLang } = req.body;
+  const { order_ids, items, custom_message, lang: reqLang, force_resend } = req.body;
   if (!Array.isArray(order_ids) || order_ids.length === 0) {
     return res.status(400).json({ error: 'order_ids array is required' });
   }
@@ -492,6 +554,33 @@ router.post('/batch-notify-arrival', async (req, res) => {
     }
 
     const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
+    const last10 = firstPhone.slice(-10);
+    const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1000;
+
+    // 60-minute anti-spam duplicate guard: check if arrival message was already queued to this customer in the last 60 minutes
+    if (!force_resend) {
+      const recentQueue = await db.get(
+        `SELECT id, created_at, status FROM whatsapp_send_queue
+         WHERE (number LIKE ? OR number LIKE ?)
+           AND type = 'special_order'
+           AND status NOT IN ('cancelled', 'failed_perm')
+           AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`,
+        [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+      );
+
+      if (recentQueue) {
+        const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recentQueue.created_at)) / 60000));
+        return res.status(409).json({
+          error: `An arrival notification was already queued for this customer ${minutesAgo} minute(s) ago.`,
+          code: 'RECENTLY_NOTIFIED',
+          already_queued: true,
+          minutes_ago: minutesAgo,
+          recent_queue_id: recentQueue.id
+        });
+      }
+    }
+
     const custRow = await db.get('SELECT language FROM customers WHERE phone = ? LIMIT 1', [firstPhone]);
     const lang = reqLang || orders[0].language || custRow?.language || 'en';
     const requesterName = orders[0].requester || 'Customer';

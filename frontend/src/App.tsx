@@ -46,6 +46,7 @@ const DispatchPage = lazy(pageImports['/dispatch']);
 const Learning = lazy(pageImports['/learning']);
 const AuditCenter = lazy(pageImports['/audit']);
 const WebsiteOrders = lazy(pageImports['/website-orders']);
+const OnlineCatalog = lazy(pageImports['/online-catalog']);
 const LiveCart = lazy(pageImports['/live-cart']);
 const CustomerPortal = lazy(pageImports['/portal']);
 const ImageCorrectionRedirect: React.FC = () => {
@@ -90,6 +91,7 @@ const pageRoutes: KeepAliveRoute[] = [
   { path: '/learning', element: <Learning /> },
   { path: '/audit', element: <AuditCenter /> },
   { path: '/website-orders', element: <WebsiteOrders /> },
+  { path: '/online-catalog', element: <OnlineCatalog /> },
   { path: '/live-cart', element: <LiveCart /> },
   { path: '/portal', element: <CustomerPortal /> },
   { path: '/refill-portal', element: <CustomerPortal /> },

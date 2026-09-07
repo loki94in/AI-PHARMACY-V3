@@ -3980,8 +3980,12 @@ const SpecialOrdersSection: React.FC = () => {
     setNotifyingId(order.id);
     try {
       messageSendEvent.triggerSendProgress(order.requester || order.phone || 'Customer', `Arrival alert for ${order.product}`, 10);
-      await api.notifySpecialOrderArrival(order.id);
-      toastEvent.trigger(`Arrival WhatsApp sent to ${order.requester}!`, 'success', '/crm');
+      const notifyRes = await api.notifySpecialOrderArrival(order.id);
+      if (notifyRes && notifyRes.whatsapp_queued === false) {
+        toastEvent.trigger(`Notice already queued in last 60 min for ${order.requester}.`, 'info', '/crm');
+      } else {
+        toastEvent.trigger(`Arrival WhatsApp sent to ${order.requester}!`, 'success', '/crm');
+      }
       whatsappQueueEvent.triggerUpdated();
       await loadOrders();
     } catch (err) {

@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Store as StoreIcon, Phone, Key, ShieldCheck, CheckCircle2, Clock,
   ArrowRight, RefreshCw, ShoppingCart, ShoppingBag, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
-  CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera
+  CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera,
+  LayoutGrid, Eye, EyeOff, Star, Image, Filter, ChevronLeft
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -76,7 +77,7 @@ export default function CustomerPortal() {
   const navigate = useNavigate();
 
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'catalog' | 'portal'>('catalog');
+  const [activeTab, setActiveTab] = useState<'catalog' | 'portal' | 'manager'>('catalog');
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [isPortalRxModalOpen, setIsPortalRxModalOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
@@ -134,6 +135,17 @@ export default function CustomerPortal() {
   const [bills, setBills] = useState<PastBill[]>([]);
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(false);
+
+  // ─── Catalog Manager State ──────────────────────────────────────────────────
+  const [cmSearch, setCmSearch] = useState('');
+  const [cmFilter, setCmFilter] = useState<'all' | 'in_stock' | 'enabled' | 'disabled' | 'with_image'>('in_stock');
+  const [cmPage, setCmPage] = useState(1);
+  const [cmData, setCmData] = useState<{ medicines: any[]; total_count: number; total_pages: number; stats: any } | null>(null);
+  const [cmLoading, setCmLoading] = useState(false);
+  const [cmTogglingId, setCmTogglingId] = useState<number | null>(null);
+  const [cmSelected, setCmSelected] = useState<Set<number>>(new Set());
+  const [cmBulkLoading, setCmBulkLoading] = useState(false);
+  const cmSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Selection & Checkout States ───────────────────────────────────────────
   const [selectedItems, setSelectedItems] = useState<Record<string, SelectedMedicine>>({});
@@ -712,7 +724,7 @@ export default function CustomerPortal() {
               }`}
             >
               <Activity className="w-3.5 h-3.5" />
-              <span>Browse Catalog & Refills</span>
+              <span>Browse Catalog &amp; Refills</span>
             </button>
 
             <button
@@ -724,7 +736,35 @@ export default function CustomerPortal() {
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>{session ? 'My Prescriptions & Bills' : 'My Account / Login'}</span>
+              <span>{session ? 'My Prescriptions &amp; Bills' : 'My Account / Login'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('manager');
+                if (!cmData) {
+                  setCmLoading(true);
+                  fetch('/api/customer-portal/admin/catalog-visibility?limit=50&page=1&filter=in_stock')
+                    .then(r => r.json())
+                    .then(d => { setCmData(d); setCmLoading(false); })
+                    .catch(() => setCmLoading(false));
+                }
+              }}
+              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === 'manager'
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'text-muted hover:text-text'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Catalog Manager</span>
+              {cmData?.stats?.portal_enabled != null && (
+                <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
+                  activeTab === 'manager' ? 'bg-white/20 text-white' : 'bg-primary/15 text-primary'
+                }`}>
+                  {cmData.stats.portal_enabled}
+                </span>
+              )}
             </button>
           </div>
 
@@ -786,6 +826,316 @@ export default function CustomerPortal() {
             onOpenCartModal={() => setIsCartModalOpen(true)}
             onOpenLogin={() => setActiveTab('portal')}
           />
+        )}
+
+        {/* VIEW 3: CATALOG MANAGER (Pharmacist Admin) */}
+        {activeTab === 'manager' && (
+          <div className="space-y-4 py-2">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-text flex items-center gap-2">
+                  <LayoutGrid className="w-5 h-5 text-primary" />
+                  Portal Catalog Manager
+                </h2>
+                <p className="text-xs text-muted mt-0.5">
+                  Toggle which medicines are visible on the patient-facing portal. Only enabled medicines appear in the catalog.
+                </p>
+              </div>
+              {cmData?.stats && (
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  <span className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-500 font-bold">
+                    🌐 {cmData.stats.portal_enabled} Online
+                  </span>
+                  {cmData.stats.in_stock != null && (
+                    <span className="px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-lg text-primary font-bold">
+                      📦 {cmData.stats.in_stock} In Stock
+                    </span>
+                  )}
+                  <span className="px-3 py-1.5 bg-bg3 border border-border rounded-lg text-muted">
+                    {cmData.stats.total_medicines?.toLocaleString()} Total
+                  </span>
+                  <span className="px-3 py-1.5 bg-sky/10 border border-sky/20 rounded-lg text-sky font-medium">
+                    <Image className="w-3 h-3 inline mr-1" />
+                    {cmData.stats.with_image?.toLocaleString()} Images
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Search + Filter Bar */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                <input
+                  type="text"
+                  placeholder="Search medicine name, composition, manufacturer…"
+                  value={cmSearch}
+                  onChange={e => {
+                    setCmSearch(e.target.value);
+                    setCmPage(1);
+                    if (cmSearchTimeout.current) clearTimeout(cmSearchTimeout.current);
+                    cmSearchTimeout.current = setTimeout(() => {
+                      setCmLoading(true);
+                      const params = new URLSearchParams({ search: e.target.value, filter: cmFilter, page: '1', limit: '50' });
+                      fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                        .then(r => r.json())
+                        .then(d => { setCmData(d); setCmLoading(false); })
+                        .catch(() => setCmLoading(false));
+                    }, 400);
+                  }}
+                  className="w-full pl-10 pr-4 py-2.5 bg-bg2 border border-border rounded-xl text-sm text-text placeholder:text-muted focus:outline-none focus:border-primary/60"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {([
+                  { key: 'in_stock', label: '📦 In Stock' },
+                  { key: 'enabled', label: '🌐 Online' },
+                  { key: 'disabled', label: '📴 Offline' },
+                  { key: 'with_image', label: '🖼 With Image' },
+                  { key: 'all', label: 'All Catalog' }
+                ] as const).map(f => (
+                  <button
+                    key={f.key}
+                    onClick={() => {
+                      setCmFilter(f.key); setCmPage(1); setCmLoading(true);
+                      const params = new URLSearchParams({ search: cmSearch, filter: f.key, page: '1', limit: '50' });
+                      fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                        .then(r => r.json())
+                        .then(d => { setCmData(d); setCmLoading(false); })
+                        .catch(() => setCmLoading(false));
+                    }}
+                    className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-all ${
+                      cmFilter === f.key
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-bg2 text-muted border-border hover:border-primary/40 hover:text-text'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bulk Actions */}
+            {cmSelected.size > 0 && (
+              <div className="flex items-center gap-2 p-3 bg-primary/5 border border-primary/20 rounded-xl text-xs">
+                <span className="font-bold text-primary">{cmSelected.size} selected</span>
+                <button
+                  disabled={cmBulkLoading}
+                  onClick={() => {
+                    setCmBulkLoading(true);
+                    fetch('/api/customer-portal/admin/catalog-visibility/bulk', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ medicine_ids: Array.from(cmSelected), is_portal_visible: true })
+                    }).then(r => r.json()).then(() => {
+                      setCmSelected(new Set());
+                      setCmBulkLoading(false);
+                      // Refresh
+                      const params = new URLSearchParams({ search: cmSearch, filter: cmFilter, page: String(cmPage), limit: '50' });
+                      fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                        .then(r => r.json()).then(d => setCmData(d));
+                    }).catch(() => setCmBulkLoading(false));
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold transition-all disabled:opacity-50"
+                >
+                  {cmBulkLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
+                  Make Online (Go Online)
+                </button>
+                <button
+                  disabled={cmBulkLoading}
+                  onClick={() => {
+                    setCmBulkLoading(true);
+                    fetch('/api/customer-portal/admin/catalog-visibility/bulk', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ medicine_ids: Array.from(cmSelected), is_portal_visible: false })
+                    }).then(r => r.json()).then(() => {
+                      setCmSelected(new Set());
+                      setCmBulkLoading(false);
+                      const params = new URLSearchParams({ search: cmSearch, filter: cmFilter, page: String(cmPage), limit: '50' });
+                      fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                        .then(r => r.json()).then(d => setCmData(d));
+                    }).catch(() => setCmBulkLoading(false));
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg font-bold transition-all disabled:opacity-50"
+                >
+                  <EyeOff className="w-3 h-3" />
+                  Make Offline (Go Offline)
+                </button>
+                <button onClick={() => setCmSelected(new Set())} className="ml-auto text-muted hover:text-text">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Medicine List */}
+            {cmLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+                <span className="ml-2 text-sm text-muted">Loading medicines…</span>
+              </div>
+            ) : cmData && cmData.medicines.length === 0 ? (
+              <div className="text-center py-16 text-muted">
+                <LayoutGrid className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                <p className="font-semibold">No medicines found</p>
+                <p className="text-xs mt-1">{cmFilter === 'enabled' ? 'No medicines are enabled yet. Search and toggle medicines on.' : 'Try a different search or filter.'}</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {/* Select All */}
+                {cmData && cmData.medicines.length > 0 && (
+                  <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted">
+                    <input
+                      type="checkbox"
+                      checked={cmSelected.size === cmData.medicines.length && cmData.medicines.length > 0}
+                      onChange={e => {
+                        if (e.target.checked) setCmSelected(new Set(cmData.medicines.map((m: any) => m.id)));
+                        else setCmSelected(new Set());
+                      }}
+                      className="rounded"
+                    />
+                    <span>Select all {cmData.medicines.length} on this page</span>
+                    <span className="ml-auto text-muted">{cmData.total_count?.toLocaleString()} total results</span>
+                  </div>
+                )}
+
+                {cmData?.medicines.map((med: any) => (
+                  <div
+                    key={med.id}
+                    className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                      cmSelected.has(med.id)
+                        ? 'border-primary/50 bg-primary/5'
+                        : med.is_portal_visible
+                          ? 'border-emerald-500/30 bg-emerald-500/5'
+                          : 'border-border bg-bg2 hover:border-border/80'
+                    }`}
+                  >
+                    {/* Checkbox */}
+                    <input
+                      type="checkbox"
+                      checked={cmSelected.has(med.id)}
+                      onChange={e => {
+                        const s = new Set(cmSelected);
+                        if (e.target.checked) s.add(med.id); else s.delete(med.id);
+                        setCmSelected(s);
+                      }}
+                      className="rounded shrink-0"
+                    />
+
+                    {/* Thumbnail */}
+                    <div className="w-10 h-10 rounded-lg bg-bg3 border border-border shrink-0 flex items-center justify-center overflow-hidden">
+                      {med.primary_image ? (
+                        <img src={med.primary_image} alt={med.name} className="w-full h-full object-contain p-1" loading="lazy"
+                          onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+                        />
+                      ) : (
+                        <Image className="w-4 h-4 text-muted/40" />
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-bold text-text truncate">{med.name}</span>
+                        {med.stock_qty > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-bold border border-emerald-500/20">In Stock {med.stock_qty}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px] text-muted mt-0.5 flex-wrap">
+                        <span>{med.category || '—'}</span>
+                        {med.manufacturer && <><span>·</span><span className="truncate">{med.manufacturer}</span></>}
+                        {med.mrp > 0 && <><span>·</span><span className="font-mono text-text">₹{Number(med.mrp).toFixed(0)}</span></>}
+                      </div>
+                    </div>
+
+                    {/* Toggle */}
+                    <button
+                      disabled={cmTogglingId === med.id}
+                      onClick={() => {
+                        const newVal = !med.is_portal_visible;
+                        setCmTogglingId(med.id);
+                        fetch(`/api/customer-portal/admin/catalog-visibility/${med.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ is_portal_visible: newVal, is_website_visible: newVal })
+                        }).then(r => r.json()).then(() => {
+                          setCmData(prev => prev ? {
+                            ...prev,
+                            medicines: prev.medicines.map((m: any) =>
+                              m.id === med.id ? { ...m, is_portal_visible: newVal ? 1 : 0, is_website_visible: newVal ? 1 : 0 } : m
+                            ),
+                            stats: {
+                              ...prev.stats,
+                              portal_enabled: prev.stats.portal_enabled + (newVal ? 1 : -1)
+                            }
+                          } : prev);
+                          setCmTogglingId(null);
+                        }).catch(() => setCmTogglingId(null));
+                      }}
+                      className={`shrink-0 relative w-11 h-6 rounded-full border transition-all ${
+                        med.is_portal_visible
+                          ? 'bg-emerald-500 border-emerald-600'
+                          : 'bg-bg3 border-border'
+                      } ${cmTogglingId === med.id ? 'opacity-50' : ''}`}
+                      title={med.is_portal_visible ? 'Online — click to take offline' : 'Offline — click to make online'}
+                    >
+                      {cmTogglingId === med.id ? (
+                        <RefreshCw className="w-3 h-3 animate-spin absolute top-1.5 left-1.5" style={{ color: 'white' }} />
+                      ) : (
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
+                          med.is_portal_visible ? 'left-5' : 'left-0.5'
+                        }`} style={{ backgroundColor: 'white' }} />
+                      )}
+                    </button>
+
+                    {/* Status label */}
+                    <span className={`text-[10px] font-bold shrink-0 w-16 text-right ${
+                      med.is_portal_visible ? 'text-emerald-500' : 'text-muted'
+                    }`}>
+                      {med.is_portal_visible ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pagination */}
+            {cmData && cmData.total_pages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-3">
+                <button
+                  disabled={cmPage <= 1 || cmLoading}
+                  onClick={() => {
+                    const p = cmPage - 1; setCmPage(p); setCmLoading(true);
+                    const params = new URLSearchParams({ search: cmSearch, filter: cmFilter, page: String(p), limit: '50' });
+                    fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                      .then(r => r.json()).then(d => { setCmData(d); setCmLoading(false); })
+                      .catch(() => setCmLoading(false));
+                  }}
+                  className="p-2 rounded-lg border border-border text-muted hover:text-text disabled:opacity-30 transition-all"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs text-muted px-2">
+                  Page {cmPage} of {cmData.total_pages} &middot; {cmData.total_count?.toLocaleString()} medicines
+                </span>
+                <button
+                  disabled={cmPage >= cmData.total_pages || cmLoading}
+                  onClick={() => {
+                    const p = cmPage + 1; setCmPage(p); setCmLoading(true);
+                    const params = new URLSearchParams({ search: cmSearch, filter: cmFilter, page: String(p), limit: '50' });
+                    fetch(`/api/customer-portal/admin/catalog-visibility?${params}`)
+                      .then(r => r.json()).then(d => { setCmData(d); setCmLoading(false); })
+                      .catch(() => setCmLoading(false));
+                  }}
+                  className="p-2 rounded-lg border border-border text-muted hover:text-text disabled:opacity-30 transition-all"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* VIEW 2: PERSONAL PORTAL & LOGIN */}

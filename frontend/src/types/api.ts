@@ -73,6 +73,8 @@ export interface InventoryItem extends Medicine {
   rack_location?: string;
   medicine_id?: number;
   medicine_name?: string;
+  is_online?: number | boolean;
+  is_website_visible?: number | boolean;
 }
 
 export interface SpecialOrder {

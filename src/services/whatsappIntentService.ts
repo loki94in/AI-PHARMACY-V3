@@ -948,12 +948,29 @@ export async function handleOcrComplete(data: any): Promise<void> {
     typeof ocrResult?.cloudDetails === 'string' ? ocrResult.cloudDetails : ocrResult?.cloudDetails?.text,
   ].filter(Boolean).join(' ');
 
-  // Fetch known API substances dynamically and run V2 Signal-Required Gate
+  // Fetch known API substances & medicine reference dynamically and run V2 Signal-Required Gate
   Promise.all([
     lookupCustomer(phone),
-    dbManager.getConnection().then(db => db.all('SELECT api FROM api_substances'))
-  ]).then(async ([customer, rows]) => {
-    const knownApis = new Set(rows.map(r => (r.api || '').toLowerCase()));
+    dbManager.getConnection().then(async db => {
+      const apiRows = await db.all('SELECT api FROM api_substances').catch(() => []);
+      const refRows = await db.all('SELECT name, composition1 FROM medicine_reference').catch(() => []);
+      const combined = [
+        ...apiRows.map((r: any) => r.api),
+        ...refRows.map((r: any) => r.name),
+        ...refRows.map((r: any) => r.composition1)
+      ];
+      return combined.filter(Boolean);
+    })
+  ]).then(async ([customer, apiNames]) => {
+    const knownApis = new Set(apiNames.map((s: string) => String(s).toLowerCase().trim()));
+    // Also include core tokens from loaded medicine dictionary if available
+    const medNames = productNameFilterService.getMedicineNames();
+    if (medNames && medNames.length > 0) {
+      for (const m of medNames.slice(0, 5000)) {
+        const first = m.split(/\s+/)[0]?.toLowerCase();
+        if (first && first.length >= 4) knownApis.add(first);
+      }
+    }
     // Primary name first, then extra image/caption candidates — every one
     // independently through the V2 gate so a second product on a strip or a
     // caption medicine is found, while tickets/bills still get skipped whole.
