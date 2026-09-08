@@ -1,10 +1,21 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Clock, Pause, Play, ChevronLeft, ChevronRight, ShoppingCart, Send, Store } from 'lucide-react';
+import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
 
-// Indian Public & National Holidays (2026 reference)
-const INDIAN_HOLIDAYS_2026: Record<string, string> = {
+// Indian Public & National Holidays (2025-2027 reference)
+const INDIAN_HOLIDAYS: Record<string, string> = {
+  // 2025
+  '2025-01-26': 'Republic Day',
+  '2025-03-14': 'Holi',
+  '2025-03-31': 'Id-ul-Fitr',
+  '2025-04-18': 'Good Friday',
+  '2025-08-15': 'Independence Day',
+  '2025-10-02': 'Gandhi Jayanti',
+  '2025-10-21': 'Dussehra',
+  '2025-10-20': 'Diwali',
+  '2025-12-25': 'Christmas',
+  // 2026
   '2026-01-01': 'New Year',
   '2026-01-26': 'Republic Day',
   '2026-03-04': 'Mahashivratri',
@@ -22,6 +33,13 @@ const INDIAN_HOLIDAYS_2026: Record<string, string> = {
   '2026-11-08': 'Diwali',
   '2026-11-24': 'Guru Nanak Jayanti',
   '2026-12-25': 'Christmas',
+  // 2027
+  '2027-01-26': 'Republic Day',
+  '2027-03-22': 'Holi',
+  '2027-08-15': 'Independence Day',
+  '2027-10-02': 'Gandhi Jayanti',
+  '2027-11-09': 'Diwali',
+  '2027-12-25': 'Christmas',
 };
 
 interface DateCardItem {
@@ -72,6 +90,23 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   const [shopCloseTime, setShopCloseTime] = useState<string>('22:00');
   const [pharmacyClosedDates, setPharmacyClosedDates] = useState<string[]>([]);
 
+  // Month Calendar Popover State
+  const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
+  const calendarPopoverRef = useRef<HTMLDivElement>(null);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(() => new Date());
+
+  // Click outside listener for calendar popover
+  useEffect(() => {
+    if (!isCalendarOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (calendarPopoverRef.current && !calendarPopoverRef.current.contains(e.target as Node)) {
+        setIsCalendarOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isCalendarOpen]);
+
   // Fetch current pacing and schedule settings
   useEffect(() => {
     let mounted = true;
@@ -119,6 +154,44 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     }).catch(() => {});
   };
 
+  const toggleCustomClosedDate = (dateStr: string) => {
+    let updated: string[];
+    const isCurrentlyClosed = pharmacyClosedDates.includes(dateStr);
+    if (isCurrentlyClosed) {
+      updated = pharmacyClosedDates.filter(d => d !== dateStr);
+    } else {
+      updated = [...pharmacyClosedDates, dateStr].sort();
+    }
+    setPharmacyClosedDates(updated);
+    apiClient.post('/settings/save', {
+      pharmacy_closed_dates: JSON.stringify(updated)
+    }).then(() => {
+      toastEvent.trigger(
+        isCurrentlyClosed ? `Reopened shop on ${dateStr}` : `Marked shop closed on ${dateStr}`,
+        'info'
+      );
+    }).catch(() => {});
+  };
+
+  const clearAllCustomClosedDates = () => {
+    setPharmacyClosedDates([]);
+    apiClient.post('/settings/save', {
+      pharmacy_closed_dates: JSON.stringify([])
+    }).then(() => {
+      toastEvent.trigger('Cleared all custom shop closed dates', 'info');
+    }).catch(() => {});
+  };
+
+  const handlePrevMonth = () => {
+    setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  };
+  const handleNextMonth = () => {
+    setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  };
+  const handleTodayMonth = () => {
+    setCalendarViewDate(new Date());
+  };
+
   const handleTimeChange = (open: string, close: string) => {
     setShopOpenTime(open);
     setShopCloseTime(close);
@@ -152,15 +225,15 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   const dateCards = useMemo(() => {
     const cards: DateCardItem[] = [];
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
     for (let offset = -3; offset <= 17; offset++) {
       const d = new Date(now);
       d.setDate(now.getDate() + offset);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const isSunday = d.getDay() === 0;
       const isToday = dateStr === todayStr;
-      const holidayName = INDIAN_HOLIDAYS_2026[dateStr];
+      const holidayName = INDIAN_HOLIDAYS[dateStr];
       const isPaused = pausedDates.includes(dateStr);
       const dayFullName = d.toLocaleDateString('en-US', { weekday: 'long' });
       const isShopWeeklyOff = shopWeeklyOff.toLowerCase() !== 'none' && dayFullName.toLowerCase() === shopWeeklyOff.toLowerCase();
@@ -194,13 +267,28 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
   const scrollLeft = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: -200, behavior: 'smooth' });
+      scrollContainerRef.current.scrollBy({ left: -220, behavior: 'smooth' });
     }
   };
 
   const scrollRight = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: 200, behavior: 'smooth' });
+      scrollContainerRef.current.scrollBy({ left: 220, behavior: 'smooth' });
+    }
+  };
+
+  const scrollToToday = () => {
+    if (todayCardRef.current && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      const card = todayCardRef.current;
+      const scrollPos = card.offsetLeft - container.offsetWidth / 2 + card.offsetWidth / 2;
+      container.scrollTo({ left: Math.max(0, scrollPos), behavior: 'smooth' });
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (scrollContainerRef.current && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      scrollContainerRef.current.scrollLeft += e.deltaY;
     }
   };
 
@@ -218,17 +306,17 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             onClick={() => onTabChange('reorder')}
             className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
               currentTab === 'reorder'
-                ? 'bg-amber-500/20 text-amber-400 font-black shadow-xs border border-amber-500/40'
+                ? 'bg-amber-500/20 text-amber-500 font-black shadow-xs border border-amber-500/40'
                 : reorderCount > 0
-                  ? 'text-amber-400 hover:bg-amber-500/10'
+                  ? 'text-amber-500 hover:bg-amber-500/10'
                   : 'text-muted hover:text-text hover:bg-bg3'
             }`}
             title="Customer requests, refills due, sales-weighted restock suggestions, and recently ordered medicines"
           >
-            <Clock size={13} className={currentTab === 'reorder' || reorderCount > 0 ? 'text-amber-400' : 'text-muted'} />
+            <Clock size={13} className={currentTab === 'reorder' || reorderCount > 0 ? 'text-amber-500' : 'text-muted'} />
             <span>Reorder Hub</span>
             {reorderCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/40 font-mono font-bold">
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-500 border border-amber-500/40 font-mono font-bold">
                 {reorderCount}
               </span>
             )}
@@ -277,8 +365,8 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
         {/* Timer Pacing Selector & Controls */}
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <div className="flex items-center gap-1 bg-bg px-2.5 py-1 rounded-xl border border-glass-border">
-            <Clock size={12} className="text-sky-400 shrink-0" />
+          <div className="flex items-center gap-1 bg-bg px-2.5 py-1 rounded-xl border border-glass-border shadow-2xs">
+            <Clock size={12} className="text-sky-500 shrink-0" />
             <span className="text-[11px] font-bold text-muted truncate mr-1">Delay:</span>
             <div className="flex items-center gap-0.5">
               {[1, 5, 10, 30, 60].map(sec => (
@@ -288,7 +376,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
                   onClick={() => handleTimerChange(sec)}
                   className={`px-1.5 py-0.5 rounded-md text-[9px] font-black transition-all cursor-pointer ${
                     timerSec === sec
-                      ? 'bg-transparent text-sky-400 border border-sky-400/60 shadow-xs'
+                      ? 'bg-transparent text-sky-600 border border-sky-400/80 shadow-2xs'
                       : 'text-muted hover:text-text hover:bg-bg3 border border-transparent'
                   }`}
                   title={`Set auto-send delay timer to ${sec}s`}
@@ -299,24 +387,15 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={scrollLeft}
-              className="p-1 rounded-lg bg-bg border border-glass-border hover:bg-bg3 text-muted hover:text-text transition-all cursor-pointer"
-              title="Scroll Left"
-            >
-              <ChevronLeft size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={scrollRight}
-              className="p-1 rounded-lg bg-bg border border-glass-border hover:bg-bg3 text-muted hover:text-text transition-all cursor-pointer"
-              title="Scroll Right"
-            >
-              <ChevronRight size={13} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={scrollToToday}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-[11px] font-bold text-sky-700 hover:text-sky-800 transition-all cursor-pointer shadow-2xs"
+            title="Jump back to Today in calendar strip"
+          >
+            <Calendar size={12} className="text-sky-500" />
+            <span>Today</span>
+          </button>
         </div>
 
       </div>
@@ -324,117 +403,433 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       {/* Pharmacy Schedule & Operating Hours Strip */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1 bg-bg3/30 rounded-xl border border-glass-border/30 text-xs">
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Shop Weekly Off */}
-          <div className="flex items-center gap-1.5">
-            <Store size={13} className="text-emerald-400 shrink-0" />
-            <span className="text-[11px] font-bold text-muted">Shop Off Day:</span>
-            <select
-              value={shopWeeklyOff}
-              onChange={(e) => handleShopWeeklyOffChange(e.target.value)}
-              className="bg-bg border border-glass-border rounded-lg px-2 py-0.5 text-[11px] font-bold text-text focus:outline-none focus:border-primary cursor-pointer"
-            >
-              {['None', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(d => (
-                <option key={d} value={d} className="bg-bg text-text">{d}</option>
-              ))}
-            </select>
+          {/* Shop Off Calendar Popover Trigger */}
+          <div className="relative" ref={calendarPopoverRef}>
+            <div className="flex items-center gap-1.5">
+              <Store size={13} className="text-emerald-600 shrink-0" />
+              <span className="text-[11px] font-bold text-muted">Shop Off Day:</span>
+              <button
+                type="button"
+                onClick={() => setIsCalendarOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 bg-bg border rounded-lg px-2 py-0.5 text-[11px] font-bold text-text hover:border-primary/50 transition-all cursor-pointer shadow-2xs ${
+                  isCalendarOpen ? 'border-primary ring-1 ring-primary/30' : 'border-border'
+                }`}
+                title="Click to open calendar and configure Shop Off Days & Holidays"
+              >
+                <Calendar size={11} className="text-emerald-600 shrink-0" />
+                <span>{shopWeeklyOff}</span>
+                {pharmacyClosedDates.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-rose-500/15 text-rose-600 border border-rose-500/30">
+                    +{pharmacyClosedDates.length}
+                  </span>
+                )}
+                <ChevronDown size={11} className={`text-muted transition-transform duration-150 ${isCalendarOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+
+            {/* Interactive Month Calendar Popover */}
+            {isCalendarOpen && (
+              <div className="absolute left-0 top-full mt-1.5 z-50 w-[310px] sm:w-[340px] bg-bg border border-border rounded-2xl shadow-xl p-3.5 space-y-3 backdrop-blur-md">
+                {/* Header with Title & Close button */}
+                <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/40">
+                  <div className="flex items-center gap-1.5">
+                    <Calendar size={14} className="text-primary" />
+                    <span className="text-xs font-bold text-text">Pharmacy Schedule & Off Days</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsCalendarOpen(false)}
+                    className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg2 transition-all cursor-pointer"
+                    title="Close Calendar"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+
+                {/* Month Navigator */}
+                <div className="flex items-center justify-between px-1">
+                  <button
+                    type="button"
+                    onClick={handlePrevMonth}
+                    className="p-1 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer shadow-2xs"
+                    title="Previous Month"
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black text-text">
+                      {calendarViewDate.toLocaleDateString('en-IN', { month: 'long' })} {calendarViewDate.getFullYear()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleTodayMonth}
+                      className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-sky-500/15 text-sky-600 hover:bg-sky-500/25 border border-sky-400/40 transition-all cursor-pointer"
+                      title="Jump to current month"
+                    >
+                      Today
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNextMonth}
+                    className="p-1 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all cursor-pointer shadow-2xs"
+                    title="Next Month"
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+
+                {/* Section 1: Recurring Weekly Off Day Selector */}
+                <div className="space-y-1.5 bg-bg2/40 p-2 rounded-xl border border-glass-border/40">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-muted">
+                      Recurring Weekly Off
+                    </span>
+                    <span className="text-[9px] font-bold text-muted/80">
+                      {shopWeeklyOff === 'None' ? 'No weekly off' : `Every ${shopWeeklyOff}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {['None', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dayShort => {
+                      const dayFullMap: Record<string, string> = {
+                        None: 'None',
+                        Sun: 'Sunday',
+                        Mon: 'Monday',
+                        Tue: 'Tuesday',
+                        Wed: 'Wednesday',
+                        Thu: 'Thursday',
+                        Fri: 'Friday',
+                        Sat: 'Saturday'
+                      };
+                      const dayFull = dayFullMap[dayShort];
+                      const isSelected = shopWeeklyOff.toLowerCase() === dayFull.toLowerCase();
+
+                      return (
+                        <button
+                          key={dayShort}
+                          type="button"
+                          onClick={() => handleShopWeeklyOffChange(dayFull)}
+                          className={`flex-1 min-w-[32px] py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer text-center ${
+                            isSelected
+                              ? 'bg-red-600 text-white shadow-xs'
+                              : 'bg-bg hover:bg-bg3 text-text border border-border/70 hover:border-border'
+                          }`}
+                        >
+                          {dayShort}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Section 2: Interactive Month Grid */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-muted">
+                      Specific Closed Dates
+                    </span>
+                    <span className="text-[9px] text-muted italic">Click date to toggle</span>
+                  </div>
+
+                  {/* Days of Week Header */}
+                  <div className="grid grid-cols-7 gap-1 text-center font-black">
+                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((dw, idx) => (
+                      <div
+                        key={dw}
+                        className={`text-[10px] py-0.5 ${idx === 0 ? 'text-red-600' : 'text-muted'}`}
+                      >
+                        {dw}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Month Day Cells */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {/* Leading blank slots */}
+                    {Array.from({ length: new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay() }).map((_, i) => (
+                      <div key={`blank-${i}`} className="h-7" />
+                    ))}
+
+                    {/* Days in Month */}
+                    {Array.from({ length: new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
+                      const yr = calendarViewDate.getFullYear();
+                      const mo = calendarViewDate.getMonth();
+                      const dateStr = `${yr}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                      const dayDate = new Date(yr, mo, d);
+                      const dayOfWeekName = dayDate.toLocaleDateString('en-US', { weekday: 'long' });
+                      const isWeeklyOff = shopWeeklyOff.toLowerCase() !== 'none' && dayOfWeekName.toLowerCase() === shopWeeklyOff.toLowerCase();
+                      const isCustomClosed = pharmacyClosedDates.includes(dateStr);
+                      const holidayName = INDIAN_HOLIDAYS[dateStr];
+                      const isSunday = dayDate.getDay() === 0;
+                      const now = new Date();
+                      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                      const isToday = dateStr === todayStr;
+
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => toggleCustomClosedDate(dateStr)}
+                          className={`
+                            relative h-7 w-full rounded-lg text-[11px] font-bold flex flex-col items-center justify-center transition-all cursor-pointer select-none
+                            ${isCustomClosed
+                              ? 'bg-red-600 text-white font-black shadow-xs ring-1 ring-red-400'
+                              : isWeeklyOff
+                                ? 'bg-red-500/15 text-red-600 border border-red-400/40 font-black'
+                                : holidayName
+                                  ? 'bg-purple-500/15 text-purple-600 border border-purple-400/40 font-extrabold'
+                                  : isToday
+                                    ? 'bg-sky-500/15 text-sky-700 border border-sky-400 font-black ring-1 ring-sky-400/50'
+                                    : isSunday
+                                      ? 'text-red-600 hover:bg-bg3 border border-transparent'
+                                      : 'text-text hover:bg-bg3 border border-transparent'
+                            }
+                            hover:scale-105 active:scale-95
+                          `}
+                          title={`${d} ${calendarViewDate.toLocaleDateString('en-IN', { month: 'short' })} ${yr}${
+                            isCustomClosed ? ' • Marked Closed (Click to reopen)' :
+                            isWeeklyOff ? ' • Recurring Weekly Off (Click to toggle custom off)' :
+                            holidayName ? ` • Holiday: ${holidayName} (Click to mark closed)` :
+                            ' • Open (Click to mark closed)'
+                          }`}
+                        >
+                          <span>{d}</span>
+                          <div className="absolute bottom-0.5 flex items-center justify-center gap-0.5 leading-none">
+                            {isCustomClosed && (
+                              <span className="w-1 h-1 rounded-full bg-red-100 inline-block"></span>
+                            )}
+                            {!isCustomClosed && holidayName && (
+                              <span className="w-1 h-1 rounded-full bg-purple-500 inline-block"></span>
+                            )}
+                            {!isCustomClosed && isWeeklyOff && (
+                              <span className="w-1 h-1 rounded-full bg-red-500 inline-block"></span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Popover Footer: Legend & Actions */}
+                <div className="pt-2 border-t border-glass-border/40 space-y-2">
+                  <div className="flex items-center justify-between text-[10px] text-muted flex-wrap gap-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-xs bg-red-500/20 border border-red-400 inline-block"></span>
+                        <span>Weekly Off</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-xs bg-red-600 inline-block"></span>
+                        <span className="font-semibold text-red-600">Custom Closed</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-xs bg-purple-500/20 border border-purple-400 inline-block"></span>
+                        <span>Holiday</span>
+                      </span>
+                    </div>
+                    {pharmacyClosedDates.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={clearAllCustomClosedDates}
+                        className="text-[10px] font-bold text-red-600 hover:text-red-700 underline cursor-pointer"
+                      >
+                        Clear ({pharmacyClosedDates.length})
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[10px] text-muted italic">
+                      Closed days sync with order auto-dispatch
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsCalendarOpen(false)}
+                      className="px-3 py-1 bg-primary text-white text-[11px] font-bold rounded-lg hover:bg-primary/90 transition-all cursor-pointer shadow-2xs"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Shop Hours: Open - Close */}
           <div className="flex items-center gap-1.5">
-            <Clock size={13} className="text-emerald-400 shrink-0" />
+            <Clock size={13} className="text-emerald-600 shrink-0" />
             <span className="text-[11px] font-bold text-muted">Store Hours:</span>
             <input
               type="time"
               value={shopOpenTime}
               onChange={(e) => handleTimeChange(e.target.value, shopCloseTime)}
-              className="bg-bg border border-glass-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary"
+              className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
             />
             <span className="text-muted text-[10px] font-bold">to</span>
             <input
               type="time"
               value={shopCloseTime}
               onChange={(e) => handleTimeChange(shopOpenTime, e.target.value)}
-              className="bg-bg border border-glass-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary"
+              className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
             />
           </div>
         </div>
 
         {/* Legend / Status Info */}
-        <div className="flex items-center gap-3 text-[10px] text-muted font-medium">
+        <div className="flex items-center gap-3 text-[10px] text-muted font-medium flex-wrap">
           <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+            <span>Auto Dispatch</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
             <span>Distributor Paused</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block"></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
             <span>Shop Closed / Holiday</span>
+          </span>
+          <span className="text-[10px] text-muted/70 italic hidden xl:inline">
+            (Click any day to pause/resume dispatch)
           </span>
         </div>
       </div>
 
-      {/* Date Strip: High Contrast & Crystal Clear Text */}
-      <div
-        ref={scrollContainerRef}
-        className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-0.5 px-0.5 min-w-0"
-      >
-        {dateCards.map((card) => {
-          const isRed = card.isSunday || Boolean(card.holidayName) || card.isShopClosed;
+      {/* Date Strip: Modern Calendar Day Tiles with High Contrast & Smooth Scrolling */}
+      <div className="relative flex items-center w-full min-w-0">
+        <button
+          type="button"
+          onClick={scrollLeft}
+          className="shrink-0 p-1 mr-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
+          title="Scroll earlier dates"
+        >
+          <ChevronLeft size={14} />
+        </button>
 
-          return (
-            <button
-              key={card.dateStr}
-              ref={card.isToday ? todayCardRef : undefined}
-              type="button"
-              onClick={() => togglePauseDate(card.dateStr)}
-              className={`
-                shrink-0 px-2 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 text-left select-none bg-bg
-                ${card.isPaused
-                  ? 'border-amber-500/60 ring-1 ring-amber-500/40 text-amber-400'
-                  : card.isShopClosed
-                    ? 'border-rose-500/60 text-rose-400 font-bold'
-                    : isRed
-                      ? 'border-rose-500/40 hover:border-rose-500/70 text-rose-400 font-bold'
-                      : card.isToday
-                        ? 'border-sky-400 text-sky-300 font-black'
-                        : 'border-glass-border hover:border-border text-text'}
-              `}
-              title={`${card.dayName} ${card.dateNum} ${card.monthName} ${card.isShopClosed ? '(Shop Closed)' : card.holidayName ? `(${card.holidayName})` : card.isSunday ? '(Sunday)' : ''} - Click to ${card.isPaused ? 'resume' : 'pause auto-dispatch'}`}
-            >
-              {/* Day + Date Num */}
-              <div className="flex items-center gap-1">
-                <span className={`text-[10px] font-black uppercase ${isRed ? 'text-rose-400' : card.isToday ? 'text-sky-400' : 'text-muted'}`}>
-                  {card.dayName}
-                </span>
-                <span className={`text-xs font-black leading-none ${isRed ? 'text-rose-400' : 'text-text'}`}>
-                  {card.dateNum}
-                </span>
-              </div>
+        <div
+          ref={scrollContainerRef}
+          onWheel={handleWheel}
+          className="flex-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-1 px-0.5 min-w-0"
+        >
+          {dateCards.map((card) => {
+            const isRed = card.isSunday || Boolean(card.holidayName) || card.isShopClosed;
 
-              {/* Status Badge */}
-              {card.isPaused ? (
-                <span className="text-[9px] font-black px-1 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-0.5 shrink-0">
-                  <Pause size={8} /> Paused
-                </span>
-              ) : card.isShopClosed ? (
-                <span className="text-[9px] font-black px-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 truncate max-w-[65px] shrink-0">
-                  Shop Off
-                </span>
-              ) : isRed ? (
-                <span className="text-[9px] font-black px-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/40 truncate max-w-[65px] shrink-0">
-                  {card.holidayName || 'Sun'}
-                </span>
-              ) : card.isToday ? (
-                <span className="text-[9px] font-black px-1 rounded bg-sky-500/20 text-sky-400 border border-sky-500/40 shrink-0">
-                  Today
-                </span>
-              ) : (
-                <span className="text-[8px] font-extrabold text-emerald-400 shrink-0">
-                  <Play size={8} className="inline" />
-                </span>
-              )}
-            </button>
-          );
-        })}
+            return (
+              <button
+                key={card.dateStr}
+                ref={card.isToday ? todayCardRef : undefined}
+                type="button"
+                onClick={() => togglePauseDate(card.dateStr)}
+                className={`
+                  group relative shrink-0 flex flex-col items-center justify-between
+                  w-[68px] sm:w-[72px] h-[64px] py-1.5 px-1 rounded-xl border
+                  transition-all duration-150 cursor-pointer select-none text-center
+                  ${card.isPaused
+                    ? 'bg-amber-500/10 border-amber-500/60 ring-1 ring-amber-500/30 hover:border-amber-500 shadow-2xs hover:shadow-xs'
+                    : card.isToday
+                      ? 'bg-sky-500/10 border-sky-500 ring-2 ring-sky-500/30 shadow-xs'
+                      : card.isShopClosed
+                        ? 'bg-rose-500/10 border-rose-400/50 hover:border-rose-400 shadow-2xs'
+                        : isRed
+                          ? 'bg-rose-500/5 border-rose-300/50 hover:border-rose-400 shadow-2xs'
+                          : 'bg-bg hover:bg-bg2 border-border hover:border-glass-border shadow-2xs hover:shadow-xs'
+                  }
+                  hover:-translate-y-0.5 active:scale-95
+                `}
+                title={`${card.dayName}, ${card.dateNum} ${card.monthName} ${card.dateStr.split('-')[0]} ${
+                  card.isShopClosed
+                    ? '• Shop Closed'
+                    : card.holidayName
+                      ? `• ${card.holidayName}`
+                      : card.isSunday
+                        ? '• Sunday'
+                        : '• Auto-dispatch Active'
+                } — Click to ${card.isPaused ? 'resume auto-dispatch' : 'pause auto-dispatch'}`}
+              >
+                {/* Top: Day name + Month */}
+                <div className="w-full flex items-center justify-between px-1 leading-none">
+                  <span
+                    className={`text-[10px] font-black uppercase tracking-wider ${
+                      card.isPaused
+                        ? 'text-amber-700'
+                        : card.isToday
+                          ? 'text-sky-700'
+                          : card.isShopClosed || isRed
+                            ? 'text-rose-600'
+                            : 'text-muted'
+                    }`}
+                  >
+                    {card.dayName}
+                  </span>
+                  <span
+                    className={`text-[9px] font-semibold ${
+                      card.isToday ? 'text-sky-600 font-bold' : 'text-muted/80'
+                    }`}
+                  >
+                    {card.monthName}
+                  </span>
+                </div>
+
+                {/* Middle: Date Number */}
+                <div className="flex items-center justify-center -my-0.5">
+                  <span
+                    className={`text-base font-black leading-none tracking-tight ${
+                      card.isPaused
+                        ? 'text-amber-800'
+                        : card.isToday
+                          ? 'text-sky-800'
+                          : card.isShopClosed || isRed
+                            ? 'text-rose-700'
+                            : 'text-text'
+                    }`}
+                  >
+                    {card.dateNum}
+                  </span>
+                </div>
+
+                {/* Bottom: Status Badge */}
+                <div className="w-full flex items-center justify-center px-0.5">
+                  {card.isPaused ? (
+                    <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8px] font-black bg-amber-500 text-white uppercase tracking-wider leading-tight shadow-2xs">
+                      <Pause size={7} strokeWidth={3} /> Paused
+                    </span>
+                  ) : card.isToday ? (
+                    <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[8px] font-black bg-sky-500 text-white uppercase tracking-wider leading-tight shadow-2xs">
+                      Today
+                    </span>
+                  ) : card.isShopClosed ? (
+                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-black bg-red-500 text-white uppercase tracking-wider leading-tight truncate max-w-[58px]">
+                      Shop Off
+                    </span>
+                  ) : card.holidayName ? (
+                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-bold bg-rose-100 text-rose-700 border border-rose-300/60 leading-tight truncate max-w-[58px]">
+                      {card.holidayName}
+                    </span>
+                  ) : card.isSunday ? (
+                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-bold bg-rose-100 text-rose-700 border border-rose-300/60 leading-tight">
+                      Sunday
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[8px] font-extrabold text-emerald-600 leading-tight">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      <span>Auto</span>
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={scrollRight}
+          className="shrink-0 p-1 ml-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
+          title="Scroll later dates"
+        >
+          <ChevronRight size={14} />
+        </button>
       </div>
 
     </div>
