@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "gmail": {
+      "enabled": true
+    }
+  }
+}
