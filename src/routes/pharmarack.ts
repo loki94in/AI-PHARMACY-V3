@@ -2056,12 +2056,30 @@ router.get('/session-status', async (req, res) => {
     const token = settings['pharmarack_session_token'] || '';
 
     if (!token) {
-      return res.json({ healthy: false, mode: 'Live', isRefreshing, reason: 'NO_TOKEN', message: 'Session not linked' });
+      return res.json({ healthy: false, mode: 'Live', isRefreshing, daysLeft: null, expiresAt: null, reason: 'NO_TOKEN', message: 'Session not linked' });
     }
 
     let healthy = false;
     let reason = 'EXPIRED';
     let message = 'Session expired';
+    let daysLeft: number | null = null;
+    let expiresAt: string | null = null;
+
+    try {
+      const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+      const parts = cleanToken.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+        if (payload.exp && typeof payload.exp === 'number') {
+          const expMs = payload.exp * 1000;
+          expiresAt = new Date(expMs).toISOString();
+          const diffMs = expMs - Date.now();
+          daysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        }
+      }
+    } catch {
+      // Ignore token decode errors
+    }
 
     try {
       // Shared TTL-cached probe (also silently retries with a refreshed token on 401/403)
@@ -2080,7 +2098,15 @@ router.get('/session-status', async (req, res) => {
       message = err.message || 'Network timeout/connection error';
     }
 
-    return res.json({ healthy, mode: 'Live', isRefreshing, reason: healthy ? undefined : reason, message: healthy ? 'Session active' : message });
+    return res.json({
+      healthy,
+      mode: 'Live',
+      isRefreshing,
+      daysLeft,
+      expiresAt,
+      reason: healthy ? undefined : reason,
+      message: healthy ? 'Session active' : message
+    });
   } catch (err: any) {
     console.error('Session status check error:', err);
     return res.status(500).json({ error: 'Internal server error' });

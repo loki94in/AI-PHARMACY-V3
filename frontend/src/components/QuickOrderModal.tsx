@@ -171,6 +171,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const [prMode, setPrMode] = useState<'Live' | 'Unknown'>('Live');
   type SessionState = 'active' | 'restoring' | 'disconnected';
   const [sessionStatus, setSessionStatus] = useState<SessionState>('active');
+  const [sessionDaysLeft, setSessionDaysLeft] = useState<number | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
 
   // Duplicate check states
@@ -319,6 +320,9 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     try {
       const data = await api.checkPharmarackSession();
       setPrMode(data.mode || 'Live');
+      if (typeof data.daysLeft === 'number') {
+        setSessionDaysLeft(data.daysLeft);
+      }
       if (data.healthy) {
         setSessionStatus('active');
       } else if (data.isRefreshing) {
@@ -726,8 +730,12 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
               Quick Special Request
               <span className="text-[10px] bg-bg3 border border-glass-border text-muted px-2 py-0.5 rounded-md font-mono font-semibold">Alt + O</span>
               {sessionStatus === 'active' && (
-                <span className="text-[9px] font-extrabold px-2.5 py-0.5 rounded-full border leading-none bg-emerald-500/10 text-emerald-400 border-emerald-500/30 flex items-center gap-1 shadow-sm">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block"></span> LIVE READY
+                <span
+                  className="text-[9px] font-extrabold px-2.5 py-0.5 rounded-full border leading-none bg-emerald-500/10 text-emerald-400 border-emerald-500/30 flex items-center gap-1 shadow-sm"
+                  title={sessionDaysLeft !== null ? `Pharmarack session active • ${sessionDaysLeft} days left before re-login` : 'Pharmarack session active'}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block"></span>
+                  {sessionDaysLeft !== null ? `${sessionDaysLeft}d left` : 'LIVE READY'}
                 </span>
               )}
               {sessionStatus === 'restoring' && (

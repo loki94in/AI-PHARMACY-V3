@@ -282,6 +282,7 @@ let cachedSkippedItemKeys: Set<string> = loadInitialSkippedKeys();
 let cachedPrMode: 'Live' | 'Unknown' = 'Live';
 type SessionState = 'active' | 'restoring' | 'disconnected';
 let cachedSessionStatus: SessionState = 'active';
+let cachedSessionDaysLeft: number | null = null;
 const clientSearchCache = new Map<string, SuggestionMedicine[]>();
 const MAX_CLIENT_SEARCH_CACHE = 100;
 
@@ -478,6 +479,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [prMode, setPrMode] = useState<'Live' | 'Unknown'>(cachedPrMode);
   const [sessionStatus, setSessionStatus] = useState<SessionState>(cachedSessionStatus);
+  const [sessionDaysLeft, setSessionDaysLeft] = useState<number | null>(cachedSessionDaysLeft);
   const [reconnecting, setReconnecting] = useState(false);
 
   // Cart Preview States (Hydrated instantly from module cache)
@@ -946,6 +948,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const data = await api.checkPharmarackSession();
       cachedPrMode = data.mode || 'Live';
       setPrMode(cachedPrMode);
+      if (typeof data.daysLeft === 'number') {
+        cachedSessionDaysLeft = data.daysLeft;
+        setSessionDaysLeft(data.daysLeft);
+      }
       if (data.healthy) {
         cachedSessionStatus = 'active';
         setSessionStatus('active');
@@ -2253,8 +2259,12 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                     Live Cart
                     <span className="text-[10px] bg-bg3 border border-border text-muted px-1.5 py-0.5 rounded font-mono">Alt + L</span>
                     {sessionStatus === 'active' && (
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border leading-none bg-emerald-500/10 text-emerald-400 border-emerald-500/30 flex items-center gap-1.5 shadow-sm">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> LIVE READY
+                      <span
+                        className="text-[9px] font-bold px-2 py-0.5 rounded-full border leading-none bg-emerald-500/10 text-emerald-400 border-emerald-500/30 flex items-center gap-1.5 shadow-sm"
+                        title={sessionDaysLeft !== null ? `Pharmarack session active • ${sessionDaysLeft} days left before re-login` : 'Pharmarack session active'}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        {sessionDaysLeft !== null ? `${sessionDaysLeft}d left` : 'LIVE READY'}
                       </span>
                     )}
                     {sessionStatus === 'restoring' && (
