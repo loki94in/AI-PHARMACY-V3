@@ -1,0 +1,4322 @@
+[
+  {
+    "med": {
+      "id": 75471,
+      "name": "CASTOR OIL 50ML",
+      "manufacturer": "MULTIPHAR",
+      "generic_name": "OLEIC ACID+RICINOLEIC ACID",
+      "packaging": "50 ML",
+      "strength": null
+    },
+    "file": "/products/castor-oil-50ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CASTOR\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 105810,
+      "name": "DR ORTHO 48 CREAM 15GM",
+      "manufacturer": "DR ORTHO",
+      "generic_name": null,
+      "packaging": "15GM",
+      "strength": null
+    },
+    "file": "/products/dr-ortho-48-cream-15gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DR\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 123103,
+      "name": "MANFORCE STAYLONG GEL 10 GM",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": null,
+      "packaging": "10 G",
+      "strength": null
+    },
+    "file": "/products/manforce-stay-long-gel-10gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MANFORCE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 174071,
+      "name": "VICKS 115 CREAM 25ML",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "25ML",
+      "strength": null
+    },
+    "file": "/products/vicks-115-cream-25ml-side.jpg",
+    "score": {
+      "confidenceScore": 98,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Strength verified (25ML) • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": true,
+        "strengthConflict": false,
+        "strengthScore": 20,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 175914,
+      "name": "VICKS 130 ROLL 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-130-roll-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 176277,
+      "name": "VICKS 145 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-145-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 176298,
+      "name": "VICKS 155 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-155-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 221720,
+      "name": "DABUR GLUCOSE D  POWDER 75GM",
+      "manufacturer": "DABUR INDIA LIMITED",
+      "generic_name": null,
+      "packaging": "75GM",
+      "strength": null
+    },
+    "file": "/products/dabur-glucose-d-powder-75gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DABUR\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 284714,
+      "name": "ABZORB ANTI FUNGAL POWDER BOTTLE OF 100 G",
+      "manufacturer": "SUN PHARMA (CONSUMER HEALTHCARE)",
+      "generic_name": "CLOTRIMAZOLE(1.0 %)",
+      "packaging": "100 G",
+      "strength": null
+    },
+    "file": "/products/abzorb-anti-fungal-powder-bottle-of-100-g-side.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ABZORB\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 284867,
+      "name": "ALKOF JUNIOR COUGH SYP 100ML",
+      "manufacturer": "ALKEM LABORATORIES LTD",
+      "generic_name": "DEXTROMETHORPHAN(10.0 MG)+PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+      "packaging": "100 ML",
+      "strength": null
+    },
+    "file": "/products/alkof-junior-cough-syp-100ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ALKOF\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285279,
+      "name": "B COLEN C NS RASPBERRY FLAV SYP 100ML",
+      "manufacturer": "GALPHA LABORATORIES LTD",
+      "generic_name": "VITAMIN B COMPLEX(5.0 MG)",
+      "packaging": "100 ML",
+      "strength": null
+    },
+    "file": "/products/b-colen-c-ns-raspberry-flav-syp-100ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"COLEN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285294,
+      "name": "BADAM SHIRIN OIL 25 ML",
+      "manufacturer": "HAMDARD (WAKF) LABORATORIES",
+      "generic_name": null,
+      "packaging": "25 ML",
+      "strength": null
+    },
+    "file": "/products/badam-shirin-oil-25-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BADAM\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285299,
+      "name": "BAID ABHAYARISHTA SYP 227ML",
+      "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+      "generic_name": null,
+      "packaging": "0 ",
+      "strength": null
+    },
+    "file": "/products/baid-abhayarishta-syp-227ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BAID\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285328,
+      "name": "BAIDYANATH PUNARNAVARISHTA LIQUID 455 ML",
+      "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+      "generic_name": null,
+      "packaging": "455 ML",
+      "strength": null
+    },
+    "file": "/products/baidyanath-punarnavarishta-liquid-455-ml-front.jpg",
+    "score": {
+      "confidenceScore": 91,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BAIDYANATH\") • Strength verified (455ML) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": true,
+        "strengthConflict": false,
+        "strengthScore": 20,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285329,
+      "name": "BAIDYANATH SARIVADYARISHTA LIQUID 455 ML",
+      "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+      "generic_name": null,
+      "packaging": "455 ML",
+      "strength": null
+    },
+    "file": "/products/baidyanath-sarivadyarishta-liquid-455-ml-front.jpg",
+    "score": {
+      "confidenceScore": 91,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BAIDYANATH\") • Strength verified (455ML) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": true,
+        "strengthConflict": false,
+        "strengthScore": 20,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285396,
+      "name": "BEARDO BEARD OIL 349  OIL 60ML",
+      "manufacturer": "BEARDO",
+      "generic_name": null,
+      "packaging": "60ML",
+      "strength": null
+    },
+    "file": "/products/beardo-beard-oil-349-oil-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BEARDO\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285397,
+      "name": "BEARDO BEARD OIL 750 OIL 50ML",
+      "manufacturer": "BEARDO",
+      "generic_name": null,
+      "packaging": "50ML",
+      "strength": null
+    },
+    "file": "/products/beardo-beard-oil-750-oil-50ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BEARDO\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285420,
+      "name": "BEIPOS 1.5%W/V EYE DROPS 5ML",
+      "manufacturer": "LUPIN",
+      "generic_name": "BEPOTASTINE(1.5 %)",
+      "packaging": "5 ML",
+      "strength": null
+    },
+    "file": "/products/beipos-15wv-eye-drops-5ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"BEIPOS\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285681,
+      "name": "CALADRYL LOTION 100ML",
+      "manufacturer": "JOHNSON & JOHNSON",
+      "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+      "packaging": "100 ML",
+      "strength": null
+    },
+    "file": "/products/caladryl-lotion-100ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CALADRYL\") • Form matched (LOTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285683,
+      "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION- SKIN SOOTHING SOLUTION - 60 ML",
+      "manufacturer": "PIRAMAL ENTERPRISES LTD",
+      "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/caladryl-skin-allergy-expert-calamine-lotion--skin-soothing-solution---60-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CALADRYL\") • Form matched (LOTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285684,
+      "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION - SKIN SOOTHING SOLUTION - 120 ML",
+      "manufacturer": "PIRAMAL ENTERPRISES LTD",
+      "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+      "packaging": "120 ML",
+      "strength": null
+    },
+    "file": "/products/caladryl-skin-allergy-expert-calamine-lotion---skin-soothing-solution---120-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CALADRYL\") • Form matched (LOTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285798,
+      "name": "CARMICIDE DROPS 30ML",
+      "manufacturer": "INDOCO REMEDIES LTD",
+      "generic_name": "SIMETHICONE / SIMETICONE(40.0 MG)",
+      "packaging": "30 ML",
+      "strength": null
+    },
+    "file": "/products/carmicide-drops-30ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CARMICIDE\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285814,
+      "name": "CASTOR OIL 30 ML",
+      "manufacturer": "10 DRUG MART",
+      "generic_name": null,
+      "packaging": "30 ML",
+      "strength": null
+    },
+    "file": "/products/castor-oil-30-ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CASTOR\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 285913,
+      "name": "CHANDAN BALA OIL 60ML",
+      "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+      "generic_name": "AYURVEDIC",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/chandan-bala-oil-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CHANDAN\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286045,
+      "name": "CIPLADINE 39 OINT 15GM",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": null,
+      "packaging": "15GM",
+      "strength": null
+    },
+    "file": "/products/cipladine-39-oint-15gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CIPLADINE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286048,
+      "name": "CIPLADINE 5% OINT 15GM",
+      "manufacturer": "CIPLA GX",
+      "generic_name": "POVIDONE-IODINE(5.0 %)",
+      "packaging": "15 G",
+      "strength": null
+    },
+    "file": "/products/cipladine-5-oint-15gm-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CIPLADINE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286052,
+      "name": "CIPLADINE 5% OINT 30GM",
+      "manufacturer": "CIPLA GX",
+      "generic_name": "POVIDONE-IODINE(5.0 %)",
+      "packaging": "30 G",
+      "strength": null
+    },
+    "file": "/products/cipladine-5-oint-30gm-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CIPLADINE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286057,
+      "name": "CIPLADINE 80 OINT 30GM",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": null,
+      "packaging": "30GM",
+      "strength": null
+    },
+    "file": "/products/cipladine-80-oint-30gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CIPLADINE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286058,
+      "name": "CIPLADINE 87 CREAM 30GM",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": null,
+      "packaging": "30GM",
+      "strength": null
+    },
+    "file": "/products/cipladine-87-cream-30gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CIPLADINE\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286374,
+      "name": "CREMAFFIN PLUS SYP 200ML",
+      "manufacturer": "ABBOTT INDIA LTD",
+      "generic_name": "SODIUM PICOSULFATE(3.33 MG)+LIQUID PARAFFIN(1.25 ML)+MAGNESIUM HYDROXIDE / MILK OF MAGNESIA(3.75 ML)",
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/cremaffin-plus-syp-200ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CREMAFFIN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286399,
+      "name": "CROCIN DS SUSP SUS 100ML",
+      "manufacturer": "GLENWOOD BIOTECH PVT LIMITED",
+      "generic_name": null,
+      "packaging": "100ML",
+      "strength": null
+    },
+    "file": "/products/crocin-ds-susp-sus-100ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CROCIN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286666,
+      "name": "DERMI COOL  POWDER 150 ML",
+      "manufacturer": "DERMICOOL",
+      "generic_name": null,
+      "packaging": "150 ML",
+      "strength": null
+    },
+    "file": "/products/dermi-cool-powder-150-ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DERMI\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286668,
+      "name": "DERMI COOL LAVENDER POWDER 90GM",
+      "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+      "generic_name": null,
+      "packaging": "90 G",
+      "strength": null
+    },
+    "file": "/products/dermi-cool-lavender-powder-90gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DERMI\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286669,
+      "name": "DERMI COOL SANDAL POWDER 50GM",
+      "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+      "generic_name": null,
+      "packaging": "50 G",
+      "strength": null
+    },
+    "file": "/products/dermi-cool-sandal-powder-50gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DERMI\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 286978,
+      "name": "DR ORTHO AN AYURVEDIC MEDICINE OIL BOTTLE OF 60 ML",
+      "manufacturer": "DIVISA HERBAL CARE PVT LTD",
+      "generic_name": null,
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/dr-ortho-an-ayurvedic-medicine-oil-combo.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DR\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287029,
+      "name": "DUONASE NASAL SPRAY 70MD 9.8ML",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": "FLUTICASONE(50.0 MCG)+AZELASTINE(140.0 MCG)",
+      "packaging": "70 MD",
+      "strength": null
+    },
+    "file": "/products/duonase-nasal-spray-70md-98ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"DUONASE\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287502,
+      "name": "FLEXON 100MG/162.5MG SYP 100ML",
+      "manufacturer": "ARISTO PHARMACEUTICALS PVT LTD",
+      "generic_name": "IBUPROFEN(100.0 MG)+PARACETAMOL / ACETAMINOPHEN(162.5 MG)",
+      "packaging": "100 ML",
+      "strength": null
+    },
+    "file": "/products/flexon-100mg1625mg-syp-100ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"FLEXON\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287649,
+      "name": "GABANEURON NT 100MG STRIP OF 10 TABLETS",
+      "manufacturer": "ARISTO PHARMACEUTICALS PVT LTD",
+      "generic_name": "NORTRIPTYLINE(10.0 MG)+GABAPENTIN(100.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/gabaneuron-nt-100mg-combo.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"GABANEURON\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287745,
+      "name": "GEMINOR M 1/500 MG TABLET 10",
+      "manufacturer": "MACLEODS PHARMACEUTICALS",
+      "generic_name": "GLIMEPIRIDE(1.0 MG)+METFORMIN(500.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/geminor-m-1500-mg-tablet-10-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"GEMINOR\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287820,
+      "name": "GILLETTE SHAVE FOAM LOTION 200ML",
+      "manufacturer": "GILLETTE INDIA LTD",
+      "generic_name": null,
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/gillette-shave-foam-lotion-200ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"GILLETTE\") • Form matched (LOTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 287879,
+      "name": "GLUCON D REGULAR INSTANT ENERGY POWDER BOTTLE OF 500 G",
+      "manufacturer": "ZYDUS WELLNESS PRODUCTS LTD",
+      "generic_name": null,
+      "packaging": "500 G",
+      "strength": null
+    },
+    "file": "/products/glucon-d-regular-instant-energy-powder-bottle-of-500-g-side.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"GLUCON\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288114,
+      "name": "GUDLAX PLUS SF SUSP 110ML",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": "SODIUM PICOSULFATE(3.33 MG)+LIQUID PARAFFIN(1.25 MG)+MAGNESIUM HYDROXIDE / MILK OF MAGNESIA(300.0 MG)",
+      "packaging": "110 ML",
+      "strength": null
+    },
+    "file": "/products/gudlax-plus-sf-susp-110ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"GUDLAX\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288173,
+      "name": "HAND CLINSER 250 SPRAY 500ML",
+      "manufacturer": "GEN BIOTEC PRIVATE LIMITED",
+      "generic_name": null,
+      "packaging": "500ML",
+      "strength": null
+    },
+    "file": "/products/hand-clinser-250-spray-500ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"HAND\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288587,
+      "name": "HIMALAYA NOURISHING SKIN CREAM 50ML",
+      "manufacturer": "THE HIMALAYA DRUG COMPANY",
+      "generic_name": "AYURVEDIC",
+      "packaging": "50 ML",
+      "strength": null
+    },
+    "file": "/products/himalaya-nourishing-skin-cream-50ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"HIMALAYA\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288735,
+      "name": "I KUL PLUS EYE DROPS 15ML",
+      "manufacturer": "INTAS PHARMACEUTICALS LTD",
+      "generic_name": "CHLORPHENIRAMINE+HYPROMELLOSE+NAPHAZOLINE+ZINC SULFATE",
+      "packaging": "15 ML",
+      "strength": null
+    },
+    "file": "/products/i-kul-plus-eye-drops-15ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"KUL\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288740,
+      "name": "IBUGESIC BOTTLE OF 60ML SUSPENSION",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": "IBUPROFEN(100.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/ibugesic-bottle-of-60ml-suspension-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"IBUGESIC\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288850,
+      "name": "ITCHGUARD 17 CREAM 5GM",
+      "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+      "generic_name": null,
+      "packaging": "5GM",
+      "strength": null
+    },
+    "file": "/products/itchguard-17-cream-5gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ITCHGUARD\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288855,
+      "name": "ITCHGUARD CREAM 6GM",
+      "manufacturer": "RECKITT BENCKISER",
+      "generic_name": "CLOTRIMAZOLE(1.0 %)",
+      "packaging": "6 G",
+      "strength": null
+    },
+    "file": "/products/itchguard-cream-6gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ITCHGUARD\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 288967,
+      "name": "JOLLY TULSI 51 DROPS 21 ML",
+      "manufacturer": "JOLLY HEALTHCARE",
+      "generic_name": null,
+      "packaging": "21 ML",
+      "strength": null
+    },
+    "file": "/products/jolly-tulsi-51-drops-21-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"JOLLY\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289035,
+      "name": "KANAKASAV SYP 220ML",
+      "manufacturer": "SANDU PHARMA",
+      "generic_name": null,
+      "packaging": "220ML",
+      "strength": null
+    },
+    "file": "/products/kanakasav-syp-220ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"KANAKASAV\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289036,
+      "name": "KANAKASAVA SYP 200ML (DHOOTH)",
+      "manufacturer": "SHREE DHOOTAPAPESHWAR",
+      "generic_name": null,
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/kanakasava-syp-200ml-dhooth-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"KANAKASAVA\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289172,
+      "name": "KILLER 299 SPRAY 180ML",
+      "manufacturer": "KILLER SPRAY",
+      "generic_name": null,
+      "packaging": "180ML",
+      "strength": null
+    },
+    "file": "/products/killer-299-spray-180ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"KILLER\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289223,
+      "name": "KOFOL COUGH SYRUP BOTTLE OF 100 ML",
+      "manufacturer": "VEDISTRY PRIVATE LIMITED",
+      "generic_name": "AYURVEDIC(0.0 MG)",
+      "packaging": "100 ML",
+      "strength": null
+    },
+    "file": "/products/kofol-cough-syrup-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"KOFOL\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289349,
+      "name": "LAKME SUN EXPERT TINTED SUNSCRE LOTION 18ML",
+      "manufacturer": "LAKME",
+      "generic_name": null,
+      "packaging": "18ML",
+      "strength": null
+    },
+    "file": "/products/lakme-sun-expert-tinted-sunscre-lotion-18ml-back.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"LAKME\") • Form matched (LOTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289769,
+      "name": "MAHACEF DRY SYP 30ML",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": "CEFIXIME(50.0 MG)",
+      "packaging": "30 ML",
+      "strength": null
+    },
+    "file": "/products/mahacef-dry-syp-30ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MAHACEF\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 289784,
+      "name": "MAHASUDARSHAN KADHA SYP 200ML",
+      "manufacturer": "SHREE DHOOTAPAPESHWAR",
+      "generic_name": null,
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/mahasudarshan-kadha-syp-200ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MAHASUDARSHAN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290019,
+      "name": "MET XL AM 25/2.5MG TABLET 10'S",
+      "manufacturer": "AJANTA PHARMA LTD",
+      "generic_name": "AMLODIPINE(2.5 MG)+METOPROLOL(25.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/met-xl-am-2525mg-tablet-10s-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MET\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290020,
+      "name": "MET XL AM 25/2.5MG TABLET 15'S",
+      "manufacturer": "AJANTA PHARMA LTD",
+      "generic_name": "AMLODIPINE(2.5 MG)+METOPROLOL(25.0 MG)",
+      "packaging": "15 NO'S",
+      "strength": null
+    },
+    "file": "/products/met-xl-am-2525mg-tablet-15s-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MET\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290242,
+      "name": "MOOV OINTMENT 35 GM",
+      "manufacturer": "RECKITT BENCKISER",
+      "generic_name": "WINTERGREEN OIL(15.0 %)+NILGIRI OIL(2.0 %)+TURPENTINE OIL(3.0 %)+MENTHA SPICATA(5.0 %)",
+      "packaging": "35 G",
+      "strength": null
+    },
+    "file": "/products/moov-ointment-35-gm-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MOOV\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290245,
+      "name": "MOOV PAIN RELIEF SPRAY BOTTLE OF 35 ML",
+      "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+      "generic_name": null,
+      "packaging": "35 ML",
+      "strength": null
+    },
+    "file": "/products/moov-pain-relief-spray-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MOOV\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290246,
+      "name": "MOOV PAIN RELIF SPRAY 25ML",
+      "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+      "generic_name": null,
+      "packaging": "25ML",
+      "strength": null
+    },
+    "file": "/products/moov-pain-relif-spray-25ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"MOOV\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290402,
+      "name": "NATURES GOLD KIT CREAM 43GM",
+      "manufacturer": "ESTRAGEN PHARMA",
+      "generic_name": null,
+      "packaging": "43GM",
+      "strength": null
+    },
+    "file": "/products/natures-gold-kit-cream-43gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"NATURES\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290412,
+      "name": "NAVRATNA 170 OIL 150ML",
+      "manufacturer": "UNIVERSAL LIFE SCIENCES",
+      "generic_name": null,
+      "packaging": "150ML",
+      "strength": null
+    },
+    "file": "/products/navratna-170-oil-150ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"NAVRATNA\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290818,
+      "name": "NYCIL COOL CHANDAN POWDER 50 GM",
+      "manufacturer": "HEINZ INDIA LTD",
+      "generic_name": null,
+      "packaging": "50 G",
+      "strength": null
+    },
+    "file": "/products/nycil-cool-chandan-powder-50-gm-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"NYCIL\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290819,
+      "name": "NYCIL COOL GULABJAL PRICKLY HEAT TALCUM POWDER - 75GM",
+      "manufacturer": "ZYDUS WELLNESS PRODUCTS LTD",
+      "generic_name": null,
+      "packaging": "75 G",
+      "strength": null
+    },
+    "file": "/products/nycil-cool-gulabjal-prickly-heat-talcum-powder---75gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"NYCIL\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290991,
+      "name": "OMNIGEL 100 SPRAY 28GM",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": null,
+      "packaging": "28GM",
+      "strength": null
+    },
+    "file": "/products/omnigel-100-spray-28gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"OMNIGEL\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 290995,
+      "name": "OMNIGEL 217.8 SPRAY 78.6ML",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": null,
+      "packaging": "78.6ML",
+      "strength": null
+    },
+    "file": "/products/omnigel-2178-spray-786ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"OMNIGEL\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291003,
+      "name": "OMNIGEL SPRAY 50ML",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": "METHYLSALICYLATE(10.0 %)+DICLOFENAC(1.16 %)+LINSEED OIL(3.0 %)+MENTHOL(5.0 %)",
+      "packaging": "50 ML",
+      "strength": null
+    },
+    "file": "/products/omnigel-spray-50ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"OMNIGEL\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291067,
+      "name": "ORGANIC INDIA MUSTARD OIL - 750ML",
+      "manufacturer": "ORGANIC INDIA PRIVATE LIMITED",
+      "generic_name": null,
+      "packaging": "750 ML",
+      "strength": null
+    },
+    "file": "/products/organic-india-mustard-oil---750ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ORGANIC\") • Form matched (OIL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291096,
+      "name": "ORTHO BALM BAM 50GM",
+      "manufacturer": "AYURVED",
+      "generic_name": null,
+      "packaging": "50GM",
+      "strength": null
+    },
+    "file": "/products/ortho-balm-bam-50gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ORTHO\") • Form matched (BALM) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291116,
+      "name": "OTRIVIN BABY SALINE BOTTLE OF 10ML NASAL SPRAY",
+      "manufacturer": "GLAXOSMITHKLINE",
+      "generic_name": "SODIUM CHLORIDE(0.74 %W/V)",
+      "packaging": "10 ML",
+      "strength": null
+    },
+    "file": "/products/otrivin-baby-saline-bottle-of-10ml-nasal-spray-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"OTRIVIN\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291426,
+      "name": "PET SAFA GRANULES 100 GM",
+      "manufacturer": "DIVISA HERBAL CARE PVT LTD",
+      "generic_name": null,
+      "packaging": "100 G",
+      "strength": null
+    },
+    "file": "/products/pet-safa-granules-100-gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"PET\") • Form matched (SACHET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291436,
+      "name": "PHENSEDYL DX SYP 60ML",
+      "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+      "generic_name": "DEXTROMETHORPHAN(10.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/phensedyl-dx-syp-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"PHENSEDYL\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291761,
+      "name": "PROTIN GEN POWDER 200ML",
+      "manufacturer": "MEDOX REMEDIES PVT LTD",
+      "generic_name": null,
+      "packaging": "200ML",
+      "strength": null
+    },
+    "file": "/products/protin-gen-powder-200ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"PROTIN\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291876,
+      "name": "R7 LIVER AND GALLBLADDER  DROP 30ML",
+      "manufacturer": "RECKITT BENCKISER PVT LTD",
+      "generic_name": null,
+      "packaging": "30ML",
+      "strength": null
+    },
+    "file": "/products/r7-liver-and-gallbladder-drop-30ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"R7\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 291877,
+      "name": "R71 SCIATICA DROP 30ML",
+      "manufacturer": "RECKET",
+      "generic_name": null,
+      "packaging": "30ML",
+      "strength": null
+    },
+    "file": "/products/r71-sciatica-drop-30ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"R71\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292017,
+      "name": "RELISPRAY 150 SPRAY 36GM",
+      "manufacturer": "REAL HEALTHCARE",
+      "generic_name": null,
+      "packaging": "36GM",
+      "strength": null
+    },
+    "file": "/products/relispray-150-spray-36gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"RELISPRAY\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292157,
+      "name": "ROSYCAP ASP 10/150MG CAP 10'S",
+      "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+      "generic_name": "ACETYLSALICYLIC ACID(150.0 MG)+ROSUVASTATIN(10.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/rosycap-asp-10150mg-cap-10s-front.jpg",
+    "score": {
+      "confidenceScore": 87,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ROSYCAP\") • Form matched (CAPSULE) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": true,
+        "packScore": 5,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292158,
+      "name": "ROSYCAP ASP 10MG/75MG CAP 10'S",
+      "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+      "generic_name": "ROSUVASTATIN(10.0 MG)+ACETYLSALICYLIC ACID(75.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/rosycap-asp-10mg75mg-cap-10s-front.jpg",
+    "score": {
+      "confidenceScore": 87,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ROSYCAP\") • Form matched (CAPSULE) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": true,
+        "packScore": 5,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292159,
+      "name": "ROSYCAP ASP 20/150MG CAP",
+      "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+      "generic_name": "ROSUVASTATIN(20.0 MG)+ACETYLSALICYLIC ACID(150.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/rosycap-asp-20150mg-cap-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ROSYCAP\") • Form matched (CAPSULE) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292182,
+      "name": "RUBIRED SYP 150ML",
+      "manufacturer": "MACLEODS PHARMACEUTICALS",
+      "generic_name": "VITAMIN B12 / MECOBALAMIN / CYNOCOBALAMIN / METHYLCOBALAMIN(2.5 MCG)+IRON(30.0 MG)+VITAMIN B9 / FOLIC ACID / FOLATE(0.5 MG)",
+      "packaging": "150 ML",
+      "strength": null
+    },
+    "file": "/products/rubired-syp-150ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"RUBIRED\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292212,
+      "name": "SANI OS SANITIZER SPRAY 60ML",
+      "manufacturer": "SANIFY HEALTHCARE",
+      "generic_name": null,
+      "packaging": "60ML",
+      "strength": null
+    },
+    "file": "/products/sani-os-sanitizer-spray-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SANI\") • Form matched (SPRAY) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292389,
+      "name": "SELSUN SUSPENSION 60 ML",
+      "manufacturer": "ABBOTT INDIA LTD",
+      "generic_name": null,
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/selsun-suspension-60-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SELSUN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292565,
+      "name": "SINAREST AF SYP 60ML",
+      "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+      "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/sinarest-af-syp-60ml-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SINAREST\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292570,
+      "name": "SINAREST PLUS SUSPENSION 60ML",
+      "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+      "generic_name": "MENTHOL(1.0 MG)+PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)+SODIUM CITRATE(60.0 MG)+PARACETAMOL / ACETAMINOPHEN(250.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/sinarest-plus-suspension-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SINAREST\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292571,
+      "name": "SINAREST SUSPENSION 60 ML",
+      "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+      "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)+PARACETAMOL / ACETAMINOPHEN(125.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/sinarest-suspension-60-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SINAREST\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292573,
+      "name": "SINAREST SYP 60ML",
+      "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+      "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)+PARACETAMOL / ACETAMINOPHEN(125.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/sinarest-syp-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"SINAREST\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292881,
+      "name": "TELSAR BISO 5 MG STRIP OF 10 TAB",
+      "manufacturer": "TORRENT PHARMACEUTICALS LTD",
+      "generic_name": null,
+      "packaging": "10 TAB",
+      "strength": null
+    },
+    "file": "/products/telsar-biso-5-mg-strip-of-10-tab-box-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TELSAR\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 292947,
+      "name": "TAXIM 50 MG DRY SYRUP 30 ML",
+      "manufacturer": "ALKEM LABORATORIES LTD",
+      "generic_name": "CEFOTAXIME",
+      "packaging": "30 ML",
+      "strength": null
+    },
+    "file": "/products/taxim-50-mg-dry-syrup-30-ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TAXIM\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293006,
+      "name": "TELMIKIND CT 40MG STRIP OF 10 TABLETS",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": "TELMISARTAN(40.0 MG)+CHLORTHALIDONE / CHLORTALIDONE(12.5 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/telmikind-ct-40mg-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TELMIKIND\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293012,
+      "name": "TELPRES CT 40/12.5MG TAB 15'S",
+      "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+      "generic_name": "TELMISARTAN(40.0 MG)+CHLORTHALIDONE / CHLORTALIDONE(12.5 MG)",
+      "packaging": "15 NO'S",
+      "strength": null
+    },
+    "file": "/products/telpres-ct-40125mg-tab-15s-front.jpg",
+    "score": {
+      "confidenceScore": 87,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TELPRES\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": true,
+        "packScore": 5,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293036,
+      "name": "TEMSAN AM 2.5MG TAB 15'S",
+      "manufacturer": "EMCURE PHARMACEUTICALS LTD",
+      "generic_name": "S AMLODIPINE(2.5 MG)+TELMISARTAN(40.0 MG)",
+      "packaging": "15 NO'S",
+      "strength": null
+    },
+    "file": "/products/temsan-am-25mg-tab-15s-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TEMSAN\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293176,
+      "name": "TOPI GRAPHITES OINT 25GM",
+      "manufacturer": "WILLCARE LIFESCIENCES PVT LTD",
+      "generic_name": null,
+      "packaging": "25GM",
+      "strength": null
+    },
+    "file": "/products/topi-graphites-oint-25gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TOPI\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293187,
+      "name": "TOPISAL 6% OINT 20GM",
+      "manufacturer": "SYSTOPIC LABORATORIES",
+      "generic_name": "SALICYLIC ACID(6.0 %)+CLOBETASOL(0.05 %)",
+      "packaging": "20 G",
+      "strength": null
+    },
+    "file": "/products/topisal-6-oint-20gm-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"TOPISAL\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293353,
+      "name": "VALPARIN BOTTLE OF 200ML SOLUTION",
+      "manufacturer": "SANOFI",
+      "generic_name": "SODIUM VALPROATE(200.0 MG)",
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/valparin-bottle-of-200ml-solution-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VALPARIN\") • Form matched (SOLUTION) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293450,
+      "name": "VEET SILK AND FRESH HAIR REMOVAL CREAM MIXED 25 GM",
+      "manufacturer": "RECKITT BENCKISER",
+      "generic_name": null,
+      "packaging": "25 G",
+      "strength": null
+    },
+    "file": "/products/veet-silk-and-fresh-hair-removal-cream-mixed-25-gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VEET\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293538,
+      "name": "VICKS 102 BOTTLE 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-102-bottle-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293540,
+      "name": "VICKS 109 BOTTLE 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-109-bottle-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293541,
+      "name": "VICKS 170 BOTTLE 25",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "25",
+      "strength": null
+    },
+    "file": "/products/vicks-170-bottle-25-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293542,
+      "name": "VICKS 199 CREAM 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-199-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293543,
+      "name": "VICKS 205 JAR 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-205-jar-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293544,
+      "name": "VICKS 21 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-21-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293545,
+      "name": "VICKS 22 CREAM 1",
+      "manufacturer": "RECKET",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-22-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293546,
+      "name": "VICKS 23 BOTTLE 1",
+      "manufacturer": "RECKET",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-23-bottle-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293547,
+      "name": "VICKS 24 CREAM 1",
+      "manufacturer": "PROCTER & GAMBLE HEALTHCARE",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-24-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293548,
+      "name": "VICKS 40 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-40-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293549,
+      "name": "VICKS 42 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-42-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293550,
+      "name": "VICKS 44 CREAM 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-44-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293551,
+      "name": "VICKS 47 CREAM 10ML",
+      "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+      "generic_name": null,
+      "packaging": "10ML",
+      "strength": null
+    },
+    "file": "/products/vicks-47-cream-10ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293553,
+      "name": "VICKS 49 CREAM 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-49-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293556,
+      "name": "VICKS 50 CREAM 7ML",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "7ML",
+      "strength": null
+    },
+    "file": "/products/vicks-50-cream-7ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293557,
+      "name": "VICKS 51 BOTTLE 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-51-bottle-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293559,
+      "name": "VICKS 55 CREAM 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-55-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293562,
+      "name": "VICKS 85 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-85-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293563,
+      "name": "VICKS 89 ROLL ON 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-89-roll-on-1-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293564,
+      "name": "VICKS 90 CREAM 1",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-90-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293565,
+      "name": "VICKS 99 CREAM 25ML",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "25ML",
+      "strength": null
+    },
+    "file": "/products/vicks-99-cream-25ml-side.jpg",
+    "score": {
+      "confidenceScore": 98,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Strength verified (25ML) • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": true,
+        "strengthConflict": false,
+        "strengthScore": 20,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293566,
+      "name": "VICKS ACTION 500 EXTRA",
+      "manufacturer": "PROCTER & GAMBLE",
+      "generic_name": null,
+      "packaging": "11 NO'S",
+      "strength": null
+    },
+    "file": "/products/vicks-action-500-extra-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293568,
+      "name": "VICKS ACTION 50MG GEL 1 PK",
+      "manufacturer": "VICKS",
+      "generic_name": null,
+      "packaging": "1 PK",
+      "strength": null
+    },
+    "file": "/products/vicks-action-50mg-gel-1-pk-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293570,
+      "name": "VICKS BABY RUB CREAM 1",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-baby-rub-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293574,
+      "name": "VICKS CREAM 50ML",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "50ML",
+      "strength": null
+    },
+    "file": "/products/vicks-cream-50ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293575,
+      "name": "VICKS CTU KIT 200LTR",
+      "manufacturer": "PANDG",
+      "generic_name": null,
+      "packaging": "200LTR",
+      "strength": null
+    },
+    "file": "/products/vicks-ctu-kit-200ltr-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293581,
+      "name": "VICKS JAR BIG 1300T",
+      "manufacturer": "SUTURES INDIA",
+      "generic_name": "AYURVEDIC",
+      "packaging": "1300 NO'S",
+      "strength": null
+    },
+    "file": "/products/vicks-jar-big-1300t-side.jpg",
+    "score": {
+      "confidenceScore": 81,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": false,
+        "dosageFormConflict": false,
+        "dosageFormScore": 8,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293582,
+      "name": "VICKS RED 196 CREAM 4",
+      "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+      "generic_name": null,
+      "packaging": "4",
+      "strength": null
+    },
+    "file": "/products/vicks-red-196-cream-4-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293659,
+      "name": "VOLINI GEL 40 GM",
+      "manufacturer": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "generic_name": null,
+      "packaging": "40 G",
+      "strength": null
+    },
+    "file": "/products/volini-gel-40-gm-side.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VOLINI\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293690,
+      "name": "WALAMYCIN SUSP 60ML",
+      "manufacturer": "WALLACE PHARMACEUTICALS",
+      "generic_name": "COLISTIN(12.5 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/walamycin-susp-60ml-combo.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"WALAMYCIN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293792,
+      "name": "WIKORYL AF DROPS 10ML",
+      "manufacturer": "ALEMBIC PHARMACEUTICALS",
+      "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+      "packaging": "10 ML",
+      "strength": null
+    },
+    "file": "/products/wikoryl-af-drops-10ml-box-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"WIKORYL\") • Form matched (DROPS) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293881,
+      "name": "YARDLE 135 POWDER 125GM",
+      "manufacturer": "RAYMOND PHARMACEUTICAL PVT LTD",
+      "generic_name": null,
+      "packaging": "125GM",
+      "strength": null
+    },
+    "file": "/products/yardle-135-powder-125gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"YARDLE\") • Form matched (POWDER) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293937,
+      "name": "ZANDU BALM TUBE 25GM",
+      "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+      "generic_name": null,
+      "packaging": "25 G",
+      "strength": null
+    },
+    "file": "/products/zandu-balm-tube-25gm-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ZANDU\") • Form matched (BALM) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 293948,
+      "name": "ZANDU ULTRA POWER BALM 8 ML",
+      "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+      "generic_name": "CLOVE OIL(5.0 %)+CAPSAICIN(0.02 %)+CAJUPUT OIL(5.0 %)+MENTHOL(20.0 %)+GAULTHERIA OIL(25.0 %)",
+      "packaging": "8 ML",
+      "strength": null
+    },
+    "file": "/products/zandu-ultra-power-balm-8-ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ZANDU\") • Form matched (BALM) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 294039,
+      "name": "ZUKANORM M 50/500MG TABLET 10'S",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": "VILDAGLIPTIN(50.0 MG)+METFORMIN(500.0 MG)",
+      "packaging": "10 NO'S",
+      "strength": null
+    },
+    "file": "/products/zukanorm-m-50500mg-tablet-10s-front.jpg",
+    "score": {
+      "confidenceScore": 82,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"ZUKANORM\") • Form matched (TABLET) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 0,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 294072,
+      "name": "IBUGESIC PLUS SUSP 60ML",
+      "manufacturer": "CIPLA LIMITED",
+      "generic_name": "IBUPROFEN(100.0 MG)+PARACETAMOL / ACETAMINOPHEN(162.5 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/ibugesic-plus-susp-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"IBUGESIC\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 294144,
+      "name": "CREMAFFIN MINT CONSTIPATION SYRUP  BOTTLE OF 200 ML",
+      "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+      "generic_name": "LIQUID PARAFFIN(3.75 MG)+MAGNESIUM HYDROXIDE(11.25 MG)",
+      "packaging": "200 ML",
+      "strength": null
+    },
+    "file": "/products/cremaffin-mint-constipation-syrup-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CREMAFFIN\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 294184,
+      "name": "CODISTAR DX SYP 60ML",
+      "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+      "generic_name": "DEXTROMETHORPHAN(10.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(4.0 MG)",
+      "packaging": "60 ML",
+      "strength": null
+    },
+    "file": "/products/codistar-dx-syp-60ml-front.jpg",
+    "score": {
+      "confidenceScore": 86,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"CODISTAR\") • Form matched (SYRUP) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 8,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  },
+  {
+    "med": {
+      "id": 294289,
+      "name": "VICKS 45 CREAM 1",
+      "manufacturer": "PROCTER & GAMBLE HEALTHCARE",
+      "generic_name": null,
+      "packaging": "1",
+      "strength": null
+    },
+    "file": "/products/vicks-45-cream-1-side.jpg",
+    "score": {
+      "confidenceScore": 88,
+      "verificationStatus": "HIGH_CONFIDENCE",
+      "reason": "Brand matched (\"VICKS\") • Form matched (TOPICAL) • Manufacturer verified",
+      "signals": {
+        "brandMatch": true,
+        "brandScore": 35,
+        "companyMatch": true,
+        "companyScore": 15,
+        "strengthMatch": false,
+        "strengthConflict": false,
+        "strengthScore": 10,
+        "dosageFormMatch": true,
+        "dosageFormConflict": false,
+        "dosageFormScore": 15,
+        "packMatch": false,
+        "packScore": 4,
+        "ocrMatch": false,
+        "ocrScore": 9
+      }
+    }
+  }
+]

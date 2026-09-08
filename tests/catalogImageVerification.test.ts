@@ -130,6 +130,57 @@ describe('Catalogue Image Connection & AI Verification Master Suite', () => {
       expect(result.confidenceScore).toBeLessThan(99);
       expect(result.verificationStatus).toBe('PENDING_REVIEW');
     });
+
+    it('should reject candidates where candidate name is a different brand even if imagePath contains the medicine name', () => {
+      const med = {
+        name: 'HEAD AND SHOULDER 8ML SACHET 8.4ML',
+        manufacturer: 'HEAD AND SHOULDER',
+        packaging: '8.4 ML'
+      };
+      const candidate = {
+        name: 'Vicks Vaporub Classic | Relief From Cold Cough 25 Ml',
+        manufacturer: 'PROCTER & GAMBLE',
+        imagePath: '/products/head-and-shoulder-8ml-sachet-84ml-front.jpg'
+      };
+
+      const result = catalogImageService.computeConfidence(med, candidate);
+      expect(result.signals.brandMatch).toBe(false);
+      expect(result.verificationStatus).toBe('REJECTED');
+    });
+
+    it('should reject generic prefix false match like COTTON 30 [HIRAL LABS] against Liveasy Cotton', () => {
+      const med = {
+        name: 'COTTON 30 COTTON 20GM',
+        manufacturer: 'HIRAL LABS LTD',
+        packaging: '20 GM'
+      };
+      const candidate = {
+        name: 'Liveasy Surgical Absorbent Cotton Roll 20Gm Net',
+        manufacturer: 'LIVEASY',
+        imagePath: '/products/cotton-30-cotton-20gm-front.jpg'
+      };
+
+      const result = catalogImageService.computeConfidence(med, candidate);
+      expect(result.signals.brandMatch).toBe(false);
+      expect(result.verificationStatus).toBe('REJECTED');
+    });
+
+    it('should penalize conflicting bottle/pack volume (e.g. 45ml vs 650ml)', () => {
+      const med = {
+        name: 'BAJAJ OIL 45ML',
+        manufacturer: 'BAJAJ',
+        packaging: '45 ML'
+      };
+      const candidate = {
+        name: 'Bajaj Almond Drops Hair Oil - 650Ml',
+        manufacturer: 'BAJAJ',
+        imagePath: '/products/bajaj-oil-45ml-front.jpg'
+      };
+
+      const result = catalogImageService.computeConfidence(med, candidate);
+      expect(result.signals.strengthConflict).toBe(true);
+      expect(result.verificationStatus).not.toBe('HIGH_CONFIDENCE');
+    });
   });
 
   describe('Task 7–16: User Actions, Rejection Exclusion & History', () => {

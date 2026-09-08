@@ -51,6 +51,8 @@ interface SuggestionMedicine {
   productCode?: string;
   company?: string;
   manufacturer?: string;
+  cartItemCount?: number;
+  cartTotalAmount?: number;
 }
 
 interface SchemeInfo {
@@ -350,11 +352,28 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
     }
   }, []);
 
-  // Proactively warm up session & check status on open
+  const [activeCartStores, setActiveCartStores] = useState<Map<string, { storeId: number; count: number; total: number; name: string }>>(new Map());
+
+  // Proactively warm up session, check status, and load live cart summary on open
   useEffect(() => {
     if (isOpen) {
       api.warmupPharmarackSession();
       checkSession();
+      api.getPharmarackLiveCartSummary().then((res: any) => {
+        if (res?.cart?.distributors && Array.isArray(res.cart.distributors)) {
+          const map = new Map<string, { storeId: number; count: number; total: number; name: string }>();
+          res.cart.distributors.forEach((d: any) => {
+            if (d.items && d.items.length > 0) {
+              const count = d.items.length;
+              const total = d.lineTotal || d.items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+              if (d.storeId) map.set(String(d.storeId), { storeId: d.storeId, count, total, name: d.storeName });
+              if (d.storeName) map.set(d.storeName.toLowerCase().trim(), { storeId: d.storeId, count, total, name: d.storeName });
+            }
+          });
+          setActiveCartStores(map);
+        }
+      }).catch(() => {});
+
       setTimeout(() => {
         productInputRef.current?.focus();
       }, 50);
@@ -424,6 +443,9 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
           }
 
           prData.forEach((item: LocalPharmarackSearchItem) => {
+            const cartInfo = (item.storeId && activeCartStores.get(String(item.storeId))) ||
+                             (item.distributor && activeCartStores.get(item.distributor.toLowerCase().trim()));
+
             prSuggestions.push({
               medicine_name: item.name,
               mrp: item.mrp,
@@ -438,6 +460,8 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
               company: item.company,
               packaging: item.packaging,
               stock: item.stock,
+              cartItemCount: cartInfo ? cartInfo.count : undefined,
+              cartTotalAmount: cartInfo ? cartInfo.total : undefined
             });
           });
 
@@ -457,21 +481,49 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             return 2;
           };
 
-          // Sort suggestions: All Green (High stock) on TOP, then Yellow (Low stock), then Red (0) at bottom
+          // Sort suggestions:
+          // 1. TOP PRIORITY: In Active Live Cart (Consolidate orders / reach MOVs)
+          // 2. Exact title / core query match (e.g. "NICIP P" before "NICIP PLUS")
+          // 3. Mapped ALWAYS before Unmapped
+          // 4. Stock Tier: Green (2) -> Yellow (1) -> Red (0)
+          const cleanQ = query.toLowerCase().trim();
           if (prSuggestions.length > 1) {
             prSuggestions.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-              // 1. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
-              const aStock = getStockTier(a.stock);
-              const bStock = getStockTier(b.stock);
-              if (aStock !== bStock) return bStock - aStock;
+              // 1. TOP PRIORITY: In Active Live Cart
+              const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
+              const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
+              if (aInCart && !bInCart) return -1;
+              if (!aInCart && bInCart) return 1;
+              if (aInCart && bInCart) {
+                if ((b.cartItemCount || 0) !== (a.cartItemCount || 0)) {
+                  return (b.cartItemCount || 0) - (a.cartItemCount || 0);
+                }
+                if ((b.cartTotalAmount || 0) !== (a.cartTotalAmount || 0)) {
+                  return (b.cartTotalAmount || 0) - (a.cartTotalAmount || 0);
+                }
+              }
 
-              // 2. Within same stock tier: Mapped (Blue text-sky-400) first, Unmapped (Purple text-purple-400) second
+              // 2. Exact title match / core query proximity
+              const aName = (a.medicine_name || '').toLowerCase().trim();
+              const bName = (b.medicine_name || '').toLowerCase().trim();
+              const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
+              const bExact = bName === cleanQ || bName.startsWith(cleanQ + ' ');
+              if (aExact && !bExact) return -1;
+              if (!aExact && bExact) return 1;
+
+              // 3. Mapped ALWAYS before Unmapped
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped && !bMapped) return -1;
               if (!aMapped && bMapped) return 1;
+
+              // 4. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
+              const aStock = getStockTier(a.stock);
+              const bStock = getStockTier(b.stock);
+              if (aStock !== bStock) return bStock - aStock;
+
               return 0;
             });
           }
@@ -498,7 +550,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
       active = false;
       clearTimeout(delayDebounce);
     };
-  }, [product]);
+  }, [product, activeCartStores]);
 
   // Autocomplete key navigation
   const handleProductKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -811,7 +863,7 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                   )}
                   
                   {showSuggestions && suggestions.length > 0 && (
-                    <ul className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[380px] overflow-y-auto bg-bg2 border-2 border-primary/40 backdrop-blur-2xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] divide-y divide-border/30 py-1 scrollbar-thin">
+                    <ul className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] overflow-y-auto bg-bg2 border-2 border-primary/40 backdrop-blur-2xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] divide-y divide-border/30 py-1 scrollbar-thin">
                       {suggestions.map((med, index) => (
                         <li
                           key={index}
@@ -828,9 +880,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                           }`}
                         >
                           <div className="flex-1 min-w-0 pr-2">
-                            {/* Line 1: Product name + scheme badge + Best Rate badge */}
+                            {/* Line 1: Product name + In Cart badge + scheme badge + Best Rate badge */}
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-bold text-text truncate text-sm">{med.medicine_name}</span>
+                              {med.cartItemCount !== undefined && med.cartItemCount > 0 && (
+                                <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase flex items-center gap-1 shrink-0 select-none animate-in fade-in">
+                                  <ShoppingCart size={10} className="text-emerald-400" /> In Cart ({med.cartItemCount} items • ₹{Math.round(med.cartTotalAmount || 0)})
+                                </span>
+                              )}
                               {med.scheme && !med.isErrorMessage && (
                                 <span className="text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-bold uppercase shrink-0 flex items-center gap-1">
                                   <Tag size={10} /> {med.scheme}
@@ -848,6 +905,11 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                               <div className="flex items-center gap-2 flex-wrap mt-1 text-xs">
                                 <span className={`font-semibold flex items-center gap-1 ${ med.isPharmarack ? (med.mapped ? 'text-sky-400' : 'text-purple-400') : 'text-muted' }`}>
                                   <Store size={11} /> {med.isPharmarack ? (med.distributor || 'No Distributor') : 'Local Inventory'}
+                                  {med.isPharmarack && med.mapped && (
+                                    <span className="text-[8.5px] px-1 py-0.2 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25 uppercase font-bold tracking-wider">
+                                      Mapped
+                                    </span>
+                                  )}
                                 </span>
                                 {(med.company || med.manufacturer) && (
                                   <span className="text-[10px] text-muted/70 font-semibold uppercase tracking-wider">

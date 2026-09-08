@@ -101,8 +101,31 @@ const DOSAGE_FORMS = [
   'CREAM', 'GEL', 'OINTMENT', 'OINT',
   'DROPS', 'DROP', 'EYE DROPS', 'EAR DROPS',
   'INHALER', 'RESPULES', 'ROTACAPS', 'ROTACAP',
-  'POWDER', 'LOTION', 'SHAMPOO', 'SPRAY', 'SOLUTION'
+  'POWDER', 'LOTION', 'SHAMPOO', 'SPRAY', 'SOLUTION',
+  'SOAP', 'BAR', 'BALM', 'OIL', 'WASH', 'SERUM', 'GRANULES', 'SACHET'
 ];
+
+const PACKAGING_CONTAINERS = new Set([
+  'BOTTLE', 'JAR', 'TUBE', 'PACK', 'BOX', 'STRIP', 'VIAL', 'AMPOULE', 'CAN', 'POUCH'
+]);
+
+
+
+const GENERIC_CATEGORY_WORDS = new Set([
+  'ADULT', 'COTTON', 'BABY', 'SURGICAL', 'DISPO', 'DISPOSABLE', 'BANDAGE', 'GAUZE',
+  'GLOVES', 'MASK', 'POWDER', 'SOAP', 'CREAM', 'OIL', 'GEL', 'SHAMPOO', 'LOTION',
+  'DROPS', 'SYRUP', 'TABLET', 'CAPSULE', 'INJECTION', 'HOT', 'COLD', 'DIGITAL',
+  'TEST', 'KIT', 'STRIP', 'BLOOD', 'BP', 'PULSE', 'BALM', 'DIAPER', 'SANITARY',
+  'PAD', 'PADS', 'ROLL', 'WOOL', 'NEEDLE', 'SYRINGE', 'WIPES', 'TAPE', 'PASTE',
+  'SERUM', 'WASH', 'BAR', 'SACHET', 'CASTOR', 'HONEY', 'GLYCERIN', 'GLYCERINE',
+  'PETROLEUM', 'JELLY', 'VASELINE', 'NEW', 'SUPER', 'EXTRA', 'PLUS', 'PREMIUM',
+  'PURE', 'NATURAL', 'HERBAL', 'GENUINE', 'ORIGINAL'
+]);
+
+const UMBRELLA_PHARMA_BRANDS = new Set([
+  'BAIDYANATH', 'BAID', 'DABUR', 'DAB', 'HIMALAYA', 'HIM', 'PATANJALI', 'PAT',
+  'ZANDU', 'ZAN', 'HAMDARD', 'SBL', 'SCHWABE', 'BEARDO', 'AYUR'
+]);
 
 export class CatalogImageService {
   private static instance: CatalogImageService;
@@ -143,6 +166,12 @@ export class CatalogImageService {
         if (form === 'GEL' || form === 'CREAM' || form.startsWith('OINT')) return 'TOPICAL';
         if (form.startsWith('DROP')) return 'DROPS';
         if (form.startsWith('INH') || form.startsWith('ROTA') || form.startsWith('RESP')) return 'INHALER';
+        if (form === 'SOAP' || form === 'BAR') return 'SOAP';
+        if (form === 'BALM') return 'BALM';
+        if (form === 'OIL') return 'OIL';
+        if (form === 'SERUM') return 'SERUM';
+        if (form === 'POWDER') return 'POWDER';
+        if (form === 'SACHET' || form === 'GRANULES') return 'SACHET';
         return form;
       }
     }
@@ -150,25 +179,57 @@ export class CatalogImageService {
   }
 
   /**
-   * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML")
+   * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML", "100 G")
    */
   public extractStrength(text: string): string | null {
     if (!text) return null;
-    const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
-    return match ? match[0].toUpperCase().replace(/\s+/g, '') : null;
+    const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|G|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
+    if (!match) return null;
+    let s = match[0].toUpperCase().replace(/\s+/g, '');
+    if (s.endsWith('G') && !s.endsWith('MG') && !s.endsWith('MCG')) {
+      s = s.replace(/G$/, 'GM');
+    }
+    return s;
   }
 
   /**
    * Extract core brand name (strips dosage, packaging, company brackets)
    */
-  public extractCoreBrand(raw: string): string {
+  public extractCoreBrand(raw: string, manufacturer?: string | null): string {
     if (!raw) return '';
     let c = raw.replace(/\[.*?\]/g, ' '); // remove [COMPANY LTD]
     c = c.replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, ' ');
-    c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, ' ');
-    const words = c.split(/[^A-Za-z0-9\+\-]+/).filter(w => w.length >= 2 && !DOSAGE_FORMS.includes(w.toUpperCase()));
-    return words[0] ? words[0].toUpperCase() : '';
+    c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|G|MCG|IU|%)\b/gi, ' ');
+    const words = c.split(/[^A-Za-z0-9\+\-]+/).filter(w => w.length >= 2 && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+
+    if (!words[0]) {
+      if (manufacturer) {
+        const mfgClean = manufacturer.toUpperCase();
+        if (mfgClean.includes('PARACHUT')) return 'PARACHUTE';
+        if (mfgClean.includes('BAJAJ')) return 'BAJAJ';
+        if (mfgClean.includes('DABUR')) return 'DABUR';
+        if (mfgClean.includes('HIMALAYA')) return 'HIMALAYA';
+        if (mfgClean.includes('ZANDU')) return 'ZANDU';
+        if (mfgClean.includes('PATANJALI')) return 'PATANJALI';
+      }
+      return '';
+    }
+
+    // If first word is an umbrella brand (e.g. BAIDYANATH, DABUR, HIMALAYA), prefer the formulation name in subsequent words
+    if (UMBRELLA_PHARMA_BRANDS.has(words[0].toUpperCase()) && words.length > 1) {
+      const formulationWord = words.slice(1).find(w => !GENERIC_CATEGORY_WORDS.has(w.toUpperCase()) && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+      if (formulationWord) return formulationWord.toUpperCase();
+    }
+
+    // If first word is a generic category/adjective word (e.g. ADULT, COTTON, NEW, SUPER), prefer the distinctive second word if available
+    if (GENERIC_CATEGORY_WORDS.has(words[0].toUpperCase()) && words.length > 1) {
+      const nonGeneric = words.find(w => !GENERIC_CATEGORY_WORDS.has(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+
+      if (nonGeneric) return nonGeneric.toUpperCase();
+    }
+    return words[0].toUpperCase();
   }
+
 
   /**
    * Multi-Signal AI Confidence Scoring
@@ -186,30 +247,63 @@ export class CatalogImageService {
     ocrText?: string | null;
     imagePath?: string | null;
   }): MatchScoreResult {
-    const medBrand = this.extractCoreBrand(medicine.name);
-    const candUpper = (candidate.name || '').toUpperCase();
+    const medBrand = this.extractCoreBrand(medicine.name, medicine.manufacturer);
+
+    const candUpper = (candidate.name || '').toUpperCase().trim();
     const pathUpper = (candidate.imagePath || '').replace(/[-_.]/g, ' ').toUpperCase();
     const ocrUpper = (candidate.ocrText || '').toUpperCase();
 
-    // 1. Brand Match (35%) — Strict boundary/whole-word check (Section 11)
+    // To prevent circular false passes: candUpper and ocrUpper are primary evidence.
+    // pathUpper (local filename derived from medicine name) should NOT be used to prove brand match if candidate.name is present.
+    const cleanCandStr = candUpper
+      ? (candUpper + (ocrUpper ? ' ' + ocrUpper : '')).replace(/[-_]/g, ' ')
+      : (pathUpper + (ocrUpper ? ' ' + ocrUpper : '')).replace(/[-_]/g, ' ');
+
+    // 1. Brand Match (35%) — Strict boundary/whole-word check
     let brandMatch = false;
     let brandScore = 0;
     if (medBrand) {
       const normMedBrand = medBrand.replace(/[-_]/g, ' ').trim();
-      const cleanCandStr = (candUpper + ' ' + pathUpper).replace(/[-_]/g, ' ');
+      const compactMedBrand = normMedBrand.replace(/[^A-Z0-9]/g, '');
+      const compactCand = cleanCandStr.replace(/[^A-Z0-9]/g, '');
       const candWords = cleanCandStr.split(/[^A-Za-z0-9]+/).filter(w => w.length >= 2);
 
-      const exactWordMatch = candWords.some(w => w === medBrand || w === normMedBrand || (medBrand.length >= 5 && w.startsWith(medBrand)));
+      // Exact word boundary or full token match (no loose prefix matching that confuses Derma vs Dermatouch)
+      const exactWordMatch = candWords.some(w => w === medBrand || w === normMedBrand);
       const wordBoundaryMatch = new RegExp(`\\b${normMedBrand}\\b`, 'i').test(cleanCandStr);
 
       const subWords = normMedBrand.split(' ').filter(w => w.length >= 2 && !/^\d+$/.test(w));
       const subWordMatch = subWords.length > 0 && subWords.every(sw => new RegExp(`\\b${sw}\\b`, 'i').test(cleanCandStr));
 
-      if (exactWordMatch || wordBoundaryMatch || subWordMatch) {
+      // Compact match for concatenated/hyphenated words (e.g. 4QUIN vs 4 Quin, GASOFAST vs GAS-O-FAST)
+      const compactMatch = compactMedBrand.length >= 4 && !GENERIC_CATEGORY_WORDS.has(compactMedBrand) && compactCand.includes(compactMedBrand);
+
+      if (exactWordMatch || wordBoundaryMatch || subWordMatch || compactMatch) {
         brandMatch = true;
         brandScore = 35;
       }
+
+      // Check special generic false match: e.g. Vicks Vaporub assigned to Head & Shoulder or Vicks Drops/Inhaler
+      if (cleanCandStr.includes('VICKS VAPORUB')) {
+        const medUpper = medicine.name.toUpperCase();
+        const hasVicks = medUpper.includes('VICKS');
+        const isDifferentForm = medUpper.includes('INHALER') || medUpper.includes('DROP') || medUpper.includes('TAB') || medUpper.includes('LOZENGE');
+        if (!hasVicks || isDifferentForm) {
+          brandMatch = false;
+          brandScore = 0;
+        }
+      }
+
+      if (cleanCandStr.includes('COUGH DROP') || cleanCandStr.includes('LOZENGE') || cleanCandStr.includes('INHALER')) {
+        const medUpper = medicine.name.toUpperCase();
+        const medIsDropsOrInhaler = medUpper.includes('DROP') || medUpper.includes('LOZENGE') || medUpper.includes('INHALER') || medUpper.includes('COUGH') || medUpper.includes('TAB');
+        if (!medIsDropsOrInhaler) {
+          brandMatch = false;
+          brandScore = 0;
+        }
+      }
     }
+
 
     // 2. Company Match (15%)
     let companyMatch = false;
@@ -217,10 +311,35 @@ export class CatalogImageService {
     const medMfg = (medicine.manufacturer || '').toUpperCase().trim();
     const candMfg = (candidate.manufacturer || '').toUpperCase().trim();
 
+    const GENERIC_MFG_WORDS = new Set([
+      'NATURAL', 'NATURE', 'HERBAL', 'HEALTH', 'HEALTHCARE', 'CARE', 'PHARMA',
+      'PHARMACEUTICALS', 'LABS', 'LABORATORIES', 'REMEDIES', 'PVT', 'LTD', 'LIMITED',
+      'INDIA', 'GLOBAL', 'LIFE', 'SCIENCES', 'THE', 'AND', 'OF', 'CORPORATION', 'CORP',
+      'PRODUCTS', 'AYURVEDA', 'AYURVEDIC', 'CONSUMER', 'ORGANICS', 'HOME', 'ASIA', 'WELLNESS'
+    ]);
+
     if (medMfg && candMfg) {
       const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
       const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
-      if (cleanCandMfg && cleanMedMfg.includes(cleanCandMfg.slice(0, 5))) {
+
+      const isKnownAlias =
+        ((cleanMedMfg.includes('PANDG') || cleanMedMfg.includes('P&G') || cleanMedMfg.includes('PROCTER')) && (cleanCandMfg.includes('PANDG') || cleanCandMfg.includes('P&G') || cleanCandMfg.includes('PROCTER') || cleanCandMfg.includes('VICKS') || cleanCandMfg.includes('GILLETTE') || cleanCandMfg.includes('PAMPERS') || cleanCandMfg.includes('HEAD'))) ||
+        ((cleanMedMfg.includes('HMD') || cleanMedMfg.includes('HINDUSTAN SYRINGES')) && (cleanCandMfg.includes('HMD') || cleanCandMfg.includes('HINDUSTAN') || cleanCandMfg.includes('DISPOVAN'))) ||
+        ((cleanMedMfg.includes('ZANDU') || cleanMedMfg.includes('EMAMI')) && (cleanCandMfg.includes('ZANDU') || cleanCandMfg.includes('EMAMI') || cleanCandMfg.includes('DERMI'))) ||
+        ((cleanMedMfg.includes('MANKIND')) && (cleanCandMfg.includes('MANFORCE') || cleanCandMfg.includes('MANKIND') || cleanCandMfg.includes('HEALTH OK'))) ||
+        ((cleanMedMfg.includes('SUN PHARMA')) && (cleanCandMfg.includes('ABZORB') || cleanCandMfg.includes('SUN'))) ||
+        ((cleanMedMfg.includes('RECKITT') || cleanMedMfg.includes('RECKNOR')) && (cleanCandMfg.includes('DETTOL') || cleanCandMfg.includes('RECKITT'))) ||
+        ((cleanMedMfg.includes('JOHNSON')) && (cleanCandMfg.includes('BAND AID') || cleanCandMfg.includes('JOHNSON'))) ||
+        ((cleanMedMfg.includes('CIPLA')) && (cleanCandMfg.includes('CIPLADINE') || cleanCandMfg.includes('CIPLA') || cleanCandMfg.includes('IBUGESIC'))) ||
+        ((cleanMedMfg.includes('ZYDUS')) && (cleanCandMfg.includes('GLUCON') || cleanCandMfg.includes('DEXONA') || cleanCandMfg.includes('ZYDUS'))) ||
+        ((cleanMedMfg.includes('MARICO') || cleanMedMfg.includes('PARACHUT')) && (cleanCandMfg.includes('PARACHUTE') || cleanCandMfg.includes('MARICO')));
+
+      const medMfgTokens = cleanMedMfg.split(/[^A-Z0-9]+/).filter(w => w.length >= 4 && !GENERIC_MFG_WORDS.has(w));
+      const candMfgTokens = cleanCandMfg.split(/[^A-Z0-9]+/).filter(w => w.length >= 4 && !GENERIC_MFG_WORDS.has(w));
+      const hasSharedToken = medMfgTokens.length > 0 && candMfgTokens.length > 0 &&
+        medMfgTokens.some(mt => candMfgTokens.some(ct => mt === ct || (mt.length >= 5 && ct.includes(mt)) || (ct.length >= 5 && mt.includes(ct))));
+
+      if (hasSharedToken || isKnownAlias) {
         companyMatch = true;
         companyScore = 15;
       } else {
@@ -232,21 +351,45 @@ export class CatalogImageService {
       companyScore = 15;
     }
 
+    // Generic commodity protection: lone generic descriptors (cotton, castor, bandage) cannot match arbitrary brands
+    if (GENERIC_CATEGORY_WORDS.has(medBrand) && !companyMatch) {
+      brandMatch = false;
+      brandScore = 0;
+    }
+
     // 3. Strength Match (20%) & Conflict Penalty
     const medStr = this.extractStrength(medicine.strength || '') || this.extractStrength(medicine.name);
-    const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.imagePath || '') || this.extractStrength(candidate.ocrText || '');
+    const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.ocrText || '') || (candUpper ? null : this.extractStrength(candidate.imagePath || ''));
     let strengthMatch = false;
     let strengthConflict = false;
     let strengthScore = 10; // neutral if neither specifies
 
     if (medStr && candStr) {
-      if (medStr === candStr) {
+      const isEquivVolume =
+        (medStr === '455ML' && candStr === '450ML') || (medStr === '450ML' && candStr === '455ML') ||
+        (medStr === '227ML' && candStr === '220ML') || (medStr === '220ML' && candStr === '227ML');
+
+      if (medStr === candStr || isEquivVolume) {
         strengthMatch = true;
         strengthScore = 20;
       } else {
-        // Explicit dosage conflict (e.g. 10MG vs 20MG, 5MG vs 10MG, 20GM vs 200GM) -> strict failure
-        strengthConflict = true;
-        strengthScore = -40;
+        const isMgStrength = (medStr.endsWith('MG') || medStr.endsWith('MCG')) && (candStr.endsWith('MG') || candStr.endsWith('MCG'));
+        const medNum = parseFloat(medStr);
+        const candNum = parseFloat(candStr);
+        const ratio = (medNum > 0 && candNum > 0) ? (Math.max(medNum, candNum) / Math.min(medNum, candNum)) : 1;
+
+        if (isMgStrength && ratio > 1.2) {
+          // Explicit drug strength conflict (e.g. 10mg vs 20mg, 5mg vs 10mg) -> strict failure
+          strengthConflict = true;
+          strengthScore = -40;
+        } else if (ratio >= 4.0) {
+          // Extreme packaging size conflict (e.g. 45ml vs 650ml) -> strict failure
+          strengthConflict = true;
+          strengthScore = -40;
+        } else {
+          // Commercial pack size variation on same formulation (e.g. 8g vs 10g, 100g vs 120g promo pack)
+          strengthScore = 8;
+        }
       }
     } else if (medStr && !candStr) {
       strengthScore = 10;
@@ -256,14 +399,18 @@ export class CatalogImageService {
     // ALWAYS check medicine.name first (most informative), fallback to packaging
     const medForm = this.extractDosageForm(medicine.name) || this.extractDosageForm(medicine.packaging || '');
     const candNameForm = this.extractDosageForm(candidate.name);
-    const candPathForm = this.extractDosageForm(candidate.imagePath || '');
+    const candPathForm = candNameForm ? null : this.extractDosageForm(candidate.imagePath || '');
     const candForm = candNameForm || candPathForm || this.extractDosageForm(candidate.ocrText || '');
     let dosageFormMatch = false;
     let dosageFormConflict = false;
     let dosageFormScore = 8; // neutral
 
+    const ACCESSORY_REGEX = /\b(slippers?|shoes?|belt|collar|support|knee\s*cap|anklet|mattress|pillow|chair|cushion|eyeliner|lipstick|kajal|mascara|nail\s*polish)\b/i;
     if (medForm) {
-      if (candNameForm && candNameForm !== medForm) {
+      if (ACCESSORY_REGEX.test(candidate.name)) {
+        dosageFormConflict = true;
+        dosageFormScore = -40;
+      } else if (candNameForm && candNameForm !== medForm) {
         dosageFormConflict = true;
         dosageFormScore = -40;
       } else if (candPathForm && candPathForm !== medForm) {
@@ -3006,12 +3153,51 @@ export class CatalogImageService {
              WHERE id = ?`,
             [item.reason, item.id]
           );
+
+          try {
+            await db.run(
+              `INSERT INTO image_review_history (
+                product_image_id, medicine_id, previous_status, new_status, action, reason, performed_by
+              ) VALUES (?, (SELECT medicine_id FROM catalog_images WHERE id = ?), 'APPROVED', 'REJECTED', 'AUTO_AUDIT_PURGE', ?, 'audit_engine')`,
+              [item.id, item.id, item.reason]
+            );
+          } catch (_) {}
         }
         await db.run('COMMIT');
       } catch (err) {
         await db.run('ROLLBACK');
         throw err;
       }
+
+      // Purge state file if present
+      try {
+        const stateFile = path.resolve(process.cwd(), 'data/image_download_state.json');
+        if (fs.existsSync(stateFile)) {
+          const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+          const medIds = new Set(toDeactivate.map(i => i.id));
+          let purged = 0;
+          for (const [key, p] of Object.entries((state.products || {}) as Record<string, any>)) {
+            if (p.images) {
+              const urls = Object.values(p.images).map((img: any) => img?.url);
+              // If matches deactivated image
+              const matchedRow = rows.find(r => medIds.has(r.id) && urls.includes(r.image_path));
+              if (matchedRow) {
+                state.products[key] = {
+                  status: 'purged_incorrect',
+                  matched_name: null,
+                  purged_previous_match: p.matched_name,
+                  updated_at: new Date().toISOString()
+                };
+                purged++;
+              }
+            }
+          }
+          if (purged > 0) {
+            state.last_updated = new Date().toISOString();
+            fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf8');
+          }
+        }
+      } catch (_) {}
 
       eventService.broadcast('catalog_image_updated', {
         action: 'audit_deactivation_completed',

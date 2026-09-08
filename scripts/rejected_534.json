@@ -1,0 +1,4274 @@
+[
+  {
+    "id": 32537,
+    "name": "\tADULT DIAPER WETEX PULL UP MED COTTON 1",
+    "manufacturer": "GENTECH HEALTHCARE LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 32575,
+    "name": "\tADULT DIAPER WETEX PULL UP XL COTTON 10",
+    "manufacturer": "GENTECH HEALTHCARE LTD",
+    "generic_name": null,
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 18819,
+    "name": " COTTON 30 COTTON 20GM",
+    "manufacturer": "HIRAL LABS LTD",
+    "generic_name": null,
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 284714,
+    "name": "ABZORB ANTI FUNGAL POWDER BOTTLE OF 100 G",
+    "manufacturer": "SUN PHARMA (CONSUMER HEALTHCARE)",
+    "generic_name": "CLOTRIMAZOLE(1.0 %)",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 284797,
+    "name": "ADULT DIAPER WETEX PULL UP MED COTTON COTTON 1",
+    "manufacturer": "GENCURE MEUTRACEUTICALS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284798,
+    "name": "ADULT DIPER 525 M 10",
+    "manufacturer": "FRIENDS PHARMACEUTICALS PVT LTD",
+    "generic_name": null,
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 284799,
+    "name": "ADULT DIPER 580 L 10",
+    "manufacturer": "FRINDS",
+    "generic_name": null,
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 284824,
+    "name": "AIR POKET 50 1",
+    "manufacturer": "GOODNESS OF NATURE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284867,
+    "name": "ALKOF JUNIOR COUGH SYP 100ML",
+    "manufacturer": "ALKEM LABORATORIES LTD",
+    "generic_name": "DEXTROMETHORPHAN(10.0 MG)+PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 284939,
+    "name": "AMLA 25 OIL 1",
+    "manufacturer": "SHANTI",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285014,
+    "name": "AMRUTANJAN STRONG 9GM",
+    "manufacturer": "AMRUTANJAN HEALTH CARE LIMITED",
+    "generic_name": "PAIN RELIFE",
+    "packaging": "9 ML",
+    "strength": null
+  },
+  {
+    "id": 285041,
+    "name": "ANU TAILA 15ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 285051,
+    "name": "APPLE CIDER VINEGAR 450 ML",
+    "manufacturer": "MANSI HERBAL PHARMA",
+    "generic_name": null,
+    "packaging": "450 ML",
+    "strength": null
+  },
+  {
+    "id": 285221,
+    "name": "AYUR 115 SUNSCREEM  1",
+    "manufacturer": "AYURVED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285225,
+    "name": "AYUR 70 SUNSCREEM 50ML",
+    "manufacturer": "AYURVED",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 285234,
+    "name": "AYUR LIP BALAM 5ML",
+    "manufacturer": "AYURVED",
+    "generic_name": null,
+    "packaging": "5ML",
+    "strength": null
+  },
+  {
+    "id": 285279,
+    "name": "B COLEN C NS RASPBERRY FLAV SYP 100ML",
+    "manufacturer": "GALPHA LABORATORIES LTD",
+    "generic_name": "VITAMIN B COMPLEX(5.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 285290,
+    "name": "BABY CARE WET WIPES 10`S",
+    "manufacturer": "TAINWALA PERSONAL CARE PRODUCTS PVT LTD",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285291,
+    "name": "BABY DRY SHEET COTTON 1",
+    "manufacturer": "HANDH",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284590,
+    "name": "BABY WIPES 10'S",
+    "manufacturer": "null",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285294,
+    "name": "BADAM SHIRIN OIL 25 ML",
+    "manufacturer": "HAMDARD (WAKF) LABORATORIES",
+    "generic_name": null,
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 285298,
+    "name": "BAI GOKSHURADHI  KADHA 200ML",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 285299,
+    "name": "BAID ABHAYARISHTA SYP 227ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285305,
+    "name": "BAID KUTAJGHAN BATI",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "40 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285317,
+    "name": "BAIDYANATH DRAKSHASAVA LIQUID 227 ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "227 ML",
+    "strength": null
+  },
+  {
+    "id": 285327,
+    "name": "BAIDYANATH PUNARNAVARISHTA LIQUID 227 ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "227 ML",
+    "strength": null
+  },
+  {
+    "id": 285328,
+    "name": "BAIDYANATH PUNARNAVARISHTA LIQUID 455 ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "455 ML",
+    "strength": null
+  },
+  {
+    "id": 285329,
+    "name": "BAIDYANATH SARIVADYARISHTA LIQUID 455 ML",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": null,
+    "packaging": "455 ML",
+    "strength": null
+  },
+  {
+    "id": 285335,
+    "name": "BAJAJ  OIL 45ML",
+    "manufacturer": "BAJAJ PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "45ML",
+    "strength": null
+  },
+  {
+    "id": 285337,
+    "name": "BAJAJ 133 OIL 150ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 285339,
+    "name": "BAJAJ 138 OIL 138ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "138ML",
+    "strength": null
+  },
+  {
+    "id": 285340,
+    "name": "BAJAJ 142 OIL 190 ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "190 ML",
+    "strength": null
+  },
+  {
+    "id": 285341,
+    "name": "BAJAJ 195 OIL 1",
+    "manufacturer": "BAJAJ HEALTHCARE LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285343,
+    "name": "BAJAJ 205 OIL 285 ML",
+    "manufacturer": "BAJAJ PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "285 ML",
+    "strength": null
+  },
+  {
+    "id": 285345,
+    "name": "BAJAJ 305 OIL 305ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "305ML",
+    "strength": null
+  },
+  {
+    "id": 284594,
+    "name": "BAJAJ 69 OIL 70ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "70ML",
+    "strength": null
+  },
+  {
+    "id": 284597,
+    "name": "BAJAJ 72 OIL 80ML",
+    "manufacturer": "BAJAJ CONSUMER CARE LTD.",
+    "generic_name": null,
+    "packaging": "80ML",
+    "strength": null
+  },
+  {
+    "id": 284611,
+    "name": "BAM BAID BAM 10 GM",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 285325,
+    "name": "BAND AID ADHESIVE",
+    "manufacturer": "JOHNSON & JOHNSON",
+    "generic_name": "NOT APPLICABLE",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 284579,
+    "name": "BANDAGE 30 COTTON 4",
+    "manufacturer": "SURGICAL",
+    "generic_name": null,
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 285367,
+    "name": "BANDAGE CLOTH 1 INCH",
+    "manufacturer": "10 DRUG MART",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285368,
+    "name": "BANDAGE CLOTH 100CM X 10M",
+    "manufacturer": "10 DRUG MART",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285369,
+    "name": "BANDAGE CLOTH 15CMX2.5M",
+    "manufacturer": "SURGICAL",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285372,
+    "name": "BANDAGE CLOTH 4 INCH",
+    "manufacturer": "10 DRUG MART",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285373,
+    "name": "BANDAGE CLOTH 5CMX3CM",
+    "manufacturer": "SURGICAL",
+    "generic_name": null,
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285374,
+    "name": "BANDAGE CLOTH SCHF II 7.5CMX3M",
+    "manufacturer": "SURGICAL",
+    "generic_name": null,
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285391,
+    "name": "BD INSULIN ULTRAFINE 40 IU/31 G SYRINGE 1 ML",
+    "manufacturer": "BECTON DICKINSON INDIA PVT LTD",
+    "generic_name": "SURGICAL(0.0 MG)",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285396,
+    "name": "BEARDO BEARD OIL 349  OIL 60ML",
+    "manufacturer": "BEARDO",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 285397,
+    "name": "BEARDO BEARD OIL 750 OIL 50ML",
+    "manufacturer": "BEARDO",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 285414,
+    "name": "BED PAN",
+    "manufacturer": "SUTURES INDIA",
+    "generic_name": null,
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285420,
+    "name": "BEIPOS 1.5%W/V EYE DROPS 5ML",
+    "manufacturer": "LUPIN",
+    "generic_name": "BEPOTASTINE(1.5 %)",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 285492,
+    "name": "BHUNIMBADI KADHA 400ML",
+    "manufacturer": "BV PANDIT",
+    "generic_name": null,
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 294174,
+    "name": "BOROLINE 10 CREAM 7GM",
+    "manufacturer": "BOROLINE",
+    "generic_name": null,
+    "packaging": "7GM",
+    "strength": null
+  },
+  {
+    "id": 285580,
+    "name": "BOROLINE ANTISEPTIC AYURVEDIC CREAM 6 GM",
+    "manufacturer": "G D PHARMA",
+    "generic_name": null,
+    "packaging": "6 G",
+    "strength": null
+  },
+  {
+    "id": 285661,
+    "name": "BUDS 10 COTTON 1",
+    "manufacturer": "APPLE PHARMA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284657,
+    "name": "BUDS 44 BUDS 1",
+    "manufacturer": "MAHADEV",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284659,
+    "name": "BUNASE-L 0.5 RESPULES 5 2 ML",
+    "manufacturer": "MACLEODS PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "5 2 ML",
+    "strength": null
+  },
+  {
+    "id": 284662,
+    "name": "CAL SULPH 200 DROP 30ML",
+    "manufacturer": "SBL HOMEOPATHY",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 285681,
+    "name": "CALADRYL LOTION 100ML",
+    "manufacturer": "JOHNSON & JOHNSON",
+    "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 285684,
+    "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION - SKIN SOOTHING SOLUTION - 120 ML",
+    "manufacturer": "PIRAMAL ENTERPRISES LTD",
+    "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+    "packaging": "120 ML",
+    "strength": null
+  },
+  {
+    "id": 285683,
+    "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION- SKIN SOOTHING SOLUTION - 60 ML",
+    "manufacturer": "PIRAMAL ENTERPRISES LTD",
+    "generic_name": "DIPHENHYDRAMINE(1.0 %)+CALAMINE(8.0 %)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 285729,
+    "name": "CALPOL PLUS SYP 60ML",
+    "manufacturer": "GLAXOSMITHKLINE",
+    "generic_name": "IBUPROFEN(400.0 MG)+PARACETAMOL / ACETAMINOPHEN(325.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 285784,
+    "name": "CANDITRAL SB 130 STRIP 10 TAB",
+    "manufacturer": "GLENMARK PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 285788,
+    "name": "CARBO VEG 30 LIQUID 25ML",
+    "manufacturer": "BANAJI HOMEOPATHIC PHARMACY",
+    "generic_name": null,
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 285792,
+    "name": "CARDUUS MARIANUS LIQUID 20ML",
+    "manufacturer": "DR WILLMAR SCHWABE",
+    "generic_name": "AYURVEDIC",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 285798,
+    "name": "CARMICIDE DROPS 30ML",
+    "manufacturer": "INDOCO REMEDIES LTD",
+    "generic_name": "SIMETHICONE / SIMETICONE(40.0 MG)",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 285814,
+    "name": "CASTOR OIL 30 ML",
+    "manufacturer": "10 DRUG MART",
+    "generic_name": null,
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 285815,
+    "name": "CASTOR OIL 400ML",
+    "manufacturer": "MULTIPHAR",
+    "generic_name": null,
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 58229,
+    "name": "CASTOR OIL 450 ML",
+    "manufacturer": "NATURE HOME ASIA",
+    "generic_name": null,
+    "packaging": "450 ML",
+    "strength": null
+  },
+  {
+    "id": 77243,
+    "name": "CAT KOF STRIP OF 10TAB",
+    "manufacturer": "ALKEM LABORATORIES LTD",
+    "generic_name": null,
+    "packaging": "10TAB",
+    "strength": null
+  },
+  {
+    "id": 285913,
+    "name": "CHANDAN BALA OIL 60ML",
+    "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "generic_name": "AYURVEDIC",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286045,
+    "name": "CIPLADINE 39 OINT 15GM",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "15GM",
+    "strength": null
+  },
+  {
+    "id": 286048,
+    "name": "CIPLADINE 5% OINT 15GM",
+    "manufacturer": "CIPLA GX",
+    "generic_name": "POVIDONE-IODINE(5.0 %)",
+    "packaging": "15 G",
+    "strength": null
+  },
+  {
+    "id": 286052,
+    "name": "CIPLADINE 5% OINT 30GM",
+    "manufacturer": "CIPLA GX",
+    "generic_name": "POVIDONE-IODINE(5.0 %)",
+    "packaging": "30 G",
+    "strength": null
+  },
+  {
+    "id": 286057,
+    "name": "CIPLADINE 80 OINT 30GM",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 286058,
+    "name": "CIPLADINE 87 CREAM 30GM",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 286098,
+    "name": "CLEAN AND CLEAR LIQUID 120ML",
+    "manufacturer": "CLEAN AND CLEAR",
+    "generic_name": null,
+    "packaging": "120ML",
+    "strength": null
+  },
+  {
+    "id": 286208,
+    "name": "CLOVE OIL 10ML",
+    "manufacturer": "TALENT HEALTH CARE",
+    "generic_name": "ALL OTHER DERMATOLOGICAL PREPARATIONS",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 162413,
+    "name": "CLOVE OIL 5 ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 294184,
+    "name": "CODISTAR DX SYP 60ML",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "DEXTROMETHORPHAN(10.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(4.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286227,
+    "name": "COF Q D SYRUP 100ML",
+    "manufacturer": "CIPLA GX",
+    "generic_name": "DEXTROMETHORPHAN(10.0 MG)+PHENYLEPHRINE(5.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286349,
+    "name": "COTTON 12 PACK 10 GM",
+    "manufacturer": "KLENZA",
+    "generic_name": null,
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 286350,
+    "name": "COTTON 130 COTTON 200GMS",
+    "manufacturer": "AMIT PHARMACY",
+    "generic_name": null,
+    "packaging": "200GMS",
+    "strength": null
+  },
+  {
+    "id": 286331,
+    "name": "COTTON 20 COTTON 1",
+    "manufacturer": "GEN BIOTEC PRIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286352,
+    "name": "COTTON 40 COTTON 1",
+    "manufacturer": "OMKAR AYURVEDIC MANDIR",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286353,
+    "name": "COTTON 68 COTTON 1",
+    "manufacturer": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286354,
+    "name": "COTTON 90 COTTAN 1",
+    "manufacturer": "AMIT PHARMACY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286355,
+    "name": "COTTON ABSORBANT OTHER 20GM",
+    "manufacturer": "ADMAK PHARMACEUTICALS PVT LTD",
+    "generic_name": null,
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 286357,
+    "name": "COTTON BANDAGE 4X12 COTTON 4' 12M",
+    "manufacturer": "BANAJI HOMEOPATHIC PHARMACY",
+    "generic_name": null,
+    "packaging": "4' 12M",
+    "strength": null
+  },
+  {
+    "id": 286358,
+    "name": "COTTON EAR BUDS 6",
+    "manufacturer": "TULIP LAB PVT LTD",
+    "generic_name": null,
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 294144,
+    "name": "CREMAFFIN MINT CONSTIPATION SYRUP  BOTTLE OF 200 ML",
+    "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+    "generic_name": "LIQUID PARAFFIN(3.75 MG)+MAGNESIUM HYDROXIDE(11.25 MG)",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286374,
+    "name": "CREMAFFIN PLUS SYP 200ML",
+    "manufacturer": "ABBOTT INDIA LTD",
+    "generic_name": "SODIUM PICOSULFATE(3.33 MG)+LIQUID PARAFFIN(1.25 ML)+MAGNESIUM HYDROXIDE / MILK OF MAGNESIA(3.75 ML)",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286398,
+    "name": "CROCIN DS SUSP 60ML",
+    "manufacturer": "GLAXOSMITHKLINE",
+    "generic_name": "PARACETAMOL / ACETAMINOPHEN(240.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286399,
+    "name": "CROCIN DS SUSP SUS 100ML",
+    "manufacturer": "GLENWOOD BIOTECH PVT LIMITED",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 286454,
+    "name": "D LIQ 15ML DROPS",
+    "manufacturer": "DELCURE LIFESCIENCES",
+    "generic_name": "VITAMIN D3 / CHOLECALCIFEROL(800.0 IU)",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 286462,
+    "name": "D3 MUST FORTE DROPS 15ML",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "VITAMIN D3 / CHOLECALCIFEROL(800.0 IU)",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 286473,
+    "name": "DAB AMLA 10 OIL 1",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286474,
+    "name": "DAB AMLA 20 OIL 25ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 286476,
+    "name": "DAB LAL 120 OIL 100ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 221720,
+    "name": "DABUR GLUCOSE D  POWDER 75GM",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "75GM",
+    "strength": null
+  },
+  {
+    "id": 286507,
+    "name": "DABUR HONEY 1 KG",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "1 KG",
+    "strength": null
+  },
+  {
+    "id": 286508,
+    "name": "DABUR HONEY 1.2 KG",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "1 KG",
+    "strength": null
+  },
+  {
+    "id": 25654,
+    "name": "DABUR HONEY 50 GM",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 286514,
+    "name": "DABUR HONITUS  COUGH SYRUP  BOTTLE OF 100 ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": "AYURVEDIC",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286515,
+    "name": "DABUR HONITUS SYP 100ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": "AYURVEDIC",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286516,
+    "name": "DABUR HONITUS SYP 200ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": "AYURVEDIC",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286530,
+    "name": "DABUR LAL TAIL 120ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": "AYURVEDIC",
+    "packaging": "120 ML",
+    "strength": null
+  },
+  {
+    "id": 286544,
+    "name": "DABUR TRIPHALA CHURNA 60GM",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": "AYURVEDIC",
+    "packaging": "60 G",
+    "strength": null
+  },
+  {
+    "id": 286587,
+    "name": "DASHMULARISHTA 200ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286613,
+    "name": "DENTAL TONIC TEETHING PIL",
+    "manufacturer": "BOMBAY HOMOEO LABORATORIES",
+    "generic_name": null,
+    "packaging": "12 G",
+    "strength": null
+  },
+  {
+    "id": 286636,
+    "name": "DERMA 2% KOJIC ACID BOTTLE 30ML",
+    "manufacturer": "DERMACIA HEALTHCARE",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 229350,
+    "name": "DERMACO 2% SALICYLIC ACID LOTION 1",
+    "manufacturer": "DERMACO",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286666,
+    "name": "DERMI COOL  POWDER 150 ML",
+    "manufacturer": "DERMICOOL",
+    "generic_name": null,
+    "packaging": "150 ML",
+    "strength": null
+  },
+  {
+    "id": 286668,
+    "name": "DERMI COOL LAVENDER POWDER 90GM",
+    "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "90 G",
+    "strength": null
+  },
+  {
+    "id": 286669,
+    "name": "DERMI COOL SANDAL POWDER 50GM",
+    "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 286685,
+    "name": "DETTOL 235 LIQUID 500ML",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 286712,
+    "name": "DETTOL 25 SANITIZER 60 ML",
+    "manufacturer": "RECKITT BENCKISER PVT LTD",
+    "generic_name": null,
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286723,
+    "name": "DETTOL 42 REFILL LIQUID 200ML",
+    "manufacturer": "RECKITT BENCKISER PVT LTD",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 286728,
+    "name": "DETTOL 49 WIPES 1",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286735,
+    "name": "DETTOL 75 SHAVING CREAM 1",
+    "manufacturer": "RECKNOR LIFESCIENCES PVT LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286745,
+    "name": "DETTOL ANTISEPTIC LIQUID BOTTLE OF 550 ML",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "ANTISEPTIC",
+    "packaging": "550 ML",
+    "strength": null
+  },
+  {
+    "id": 286748,
+    "name": "DETTOL HAND WASH 30 HANDWASH 100 ML",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286752,
+    "name": "DETTOL LIQUID BOTTLE 60ML",
+    "manufacturer": "RECKNOR LIFESCIENCES PVT LTD",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 286753,
+    "name": "DETTOL LIQUID HANDWASH REFILL SENSITIVE - 750ML",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "750 ML",
+    "strength": null
+  },
+  {
+    "id": 286757,
+    "name": "DETTOL ORIGINAL INSTANT  HAND SANITIZER  BOTTLE OF 25 ML",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 286759,
+    "name": "DETTOL ORIGINAL SQEEZY 110 ML",
+    "manufacturer": "null",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "110 ML",
+    "strength": null
+  },
+  {
+    "id": 286743,
+    "name": "DETTOL PLASTER",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "NOT APPLICABLE",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286760,
+    "name": "DETTOL REFILL 99 LIQUID 750ML",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "750ML",
+    "strength": null
+  },
+  {
+    "id": 286786,
+    "name": "DEXONA 5 MG TABLET 20",
+    "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
+    "generic_name": "DEXAMETHASONE(5.0 MG)",
+    "packaging": "20 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286844,
+    "name": "DISPOSABLE 10ML SYRANGE 1PCS",
+    "manufacturer": "HMD",
+    "generic_name": null,
+    "packaging": "1PCS",
+    "strength": null
+  },
+  {
+    "id": 286846,
+    "name": "DISPOVAN  SYRANGE 2 ML",
+    "manufacturer": "DISPO VAN",
+    "generic_name": null,
+    "packaging": "2 ML",
+    "strength": null
+  },
+  {
+    "id": 23688,
+    "name": "DISPOVAN SYRINGE 10 ML",
+    "manufacturer": "HINDUSTAN SYRINGES & MEDICAL DEVICES LTD",
+    "generic_name": null,
+    "packaging": "1 G",
+    "strength": null
+  },
+  {
+    "id": 286849,
+    "name": "DISPOVAN SYRINGE 2.5 ML",
+    "manufacturer": "HINDUSTAN SYRINGES & MEDICAL DEVICES LTD",
+    "generic_name": null,
+    "packaging": "1 ML",
+    "strength": null
+  },
+  {
+    "id": 294251,
+    "name": "DOXY 100MG STRIP OF 8 TABLETS",
+    "manufacturer": "USV PVT LTD",
+    "generic_name": "DOXYCYCLINE(100.0 MG)",
+    "packaging": "8 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286961,
+    "name": "DR ORTHO 158 OIL 60ML",
+    "manufacturer": "SBS LIFE SCIENCES PVT LTD",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 105832,
+    "name": "DR ORTHO 48 OIL 30ML",
+    "manufacturer": "DR ORTHO",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 105853,
+    "name": "DR ORTHO 78 CREAM 1",
+    "manufacturer": "DR ORTHO",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286978,
+    "name": "DR ORTHO AN AYURVEDIC MEDICINE OIL BOTTLE OF 60 ML",
+    "manufacturer": "DIVISA HERBAL CARE PVT LTD",
+    "generic_name": null,
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286990,
+    "name": "DR.ORTHO PAIN RELIEF OIL 100 ML",
+    "manufacturer": "DIVISA HERBAL CARE PVT LTD",
+    "generic_name": null,
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 287029,
+    "name": "DUONASE NASAL SPRAY 70MD 9.8ML",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": "FLUTICASONE(50.0 MCG)+AZELASTINE(140.0 MCG)",
+    "packaging": "70 MD",
+    "strength": null
+  },
+  {
+    "id": 287044,
+    "name": "DUREX FEEL THIN CONDOMS",
+    "manufacturer": "SSL INTERNATIONAL",
+    "generic_name": "CONDOM",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 271792,
+    "name": "ECONORM SACHET OF 0.765 GM POWDER",
+    "manufacturer": "DR REDDY'S LABORATORIES LTD",
+    "generic_name": "SACCHAROMYCES BOULARDII(250.0 MG)",
+    "packaging": "0 G",
+    "strength": null
+  },
+  {
+    "id": 287115,
+    "name": "ECOSPRIN AV 75/20MG STRIP OF 10 CAPSULES",
+    "manufacturer": "USV PVT LTD",
+    "generic_name": "ACETYLSALICYLIC ACID(75.0 MG)+ATORVASTATIN(20.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287189,
+    "name": "ENERZAL ORANGE POWDER 50GM",
+    "manufacturer": "FDC LIMITED",
+    "generic_name": null,
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 287191,
+    "name": "ENERZAL PET ORANGE LIQUID 500ML",
+    "manufacturer": "FDC LIMITED",
+    "generic_name": "ORAL REHYDRATION SALT",
+    "packaging": "500 ML",
+    "strength": null
+  },
+  {
+    "id": 287193,
+    "name": "ENERZAL ZERO ORANGE FLAVOUR BOTTLE OF 400ML LIQUID",
+    "manufacturer": "FDC LIMITED",
+    "generic_name": "SODIUM(71.0 MG)+POTASSIUM(37.0 MG)+CALCIUM(3.0 MG)+MAGNESIUM(4.5 MG)+CHLORIDE(90.0 MG)",
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 287400,
+    "name": "FEBREX 250MG SUSP",
+    "manufacturer": "INDOCO REMEDIES LTD",
+    "generic_name": "PARACETAMOL / ACETAMINOPHEN(250.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 287415,
+    "name": "FEM 32 BLEATCH 1",
+    "manufacturer": "GYNOFEM HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286171,
+    "name": "FEM 75 BLEATCH 1",
+    "manufacturer": "FEM CARE PHARMA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287502,
+    "name": "FLEXON 100MG/162.5MG SYP 100ML",
+    "manufacturer": "ARISTO PHARMACEUTICALS PVT LTD",
+    "generic_name": "IBUPROFEN(100.0 MG)+PARACETAMOL / ACETAMINOPHEN(162.5 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 287571,
+    "name": "FORACORT  G  400 R/C 3X10 CAPS",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "3X10 CAPS",
+    "strength": null
+  },
+  {
+    "id": 287649,
+    "name": "GABANEURON NT 100MG STRIP OF 10 TABLETS",
+    "manufacturer": "ARISTO PHARMACEUTICALS PVT LTD",
+    "generic_name": "NORTRIPTYLINE(10.0 MG)+GABAPENTIN(100.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287745,
+    "name": "GEMINOR M 1/500 MG TABLET 10",
+    "manufacturer": "MACLEODS PHARMACEUTICALS",
+    "generic_name": "GLIMEPIRIDE(1.0 MG)+METFORMIN(500.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287760,
+    "name": "GET OUT PAST CREAM 75",
+    "manufacturer": "GET OUT",
+    "generic_name": null,
+    "packaging": "75",
+    "strength": null
+  },
+  {
+    "id": 287606,
+    "name": "GILLET 125 FOAM 1",
+    "manufacturer": "GILLETTE INDIA LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287726,
+    "name": "GILLET 188 BLADE 1",
+    "manufacturer": "GILLETE INDIA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287766,
+    "name": "GILLET 2 BLADE METAL 1",
+    "manufacturer": "GILLETTE INDIA LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 207857,
+    "name": "GILLET BLADE 4 BLADE 1",
+    "manufacturer": "GILLETE INDIA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287781,
+    "name": "GILLET SHAVING FOAM 200ML",
+    "manufacturer": "GILLETTE INDIA LTD",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 287806,
+    "name": "GILLETTE 10 RAZORS 1",
+    "manufacturer": "GILLETTE INDIA LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287819,
+    "name": "GILLETTE MACH 3 SHAVING BLADES PACK OF 6",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287820,
+    "name": "GILLETTE SHAVE FOAM LOTION 200ML",
+    "manufacturer": "GILLETTE INDIA LTD",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 287827,
+    "name": "GINSENG STRONG 200MG TAB",
+    "manufacturer": "VITABALANS OY",
+    "generic_name": "GINSENG(250.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287861,
+    "name": "GLOVES   NO 8 RUBBER 1",
+    "manufacturer": "GAMMEX",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287862,
+    "name": "GLOVES 1500 LATEX 1PC",
+    "manufacturer": "AUGMENT REMEDIES EXPORT",
+    "generic_name": null,
+    "packaging": "1PC",
+    "strength": null
+  },
+  {
+    "id": 287863,
+    "name": "GLOVES 990 PLASTIC 100PCS",
+    "manufacturer": "NULIFE PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "100PCS",
+    "strength": null
+  },
+  {
+    "id": 216040,
+    "name": "GLOVES NO 7.5 RUBBER 1",
+    "manufacturer": "GAMMEX",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287864,
+    "name": "GLOVES UNICARE GLOVES 100PCS",
+    "manufacturer": "UNITECH HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "100PCS",
+    "strength": null
+  },
+  {
+    "id": 287875,
+    "name": "GLUCON D PLAIN REFIL 75GM",
+    "manufacturer": "ZYDUS HEALTHCARE LIMITED",
+    "generic_name": null,
+    "packaging": "75GM",
+    "strength": null
+  },
+  {
+    "id": 287879,
+    "name": "GLUCON D REGULAR INSTANT ENERGY POWDER BOTTLE OF 500 G",
+    "manufacturer": "ZYDUS WELLNESS PRODUCTS LTD",
+    "generic_name": null,
+    "packaging": "500 G",
+    "strength": null
+  },
+  {
+    "id": 287999,
+    "name": "GOKSHURADI KADHA 200 ML",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 288003,
+    "name": "GOOD HEALTH POWDER",
+    "manufacturer": "ALKA PHARMACEUTICALS",
+    "generic_name": "NUTRITIONAL FOOD SUPPLEMENT",
+    "packaging": "200 G",
+    "strength": null
+  },
+  {
+    "id": 288005,
+    "name": "GOOD HOME SOUL BLOSSO ROOM FRESHNER 160G",
+    "manufacturer": "null",
+    "generic_name": "ROOM FRESHNER",
+    "packaging": "160 G",
+    "strength": null
+  },
+  {
+    "id": 288012,
+    "name": "GOOD NIGHT ACTIV COMBI PACK",
+    "manufacturer": "LABORATE PHARMACEUTICALS INDIA LTD",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 288037,
+    "name": "GRIPE WATER 48 LIQUID 48ML",
+    "manufacturer": "WOODWARD",
+    "generic_name": null,
+    "packaging": "48ML",
+    "strength": null
+  },
+  {
+    "id": 288114,
+    "name": "GUDLAX PLUS SF SUSP 110ML",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "SODIUM PICOSULFATE(3.33 MG)+LIQUID PARAFFIN(1.25 MG)+MAGNESIUM HYDROXIDE / MILK OF MAGNESIA(300.0 MG)",
+    "packaging": "110 ML",
+    "strength": null
+  },
+  {
+    "id": 288129,
+    "name": "GUTWASH BOTTLE 400ML",
+    "manufacturer": "MSN LABORATORIES",
+    "generic_name": null,
+    "packaging": "400ML",
+    "strength": null
+  },
+  {
+    "id": 288148,
+    "name": "HAIR REMOVER 399 SPRAY 1",
+    "manufacturer": "MANCODE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288149,
+    "name": "HAIR REMOVER 499 SPRAY 1",
+    "manufacturer": "URBAN GABRU",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288167,
+    "name": "HAMAMELIS Q LIQUID 20ML",
+    "manufacturer": "DR RECKEWEG",
+    "generic_name": null,
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 288173,
+    "name": "HAND CLINSER 250 SPRAY 500ML",
+    "manufacturer": "GEN BIOTEC PRIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 288174,
+    "name": "HAND SANITIZER LIQUID SPRAY 50 ML",
+    "manufacturer": "GEN BIOTEC PRIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 288227,
+    "name": "HEAD AND SHOULDER 8ML SACHET 8.4ML",
+    "manufacturer": "HEAD AND SHOULDER",
+    "generic_name": null,
+    "packaging": "8.4ML",
+    "strength": null
+  },
+  {
+    "id": 288239,
+    "name": "HEALING O2 STRIP OF 10 TABLETS",
+    "manufacturer": "HEALING PHARMA INDIA PVT LTD",
+    "generic_name": "OFLOXACIN(200.0 MG)+ORNIDAZOLE(500.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 288242,
+    "name": "HEALTH OK SACHET",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "CAFFEINE+FOLIC ACID [VIT B9]+GINSENG+INOSITOL+LEVOCARNITINE+LYCOPENE+MECOBALAMIN [VIT B12]+NIACIN [VIT B3]+TAURINE+THIAMINE [VIT B1]+ZINC SULFATE",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 288259,
+    "name": "HEMPUSHPA SYP 170ML",
+    "manufacturer": "RAJVAIDYA SHITAL PRASAD & SONS",
+    "generic_name": "AYURVEDIC",
+    "packaging": "170 ML",
+    "strength": null
+  },
+  {
+    "id": 288312,
+    "name": "HIM 100 WIPES 1",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288313,
+    "name": "HIM 100 WIPES 25",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 288315,
+    "name": "HIM 130 OIL 100ML",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288263,
+    "name": "HIM 45 WIPES 12",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 294128,
+    "name": "HIM 90 LOTION 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288326,
+    "name": "HIM 95 LOTION 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288332,
+    "name": "HIM ALOVERA GEL 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288351,
+    "name": "HIM BABY 100 MASAGE OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288352,
+    "name": "HIM BABY 100 POWDER 100GM",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288353,
+    "name": "HIM BABY 100 PRIKY   POWDER 100GM",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288355,
+    "name": "HIM BABY 105 POWDER 100GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288357,
+    "name": "HIM BABY 110 BASTHWASH 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288358,
+    "name": "HIM BABY 110 LOTION 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288359,
+    "name": "HIM BABY 115 LOTION 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288360,
+    "name": "HIM BABY 115 OIL 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288361,
+    "name": "HIM BABY 115 POWDER 100GM",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288363,
+    "name": "HIM BABY 120 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288364,
+    "name": "HIM BABY 125 MASSAGE 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288365,
+    "name": "HIM BABY 130 MESSAGE 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288367,
+    "name": "HIM BABY 135 POWD 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288368,
+    "name": "HIM BABY 140 CREAM 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288369,
+    "name": "HIM BABY 140 MESSAGE OIL 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288370,
+    "name": "HIM BABY 145 POWDER 1",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288372,
+    "name": "HIM BABY 150 OIL 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288373,
+    "name": "HIM BABY 150 POWDER 200GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "200GM",
+    "strength": null
+  },
+  {
+    "id": 288375,
+    "name": "HIM BABY 165 CREAM 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288376,
+    "name": "HIM BABY 165 LOTION 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288377,
+    "name": "HIM BABY 170 LOTION 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288378,
+    "name": "HIM BABY 175 LOTION 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288379,
+    "name": "HIM BABY 180 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288381,
+    "name": "HIM BABY 195 LOTION 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288382,
+    "name": "HIM BABY 195 POWDER 200GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "200GM",
+    "strength": null
+  },
+  {
+    "id": 288384,
+    "name": "HIM BABY 200 WIPES 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288385,
+    "name": "HIM BABY 210 MESSAGE 200ML",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 288386,
+    "name": "HIM BABY 235 POWDER 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288389,
+    "name": "HIM BABY 350 WIPES 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288390,
+    "name": "HIM BABY 40  POWDER 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288391,
+    "name": "HIM BABY 42 POWDER 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288392,
+    "name": "HIM BABY 45 MOIST WIPES 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": "SCHEDULED G",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288398,
+    "name": "HIM BABY 62 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288399,
+    "name": "HIM BABY 65 MESSAGE 1",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288403,
+    "name": "HIM BABY 72 POWDER 100GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288405,
+    "name": "HIM BABY 75 CREAM 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288406,
+    "name": "HIM BABY 80 CREAM 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288408,
+    "name": "HIM BABY 83 POWDER 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288411,
+    "name": "HIM BABY 85 WIPES 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288414,
+    "name": "HIM BABY 95 LOTION 1",
+    "manufacturer": "COCONUT HCL",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288415,
+    "name": "HIM BABY 95 POWDER 100GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288417,
+    "name": "HIM BABY 99 WIPES 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288418,
+    "name": "HIM BABY BRUSH 1",
+    "manufacturer": "CM COSMATIC",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288419,
+    "name": "HIM BABY COMBO PACK 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288420,
+    "name": "HIM BABY GIFT PACK BIG PACK",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "BIG PACK",
+    "strength": null
+  },
+  {
+    "id": 288421,
+    "name": "HIM BABY GIFT PACK MID PACK",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "MID PACK",
+    "strength": null
+  },
+  {
+    "id": 288425,
+    "name": "HIM BABY WIPES 48 WIPES 12",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 288426,
+    "name": "HIM BABYP 90 POWDER 100GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288429,
+    "name": "HIM BEBY 40 POWDER 40GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "40GM",
+    "strength": null
+  },
+  {
+    "id": 288431,
+    "name": "HIM BEBY 48 WIPES 12",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 288436,
+    "name": "HIM BODY 95 LOTION 100ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288438,
+    "name": "HIM COCO 85 LOTION 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288443,
+    "name": "HIM FACE NEEM GEL 100  ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "100  ML",
+    "strength": null
+  },
+  {
+    "id": 288452,
+    "name": "HIM KESAR 10 FACEPACK 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288454,
+    "name": "HIM KESAR 55 CREAM 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288460,
+    "name": "HIM KESAR 90 CREAM 1",
+    "manufacturer": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288465,
+    "name": "HIM LIP  BALM 5GM",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 288466,
+    "name": "HIM LIP 35 BALAM 35ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "35ML",
+    "strength": null
+  },
+  {
+    "id": 288468,
+    "name": "HIM MASSAGE 100 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288469,
+    "name": "HIM MASSAGE 115 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288470,
+    "name": "HIM MASSAGE 180 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288471,
+    "name": "HIM MASSAGE 200 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288472,
+    "name": "HIM MASSAGE 60 OIL 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288474,
+    "name": "HIM MESSAGE 180 OIL 125",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "125",
+    "strength": null
+  },
+  {
+    "id": 288475,
+    "name": "HIM MESSAGE 55 OIL 50ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 288523,
+    "name": "HIM WAL 10 SACHET 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288526,
+    "name": "HIM WIPES 85 COTTON 1",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288527,
+    "name": "HIM WIPS WIPS 24",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "24",
+    "strength": null
+  },
+  {
+    "id": 288587,
+    "name": "HIMALAYA NOURISHING SKIN CREAM 50ML",
+    "manufacturer": "THE HIMALAYA DRUG COMPANY",
+    "generic_name": "AYURVEDIC",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 288661,
+    "name": "HONEY BOTTLE OF 500ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 288686,
+    "name": "HOT WAX 70 BOTTLE 1",
+    "manufacturer": "PREMIUM HEALTHCARE DISPOSABLES PVT. LTD.",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288704,
+    "name": "HUM TUM SPRAY 100ML",
+    "manufacturer": "RIYAR",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288735,
+    "name": "I KUL PLUS EYE DROPS 15ML",
+    "manufacturer": "INTAS PHARMACEUTICALS LTD",
+    "generic_name": "CHLORPHENIRAMINE+HYPROMELLOSE+NAPHAZOLINE+ZINC SULFATE",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 288740,
+    "name": "IBUGESIC BOTTLE OF 60ML SUSPENSION",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": "IBUPROFEN(100.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 294072,
+    "name": "IBUGESIC PLUS SUSP 60ML",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": "IBUPROFEN(100.0 MG)+PARACETAMOL / ACETAMINOPHEN(162.5 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 288742,
+    "name": "INDICA 19 DAI 1",
+    "manufacturer": "INDICA LABORATORIES",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288807,
+    "name": "IODEX 170 CREAM 1",
+    "manufacturer": "DR RECKEWEG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288815,
+    "name": "IODEX 80 BALAM 20GM",
+    "manufacturer": "IODEX",
+    "generic_name": null,
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 288823,
+    "name": "IODEX BOTTLE BAM  BALAM 20GM",
+    "manufacturer": "IODEX",
+    "generic_name": null,
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 288850,
+    "name": "ITCHGUARD 17 CREAM 5GM",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 288855,
+    "name": "ITCHGUARD CREAM 6GM",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "CLOTRIMAZOLE(1.0 %)",
+    "packaging": "6 G",
+    "strength": null
+  },
+  {
+    "id": 288967,
+    "name": "JOLLY TULSI 51 DROPS 21 ML",
+    "manufacturer": "JOLLY HEALTHCARE",
+    "generic_name": null,
+    "packaging": "21 ML",
+    "strength": null
+  },
+  {
+    "id": 289017,
+    "name": "K.S 210 SPRAY 260 ML",
+    "manufacturer": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "generic_name": null,
+    "packaging": "260 ML",
+    "strength": null
+  },
+  {
+    "id": 289031,
+    "name": "KALONJI SEED 50GM",
+    "manufacturer": "SHREE DHANWANTRI HERBALS",
+    "generic_name": null,
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 289035,
+    "name": "KANAKASAV SYP 220ML",
+    "manufacturer": "SANDU PHARMA",
+    "generic_name": null,
+    "packaging": "220ML",
+    "strength": null
+  },
+  {
+    "id": 289036,
+    "name": "KANAKASAVA SYP 200ML (DHOOTH)",
+    "manufacturer": "SHREE DHOOTAPAPESHWAR",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289172,
+    "name": "KILLER 299 SPRAY 180ML",
+    "manufacturer": "KILLER SPRAY",
+    "generic_name": null,
+    "packaging": "180ML",
+    "strength": null
+  },
+  {
+    "id": 289223,
+    "name": "KOFOL COUGH SYRUP BOTTLE OF 100 ML",
+    "manufacturer": "VEDISTRY PRIVATE LIMITED",
+    "generic_name": "AYURVEDIC(0.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 289349,
+    "name": "LAKME SUN EXPERT TINTED SUNSCRE LOTION 18ML",
+    "manufacturer": "LAKME",
+    "generic_name": null,
+    "packaging": "18ML",
+    "strength": null
+  },
+  {
+    "id": 289351,
+    "name": "LAL TAIL 115 OIL 100ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 289464,
+    "name": "LIP 190 BAG 25STB",
+    "manufacturer": "GREEN CROSS HEALTHCARE",
+    "generic_name": null,
+    "packaging": "25STB",
+    "strength": null
+  },
+  {
+    "id": 289491,
+    "name": "LISTRIN 55 LIQUID 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289673,
+    "name": "LUPIHIST DM PLUS SYR 60ML",
+    "manufacturer": "LUPITAS PHARMA PVT LTD",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 289735,
+    "name": "MACBERY PD 0.5/15/50 MG SYRUP 60 ML",
+    "manufacturer": "MACLEODS PHARMACEUTICALS",
+    "generic_name": "AMBROXOL(15.0 MG)+GUAIPHENESIN / GUAIFENESIN(50.0 MG)+SALBUTAMOL / ALBUTEROL(0.5 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 289655,
+    "name": "MAG PHOS 6X TAB 25",
+    "manufacturer": "SBL HOMEOPATHY",
+    "generic_name": null,
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 289769,
+    "name": "MAHACEF DRY SYP 30ML",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "CEFIXIME(50.0 MG)",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 289779,
+    "name": "MAHANARAYAN TAIL 60ML",
+    "manufacturer": "SHREE NARNARAYAN",
+    "generic_name": "AYURVEDIC",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 289780,
+    "name": "MAHARASNADI KADHA 200ML",
+    "manufacturer": "SANDU BROTHERS",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289782,
+    "name": "MAHASUDARSHAN KADHA 200 ML",
+    "manufacturer": "SANDU PHARMA",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289783,
+    "name": "MAHASUDARSHAN KADHA BOTTLE 400 ML",
+    "manufacturer": "SANDU PHARMA",
+    "generic_name": null,
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 289784,
+    "name": "MAHASUDARSHAN KADHA SYP 200ML",
+    "manufacturer": "SHREE DHOOTAPAPESHWAR",
+    "generic_name": null,
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289812,
+    "name": "MAMA EARTH 349 OIL 1",
+    "manufacturer": "MAMA EART",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289847,
+    "name": "MANFORCE GAME 3IN1 CONDOMS - SUPER SAVER (3 X 10S)",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "GENERAL",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 289857,
+    "name": "MARKS RUB 30GM",
+    "manufacturer": "LEEFORD HEALTHCARE LTD",
+    "generic_name": "CLINDAMYCIN+NICOTINAMIDE",
+    "packaging": "30 G",
+    "strength": null
+  },
+  {
+    "id": 289860,
+    "name": "MASK 30 COTTON 1",
+    "manufacturer": "OXYGEN REMEDIES PVT LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289864,
+    "name": "MAX 30 RAZORS 1",
+    "manufacturer": "GEN BIOTEC PRIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289865,
+    "name": "MAX 40 RAZORS 1",
+    "manufacturer": "MAXRELIEF HEALTH CARE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290019,
+    "name": "MET XL AM 25/2.5MG TABLET 10'S",
+    "manufacturer": "AJANTA PHARMA LTD",
+    "generic_name": "AMLODIPINE(2.5 MG)+METOPROLOL(25.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290020,
+    "name": "MET XL AM 25/2.5MG TABLET 15'S",
+    "manufacturer": "AJANTA PHARMA LTD",
+    "generic_name": "AMLODIPINE(2.5 MG)+METOPROLOL(25.0 MG)",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290026,
+    "name": "METBETIC GL 1/500 MG TABLET 10'S",
+    "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
+    "generic_name": "GLIMEPIRIDE(1.0 MG)+METFORMIN(500.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290027,
+    "name": "METBETIC GL 1MG STRIP OF 15 TABLETS",
+    "manufacturer": "CADILA PHARMACEUTICALS LTD",
+    "generic_name": "GLIMEPIRIDE(1.0 MG)+METFORMIN(500.0 MG)",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290218,
+    "name": "MOOV  OINT 10 GM",
+    "manufacturer": "DR RECKEWEG",
+    "generic_name": null,
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 290232,
+    "name": "MOOV 75  CREAM 15GM",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "15GM",
+    "strength": null
+  },
+  {
+    "id": 290242,
+    "name": "MOOV OINTMENT 35 GM",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": "WINTERGREEN OIL(15.0 %)+NILGIRI OIL(2.0 %)+TURPENTINE OIL(3.0 %)+MENTHA SPICATA(5.0 %)",
+    "packaging": "35 G",
+    "strength": null
+  },
+  {
+    "id": 290243,
+    "name": "MOOV PAIN RELIEF SPECIALIST CREAM REGULAR 15 GM",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": null,
+    "packaging": "15 G",
+    "strength": null
+  },
+  {
+    "id": 290245,
+    "name": "MOOV PAIN RELIEF SPRAY BOTTLE OF 35 ML",
+    "manufacturer": "FOREGEN HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "35 ML",
+    "strength": null
+  },
+  {
+    "id": 290246,
+    "name": "MOOV PAIN RELIF SPRAY 25ML",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 290286,
+    "name": "MOXIKIND CV 500/125 MG CAPSULE 10",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "AMOXYCILLIN / AMOXICILLIN(500.0 MG)+CLAVULANIC ACID(125.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290340,
+    "name": "MY LOVE ALUM ALUM 1BOX",
+    "manufacturer": "ABC",
+    "generic_name": null,
+    "packaging": "1BOX",
+    "strength": null
+  },
+  {
+    "id": 290341,
+    "name": "MY PAN 1 CHOC 1",
+    "manufacturer": "ESTRAGEN PHARMA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290371,
+    "name": "NANO NIKE SYP 60ML",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 290388,
+    "name": "NASOCLEAR DROPS 15 ML",
+    "manufacturer": "null",
+    "generic_name": "SODIUM CHLORIDE(0.65 %)",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 290401,
+    "name": "NATURES GOLD KIT 104GM",
+    "manufacturer": "NATURE HEALTH CARE",
+    "generic_name": null,
+    "packaging": "104GM",
+    "strength": null
+  },
+  {
+    "id": 290402,
+    "name": "NATURES GOLD KIT CREAM 43GM",
+    "manufacturer": "ESTRAGEN PHARMA",
+    "generic_name": null,
+    "packaging": "43GM",
+    "strength": null
+  },
+  {
+    "id": 290412,
+    "name": "NAVRATNA 170 OIL 150ML",
+    "manufacturer": "UNIVERSAL LIFE SCIENCES",
+    "generic_name": null,
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 290431,
+    "name": "NAVRATNA OIL 1ML OIL 1",
+    "manufacturer": "ZANDU AYURVEDA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290445,
+    "name": "NEBULIZER DEVICE 1",
+    "manufacturer": "EASTERN MEDIKIT",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290448,
+    "name": "NEBULIZER SAI DEVICE 1 PACK",
+    "manufacturer": "CUREMED BIOTECH",
+    "generic_name": null,
+    "packaging": "1 PACK",
+    "strength": null
+  },
+  {
+    "id": 290457,
+    "name": "NEEM OIL 50ML",
+    "manufacturer": "SWASTIK PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 290575,
+    "name": "NILGIRI OIL 5 ML",
+    "manufacturer": "ARIHANT PHARMA PVT LTD",
+    "generic_name": null,
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 290797,
+    "name": "NUROKIND GOLD SACHET",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "ELEMENTAL ZINC(10.0 MG)+L ARGININE(100.0 MG)+LEVOCARNITINE(1.0 GM)+LYCOPENE(5000.0 MCG)+ELEMENTAL SELENIUM(50.0 MCG)+COENZYME Q10(30.0 MG)+CITRIC ACID(50.0 MG)+VITAMIN B12 / MECOBALAMIN / CYNOCOBALAMIN / METHYLCOBALAMIN(1500.0 MCG)",
+    "packaging": "10 G",
+    "strength": null
+  },
+  {
+    "id": 290818,
+    "name": "NYCIL COOL CHANDAN POWDER 50 GM",
+    "manufacturer": "HEINZ INDIA LTD",
+    "generic_name": null,
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 290819,
+    "name": "NYCIL COOL GULABJAL PRICKLY HEAT TALCUM POWDER - 75GM",
+    "manufacturer": "ZYDUS WELLNESS PRODUCTS LTD",
+    "generic_name": null,
+    "packaging": "75 G",
+    "strength": null
+  },
+  {
+    "id": 290823,
+    "name": "O VIT DROP 30ML",
+    "manufacturer": "AYURVED",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 290824,
+    "name": "O VIT PLUS INJ 1'S",
+    "manufacturer": "OSCAR REMEDIES PVT LTD",
+    "generic_name": "FOLIC ACID+MECOBALAMIN+NIACINAMIDE+ VIT C",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290873,
+    "name": "OIL 10 OIL 20ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "20ML",
+    "strength": null
+  },
+  {
+    "id": 290875,
+    "name": "OIL 104 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290876,
+    "name": "OIL 105 OIL 200ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 290877,
+    "name": "OIL 115 BOTTLE 175ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "175ML",
+    "strength": null
+  },
+  {
+    "id": 290878,
+    "name": "OIL 117 OIL 250,L",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250,L",
+    "strength": null
+  },
+  {
+    "id": 290880,
+    "name": "OIL 150 BOTTLE 250ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 290881,
+    "name": "OIL 162 OIL 250ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 290882,
+    "name": "OIL 172 BOTTLE 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 290883,
+    "name": "OIL 180 OIL 500 ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500 ML",
+    "strength": null
+  },
+  {
+    "id": 290884,
+    "name": "OIL 182 OIL 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 290885,
+    "name": "OIL 185 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290886,
+    "name": "OIL 189 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290887,
+    "name": "OIL 190  OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290890,
+    "name": "OIL 200 OIL 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 290891,
+    "name": "OIL 204 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290866,
+    "name": "OIL 210 OIL 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 286880,
+    "name": "OIL 216 OIL 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 286920,
+    "name": "OIL 300 OIL 500ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 287130,
+    "name": "OIL 36 OIL 100ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 287903,
+    "name": "OIL 37 OIL 125ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "125ML",
+    "strength": null
+  },
+  {
+    "id": 288512,
+    "name": "OIL 38 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288659,
+    "name": "OIL 40 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288852,
+    "name": "OIL 52 OIL 100ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 289297,
+    "name": "OIL 62 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289373,
+    "name": "OIL 63 OIL 100ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 289472,
+    "name": "OIL 64 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290829,
+    "name": "OIL 65 OIL 1",
+    "manufacturer": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290868,
+    "name": "OIL 67 OIL 175ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "175ML",
+    "strength": null
+  },
+  {
+    "id": 256372,
+    "name": "OIL 68 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 256436,
+    "name": "OIL 70 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290456,
+    "name": "OIL 85 BOTTLE 190ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "190ML",
+    "strength": null
+  },
+  {
+    "id": 290524,
+    "name": "OIL 87 OIL 1",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 238722,
+    "name": "OIL 89 OIL 250ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 240908,
+    "name": "OIL 92 BOTTLE 100ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 240929,
+    "name": "OIL 93 OIL 150ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 241592,
+    "name": "OIL 99 OIL 250ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 242130,
+    "name": "OIL ALOVERA OIL 75ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "75ML",
+    "strength": null
+  },
+  {
+    "id": 290945,
+    "name": "OMEE G  SACHET 1",
+    "manufacturer": "ALKEM LABORATORIES LTD",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290984,
+    "name": "OMNACORTIL 5MG SUSP 60ML",
+    "manufacturer": "MACLEODS PHARMACEUTICALS",
+    "generic_name": "PREDNISOLONE(5.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 290991,
+    "name": "OMNIGEL 100 SPRAY 28GM",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "28GM",
+    "strength": null
+  },
+  {
+    "id": 290995,
+    "name": "OMNIGEL 217.8 SPRAY 78.6ML",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": null,
+    "packaging": "78.6ML",
+    "strength": null
+  },
+  {
+    "id": 290998,
+    "name": "OMNIGEL GEL 10GM",
+    "manufacturer": "CIPLA GX",
+    "generic_name": "DICLOFENAC(1.16 %)+MENTHOL(5.0 %)+METHYL SALICYLATE(10.0 %)+LINSEED OIL(3.0 %)",
+    "packaging": "10 G",
+    "strength": null
+  },
+  {
+    "id": 291003,
+    "name": "OMNIGEL SPRAY 50ML",
+    "manufacturer": "CIPLA LIMITED",
+    "generic_name": "METHYLSALICYLATE(10.0 %)+DICLOFENAC(1.16 %)+LINSEED OIL(3.0 %)+MENTHOL(5.0 %)",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 291037,
+    "name": "ORA SORE STRIP 10 TAB",
+    "manufacturer": "WINGS PHARMACEUTICALS PVT LTD",
+    "generic_name": null,
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 291051,
+    "name": "ORALB 20 BRUSH 1",
+    "manufacturer": "GLAXOSMITHKLINE PHARMA",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291067,
+    "name": "ORGANIC INDIA MUSTARD OIL - 750ML",
+    "manufacturer": "ORGANIC INDIA PRIVATE LIMITED",
+    "generic_name": null,
+    "packaging": "750 ML",
+    "strength": null
+  },
+  {
+    "id": 291096,
+    "name": "ORTHO BALM BAM 50GM",
+    "manufacturer": "AYURVED",
+    "generic_name": null,
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 291116,
+    "name": "OTRIVIN BABY SALINE BOTTLE OF 10ML NASAL SPRAY",
+    "manufacturer": "GLAXOSMITHKLINE",
+    "generic_name": "SODIUM CHLORIDE(0.74 %W/V)",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 291168,
+    "name": "PAL VADI 50 1 1",
+    "manufacturer": "GOOD MORNING",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291176,
+    "name": "PAMPERS NEW BORN BABY PANTS DIAPER - 60'S",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": "DIAPERS",
+    "packaging": "60 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291178,
+    "name": "PAMPERS SMALL 10`S",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291179,
+    "name": "PAMPERS XL 10`S",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 248007,
+    "name": "PAMPERSM 399 PANDS 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291045,
+    "name": "PARA OIL 250ML",
+    "manufacturer": "PARACHUT",
+    "generic_name": null,
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 291265,
+    "name": "PARIPATHADI KADHA 200ML",
+    "manufacturer": "SANDU PHARMA",
+    "generic_name": "AYURVEDIC",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 291268,
+    "name": "PARK 199 SPRAY 1",
+    "manufacturer": "PARK AVENUE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291292,
+    "name": "PATA 295 PAST 600GM",
+    "manufacturer": "PATANJALI AYURVED LTD",
+    "generic_name": null,
+    "packaging": "600GM",
+    "strength": null
+  },
+  {
+    "id": 291303,
+    "name": "PATA 60 PAST 50GM",
+    "manufacturer": "PATANJALI AYURVED LTD",
+    "generic_name": null,
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 291332,
+    "name": "PATANJALI DIVYA DHARA 10 ML",
+    "manufacturer": "PATANJALI AYURVED LTD",
+    "generic_name": null,
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 291357,
+    "name": "PD PUPPY FOOD 1.2KG",
+    "manufacturer": "PEDIGREE",
+    "generic_name": null,
+    "packaging": "1.2KG",
+    "strength": null
+  },
+  {
+    "id": 291426,
+    "name": "PET SAFA GRANULES 100 GM",
+    "manufacturer": "DIVISA HERBAL CARE PVT LTD",
+    "generic_name": null,
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 291436,
+    "name": "PHENSEDYL DX SYP 60ML",
+    "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+    "generic_name": "DEXTROMETHORPHAN(10.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 291518,
+    "name": "POLYBION LC MANGO FLAVOUR BOTTLE OF 100ML SYRUP",
+    "manufacturer": "MERCK LIMITED",
+    "generic_name": "LYSINE HYDROCHLORIDE(375.0 MG)+VITAMIN B12 / MECOBALAMIN / CYNOCOBALAMIN / METHYLCOBALAMIN(2.0 MCG)+VITAMIN B6 / PYRIDOXINE(0.75 MG)+VITAMIN B3 / NICOTINIC ACID / NIACIN(15.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 291710,
+    "name": "PRESTO DISPO 1 4",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 291723,
+    "name": "PRO EASE COSMETIC 7P",
+    "manufacturer": "PROEAS",
+    "generic_name": "NARCOTIC DRUG",
+    "packaging": "7P",
+    "strength": null
+  },
+  {
+    "id": 291724,
+    "name": "PRO EASE XL COTTON 6S",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "6S",
+    "strength": null
+  },
+  {
+    "id": 291761,
+    "name": "PROTIN GEN POWDER 200ML",
+    "manufacturer": "MEDOX REMEDIES PVT LTD",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 291827,
+    "name": "PXL 120 PANT 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291876,
+    "name": "R7 LIVER AND GALLBLADDER  DROP 30ML",
+    "manufacturer": "RECKITT BENCKISER PVT LTD",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 291877,
+    "name": "R71 SCIATICA DROP 30ML",
+    "manufacturer": "RECKET",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 291894,
+    "name": "RABI D 20/10 MG TABLET 10",
+    "manufacturer": "ZEN PHARMA PVT LTD",
+    "generic_name": "DOMPERIDONE(10.0 MG)+RABEPRAZOLE(20.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291994,
+    "name": "RED 60 PAST 100GM",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 292017,
+    "name": "RELISPRAY 150 SPRAY 36GM",
+    "manufacturer": "REAL HEALTHCARE",
+    "generic_name": null,
+    "packaging": "36GM",
+    "strength": null
+  },
+  {
+    "id": 292083,
+    "name": "RING 20 CREAM 5GM",
+    "manufacturer": "RECKNOR LIFESCIENCES PVT LTD",
+    "generic_name": null,
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 292084,
+    "name": "RING GUARD 5GM CREAM",
+    "manufacturer": "PARAS PHARMACEUTICALS LTD",
+    "generic_name": "NEOMYCIN(0.5 %)+MICONAZOLE(2.0 %)",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 292104,
+    "name": "ROGAN BADAM BOTTLE 25 ML",
+    "manufacturer": "ZANDU AYURVEDA",
+    "generic_name": null,
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 292105,
+    "name": "ROGAN DIMAG ROSHAN THAKUR 200ML",
+    "manufacturer": "THAKUR",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 292115,
+    "name": "ROLL ON 40 PLASTIC 15ML",
+    "manufacturer": "AMRUTANJAN HEALTH CARE LIMITED",
+    "generic_name": null,
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 292138,
+    "name": "ROSE WATER 52 BOTTLE 50ML",
+    "manufacturer": "DABUR INDIA LIMITED",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 292140,
+    "name": "ROSE WATER LIQUID 50ML",
+    "manufacturer": "null",
+    "generic_name": "CONSUMER PRODUCT",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 292157,
+    "name": "ROSYCAP ASP 10/150MG CAP 10'S",
+    "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+    "generic_name": "ACETYLSALICYLIC ACID(150.0 MG)+ROSUVASTATIN(10.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292158,
+    "name": "ROSYCAP ASP 10MG/75MG CAP 10'S",
+    "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+    "generic_name": "ROSUVASTATIN(10.0 MG)+ACETYLSALICYLIC ACID(75.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292159,
+    "name": "ROSYCAP ASP 20/150MG CAP",
+    "manufacturer": "AKUMENTIS HEALTHCARE LTD",
+    "generic_name": "ROSUVASTATIN(20.0 MG)+ACETYLSALICYLIC ACID(150.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292182,
+    "name": "RUBIRED SYP 150ML",
+    "manufacturer": "MACLEODS PHARMACEUTICALS",
+    "generic_name": "VITAMIN B12 / MECOBALAMIN / CYNOCOBALAMIN / METHYLCOBALAMIN(2.5 MCG)+IRON(30.0 MG)+VITAMIN B9 / FOLIC ACID / FOLATE(0.5 MG)",
+    "packaging": "150 ML",
+    "strength": null
+  },
+  {
+    "id": 292196,
+    "name": "SAFED MUSLI 145 POWDER 25GM",
+    "manufacturer": "SDL INDIA",
+    "generic_name": null,
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 292212,
+    "name": "SANI OS SANITIZER SPRAY 60ML",
+    "manufacturer": "SANIFY HEALTHCARE",
+    "generic_name": null,
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 292213,
+    "name": "SANITARY PAD PENQUIN COTTON 1PKT",
+    "manufacturer": "CARLISLE LABORATORIES LTD",
+    "generic_name": null,
+    "packaging": "1PKT",
+    "strength": null
+  },
+  {
+    "id": 292271,
+    "name": "SBL ALFALFA TONIC 30ML",
+    "manufacturer": "SBL PVT LTD",
+    "generic_name": "HOMEOPATHIC",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 292280,
+    "name": "SBL CALCAREA FLUORICA 1000C DROP OF 30ML",
+    "manufacturer": "SBL HOMEOPATHY",
+    "generic_name": null,
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 292348,
+    "name": "SCALP VEIN NO.21G",
+    "manufacturer": "SUTURES INDIA",
+    "generic_name": null,
+    "packaging": "0 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292389,
+    "name": "SELSUN SUSPENSION 60 ML",
+    "manufacturer": "ABBOTT INDIA LTD",
+    "generic_name": null,
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292392,
+    "name": "SENQUEL F TOOTH PASTE 100GM",
+    "manufacturer": "DR REDDY'S LABORATORIES LTD",
+    "generic_name": "POTASSIUM NITRATE(5.0 %)",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 292397,
+    "name": "SENSODENT KF PAST 125GM",
+    "manufacturer": "INDICO PHARMACEUTICALS",
+    "generic_name": null,
+    "packaging": "125GM",
+    "strength": null
+  },
+  {
+    "id": 292419,
+    "name": "SENSODYNE FRESH MINT 80GM",
+    "manufacturer": "GLAXOSMITHKLINE",
+    "generic_name": null,
+    "packaging": "80 G",
+    "strength": null
+  },
+  {
+    "id": 292428,
+    "name": "SENSODYNE RAPID RELIEF 70GM",
+    "manufacturer": "GLAXOSMITHKLINE",
+    "generic_name": "MONOFLUOROPHOSPHORIC ACID+PHOSPHOSILICON CALCIUM",
+    "packaging": "70 G",
+    "strength": null
+  },
+  {
+    "id": 292443,
+    "name": "SEPTILIN 2 SYR 200ML",
+    "manufacturer": "HIMALAYA DRUG COMPANY",
+    "generic_name": null,
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 292462,
+    "name": "SET VET GEL 50ML",
+    "manufacturer": "SET VET",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 292485,
+    "name": "SHADBINDU TAILAM DROP 15ML",
+    "manufacturer": "NAGARJUN PHARMA",
+    "generic_name": null,
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 292559,
+    "name": "SIMILAC ADVANCE BABY FOOD STAGE 1 INFANT FORMULA (UPTO 6 MONTHS) REFILL OF 400 G",
+    "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+    "generic_name": null,
+    "packaging": "400 G",
+    "strength": null
+  },
+  {
+    "id": 292565,
+    "name": "SINAREST AF SYP 60ML",
+    "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292566,
+    "name": "SINAREST LP NEW 1.25/5/250 MG SYRUP 60 ML",
+    "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "generic_name": "LEVOCETIRIZINE(1.25 MG)+ACETAMINOPHEN(250.0 MG)+PHENYLEPHRINE(5.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292570,
+    "name": "SINAREST PLUS SUSPENSION 60ML",
+    "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "generic_name": "MENTHOL(1.0 MG)+PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)+SODIUM CITRATE(60.0 MG)+PARACETAMOL / ACETAMINOPHEN(250.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292571,
+    "name": "SINAREST SUSPENSION 60 ML",
+    "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)+PARACETAMOL / ACETAMINOPHEN(125.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292573,
+    "name": "SINAREST SYP 60ML",
+    "manufacturer": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 G)+PARACETAMOL / ACETAMINOPHEN(125.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 294230,
+    "name": "SITOPALADI  CURN 30GM",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 292612,
+    "name": "SLOANS BAM BAM 10GM",
+    "manufacturer": "SOLANS",
+    "generic_name": null,
+    "packaging": "10GM",
+    "strength": null
+  },
+  {
+    "id": 292762,
+    "name": "STRETCH NIL LOTION 20ML",
+    "manufacturer": "GUFIC BIOSCIENCES LTD",
+    "generic_name": "AYURVEDIC",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 292789,
+    "name": "SUCRAFIL SUSP 200ML",
+    "manufacturer": "FOURRTS INDIA LABORATORIES PVT LTD",
+    "generic_name": "SUCRALFATE(500.0 MG)",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 292814,
+    "name": "SUKOON MASSAGE OIL 50ML",
+    "manufacturer": "null",
+    "generic_name": "AYURVEDIC PRODUCT",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 292846,
+    "name": "SUNNY 130 PHYN 500ML",
+    "manufacturer": "CM COSMATIC",
+    "generic_name": null,
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 292890,
+    "name": "SURGICAL 45 RAZORS 1PCS",
+    "manufacturer": "RNGALLA FAMILY PVT LTD",
+    "generic_name": null,
+    "packaging": "1PCS",
+    "strength": null
+  },
+  {
+    "id": 292912,
+    "name": "SWAMALA CLASSIC BOTTLE OF 200GM",
+    "manufacturer": "SHREE DHOOTAPAPESHWAR",
+    "generic_name": null,
+    "packaging": "200GM",
+    "strength": null
+  },
+  {
+    "id": 292947,
+    "name": "TAXIM 50 MG DRY SYRUP 30 ML",
+    "manufacturer": "ALKEM LABORATORIES LTD",
+    "generic_name": "CEFOTAXIME",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 293006,
+    "name": "TELMIKIND CT 40MG STRIP OF 10 TABLETS",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "TELMISARTAN(40.0 MG)+CHLORTHALIDONE / CHLORTALIDONE(12.5 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293012,
+    "name": "TELPRES CT 40/12.5MG TAB 15'S",
+    "manufacturer": "ABBOTT HEALTHCARE PVT LTD",
+    "generic_name": "TELMISARTAN(40.0 MG)+CHLORTHALIDONE / CHLORTALIDONE(12.5 MG)",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292881,
+    "name": "TELSAR BISO 5 MG STRIP OF 10 TAB",
+    "manufacturer": "TORRENT PHARMACEUTICALS LTD",
+    "generic_name": null,
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 293036,
+    "name": "TEMSAN AM 2.5MG TAB 15'S",
+    "manufacturer": "EMCURE PHARMACEUTICALS LTD",
+    "generic_name": "S AMLODIPINE(2.5 MG)+TELMISARTAN(40.0 MG)",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293123,
+    "name": "TIGER BALM 8GM WHITE",
+    "manufacturer": "ELDER PHARMACEUTICALS LTD",
+    "generic_name": null,
+    "packaging": "21 ML",
+    "strength": null
+  },
+  {
+    "id": 293124,
+    "name": "TIGER BALM 9GM RED",
+    "manufacturer": "RANGOON CHEMICAL WORKS",
+    "generic_name": null,
+    "packaging": "9 G",
+    "strength": null
+  },
+  {
+    "id": 293130,
+    "name": "TIL TEL OIL 50ML",
+    "manufacturer": "PARAS PHARMACEUTICALS LTD",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 293176,
+    "name": "TOPI GRAPHITES OINT 25GM",
+    "manufacturer": "WILLCARE LIFESCIENCES PVT LTD",
+    "generic_name": null,
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 293187,
+    "name": "TOPISAL 6% OINT 20GM",
+    "manufacturer": "SYSTOPIC LABORATORIES",
+    "generic_name": "SALICYLIC ACID(6.0 %)+CLOBETASOL(0.05 %)",
+    "packaging": "20 G",
+    "strength": null
+  },
+  {
+    "id": 293248,
+    "name": "TRIPHALA CHURNA 120GM",
+    "manufacturer": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "generic_name": "AYURVEDIC",
+    "packaging": "120 G",
+    "strength": null
+  },
+  {
+    "id": 293250,
+    "name": "TRIPHALA CHURNA POWDER 60 GM",
+    "manufacturer": "BAIDYANATH CONSUMER LTD",
+    "generic_name": null,
+    "packaging": "60 GM",
+    "strength": null
+  },
+  {
+    "id": 293264,
+    "name": "TRYPTOMER 10MG STRIP OF 30 TABLETS",
+    "manufacturer": "WOCKHARDT LIMITED",
+    "generic_name": "AMITRIPTYLINE(10.0 MG)",
+    "packaging": "30 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293265,
+    "name": "TRYPTOMER 25MG STRIP OF 30 TABLETS",
+    "manufacturer": "DR REDDY'S LAB (WOCKHARDT)",
+    "generic_name": "AMITRIPTYLINE(25.0 MG)",
+    "packaging": "30 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293279,
+    "name": "TUSQ DX 5/2/15MG SYRUP 100ML",
+    "manufacturer": "BLUE CROSS LABORATORIES PRIVATE LIMITED",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+DEXTROMETHORPHAN(15.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 293299,
+    "name": "ULTRA D3 DROPS - VITAMIN D3 FOR INFANTS VITAMIN DROPS BOTTLE OF 15 ML",
+    "manufacturer": "MEYER ORGANICS PVT LTD",
+    "generic_name": "VITAMIN D3 (CHOLECALCIFEROL)(400.0 IU)",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 293330,
+    "name": "URIKIND KM SACHET 5GM",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "D MANNOSE(300.0 MG)+POTASSIUM MAGNESIUM CITRATE(978.0 MG)+CRANBERRY(200.0 MG)",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 293331,
+    "name": "URIKIND KM6 SACHET 1",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "D-MANNOSE(300.0 MG)+CRANBERRY(200.0 MG)+POTASSIUM MAGNESIUM CITRATE(978.0 MG)",
+    "packaging": "1 G",
+    "strength": null
+  },
+  {
+    "id": 293342,
+    "name": "V WASH 180 LIQUID 1",
+    "manufacturer": "LBCP",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293343,
+    "name": "V WASH PLUS LIQUID 100 ML",
+    "manufacturer": "VIWASH",
+    "generic_name": null,
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 293353,
+    "name": "VALPARIN BOTTLE OF 200ML SOLUTION",
+    "manufacturer": "SANOFI",
+    "generic_name": "SODIUM VALPROATE(200.0 MG)",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 293450,
+    "name": "VEET SILK AND FRESH HAIR REMOVAL CREAM MIXED 25 GM",
+    "manufacturer": "RECKITT BENCKISER",
+    "generic_name": null,
+    "packaging": "25 G",
+    "strength": null
+  },
+  {
+    "id": 293536,
+    "name": "VICKS  TAB 1200",
+    "manufacturer": "DR RECKEWEG",
+    "generic_name": null,
+    "packaging": "1200",
+    "strength": null
+  },
+  {
+    "id": 293538,
+    "name": "VICKS 102 BOTTLE 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293540,
+    "name": "VICKS 109 BOTTLE 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 174093,
+    "name": "VICKS 117 BOTTLE 25GM",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 293541,
+    "name": "VICKS 170 BOTTLE 25",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 293542,
+    "name": "VICKS 199 CREAM 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293543,
+    "name": "VICKS 205 JAR 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293544,
+    "name": "VICKS 21 CREAM 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293545,
+    "name": "VICKS 22 CREAM 1",
+    "manufacturer": "RECKET",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293546,
+    "name": "VICKS 23 BOTTLE 1",
+    "manufacturer": "RECKET",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293547,
+    "name": "VICKS 24 CREAM 1",
+    "manufacturer": "PROCTER & GAMBLE HEALTHCARE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293548,
+    "name": "VICKS 40 CREAM 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293549,
+    "name": "VICKS 42 CREAM 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293550,
+    "name": "VICKS 44 CREAM 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 294289,
+    "name": "VICKS 45 CREAM 1",
+    "manufacturer": "PROCTER & GAMBLE HEALTHCARE",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293551,
+    "name": "VICKS 47 CREAM 10ML",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "10ML",
+    "strength": null
+  },
+  {
+    "id": 293552,
+    "name": "VICKS 48 10ML BOTTLE",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "BOTTLE",
+    "strength": null
+  },
+  {
+    "id": 293553,
+    "name": "VICKS 49 CREAM 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293554,
+    "name": "VICKS 495 DROP 495",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "495",
+    "strength": null
+  },
+  {
+    "id": 293555,
+    "name": "VICKS 50 BOTTLE 5ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "5ML",
+    "strength": null
+  },
+  {
+    "id": 293556,
+    "name": "VICKS 50 CREAM 7ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "7ML",
+    "strength": null
+  },
+  {
+    "id": 293557,
+    "name": "VICKS 51 BOTTLE 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293559,
+    "name": "VICKS 55 CREAM 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293561,
+    "name": "VICKS 80 STRONG BOTTEL 15ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 293562,
+    "name": "VICKS 85 CREAM 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293563,
+    "name": "VICKS 89 ROLL ON 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293564,
+    "name": "VICKS 90 CREAM 1",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293565,
+    "name": "VICKS 99 CREAM 25ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 293566,
+    "name": "VICKS ACTION 500 EXTRA",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "11 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293568,
+    "name": "VICKS ACTION 50MG GEL 1 PK",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "1 PK",
+    "strength": null
+  },
+  {
+    "id": 293569,
+    "name": "VICKS BABY  BAM 10ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "10ML",
+    "strength": null
+  },
+  {
+    "id": 293570,
+    "name": "VICKS BABY RUB CREAM 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293573,
+    "name": "VICKS COUGH DROPS - 195 + 5 FREE",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": "AYURVEDIC(0.0 MG)",
+    "packaging": "200 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293574,
+    "name": "VICKS CREAM 50ML",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 293575,
+    "name": "VICKS CTU KIT 200LTR",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "200LTR",
+    "strength": null
+  },
+  {
+    "id": 293576,
+    "name": "VICKS INHALER - 2 X 0.5ML",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "2 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293580,
+    "name": "VICKS INHALER JUMBO PACK",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 293581,
+    "name": "VICKS JAR BIG 1300T",
+    "manufacturer": "SUTURES INDIA",
+    "generic_name": "AYURVEDIC",
+    "packaging": "1300 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293582,
+    "name": "VICKS RED 196 CREAM 4",
+    "manufacturer": "RECKITT & COLMAN OF INDIA LTD",
+    "generic_name": null,
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 293583,
+    "name": "VICKS ROLL-ON 8ML ROLLON 8 ML",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 293584,
+    "name": "VICKS VAPORAB 5GM GEL 25GM",
+    "manufacturer": "VICKS",
+    "generic_name": null,
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 293585,
+    "name": "VICKS VAPORUB - 5 ML",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": "AYURVEDIC(0.0 MG)",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 293587,
+    "name": "VICKS ZZZQUIL TAB 10",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 293590,
+    "name": "VIGANEXT SACHET 1 PACK",
+    "manufacturer": "MSN LABORATORIES",
+    "generic_name": null,
+    "packaging": "1 PACK",
+    "strength": null
+  },
+  {
+    "id": 293659,
+    "name": "VOLINI GEL 40 GM",
+    "manufacturer": "RANBAXY LABORATORIES (SUN PHARMA)",
+    "generic_name": null,
+    "packaging": "40 G",
+    "strength": null
+  },
+  {
+    "id": 293672,
+    "name": "VOVERAN INJ 1ML",
+    "manufacturer": "NOVARTIS INDIA LTD",
+    "generic_name": "DICLOFENAC(75.0 MG)",
+    "packaging": "1 ML",
+    "strength": null
+  },
+  {
+    "id": 293690,
+    "name": "WALAMYCIN SUSP 60ML",
+    "manufacturer": "WALLACE PHARMACEUTICALS",
+    "generic_name": "COLISTIN(12.5 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 56013,
+    "name": "WASH STONE 1",
+    "manufacturer": "CM COSMATIC",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293716,
+    "name": "WELMINIC P SYP 60ML",
+    "manufacturer": "DELCURE LIFESCIENCES",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(1.0 MG)+PARACETAMOL / ACETAMINOPHEN(125.0 MG)",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 293748,
+    "name": "WHISPER 8PAD COTTON 8PAD\\ COTTON 8",
+    "manufacturer": "WISPER",
+    "generic_name": null,
+    "packaging": "8",
+    "strength": null
+  },
+  {
+    "id": 293756,
+    "name": "WHISPER CHOICE SANITARY PADS EXTRA LARGE 6 PIECES",
+    "manufacturer": "PROCTER & GAMBLE",
+    "generic_name": null,
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293758,
+    "name": "WHISPER CHOICE ULTRA 6 PIECES",
+    "manufacturer": "null",
+    "generic_name": null,
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293759,
+    "name": "WHISPER CHOICE ULTRA SANITARY PADS EXTRA LARGE 6 PIECES",
+    "manufacturer": "null",
+    "generic_name": "COTTON",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293761,
+    "name": "WHISPER CHOICE ULTRA XL WINGS PADS 6'S",
+    "manufacturer": "null",
+    "generic_name": "CONSUMER PRODUCTS",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293763,
+    "name": "WHISPER PANT M 1 1",
+    "manufacturer": "PANDG",
+    "generic_name": null,
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293780,
+    "name": "WHITE TONE FACE POWDER 70GM",
+    "manufacturer": "VINI COSMETICS PVT LTD",
+    "generic_name": null,
+    "packaging": "70 G",
+    "strength": null
+  },
+  {
+    "id": 293792,
+    "name": "WIKORYL AF DROPS 10ML",
+    "manufacturer": "ALEMBIC PHARMACEUTICALS",
+    "generic_name": "PHENYLEPHRINE(5.0 MG)+CHLORPHENIRAMINE / CHLORPHENAMINE(2.0 MG)",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 293881,
+    "name": "YARDLE 135 POWDER 125GM",
+    "manufacturer": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "generic_name": null,
+    "packaging": "125GM",
+    "strength": null
+  },
+  {
+    "id": 293888,
+    "name": "YARDLEY LONDON LACE SATIN TALC - 100 GM",
+    "manufacturer": "WIPRO ENTERPRISES PVT LTD.",
+    "generic_name": null,
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 293889,
+    "name": "YARDLEY TALC ENG LAVENDER TALC 50 GM",
+    "manufacturer": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "generic_name": null,
+    "packaging": "50 GM",
+    "strength": null
+  },
+  {
+    "id": 293890,
+    "name": "YARDLEY TALC GENTLEMAN TALC 50 GM",
+    "manufacturer": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "generic_name": null,
+    "packaging": "50 GM",
+    "strength": null
+  },
+  {
+    "id": 293902,
+    "name": "Z POWDER 100GM",
+    "manufacturer": "ARGUS COSMETICS",
+    "generic_name": null,
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 293903,
+    "name": "Z POWDER 50GM",
+    "manufacturer": "ARGUS COSMETICS",
+    "generic_name": null,
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 293913,
+    "name": "Z&D DRY SYP 20 ML",
+    "manufacturer": "DS",
+    "generic_name": null,
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 293927,
+    "name": "ZANDU 44 BALAM 15ML",
+    "manufacturer": "DR REDDY'S LABORATORIES LTD",
+    "generic_name": null,
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 293934,
+    "name": "ZANDU BALM 8ML",
+    "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "generic_name": null,
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 293936,
+    "name": "ZANDU BALM SACHET 4.5ML",
+    "manufacturer": "null",
+    "generic_name": "AYURVEDIC PRODUCT",
+    "packaging": "4 ML",
+    "strength": null
+  },
+  {
+    "id": 293937,
+    "name": "ZANDU BALM TUBE 25GM",
+    "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "generic_name": null,
+    "packaging": "25 G",
+    "strength": null
+  },
+  {
+    "id": 293938,
+    "name": "ZANDU BAM  8GM",
+    "manufacturer": "DR REDDY'S LABORATORIES LTD",
+    "generic_name": null,
+    "packaging": "8GM",
+    "strength": null
+  },
+  {
+    "id": 293948,
+    "name": "ZANDU ULTRA POWER BALM 8 ML",
+    "manufacturer": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "generic_name": "CLOVE OIL(5.0 %)+CAPSAICIN(0.02 %)+CAJUPUT OIL(5.0 %)+MENTHOL(20.0 %)+GAULTHERIA OIL(25.0 %)",
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 294011,
+    "name": "ZINDA TILISMATH LIQUID 15 ML",
+    "manufacturer": "KARKHANA ZINDA TILISMATH",
+    "generic_name": null,
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 294039,
+    "name": "ZUKANORM M 50/500MG TABLET 10'S",
+    "manufacturer": "MANKIND PHARMACEUTICALS LTD",
+    "generic_name": "VILDAGLIPTIN(50.0 MG)+METFORMIN(500.0 MG)",
+    "packaging": "10 NO'S",
+    "strength": null
+  }
+]

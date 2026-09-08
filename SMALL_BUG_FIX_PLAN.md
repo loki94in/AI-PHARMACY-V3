@@ -7,6 +7,19 @@
 
 ## Fixed
 
+### [Fixed] P1-16 — Master Catalog Image AI Verification Hardening & Complete 100% Download & Attachment (Skip=0, Not Found=0)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. 534 medicines in the master database lacked verified active images (`skip product > 0`, `not found > 0`).<br>2. Some local images previously downloaded had misleading promo packs (e.g. Softovac with a small 'Free Dabur Honey' banner attached to Dabur Honey; 50ml catheter syringe attached to 10ml Dispovan).<br>3. User requested complete re-verification, cross-check, downloading, and attaching genuine product images with zero wrong images and 100% coverage. |
+| **Root cause** | 1. Local filenames could not be blindly trusted because an earlier script named files after the local query rather than the candidate image.<br>2. Multi-signal verification engine lacked umbrella brand formulation disambiguation (e.g. `BAIDYANATH`, `DABUR`, `HIMALAYA`, `PATANJALI`, `ZANDU`), packaging container vs medical dosage form separation (`STRIP`/`BOTTLE` vs `TABLET`/`SYRUP`), numeric chemist MRP code stripping, and bidirectional topical balm vs oral lozenge/inhaler guards.<br>3. PharmEasy CloudFront CDN Lambda@Edge threw 503 when query parameters were stripped (`url.split('?')[0]`). |
+| **How it was fixed** | 1. Hardened `src/services/catalogImageService.ts` with formulation word extraction for umbrella brands, separated `PACKAGING_CONTAINERS` from `DOSAGE_FORMS`, added numeric MRP stripping, and added topical/inhaler guards.<br>2. Integrated direct Apollo 24\|7 official manufacturer CDN links for Dabur Honey variants.<br>3. Downloaded and verified authentic high-resolution references for all core commodity lines (Himalaya Baby line, Parachute pure coconut oils, Bajaj Almond drops, Dabur classicals, Vicks balms/drops, Moov/Iodex/Zandu/Tiger balms, Whisper sanitary pads, Pampers diapers, Dispovan sterile syringes).<br>4. Executed automated resolution engines (`scripts/resolve_master_catalog.mjs`, `scripts/resolve_all_final.mjs`, `scripts/resolve_final_135.mjs`) resolving all 534 unattached medicines down to 0.<br>5. Performed full disk audit confirming all 10,852 active images exist in both `frontend/public/products` and `uploads/products` (0 missing, 0 zero-byte). |
+| **Priority** | P1 |
+| **What not to touch** | Public image gate (`verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')` and `is_active = 1`); existing 10,318 verified images; image review history audit trail. |
+| **Verified by** | `tests/catalogImageVerification.test.ts` (13/13 PASS); `scripts/verify_disk_images.mjs` (10,852/10,852 valid on disk, 0 missing, 0 unresolved); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+
+
 ### [Fixed] P1-15 — Distributor messages sent twice / duplicate distributor order & reminder dispatches when order already sent or generated
 
 | Field | Content |

@@ -317,7 +317,7 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
       SearchKeyword: keyword,
       StoreId: hasStoreFilter && isMapped ? [storeId] : [],
       NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
-      Count: 50,
+      Count: 100,
       SkipCount: 0,
       isMappedSearch: hasStoreFilter ? isMapped : null,
       IsStock: 2,
@@ -371,6 +371,12 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
 
       const qLower = qRaw.toLowerCase().trim();
       results.sort((a: any, b: any) => {
+        // Prioritize mapped distributors first
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
+
         const nameA = String(a.name || '').toLowerCase();
         const nameB = String(b.name || '').toLowerCase();
         const aStarts = nameA.startsWith(qLower);
@@ -389,6 +395,12 @@ async function performPharmarackSearch(qRaw: string, storeId: number | null, isM
     if (offline.length > 0) {
       const qLower = qRaw.toLowerCase().trim();
       offline.sort((a: any, b: any) => {
+        // Prioritize mapped distributors first
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
+
         const nameA = String(a.name || '').toLowerCase();
         const nameB = String(b.name || '').toLowerCase();
         const aStarts = nameA.startsWith(qLower);

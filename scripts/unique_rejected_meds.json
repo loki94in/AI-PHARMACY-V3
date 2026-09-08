@@ -1,0 +1,4349 @@
+[
+  {
+    "id": 18819,
+    "name": " COTTON 30 COTTON 20GM",
+    "cleaned": "COTTON 30 COTTON 20GM",
+    "normalized": "COTTON COTTON 20GM",
+    "mfg": "HIRAL LABS LTD",
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 23688,
+    "name": "DISPOVAN SYRINGE 10 ML",
+    "cleaned": "DISPOVAN SYRINGE 10 ML",
+    "normalized": "DISPOVAN SYRINGE ML",
+    "mfg": "HINDUSTAN SYRINGES & MEDICAL DEVICES LTD",
+    "packaging": "1 G",
+    "strength": null
+  },
+  {
+    "id": 25654,
+    "name": "DABUR HONEY 50 GM",
+    "cleaned": "DABUR HONEY 50 GM",
+    "normalized": "DABUR HONEY GM",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 32537,
+    "name": "\tADULT DIAPER WETEX PULL UP MED COTTON 1",
+    "cleaned": "ADULT DIAPER WETEX PULL UP MED COTTON 1",
+    "normalized": "ADULT DIAPER WETEX PULL UP MED COTTON 1",
+    "mfg": "GENTECH HEALTHCARE LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 32575,
+    "name": "\tADULT DIAPER WETEX PULL UP XL COTTON 10",
+    "cleaned": "ADULT DIAPER WETEX PULL UP XL COTTON 10",
+    "normalized": "ADULT DIAPER WETEX PULL UP XL COTTON 10",
+    "mfg": "GENTECH HEALTHCARE LTD",
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 56013,
+    "name": "WASH STONE 1",
+    "cleaned": "WASH STONE 1",
+    "normalized": "WASH STONE 1",
+    "mfg": "CM COSMATIC",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 58229,
+    "name": "CASTOR OIL 450 ML",
+    "cleaned": "CASTOR OIL 450 ML",
+    "normalized": "CASTOR OIL ML",
+    "mfg": "NATURE HOME ASIA",
+    "packaging": "450 ML",
+    "strength": null
+  },
+  {
+    "id": 75471,
+    "name": "CASTOR OIL 50ML",
+    "cleaned": "CASTOR OIL 50ML",
+    "normalized": "CASTOR OIL 50ML",
+    "mfg": "MULTIPHAR",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 77243,
+    "name": "CAT KOF STRIP OF 10TAB",
+    "cleaned": "CAT KOF STRIP OF 10TAB",
+    "normalized": "CAT KOF STRIP OF 10TAB",
+    "mfg": "ALKEM LABORATORIES LTD",
+    "packaging": "10TAB",
+    "strength": null
+  },
+  {
+    "id": 105810,
+    "name": "DR ORTHO 48 CREAM 15GM",
+    "cleaned": "DR ORTHO 48 CREAM 15GM",
+    "normalized": "DR ORTHO CREAM 15GM",
+    "mfg": "DR ORTHO",
+    "packaging": "15GM",
+    "strength": null
+  },
+  {
+    "id": 105832,
+    "name": "DR ORTHO 48 OIL 30ML",
+    "cleaned": "DR ORTHO 48 OIL 30ML",
+    "normalized": "DR ORTHO OIL 30ML",
+    "mfg": "DR ORTHO",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 105853,
+    "name": "DR ORTHO 78 CREAM 1",
+    "cleaned": "DR ORTHO 78 CREAM 1",
+    "normalized": "DR ORTHO CREAM 1",
+    "mfg": "DR ORTHO",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 123103,
+    "name": "MANFORCE STAYLONG GEL 10 GM",
+    "cleaned": "MANFORCE STAYLONG GEL 10 GM",
+    "normalized": "MANFORCE STAYLONG GEL GM",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 G",
+    "strength": null
+  },
+  {
+    "id": 162413,
+    "name": "CLOVE OIL 5 ML",
+    "cleaned": "CLOVE OIL 5 ML",
+    "normalized": "CLOVE OIL 5 ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 174071,
+    "name": "VICKS 115 CREAM 25ML",
+    "cleaned": "VICKS 115 CREAM 25ML",
+    "normalized": "VICKS CREAM 25ML",
+    "mfg": "PANDG",
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 174093,
+    "name": "VICKS 117 BOTTLE 25GM",
+    "cleaned": "VICKS 117 BOTTLE 25GM",
+    "normalized": "VICKS BOTTLE 25GM",
+    "mfg": "PANDG",
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 175914,
+    "name": "VICKS 130 ROLL 1",
+    "cleaned": "VICKS 130 ROLL 1",
+    "normalized": "VICKS ROLL 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 176277,
+    "name": "VICKS 145 CREAM 1",
+    "cleaned": "VICKS 145 CREAM 1",
+    "normalized": "VICKS CREAM 1",
+    "mfg": "VICKS",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 207857,
+    "name": "GILLET BLADE 4 BLADE 1",
+    "cleaned": "GILLET BLADE 4 BLADE 1",
+    "normalized": "GILLET BLADE 4 BLADE 1",
+    "mfg": "GILLETE INDIA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 216040,
+    "name": "GLOVES NO 7.5 RUBBER 1",
+    "cleaned": "GLOVES NO 7.5 RUBBER 1",
+    "normalized": "GLOVES NO 7.5 RUBBER 1",
+    "mfg": "GAMMEX",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 221720,
+    "name": "DABUR GLUCOSE D  POWDER 75GM",
+    "cleaned": "DABUR GLUCOSE D POWDER 75GM",
+    "normalized": "DABUR GLUCOSE D POWDER 75GM",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "75GM",
+    "strength": null
+  },
+  {
+    "id": 229350,
+    "name": "DERMACO 2% SALICYLIC ACID LOTION 1",
+    "cleaned": "DERMACO 2% SALICYLIC ACID LOTION 1",
+    "normalized": "DERMACO 2% SALICYLIC ACID LOTION 1",
+    "mfg": "DERMACO",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 238722,
+    "name": "OIL 89 OIL 250ML",
+    "cleaned": "OIL 89 OIL 250ML",
+    "normalized": "OIL OIL 250ML",
+    "mfg": "PARACHUT",
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 240908,
+    "name": "OIL 92 BOTTLE 100ML",
+    "cleaned": "OIL 92 BOTTLE 100ML",
+    "normalized": "OIL BOTTLE 100ML",
+    "mfg": "PARACHUT",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 240929,
+    "name": "OIL 93 OIL 150ML",
+    "cleaned": "OIL 93 OIL 150ML",
+    "normalized": "OIL OIL 150ML",
+    "mfg": "PARACHUT",
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 242130,
+    "name": "OIL ALOVERA OIL 75ML",
+    "cleaned": "OIL ALOVERA OIL 75ML",
+    "normalized": "OIL ALOVERA OIL 75ML",
+    "mfg": "PARACHUT",
+    "packaging": "75ML",
+    "strength": null
+  },
+  {
+    "id": 248007,
+    "name": "PAMPERSM 399 PANDS 1",
+    "cleaned": "PAMPERSM 399 PANDS 1",
+    "normalized": "PAMPERSM PANDS 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 256372,
+    "name": "OIL 68 OIL 1",
+    "cleaned": "OIL 68 OIL 1",
+    "normalized": "OIL OIL 1",
+    "mfg": "PARACHUT",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 271792,
+    "name": "ECONORM SACHET OF 0.765 GM POWDER",
+    "cleaned": "ECONORM SACHET OF 0.765 GM POWDER",
+    "normalized": "ECONORM SACHET OF 0.765 GM POWDER",
+    "mfg": "DR REDDY'S LABORATORIES LTD",
+    "packaging": "0 G",
+    "strength": null
+  },
+  {
+    "id": 284579,
+    "name": "BANDAGE 30 COTTON 4",
+    "cleaned": "BANDAGE 30 COTTON 4",
+    "normalized": "BANDAGE COTTON 4",
+    "mfg": "SURGICAL",
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 284590,
+    "name": "BABY WIPES 10'S",
+    "cleaned": "BABY WIPES 10'S",
+    "normalized": "BABY WIPES 10'S",
+    "mfg": "null",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 284594,
+    "name": "BAJAJ 69 OIL 70ML",
+    "cleaned": "BAJAJ 69 OIL 70ML",
+    "normalized": "BAJAJ OIL 70ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "70ML",
+    "strength": null
+  },
+  {
+    "id": 284597,
+    "name": "BAJAJ 72 OIL 80ML",
+    "cleaned": "BAJAJ 72 OIL 80ML",
+    "normalized": "BAJAJ OIL 80ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "80ML",
+    "strength": null
+  },
+  {
+    "id": 284611,
+    "name": "BAM BAID BAM 10 GM",
+    "cleaned": "BAM BAID BAM 10 GM",
+    "normalized": "BAM BAID BAM GM",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 284657,
+    "name": "BUDS 44 BUDS 1",
+    "cleaned": "BUDS 44 BUDS 1",
+    "normalized": "BUDS BUDS 1",
+    "mfg": "MAHADEV",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284659,
+    "name": "BUNASE-L 0.5 RESPULES 5 2 ML",
+    "cleaned": "BUNASE-L 0.5 RESPULES 5 2 ML",
+    "normalized": "BUNASE-L 0.5 RESPULES 5 2 ML",
+    "mfg": "MACLEODS PHARMACEUTICALS",
+    "packaging": "5 2 ML",
+    "strength": null
+  },
+  {
+    "id": 284662,
+    "name": "CAL SULPH 200 DROP 30ML",
+    "cleaned": "CAL SULPH 200 DROP 30ML",
+    "normalized": "CAL SULPH DROP 30ML",
+    "mfg": "SBL HOMEOPATHY",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 284714,
+    "name": "ABZORB ANTI FUNGAL POWDER BOTTLE OF 100 G",
+    "cleaned": "ABZORB ANTI FUNGAL POWDER BOTTLE OF 100 G",
+    "normalized": "ABZORB ANTI FUNGAL POWDER BOTTLE OF G",
+    "mfg": "SUN PHARMA (CONSUMER HEALTHCARE)",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 284797,
+    "name": "ADULT DIAPER WETEX PULL UP MED COTTON COTTON 1",
+    "cleaned": "ADULT DIAPER WETEX PULL UP MED COTTON COTTON 1",
+    "normalized": "ADULT DIAPER WETEX PULL UP MED COTTON COTTON 1",
+    "mfg": "GENCURE MEUTRACEUTICALS",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284798,
+    "name": "ADULT DIPER 525 M 10",
+    "cleaned": "ADULT DIPER 525 M 10",
+    "normalized": "ADULT DIPER M 10",
+    "mfg": "FRIENDS PHARMACEUTICALS PVT LTD",
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 284799,
+    "name": "ADULT DIPER 580 L 10",
+    "cleaned": "ADULT DIPER 580 L 10",
+    "normalized": "ADULT DIPER L 10",
+    "mfg": "FRINDS",
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 284824,
+    "name": "AIR POKET 50 1",
+    "cleaned": "AIR POKET 50 1",
+    "normalized": "AIR POKET 50 1",
+    "mfg": "GOODNESS OF NATURE",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 284867,
+    "name": "ALKOF JUNIOR COUGH SYP 100ML",
+    "cleaned": "ALKOF JUNIOR COUGH SYP 100ML",
+    "normalized": "ALKOF JUNIOR COUGH SYP 100ML",
+    "mfg": "ALKEM LABORATORIES LTD",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 284939,
+    "name": "AMLA 25 OIL 1",
+    "cleaned": "AMLA 25 OIL 1",
+    "normalized": "AMLA OIL 1",
+    "mfg": "SHANTI",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285014,
+    "name": "AMRUTANJAN STRONG 9GM",
+    "cleaned": "AMRUTANJAN STRONG 9GM",
+    "normalized": "AMRUTANJAN STRONG 9GM",
+    "mfg": "AMRUTANJAN HEALTH CARE LIMITED",
+    "packaging": "9 ML",
+    "strength": null
+  },
+  {
+    "id": 285041,
+    "name": "ANU TAILA 15ML",
+    "cleaned": "ANU TAILA 15ML",
+    "normalized": "ANU TAILA 15ML",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 285051,
+    "name": "APPLE CIDER VINEGAR 450 ML",
+    "cleaned": "APPLE CIDER VINEGAR 450 ML",
+    "normalized": "APPLE CIDER VINEGAR ML",
+    "mfg": "MANSI HERBAL PHARMA",
+    "packaging": "450 ML",
+    "strength": null
+  },
+  {
+    "id": 285221,
+    "name": "AYUR 115 SUNSCREEM  1",
+    "cleaned": "AYUR 115 SUNSCREEM 1",
+    "normalized": "AYUR SUNSCREEM 1",
+    "mfg": "AYURVED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285225,
+    "name": "AYUR 70 SUNSCREEM 50ML",
+    "cleaned": "AYUR 70 SUNSCREEM 50ML",
+    "normalized": "AYUR SUNSCREEM 50ML",
+    "mfg": "AYURVED",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 285234,
+    "name": "AYUR LIP BALAM 5ML",
+    "cleaned": "AYUR LIP BALAM 5ML",
+    "normalized": "AYUR LIP BALAM 5ML",
+    "mfg": "AYURVED",
+    "packaging": "5ML",
+    "strength": null
+  },
+  {
+    "id": 285279,
+    "name": "B COLEN C NS RASPBERRY FLAV SYP 100ML",
+    "cleaned": "B COLEN C NS RASPBERRY FLAV SYP 100ML",
+    "normalized": "B COLEN C NS RASPBERRY FLAV SYP 100ML",
+    "mfg": "GALPHA LABORATORIES LTD",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 285290,
+    "name": "BABY CARE WET WIPES 10`S",
+    "cleaned": "BABY CARE WET WIPES 10`S",
+    "normalized": "BABY CARE WET WIPES 10`S",
+    "mfg": "TAINWALA PERSONAL CARE PRODUCTS PVT LTD",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285291,
+    "name": "BABY DRY SHEET COTTON 1",
+    "cleaned": "BABY DRY SHEET COTTON 1",
+    "normalized": "BABY DRY SHEET COTTON 1",
+    "mfg": "HANDH",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285294,
+    "name": "BADAM SHIRIN OIL 25 ML",
+    "cleaned": "BADAM SHIRIN OIL 25 ML",
+    "normalized": "BADAM SHIRIN OIL ML",
+    "mfg": "HAMDARD (WAKF) LABORATORIES",
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 285298,
+    "name": "BAI GOKSHURADHI  KADHA 200ML",
+    "cleaned": "BAI GOKSHURADHI KADHA 200ML",
+    "normalized": "BAI GOKSHURADHI KADHA 200ML",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 285299,
+    "name": "BAID ABHAYARISHTA SYP 227ML",
+    "cleaned": "BAID ABHAYARISHTA SYP 227ML",
+    "normalized": "BAID ABHAYARISHTA SYP 227ML",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285305,
+    "name": "BAID KUTAJGHAN BATI",
+    "cleaned": "BAID KUTAJGHAN BATI",
+    "normalized": "BAID KUTAJGHAN BATI",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "40 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285317,
+    "name": "BAIDYANATH DRAKSHASAVA LIQUID 227 ML",
+    "cleaned": "BAIDYANATH DRAKSHASAVA LIQUID 227 ML",
+    "normalized": "BAIDYANATH DRAKSHASAVA LIQUID ML",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "227 ML",
+    "strength": null
+  },
+  {
+    "id": 285325,
+    "name": "BAND AID ADHESIVE",
+    "cleaned": "BAND AID ADHESIVE",
+    "normalized": "BAND AID ADHESIVE",
+    "mfg": "JOHNSON & JOHNSON",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285327,
+    "name": "BAIDYANATH PUNARNAVARISHTA LIQUID 227 ML",
+    "cleaned": "BAIDYANATH PUNARNAVARISHTA LIQUID 227 ML",
+    "normalized": "BAIDYANATH PUNARNAVARISHTA LIQUID ML",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "227 ML",
+    "strength": null
+  },
+  {
+    "id": 285329,
+    "name": "BAIDYANATH SARIVADYARISHTA LIQUID 455 ML",
+    "cleaned": "BAIDYANATH SARIVADYARISHTA LIQUID 455 ML",
+    "normalized": "BAIDYANATH SARIVADYARISHTA LIQUID ML",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "455 ML",
+    "strength": null
+  },
+  {
+    "id": 285335,
+    "name": "BAJAJ  OIL 45ML",
+    "cleaned": "BAJAJ OIL 45ML",
+    "normalized": "BAJAJ OIL 45ML",
+    "mfg": "BAJAJ PHARMACEUTICALS",
+    "packaging": "45ML",
+    "strength": null
+  },
+  {
+    "id": 285337,
+    "name": "BAJAJ 133 OIL 150ML",
+    "cleaned": "BAJAJ 133 OIL 150ML",
+    "normalized": "BAJAJ OIL 150ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 285339,
+    "name": "BAJAJ 138 OIL 138ML",
+    "cleaned": "BAJAJ 138 OIL 138ML",
+    "normalized": "BAJAJ OIL 138ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "138ML",
+    "strength": null
+  },
+  {
+    "id": 285340,
+    "name": "BAJAJ 142 OIL 190 ML",
+    "cleaned": "BAJAJ 142 OIL 190 ML",
+    "normalized": "BAJAJ OIL 190 ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "190 ML",
+    "strength": null
+  },
+  {
+    "id": 285341,
+    "name": "BAJAJ 195 OIL 1",
+    "cleaned": "BAJAJ 195 OIL 1",
+    "normalized": "BAJAJ OIL 1",
+    "mfg": "BAJAJ HEALTHCARE LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285343,
+    "name": "BAJAJ 205 OIL 285 ML",
+    "cleaned": "BAJAJ 205 OIL 285 ML",
+    "normalized": "BAJAJ OIL 285 ML",
+    "mfg": "BAJAJ PHARMACEUTICALS",
+    "packaging": "285 ML",
+    "strength": null
+  },
+  {
+    "id": 285345,
+    "name": "BAJAJ 305 OIL 305ML",
+    "cleaned": "BAJAJ 305 OIL 305ML",
+    "normalized": "BAJAJ OIL 305ML",
+    "mfg": "BAJAJ CONSUMER CARE LTD.",
+    "packaging": "305ML",
+    "strength": null
+  },
+  {
+    "id": 285367,
+    "name": "BANDAGE CLOTH 1 INCH",
+    "cleaned": "BANDAGE CLOTH 1 INCH",
+    "normalized": "BANDAGE CLOTH 1 INCH",
+    "mfg": "10 DRUG MART",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285368,
+    "name": "BANDAGE CLOTH 100CM X 10M",
+    "cleaned": "BANDAGE CLOTH 100CM X 10M",
+    "normalized": "BANDAGE CLOTH 100CM X 10M",
+    "mfg": "10 DRUG MART",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285369,
+    "name": "BANDAGE CLOTH 15CMX2.5M",
+    "cleaned": "BANDAGE CLOTH 15CMX2.5M",
+    "normalized": "BANDAGE CLOTH 15CMX2.5M",
+    "mfg": "SURGICAL",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285372,
+    "name": "BANDAGE CLOTH 4 INCH",
+    "cleaned": "BANDAGE CLOTH 4 INCH",
+    "normalized": "BANDAGE CLOTH 4 INCH",
+    "mfg": "10 DRUG MART",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285373,
+    "name": "BANDAGE CLOTH 5CMX3CM",
+    "cleaned": "BANDAGE CLOTH 5CMX3CM",
+    "normalized": "BANDAGE CLOTH 5CMX3CM",
+    "mfg": "SURGICAL",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285374,
+    "name": "BANDAGE CLOTH SCHF II 7.5CMX3M",
+    "cleaned": "BANDAGE CLOTH SCHF II 7.5CMX3M",
+    "normalized": "BANDAGE CLOTH SCHF II 7.5CMX3M",
+    "mfg": "SURGICAL",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285391,
+    "name": "BD INSULIN ULTRAFINE 40 IU/31 G SYRINGE 1 ML",
+    "cleaned": "BD INSULIN ULTRAFINE 40 IU/31 G SYRINGE 1 ML",
+    "normalized": "BD INSULIN ULTRAFINE IU/31 G SYRINGE 1 ML",
+    "mfg": "BECTON DICKINSON INDIA PVT LTD",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 285396,
+    "name": "BEARDO BEARD OIL 349  OIL 60ML",
+    "cleaned": "BEARDO BEARD OIL 349 OIL 60ML",
+    "normalized": "BEARDO BEARD OIL OIL 60ML",
+    "mfg": "BEARDO",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 285397,
+    "name": "BEARDO BEARD OIL 750 OIL 50ML",
+    "cleaned": "BEARDO BEARD OIL 750 OIL 50ML",
+    "normalized": "BEARDO BEARD OIL OIL 50ML",
+    "mfg": "BEARDO",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 285414,
+    "name": "BED PAN",
+    "cleaned": "BED PAN",
+    "normalized": "BED PAN",
+    "mfg": "SUTURES INDIA",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 285420,
+    "name": "BEIPOS 1.5%W/V EYE DROPS 5ML",
+    "cleaned": "BEIPOS 1.5%W/V EYE DROPS 5ML",
+    "normalized": "BEIPOS 1.5%W/V EYE DROPS 5ML",
+    "mfg": "LUPIN",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 285492,
+    "name": "BHUNIMBADI KADHA 400ML",
+    "cleaned": "BHUNIMBADI KADHA 400ML",
+    "normalized": "BHUNIMBADI KADHA 400ML",
+    "mfg": "BV PANDIT",
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 285580,
+    "name": "BOROLINE ANTISEPTIC AYURVEDIC CREAM 6 GM",
+    "cleaned": "BOROLINE ANTISEPTIC AYURVEDIC CREAM 6 GM",
+    "normalized": "BOROLINE ANTISEPTIC AYURVEDIC CREAM 6 GM",
+    "mfg": "G D PHARMA",
+    "packaging": "6 G",
+    "strength": null
+  },
+  {
+    "id": 285661,
+    "name": "BUDS 10 COTTON 1",
+    "cleaned": "BUDS 10 COTTON 1",
+    "normalized": "BUDS COTTON 1",
+    "mfg": "APPLE PHARMA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 285681,
+    "name": "CALADRYL LOTION 100ML",
+    "cleaned": "CALADRYL LOTION 100ML",
+    "normalized": "CALADRYL LOTION 100ML",
+    "mfg": "JOHNSON & JOHNSON",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 285683,
+    "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION- SKIN SOOTHING SOLUTION - 60 ML",
+    "cleaned": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION- SKIN SOOTHING SOLUTION - 60 ML",
+    "normalized": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION- SKIN SOOTHING SOLUTION - 60 ML",
+    "mfg": "PIRAMAL ENTERPRISES LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 285684,
+    "name": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION - SKIN SOOTHING SOLUTION - 120 ML",
+    "cleaned": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION - SKIN SOOTHING SOLUTION - 120 ML",
+    "normalized": "CALADRYL SKIN ALLERGY EXPERT CALAMINE LOTION - SKIN SOOTHING SOLUTION - 120 ML",
+    "mfg": "PIRAMAL ENTERPRISES LTD",
+    "packaging": "120 ML",
+    "strength": null
+  },
+  {
+    "id": 285729,
+    "name": "CALPOL PLUS SYP 60ML",
+    "cleaned": "CALPOL PLUS SYP 60ML",
+    "normalized": "CALPOL PLUS SYP 60ML",
+    "mfg": "GLAXOSMITHKLINE",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 285784,
+    "name": "CANDITRAL SB 130 STRIP 10 TAB",
+    "cleaned": "CANDITRAL SB 130 STRIP 10 TAB",
+    "normalized": "CANDITRAL SB STRIP 10 TAB",
+    "mfg": "GLENMARK PHARMACEUTICALS",
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 285788,
+    "name": "CARBO VEG 30 LIQUID 25ML",
+    "cleaned": "CARBO VEG 30 LIQUID 25ML",
+    "normalized": "CARBO VEG LIQUID 25ML",
+    "mfg": "BANAJI HOMEOPATHIC PHARMACY",
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 285792,
+    "name": "CARDUUS MARIANUS LIQUID 20ML",
+    "cleaned": "CARDUUS MARIANUS LIQUID 20ML",
+    "normalized": "CARDUUS MARIANUS LIQUID 20ML",
+    "mfg": "DR WILLMAR SCHWABE",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 285798,
+    "name": "CARMICIDE DROPS 30ML",
+    "cleaned": "CARMICIDE DROPS 30ML",
+    "normalized": "CARMICIDE DROPS 30ML",
+    "mfg": "INDOCO REMEDIES LTD",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 285814,
+    "name": "CASTOR OIL 30 ML",
+    "cleaned": "CASTOR OIL 30 ML",
+    "normalized": "CASTOR OIL ML",
+    "mfg": "10 DRUG MART",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 285815,
+    "name": "CASTOR OIL 400ML",
+    "cleaned": "CASTOR OIL 400ML",
+    "normalized": "CASTOR OIL 400ML",
+    "mfg": "MULTIPHAR",
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 285913,
+    "name": "CHANDAN BALA OIL 60ML",
+    "cleaned": "CHANDAN BALA OIL 60ML",
+    "normalized": "CHANDAN BALA OIL 60ML",
+    "mfg": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286045,
+    "name": "CIPLADINE 39 OINT 15GM",
+    "cleaned": "CIPLADINE 39 OINT 15GM",
+    "normalized": "CIPLADINE OINT 15GM",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "15GM",
+    "strength": null
+  },
+  {
+    "id": 286048,
+    "name": "CIPLADINE 5% OINT 15GM",
+    "cleaned": "CIPLADINE 5% OINT 15GM",
+    "normalized": "CIPLADINE 5% OINT 15GM",
+    "mfg": "CIPLA GX",
+    "packaging": "15 G",
+    "strength": null
+  },
+  {
+    "id": 286052,
+    "name": "CIPLADINE 5% OINT 30GM",
+    "cleaned": "CIPLADINE 5% OINT 30GM",
+    "normalized": "CIPLADINE 5% OINT 30GM",
+    "mfg": "CIPLA GX",
+    "packaging": "30 G",
+    "strength": null
+  },
+  {
+    "id": 286057,
+    "name": "CIPLADINE 80 OINT 30GM",
+    "cleaned": "CIPLADINE 80 OINT 30GM",
+    "normalized": "CIPLADINE OINT 30GM",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 286058,
+    "name": "CIPLADINE 87 CREAM 30GM",
+    "cleaned": "CIPLADINE 87 CREAM 30GM",
+    "normalized": "CIPLADINE CREAM 30GM",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 286098,
+    "name": "CLEAN AND CLEAR LIQUID 120ML",
+    "cleaned": "CLEAN AND CLEAR LIQUID 120ML",
+    "normalized": "CLEAN AND CLEAR LIQUID 120ML",
+    "mfg": "CLEAN AND CLEAR",
+    "packaging": "120ML",
+    "strength": null
+  },
+  {
+    "id": 286171,
+    "name": "FEM 75 BLEATCH 1",
+    "cleaned": "FEM 75 BLEATCH 1",
+    "normalized": "FEM BLEATCH 1",
+    "mfg": "FEM CARE PHARMA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286208,
+    "name": "CLOVE OIL 10ML",
+    "cleaned": "CLOVE OIL 10ML",
+    "normalized": "CLOVE OIL 10ML",
+    "mfg": "TALENT HEALTH CARE",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 286227,
+    "name": "COF Q D SYRUP 100ML",
+    "cleaned": "COF Q D SYRUP 100ML",
+    "normalized": "COF Q D SYRUP 100ML",
+    "mfg": "CIPLA GX",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286331,
+    "name": "COTTON 20 COTTON 1",
+    "cleaned": "COTTON 20 COTTON 1",
+    "normalized": "COTTON COTTON 1",
+    "mfg": "GEN BIOTEC PRIVATE LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286349,
+    "name": "COTTON 12 PACK 10 GM",
+    "cleaned": "COTTON 12 PACK 10 GM",
+    "normalized": "COTTON PACK 10 GM",
+    "mfg": "KLENZA",
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 286350,
+    "name": "COTTON 130 COTTON 200GMS",
+    "cleaned": "COTTON 130 COTTON 200GMS",
+    "normalized": "COTTON COTTON 200GMS",
+    "mfg": "AMIT PHARMACY",
+    "packaging": "200GMS",
+    "strength": null
+  },
+  {
+    "id": 286352,
+    "name": "COTTON 40 COTTON 1",
+    "cleaned": "COTTON 40 COTTON 1",
+    "normalized": "COTTON COTTON 1",
+    "mfg": "OMKAR AYURVEDIC MANDIR",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286353,
+    "name": "COTTON 68 COTTON 1",
+    "cleaned": "COTTON 68 COTTON 1",
+    "normalized": "COTTON COTTON 1",
+    "mfg": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286354,
+    "name": "COTTON 90 COTTAN 1",
+    "cleaned": "COTTON 90 COTTAN 1",
+    "normalized": "COTTON COTTAN 1",
+    "mfg": "AMIT PHARMACY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286355,
+    "name": "COTTON ABSORBANT OTHER 20GM",
+    "cleaned": "COTTON ABSORBANT OTHER 20GM",
+    "normalized": "COTTON ABSORBANT OTHER 20GM",
+    "mfg": "ADMAK PHARMACEUTICALS PVT LTD",
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 286357,
+    "name": "COTTON BANDAGE 4X12 COTTON 4' 12M",
+    "cleaned": "COTTON BANDAGE 4X12 COTTON 4' 12M",
+    "normalized": "COTTON BANDAGE 4X12 COTTON 4' 12M",
+    "mfg": "BANAJI HOMEOPATHIC PHARMACY",
+    "packaging": "4' 12M",
+    "strength": null
+  },
+  {
+    "id": 286358,
+    "name": "COTTON EAR BUDS 6",
+    "cleaned": "COTTON EAR BUDS 6",
+    "normalized": "COTTON EAR BUDS 6",
+    "mfg": "TULIP LAB PVT LTD",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286374,
+    "name": "CREMAFFIN PLUS SYP 200ML",
+    "cleaned": "CREMAFFIN PLUS SYP 200ML",
+    "normalized": "CREMAFFIN PLUS SYP 200ML",
+    "mfg": "ABBOTT INDIA LTD",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286398,
+    "name": "CROCIN DS SUSP 60ML",
+    "cleaned": "CROCIN DS SUSP 60ML",
+    "normalized": "CROCIN DS SUSP 60ML",
+    "mfg": "GLAXOSMITHKLINE",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286399,
+    "name": "CROCIN DS SUSP SUS 100ML",
+    "cleaned": "CROCIN DS SUSP SUS 100ML",
+    "normalized": "CROCIN DS SUSP SUS 100ML",
+    "mfg": "GLENWOOD BIOTECH PVT LIMITED",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 286454,
+    "name": "D LIQ 15ML DROPS",
+    "cleaned": "D LIQ 15ML DROPS",
+    "normalized": "D LIQ 15ML DROPS",
+    "mfg": "DELCURE LIFESCIENCES",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 286462,
+    "name": "D3 MUST FORTE DROPS 15ML",
+    "cleaned": "D3 MUST FORTE DROPS 15ML",
+    "normalized": "D3 MUST FORTE DROPS 15ML",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 286473,
+    "name": "DAB AMLA 10 OIL 1",
+    "cleaned": "DAB AMLA 10 OIL 1",
+    "normalized": "DAB AMLA OIL 1",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286474,
+    "name": "DAB AMLA 20 OIL 25ML",
+    "cleaned": "DAB AMLA 20 OIL 25ML",
+    "normalized": "DAB AMLA OIL 25ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 286476,
+    "name": "DAB LAL 120 OIL 100ML",
+    "cleaned": "DAB LAL 120 OIL 100ML",
+    "normalized": "DAB LAL OIL 100ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 286507,
+    "name": "DABUR HONEY 1 KG",
+    "cleaned": "DABUR HONEY 1 KG",
+    "normalized": "DABUR HONEY 1 KG",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "1 KG",
+    "strength": null
+  },
+  {
+    "id": 286508,
+    "name": "DABUR HONEY 1.2 KG",
+    "cleaned": "DABUR HONEY 1.2 KG",
+    "normalized": "DABUR HONEY 1.2 KG",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "1 KG",
+    "strength": null
+  },
+  {
+    "id": 286514,
+    "name": "DABUR HONITUS  COUGH SYRUP  BOTTLE OF 100 ML",
+    "cleaned": "DABUR HONITUS COUGH SYRUP",
+    "normalized": "DABUR HONITUS COUGH SYRUP",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286515,
+    "name": "DABUR HONITUS SYP 100ML",
+    "cleaned": "DABUR HONITUS SYP 100ML",
+    "normalized": "DABUR HONITUS SYP 100ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286516,
+    "name": "DABUR HONITUS SYP 200ML",
+    "cleaned": "DABUR HONITUS SYP 200ML",
+    "normalized": "DABUR HONITUS SYP 200ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286530,
+    "name": "DABUR LAL TAIL 120ML",
+    "cleaned": "DABUR LAL TAIL 120ML",
+    "normalized": "DABUR LAL TAIL 120ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "120 ML",
+    "strength": null
+  },
+  {
+    "id": 286544,
+    "name": "DABUR TRIPHALA CHURNA 60GM",
+    "cleaned": "DABUR TRIPHALA CHURNA 60GM",
+    "normalized": "DABUR TRIPHALA CHURNA 60GM",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "60 G",
+    "strength": null
+  },
+  {
+    "id": 286587,
+    "name": "DASHMULARISHTA 200ML",
+    "cleaned": "DASHMULARISHTA 200ML",
+    "normalized": "DASHMULARISHTA 200ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 286613,
+    "name": "DENTAL TONIC TEETHING PIL",
+    "cleaned": "DENTAL TONIC TEETHING PIL",
+    "normalized": "DENTAL TONIC TEETHING PIL",
+    "mfg": "BOMBAY HOMOEO LABORATORIES",
+    "packaging": "12 G",
+    "strength": null
+  },
+  {
+    "id": 286636,
+    "name": "DERMA 2% KOJIC ACID BOTTLE 30ML",
+    "cleaned": "DERMA 2% KOJIC ACID BOTTLE 30ML",
+    "normalized": "DERMA 2% KOJIC ACID BOTTLE 30ML",
+    "mfg": "DERMACIA HEALTHCARE",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 286666,
+    "name": "DERMI COOL  POWDER 150 ML",
+    "cleaned": "DERMI COOL POWDER 150 ML",
+    "normalized": "DERMI COOL POWDER ML",
+    "mfg": "DERMICOOL",
+    "packaging": "150 ML",
+    "strength": null
+  },
+  {
+    "id": 286668,
+    "name": "DERMI COOL LAVENDER POWDER 90GM",
+    "cleaned": "DERMI COOL LAVENDER POWDER 90GM",
+    "normalized": "DERMI COOL LAVENDER POWDER 90GM",
+    "mfg": "FOREGEN HEALTHCARE PVT LTD",
+    "packaging": "90 G",
+    "strength": null
+  },
+  {
+    "id": 286669,
+    "name": "DERMI COOL SANDAL POWDER 50GM",
+    "cleaned": "DERMI COOL SANDAL POWDER 50GM",
+    "normalized": "DERMI COOL SANDAL POWDER 50GM",
+    "mfg": "FOREGEN HEALTHCARE PVT LTD",
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 286685,
+    "name": "DETTOL 235 LIQUID 500ML",
+    "cleaned": "DETTOL 235 LIQUID 500ML",
+    "normalized": "DETTOL LIQUID 500ML",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 286712,
+    "name": "DETTOL 25 SANITIZER 60 ML",
+    "cleaned": "DETTOL 25 SANITIZER 60 ML",
+    "normalized": "DETTOL SANITIZER 60 ML",
+    "mfg": "RECKITT BENCKISER PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286723,
+    "name": "DETTOL 42 REFILL LIQUID 200ML",
+    "cleaned": "DETTOL 42 REFILL LIQUID 200ML",
+    "normalized": "DETTOL REFILL LIQUID 200ML",
+    "mfg": "RECKITT BENCKISER PVT LTD",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 286728,
+    "name": "DETTOL 49 WIPES 1",
+    "cleaned": "DETTOL 49 WIPES 1",
+    "normalized": "DETTOL WIPES 1",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286735,
+    "name": "DETTOL 75 SHAVING CREAM 1",
+    "cleaned": "DETTOL 75 SHAVING CREAM 1",
+    "normalized": "DETTOL SHAVING CREAM 1",
+    "mfg": "RECKNOR LIFESCIENCES PVT LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 286743,
+    "name": "DETTOL PLASTER",
+    "cleaned": "DETTOL PLASTER",
+    "normalized": "DETTOL PLASTER",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286745,
+    "name": "DETTOL ANTISEPTIC LIQUID BOTTLE OF 550 ML",
+    "cleaned": "DETTOL ANTISEPTIC LIQUID",
+    "normalized": "DETTOL ANTISEPTIC LIQUID",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "550 ML",
+    "strength": null
+  },
+  {
+    "id": 286748,
+    "name": "DETTOL HAND WASH 30 HANDWASH 100 ML",
+    "cleaned": "DETTOL HAND WASH 30 HANDWASH 100 ML",
+    "normalized": "DETTOL HAND WASH HANDWASH 100 ML",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 286752,
+    "name": "DETTOL LIQUID BOTTLE 60ML",
+    "cleaned": "DETTOL LIQUID BOTTLE 60ML",
+    "normalized": "DETTOL LIQUID BOTTLE 60ML",
+    "mfg": "RECKNOR LIFESCIENCES PVT LTD",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 286753,
+    "name": "DETTOL LIQUID HANDWASH REFILL SENSITIVE - 750ML",
+    "cleaned": "DETTOL LIQUID HANDWASH REFILL SENSITIVE - 750ML",
+    "normalized": "DETTOL LIQUID HANDWASH REFILL SENSITIVE - 750ML",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "750 ML",
+    "strength": null
+  },
+  {
+    "id": 286757,
+    "name": "DETTOL ORIGINAL INSTANT  HAND SANITIZER  BOTTLE OF 25 ML",
+    "cleaned": "DETTOL ORIGINAL INSTANT HAND SANITIZER",
+    "normalized": "DETTOL ORIGINAL INSTANT HAND SANITIZER",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 286759,
+    "name": "DETTOL ORIGINAL SQEEZY 110 ML",
+    "cleaned": "DETTOL ORIGINAL SQEEZY 110 ML",
+    "normalized": "DETTOL ORIGINAL SQEEZY ML",
+    "mfg": "null",
+    "packaging": "110 ML",
+    "strength": null
+  },
+  {
+    "id": 286760,
+    "name": "DETTOL REFILL 99 LIQUID 750ML",
+    "cleaned": "DETTOL REFILL 99 LIQUID 750ML",
+    "normalized": "DETTOL REFILL LIQUID 750ML",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "750ML",
+    "strength": null
+  },
+  {
+    "id": 286786,
+    "name": "DEXONA 5 MG TABLET 20",
+    "cleaned": "DEXONA 5 MG TABLET 20",
+    "normalized": "DEXONA 5 MG TABLET 20",
+    "mfg": "ZYDUS CADILA HEALTHCARE LTD",
+    "packaging": "20 NO'S",
+    "strength": null
+  },
+  {
+    "id": 286844,
+    "name": "DISPOSABLE 10ML SYRANGE 1PCS",
+    "cleaned": "DISPOSABLE 10ML SYRANGE 1PCS",
+    "normalized": "DISPOSABLE 10ML SYRANGE 1PCS",
+    "mfg": "HMD",
+    "packaging": "1PCS",
+    "strength": null
+  },
+  {
+    "id": 286846,
+    "name": "DISPOVAN  SYRANGE 2 ML",
+    "cleaned": "DISPOVAN SYRANGE 2 ML",
+    "normalized": "DISPOVAN SYRANGE 2 ML",
+    "mfg": "DISPO VAN",
+    "packaging": "2 ML",
+    "strength": null
+  },
+  {
+    "id": 286849,
+    "name": "DISPOVAN SYRINGE 2.5 ML",
+    "cleaned": "DISPOVAN SYRINGE 2.5 ML",
+    "normalized": "DISPOVAN SYRINGE 2.5 ML",
+    "mfg": "HINDUSTAN SYRINGES & MEDICAL DEVICES LTD",
+    "packaging": "1 ML",
+    "strength": null
+  },
+  {
+    "id": 286880,
+    "name": "OIL 216 OIL 500ML",
+    "cleaned": "OIL 216 OIL 500ML",
+    "normalized": "OIL OIL 500ML",
+    "mfg": "PARACHUT",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 286961,
+    "name": "DR ORTHO 158 OIL 60ML",
+    "cleaned": "DR ORTHO 158 OIL 60ML",
+    "normalized": "DR ORTHO OIL 60ML",
+    "mfg": "SBS LIFE SCIENCES PVT LTD",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 286978,
+    "name": "DR ORTHO AN AYURVEDIC MEDICINE OIL BOTTLE OF 60 ML",
+    "cleaned": "DR ORTHO AN AYURVEDIC MEDICINE OIL",
+    "normalized": "DR ORTHO AN AYURVEDIC MEDICINE OIL",
+    "mfg": "DIVISA HERBAL CARE PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 286990,
+    "name": "DR.ORTHO PAIN RELIEF OIL 100 ML",
+    "cleaned": "DR.ORTHO PAIN RELIEF OIL 100 ML",
+    "normalized": "DR.ORTHO PAIN RELIEF OIL 100 ML",
+    "mfg": "DIVISA HERBAL CARE PVT LTD",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 287029,
+    "name": "DUONASE NASAL SPRAY 70MD 9.8ML",
+    "cleaned": "DUONASE NASAL SPRAY 70MD 9.8ML",
+    "normalized": "DUONASE NASAL SPRAY 70MD 9.8ML",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "70 MD",
+    "strength": null
+  },
+  {
+    "id": 287044,
+    "name": "DUREX FEEL THIN CONDOMS",
+    "cleaned": "DUREX FEEL THIN CONDOMS",
+    "normalized": "DUREX FEEL THIN CONDOMS",
+    "mfg": "SSL INTERNATIONAL",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 287115,
+    "name": "ECOSPRIN AV 75/20MG STRIP OF 10 CAPSULES",
+    "cleaned": "ECOSPRIN AV 75/20MG",
+    "normalized": "ECOSPRIN AV 75/20MG",
+    "mfg": "USV PVT LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287130,
+    "name": "OIL 36 OIL 100ML",
+    "cleaned": "OIL 36 OIL 100ML",
+    "normalized": "OIL OIL 100ML",
+    "mfg": "PARACHUT",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 287189,
+    "name": "ENERZAL ORANGE POWDER 50GM",
+    "cleaned": "ENERZAL ORANGE POWDER 50GM",
+    "normalized": "ENERZAL ORANGE POWDER 50GM",
+    "mfg": "FDC LIMITED",
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 287191,
+    "name": "ENERZAL PET ORANGE LIQUID 500ML",
+    "cleaned": "ENERZAL PET ORANGE LIQUID 500ML",
+    "normalized": "ENERZAL PET ORANGE LIQUID 500ML",
+    "mfg": "FDC LIMITED",
+    "packaging": "500 ML",
+    "strength": null
+  },
+  {
+    "id": 287193,
+    "name": "ENERZAL ZERO ORANGE FLAVOUR BOTTLE OF 400ML LIQUID",
+    "cleaned": "ENERZAL ZERO ORANGE FLAVOUR BOTTLE OF 400ML LIQUID",
+    "normalized": "ENERZAL ZERO ORANGE FLAVOUR BOTTLE OF 400ML LIQUID",
+    "mfg": "FDC LIMITED",
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 287400,
+    "name": "FEBREX 250MG SUSP",
+    "cleaned": "FEBREX 250MG SUSP",
+    "normalized": "FEBREX 250MG SUSP",
+    "mfg": "INDOCO REMEDIES LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 287415,
+    "name": "FEM 32 BLEATCH 1",
+    "cleaned": "FEM 32 BLEATCH 1",
+    "normalized": "FEM BLEATCH 1",
+    "mfg": "GYNOFEM HEALTHCARE PVT LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287502,
+    "name": "FLEXON 100MG/162.5MG SYP 100ML",
+    "cleaned": "FLEXON 100MG/162.5MG SYP 100ML",
+    "normalized": "FLEXON 100MG/162.5MG SYP 100ML",
+    "mfg": "ARISTO PHARMACEUTICALS PVT LTD",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 287571,
+    "name": "FORACORT  G  400 R/C 3X10 CAPS",
+    "cleaned": "FORACORT G 400 R/C 3X10 CAPS",
+    "normalized": "FORACORT G R/C 3X10 CAPS",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "3X10 CAPS",
+    "strength": null
+  },
+  {
+    "id": 287606,
+    "name": "GILLET 125 FOAM 1",
+    "cleaned": "GILLET 125 FOAM 1",
+    "normalized": "GILLET FOAM 1",
+    "mfg": "GILLETTE INDIA LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287649,
+    "name": "GABANEURON NT 100MG STRIP OF 10 TABLETS",
+    "cleaned": "GABANEURON NT 100MG",
+    "normalized": "GABANEURON NT 100MG",
+    "mfg": "ARISTO PHARMACEUTICALS PVT LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287726,
+    "name": "GILLET 188 BLADE 1",
+    "cleaned": "GILLET 188 BLADE 1",
+    "normalized": "GILLET BLADE 1",
+    "mfg": "GILLETE INDIA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287745,
+    "name": "GEMINOR M 1/500 MG TABLET 10",
+    "cleaned": "GEMINOR M 1/500 MG TABLET 10",
+    "normalized": "GEMINOR M 1/500 MG TABLET 10",
+    "mfg": "MACLEODS PHARMACEUTICALS",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287760,
+    "name": "GET OUT PAST CREAM 75",
+    "cleaned": "GET OUT PAST CREAM 75",
+    "normalized": "GET OUT PAST CREAM 75",
+    "mfg": "GET OUT",
+    "packaging": "75",
+    "strength": null
+  },
+  {
+    "id": 287766,
+    "name": "GILLET 2 BLADE METAL 1",
+    "cleaned": "GILLET 2 BLADE METAL 1",
+    "normalized": "GILLET 2 BLADE METAL 1",
+    "mfg": "GILLETTE INDIA LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287781,
+    "name": "GILLET SHAVING FOAM 200ML",
+    "cleaned": "GILLET SHAVING FOAM 200ML",
+    "normalized": "GILLET SHAVING FOAM 200ML",
+    "mfg": "GILLETTE INDIA LTD",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 287806,
+    "name": "GILLETTE 10 RAZORS 1",
+    "cleaned": "GILLETTE 10 RAZORS 1",
+    "normalized": "GILLETTE RAZORS 1",
+    "mfg": "GILLETTE INDIA LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287819,
+    "name": "GILLETTE MACH 3 SHAVING BLADES PACK OF 6",
+    "cleaned": "GILLETTE MACH 3 SHAVING BLADES PACK OF 6",
+    "normalized": "GILLETTE MACH 3 SHAVING BLADES PACK OF 6",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287820,
+    "name": "GILLETTE SHAVE FOAM LOTION 200ML",
+    "cleaned": "GILLETTE SHAVE FOAM LOTION 200ML",
+    "normalized": "GILLETTE SHAVE FOAM LOTION 200ML",
+    "mfg": "GILLETTE INDIA LTD",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 287827,
+    "name": "GINSENG STRONG 200MG TAB",
+    "cleaned": "GINSENG STRONG 200MG TAB",
+    "normalized": "GINSENG STRONG 200MG TAB",
+    "mfg": "VITABALANS OY",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 287861,
+    "name": "GLOVES   NO 8 RUBBER 1",
+    "cleaned": "GLOVES NO 8 RUBBER 1",
+    "normalized": "GLOVES NO 8 RUBBER 1",
+    "mfg": "GAMMEX",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 287862,
+    "name": "GLOVES 1500 LATEX 1PC",
+    "cleaned": "GLOVES 1500 LATEX 1PC",
+    "normalized": "GLOVES 1500 LATEX 1PC",
+    "mfg": "AUGMENT REMEDIES EXPORT",
+    "packaging": "1PC",
+    "strength": null
+  },
+  {
+    "id": 287863,
+    "name": "GLOVES 990 PLASTIC 100PCS",
+    "cleaned": "GLOVES 990 PLASTIC 100PCS",
+    "normalized": "GLOVES PLASTIC 100PCS",
+    "mfg": "NULIFE PHARMACEUTICALS",
+    "packaging": "100PCS",
+    "strength": null
+  },
+  {
+    "id": 287864,
+    "name": "GLOVES UNICARE GLOVES 100PCS",
+    "cleaned": "GLOVES UNICARE GLOVES 100PCS",
+    "normalized": "GLOVES UNICARE GLOVES 100PCS",
+    "mfg": "UNITECH HEALTHCARE PVT LTD",
+    "packaging": "100PCS",
+    "strength": null
+  },
+  {
+    "id": 287875,
+    "name": "GLUCON D PLAIN REFIL 75GM",
+    "cleaned": "GLUCON D PLAIN REFIL 75GM",
+    "normalized": "GLUCON D PLAIN REFIL 75GM",
+    "mfg": "ZYDUS HEALTHCARE LIMITED",
+    "packaging": "75GM",
+    "strength": null
+  },
+  {
+    "id": 287879,
+    "name": "GLUCON D REGULAR INSTANT ENERGY POWDER BOTTLE OF 500 G",
+    "cleaned": "GLUCON D REGULAR INSTANT ENERGY POWDER BOTTLE OF 500 G",
+    "normalized": "GLUCON D REGULAR INSTANT ENERGY POWDER BOTTLE OF G",
+    "mfg": "ZYDUS WELLNESS PRODUCTS LTD",
+    "packaging": "500 G",
+    "strength": null
+  },
+  {
+    "id": 287903,
+    "name": "OIL 37 OIL 125ML",
+    "cleaned": "OIL 37 OIL 125ML",
+    "normalized": "OIL OIL 125ML",
+    "mfg": "PARACHUT",
+    "packaging": "125ML",
+    "strength": null
+  },
+  {
+    "id": 287999,
+    "name": "GOKSHURADI KADHA 200 ML",
+    "cleaned": "GOKSHURADI KADHA 200 ML",
+    "normalized": "GOKSHURADI KADHA ML",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 288003,
+    "name": "GOOD HEALTH POWDER",
+    "cleaned": "GOOD HEALTH POWDER",
+    "normalized": "GOOD HEALTH POWDER",
+    "mfg": "ALKA PHARMACEUTICALS",
+    "packaging": "200 G",
+    "strength": null
+  },
+  {
+    "id": 288005,
+    "name": "GOOD HOME SOUL BLOSSO ROOM FRESHNER 160G",
+    "cleaned": "GOOD HOME SOUL BLOSSO ROOM FRESHNER 160G",
+    "normalized": "GOOD HOME SOUL BLOSSO ROOM FRESHNER 160G",
+    "mfg": "null",
+    "packaging": "160 G",
+    "strength": null
+  },
+  {
+    "id": 288012,
+    "name": "GOOD NIGHT ACTIV COMBI PACK",
+    "cleaned": "GOOD NIGHT ACTIV COMBI PACK",
+    "normalized": "GOOD NIGHT ACTIV COMBI PACK",
+    "mfg": "LABORATE PHARMACEUTICALS INDIA LTD",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 288037,
+    "name": "GRIPE WATER 48 LIQUID 48ML",
+    "cleaned": "GRIPE WATER 48 LIQUID 48ML",
+    "normalized": "GRIPE WATER LIQUID 48ML",
+    "mfg": "WOODWARD",
+    "packaging": "48ML",
+    "strength": null
+  },
+  {
+    "id": 288114,
+    "name": "GUDLAX PLUS SF SUSP 110ML",
+    "cleaned": "GUDLAX PLUS SF SUSP 110ML",
+    "normalized": "GUDLAX PLUS SF SUSP 110ML",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "110 ML",
+    "strength": null
+  },
+  {
+    "id": 288129,
+    "name": "GUTWASH BOTTLE 400ML",
+    "cleaned": "GUTWASH BOTTLE 400ML",
+    "normalized": "GUTWASH BOTTLE 400ML",
+    "mfg": "MSN LABORATORIES",
+    "packaging": "400ML",
+    "strength": null
+  },
+  {
+    "id": 288148,
+    "name": "HAIR REMOVER 399 SPRAY 1",
+    "cleaned": "HAIR REMOVER 399 SPRAY 1",
+    "normalized": "HAIR REMOVER SPRAY 1",
+    "mfg": "MANCODE",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288149,
+    "name": "HAIR REMOVER 499 SPRAY 1",
+    "cleaned": "HAIR REMOVER 499 SPRAY 1",
+    "normalized": "HAIR REMOVER SPRAY 1",
+    "mfg": "URBAN GABRU",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288167,
+    "name": "HAMAMELIS Q LIQUID 20ML",
+    "cleaned": "HAMAMELIS Q LIQUID 20ML",
+    "normalized": "HAMAMELIS Q LIQUID 20ML",
+    "mfg": "DR RECKEWEG",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 288173,
+    "name": "HAND CLINSER 250 SPRAY 500ML",
+    "cleaned": "HAND CLINSER 250 SPRAY 500ML",
+    "normalized": "HAND CLINSER SPRAY 500ML",
+    "mfg": "GEN BIOTEC PRIVATE LIMITED",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 288174,
+    "name": "HAND SANITIZER LIQUID SPRAY 50 ML",
+    "cleaned": "HAND SANITIZER LIQUID SPRAY 50 ML",
+    "normalized": "HAND SANITIZER LIQUID SPRAY ML",
+    "mfg": "GEN BIOTEC PRIVATE LIMITED",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 288227,
+    "name": "HEAD AND SHOULDER 8ML SACHET 8.4ML",
+    "cleaned": "HEAD AND SHOULDER 8ML SACHET 8.4ML",
+    "normalized": "HEAD AND SHOULDER 8ML SACHET 8.4ML",
+    "mfg": "HEAD AND SHOULDER",
+    "packaging": "8.4ML",
+    "strength": null
+  },
+  {
+    "id": 288239,
+    "name": "HEALING O2 STRIP OF 10 TABLETS",
+    "cleaned": "HEALING O2",
+    "normalized": "HEALING O2",
+    "mfg": "HEALING PHARMA INDIA PVT LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 288242,
+    "name": "HEALTH OK SACHET",
+    "cleaned": "HEALTH OK SACHET",
+    "normalized": "HEALTH OK SACHET",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 288259,
+    "name": "HEMPUSHPA SYP 170ML",
+    "cleaned": "HEMPUSHPA SYP 170ML",
+    "normalized": "HEMPUSHPA SYP 170ML",
+    "mfg": "RAJVAIDYA SHITAL PRASAD & SONS",
+    "packaging": "170 ML",
+    "strength": null
+  },
+  {
+    "id": 288263,
+    "name": "HIM 45 WIPES 12",
+    "cleaned": "HIM 45 WIPES 12",
+    "normalized": "HIM WIPES 12",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 288312,
+    "name": "HIM 100 WIPES 1",
+    "cleaned": "HIM 100 WIPES 1",
+    "normalized": "HIM WIPES 1",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288313,
+    "name": "HIM 100 WIPES 25",
+    "cleaned": "HIM 100 WIPES 25",
+    "normalized": "HIM WIPES 25",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 288315,
+    "name": "HIM 130 OIL 100ML",
+    "cleaned": "HIM 130 OIL 100ML",
+    "normalized": "HIM OIL 100ML",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288326,
+    "name": "HIM 95 LOTION 100ML",
+    "cleaned": "HIM 95 LOTION 100ML",
+    "normalized": "HIM LOTION 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288332,
+    "name": "HIM ALOVERA GEL 100ML",
+    "cleaned": "HIM ALOVERA GEL 100ML",
+    "normalized": "HIM ALOVERA GEL 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288351,
+    "name": "HIM BABY 100 MASAGE OIL 1",
+    "cleaned": "HIM BABY 100 MASAGE OIL 1",
+    "normalized": "HIM BABY MASAGE OIL 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288352,
+    "name": "HIM BABY 100 POWDER 100GM",
+    "cleaned": "HIM BABY 100 POWDER 100GM",
+    "normalized": "HIM BABY POWDER 100GM",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288353,
+    "name": "HIM BABY 100 PRIKY   POWDER 100GM",
+    "cleaned": "HIM BABY 100 PRIKY POWDER 100GM",
+    "normalized": "HIM BABY PRIKY POWDER 100GM",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288355,
+    "name": "HIM BABY 105 POWDER 100GM",
+    "cleaned": "HIM BABY 105 POWDER 100GM",
+    "normalized": "HIM BABY POWDER 100GM",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288357,
+    "name": "HIM BABY 110 BASTHWASH 100ML",
+    "cleaned": "HIM BABY 110 BASTHWASH 100ML",
+    "normalized": "HIM BABY BASTHWASH 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288358,
+    "name": "HIM BABY 110 LOTION 100ML",
+    "cleaned": "HIM BABY 110 LOTION 100ML",
+    "normalized": "HIM BABY LOTION 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288360,
+    "name": "HIM BABY 115 OIL 100ML",
+    "cleaned": "HIM BABY 115 OIL 100ML",
+    "normalized": "HIM BABY OIL 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288363,
+    "name": "HIM BABY 120 OIL 1",
+    "cleaned": "HIM BABY 120 OIL 1",
+    "normalized": "HIM BABY OIL 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288364,
+    "name": "HIM BABY 125 MASSAGE 100ML",
+    "cleaned": "HIM BABY 125 MASSAGE 100ML",
+    "normalized": "HIM BABY MASSAGE 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288365,
+    "name": "HIM BABY 130 MESSAGE 100ML",
+    "cleaned": "HIM BABY 130 MESSAGE 100ML",
+    "normalized": "HIM BABY MESSAGE 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288367,
+    "name": "HIM BABY 135 POWD 1",
+    "cleaned": "HIM BABY 135 POWD 1",
+    "normalized": "HIM BABY POWD 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288368,
+    "name": "HIM BABY 140 CREAM 1",
+    "cleaned": "HIM BABY 140 CREAM 1",
+    "normalized": "HIM BABY CREAM 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288369,
+    "name": "HIM BABY 140 MESSAGE OIL 100ML",
+    "cleaned": "HIM BABY 140 MESSAGE OIL 100ML",
+    "normalized": "HIM BABY MESSAGE OIL 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288370,
+    "name": "HIM BABY 145 POWDER 1",
+    "cleaned": "HIM BABY 145 POWDER 1",
+    "normalized": "HIM BABY POWDER 1",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288373,
+    "name": "HIM BABY 150 POWDER 200GM",
+    "cleaned": "HIM BABY 150 POWDER 200GM",
+    "normalized": "HIM BABY POWDER 200GM",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "200GM",
+    "strength": null
+  },
+  {
+    "id": 288376,
+    "name": "HIM BABY 165 LOTION 1",
+    "cleaned": "HIM BABY 165 LOTION 1",
+    "normalized": "HIM BABY LOTION 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288384,
+    "name": "HIM BABY 200 WIPES 1",
+    "cleaned": "HIM BABY 200 WIPES 1",
+    "normalized": "HIM BABY WIPES 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288385,
+    "name": "HIM BABY 210 MESSAGE 200ML",
+    "cleaned": "HIM BABY 210 MESSAGE 200ML",
+    "normalized": "HIM BABY MESSAGE 200ML",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 288386,
+    "name": "HIM BABY 235 POWDER 1",
+    "cleaned": "HIM BABY 235 POWDER 1",
+    "normalized": "HIM BABY POWDER 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288392,
+    "name": "HIM BABY 45 MOIST WIPES 1",
+    "cleaned": "HIM BABY 45 MOIST WIPES 1",
+    "normalized": "HIM BABY MOIST WIPES 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288399,
+    "name": "HIM BABY 65 MESSAGE 1",
+    "cleaned": "HIM BABY 65 MESSAGE 1",
+    "normalized": "HIM BABY MESSAGE 1",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288414,
+    "name": "HIM BABY 95 LOTION 1",
+    "cleaned": "HIM BABY 95 LOTION 1",
+    "normalized": "HIM BABY LOTION 1",
+    "mfg": "COCONUT HCL",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288418,
+    "name": "HIM BABY BRUSH 1",
+    "cleaned": "HIM BABY BRUSH 1",
+    "normalized": "HIM BABY BRUSH 1",
+    "mfg": "CM COSMATIC",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288419,
+    "name": "HIM BABY COMBO PACK 1",
+    "cleaned": "HIM BABY COMBO PACK 1",
+    "normalized": "HIM BABY COMBO PACK 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288420,
+    "name": "HIM BABY GIFT PACK BIG PACK",
+    "cleaned": "HIM BABY GIFT PACK BIG PACK",
+    "normalized": "HIM BABY GIFT PACK BIG PACK",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "BIG PACK",
+    "strength": null
+  },
+  {
+    "id": 288421,
+    "name": "HIM BABY GIFT PACK MID PACK",
+    "cleaned": "HIM BABY GIFT PACK MID PACK",
+    "normalized": "HIM BABY GIFT PACK MID PACK",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "MID PACK",
+    "strength": null
+  },
+  {
+    "id": 288425,
+    "name": "HIM BABY WIPES 48 WIPES 12",
+    "cleaned": "HIM BABY WIPES 48 WIPES 12",
+    "normalized": "HIM BABY WIPES WIPES 12",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 288426,
+    "name": "HIM BABYP 90 POWDER 100GM",
+    "cleaned": "HIM BABYP 90 POWDER 100GM",
+    "normalized": "HIM BABYP POWDER 100GM",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 288429,
+    "name": "HIM BEBY 40 POWDER 40GM",
+    "cleaned": "HIM BEBY 40 POWDER 40GM",
+    "normalized": "HIM BEBY POWDER 40GM",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "40GM",
+    "strength": null
+  },
+  {
+    "id": 288431,
+    "name": "HIM BEBY 48 WIPES 12",
+    "cleaned": "HIM BEBY 48 WIPES 12",
+    "normalized": "HIM BEBY WIPES 12",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "12",
+    "strength": null
+  },
+  {
+    "id": 288436,
+    "name": "HIM BODY 95 LOTION 100ML",
+    "cleaned": "HIM BODY 95 LOTION 100ML",
+    "normalized": "HIM BODY LOTION 100ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288438,
+    "name": "HIM COCO 85 LOTION 1",
+    "cleaned": "HIM COCO 85 LOTION 1",
+    "normalized": "HIM COCO LOTION 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288443,
+    "name": "HIM FACE NEEM GEL 100  ML",
+    "cleaned": "HIM FACE NEEM GEL 100 ML",
+    "normalized": "HIM FACE NEEM GEL ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "100  ML",
+    "strength": null
+  },
+  {
+    "id": 288452,
+    "name": "HIM KESAR 10 FACEPACK 1",
+    "cleaned": "HIM KESAR 10 FACEPACK 1",
+    "normalized": "HIM KESAR FACEPACK 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288454,
+    "name": "HIM KESAR 55 CREAM 1",
+    "cleaned": "HIM KESAR 55 CREAM 1",
+    "normalized": "HIM KESAR CREAM 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288460,
+    "name": "HIM KESAR 90 CREAM 1",
+    "cleaned": "HIM KESAR 90 CREAM 1",
+    "normalized": "HIM KESAR CREAM 1",
+    "mfg": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288465,
+    "name": "HIM LIP  BALM 5GM",
+    "cleaned": "HIM LIP BALM 5GM",
+    "normalized": "HIM LIP BALM 5GM",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 288466,
+    "name": "HIM LIP 35 BALAM 35ML",
+    "cleaned": "HIM LIP 35 BALAM 35ML",
+    "normalized": "HIM LIP BALAM 35ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "35ML",
+    "strength": null
+  },
+  {
+    "id": 288468,
+    "name": "HIM MASSAGE 100 OIL 1",
+    "cleaned": "HIM MASSAGE 100 OIL 1",
+    "normalized": "HIM MASSAGE OIL 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288474,
+    "name": "HIM MESSAGE 180 OIL 125",
+    "cleaned": "HIM MESSAGE 180 OIL 125",
+    "normalized": "HIM MESSAGE OIL 125",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "125",
+    "strength": null
+  },
+  {
+    "id": 288475,
+    "name": "HIM MESSAGE 55 OIL 50ML",
+    "cleaned": "HIM MESSAGE 55 OIL 50ML",
+    "normalized": "HIM MESSAGE OIL 50ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 288523,
+    "name": "HIM WAL 10 SACHET 1",
+    "cleaned": "HIM WAL 10 SACHET 1",
+    "normalized": "HIM WAL SACHET 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288526,
+    "name": "HIM WIPES 85 COTTON 1",
+    "cleaned": "HIM WIPES 85 COTTON 1",
+    "normalized": "HIM WIPES COTTON 1",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288527,
+    "name": "HIM WIPS WIPS 24",
+    "cleaned": "HIM WIPS WIPS 24",
+    "normalized": "HIM WIPS WIPS 24",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "24",
+    "strength": null
+  },
+  {
+    "id": 288587,
+    "name": "HIMALAYA NOURISHING SKIN CREAM 50ML",
+    "cleaned": "HIMALAYA NOURISHING SKIN CREAM 50ML",
+    "normalized": "HIMALAYA NOURISHING SKIN CREAM 50ML",
+    "mfg": "THE HIMALAYA DRUG COMPANY",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 288661,
+    "name": "HONEY BOTTLE OF 500ML",
+    "cleaned": "HONEY BOTTLE OF 500ML",
+    "normalized": "HONEY BOTTLE OF 500ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 288686,
+    "name": "HOT WAX 70 BOTTLE 1",
+    "cleaned": "HOT WAX 70 BOTTLE 1",
+    "normalized": "HOT WAX BOTTLE 1",
+    "mfg": "PREMIUM HEALTHCARE DISPOSABLES PVT. LTD.",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288704,
+    "name": "HUM TUM SPRAY 100ML",
+    "cleaned": "HUM TUM SPRAY 100ML",
+    "normalized": "HUM TUM SPRAY 100ML",
+    "mfg": "RIYAR",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 288735,
+    "name": "I KUL PLUS EYE DROPS 15ML",
+    "cleaned": "I KUL PLUS EYE DROPS 15ML",
+    "normalized": "I KUL PLUS EYE DROPS 15ML",
+    "mfg": "INTAS PHARMACEUTICALS LTD",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 288740,
+    "name": "IBUGESIC BOTTLE OF 60ML SUSPENSION",
+    "cleaned": "IBUGESIC BOTTLE OF 60ML SUSPENSION",
+    "normalized": "IBUGESIC BOTTLE OF 60ML SUSPENSION",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 288742,
+    "name": "INDICA 19 DAI 1",
+    "cleaned": "INDICA 19 DAI 1",
+    "normalized": "INDICA DAI 1",
+    "mfg": "INDICA LABORATORIES",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288807,
+    "name": "IODEX 170 CREAM 1",
+    "cleaned": "IODEX 170 CREAM 1",
+    "normalized": "IODEX CREAM 1",
+    "mfg": "DR RECKEWEG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 288815,
+    "name": "IODEX 80 BALAM 20GM",
+    "cleaned": "IODEX 80 BALAM 20GM",
+    "normalized": "IODEX BALAM 20GM",
+    "mfg": "IODEX",
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 288823,
+    "name": "IODEX BOTTLE BAM  BALAM 20GM",
+    "cleaned": "IODEX BOTTLE BAM BALAM 20GM",
+    "normalized": "IODEX BOTTLE BAM BALAM 20GM",
+    "mfg": "IODEX",
+    "packaging": "20GM",
+    "strength": null
+  },
+  {
+    "id": 288850,
+    "name": "ITCHGUARD 17 CREAM 5GM",
+    "cleaned": "ITCHGUARD 17 CREAM 5GM",
+    "normalized": "ITCHGUARD CREAM 5GM",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 288855,
+    "name": "ITCHGUARD CREAM 6GM",
+    "cleaned": "ITCHGUARD CREAM 6GM",
+    "normalized": "ITCHGUARD CREAM 6GM",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "6 G",
+    "strength": null
+  },
+  {
+    "id": 288967,
+    "name": "JOLLY TULSI 51 DROPS 21 ML",
+    "cleaned": "JOLLY TULSI 51 DROPS 21 ML",
+    "normalized": "JOLLY TULSI DROPS 21 ML",
+    "mfg": "JOLLY HEALTHCARE",
+    "packaging": "21 ML",
+    "strength": null
+  },
+  {
+    "id": 289017,
+    "name": "K.S 210 SPRAY 260 ML",
+    "cleaned": "K.S 210 SPRAY 260 ML",
+    "normalized": "K.S 210 SPRAY 260 ML",
+    "mfg": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "packaging": "260 ML",
+    "strength": null
+  },
+  {
+    "id": 289031,
+    "name": "KALONJI SEED 50GM",
+    "cleaned": "KALONJI SEED 50GM",
+    "normalized": "KALONJI SEED 50GM",
+    "mfg": "SHREE DHANWANTRI HERBALS",
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 289035,
+    "name": "KANAKASAV SYP 220ML",
+    "cleaned": "KANAKASAV SYP 220ML",
+    "normalized": "KANAKASAV SYP 220ML",
+    "mfg": "SANDU PHARMA",
+    "packaging": "220ML",
+    "strength": null
+  },
+  {
+    "id": 289036,
+    "name": "KANAKASAVA SYP 200ML (DHOOTH)",
+    "cleaned": "KANAKASAVA SYP 200ML (DHOOTH)",
+    "normalized": "KANAKASAVA SYP 200ML (DHOOTH)",
+    "mfg": "SHREE DHOOTAPAPESHWAR",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289172,
+    "name": "KILLER 299 SPRAY 180ML",
+    "cleaned": "KILLER 299 SPRAY 180ML",
+    "normalized": "KILLER SPRAY 180ML",
+    "mfg": "KILLER SPRAY",
+    "packaging": "180ML",
+    "strength": null
+  },
+  {
+    "id": 289223,
+    "name": "KOFOL COUGH SYRUP BOTTLE OF 100 ML",
+    "cleaned": "KOFOL COUGH SYRUP",
+    "normalized": "KOFOL COUGH SYRUP",
+    "mfg": "VEDISTRY PRIVATE LIMITED",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 289349,
+    "name": "LAKME SUN EXPERT TINTED SUNSCRE LOTION 18ML",
+    "cleaned": "LAKME SUN EXPERT TINTED SUNSCRE LOTION 18ML",
+    "normalized": "LAKME SUN EXPERT TINTED SUNSCRE LOTION 18ML",
+    "mfg": "LAKME",
+    "packaging": "18ML",
+    "strength": null
+  },
+  {
+    "id": 289351,
+    "name": "LAL TAIL 115 OIL 100ML",
+    "cleaned": "LAL TAIL 115 OIL 100ML",
+    "normalized": "LAL TAIL OIL 100ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "100ML",
+    "strength": null
+  },
+  {
+    "id": 289464,
+    "name": "LIP 190 BAG 25STB",
+    "cleaned": "LIP 190 BAG 25STB",
+    "normalized": "LIP BAG 25STB",
+    "mfg": "GREEN CROSS HEALTHCARE",
+    "packaging": "25STB",
+    "strength": null
+  },
+  {
+    "id": 289491,
+    "name": "LISTRIN 55 LIQUID 1",
+    "cleaned": "LISTRIN 55 LIQUID 1",
+    "normalized": "LISTRIN LIQUID 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289655,
+    "name": "MAG PHOS 6X TAB 25",
+    "cleaned": "MAG PHOS 6X TAB 25",
+    "normalized": "MAG PHOS 6X TAB 25",
+    "mfg": "SBL HOMEOPATHY",
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 289673,
+    "name": "LUPIHIST DM PLUS SYR 60ML",
+    "cleaned": "LUPIHIST DM PLUS SYR 60ML",
+    "normalized": "LUPIHIST DM PLUS SYR 60ML",
+    "mfg": "LUPITAS PHARMA PVT LTD",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 289735,
+    "name": "MACBERY PD 0.5/15/50 MG SYRUP 60 ML",
+    "cleaned": "MACBERY PD 0.5/15/50 MG SYRUP 60 ML",
+    "normalized": "MACBERY PD 0.5/15/50 MG SYRUP 60 ML",
+    "mfg": "MACLEODS PHARMACEUTICALS",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 289769,
+    "name": "MAHACEF DRY SYP 30ML",
+    "cleaned": "MAHACEF DRY SYP 30ML",
+    "normalized": "MAHACEF DRY SYP 30ML",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 289779,
+    "name": "MAHANARAYAN TAIL 60ML",
+    "cleaned": "MAHANARAYAN TAIL 60ML",
+    "normalized": "MAHANARAYAN TAIL 60ML",
+    "mfg": "SHREE NARNARAYAN",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 289780,
+    "name": "MAHARASNADI KADHA 200ML",
+    "cleaned": "MAHARASNADI KADHA 200ML",
+    "normalized": "MAHARASNADI KADHA 200ML",
+    "mfg": "SANDU BROTHERS",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289782,
+    "name": "MAHASUDARSHAN KADHA 200 ML",
+    "cleaned": "MAHASUDARSHAN KADHA 200 ML",
+    "normalized": "MAHASUDARSHAN KADHA ML",
+    "mfg": "SANDU PHARMA",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289783,
+    "name": "MAHASUDARSHAN KADHA BOTTLE 400 ML",
+    "cleaned": "MAHASUDARSHAN KADHA BOTTLE 400 ML",
+    "normalized": "MAHASUDARSHAN KADHA BOTTLE ML",
+    "mfg": "SANDU PHARMA",
+    "packaging": "400 ML",
+    "strength": null
+  },
+  {
+    "id": 289784,
+    "name": "MAHASUDARSHAN KADHA SYP 200ML",
+    "cleaned": "MAHASUDARSHAN KADHA SYP 200ML",
+    "normalized": "MAHASUDARSHAN KADHA SYP 200ML",
+    "mfg": "SHREE DHOOTAPAPESHWAR",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 289812,
+    "name": "MAMA EARTH 349 OIL 1",
+    "cleaned": "MAMA EARTH 349 OIL 1",
+    "normalized": "MAMA EARTH OIL 1",
+    "mfg": "MAMA EART",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289847,
+    "name": "MANFORCE GAME 3IN1 CONDOMS - SUPER SAVER (3 X 10S)",
+    "cleaned": "MANFORCE GAME 3IN1 CONDOMS - SUPER SAVER (3 X 10S)",
+    "normalized": "MANFORCE GAME 3IN1 CONDOMS - SUPER SAVER (3 X 10S)",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 289857,
+    "name": "MARKS RUB 30GM",
+    "cleaned": "MARKS RUB 30GM",
+    "normalized": "MARKS RUB 30GM",
+    "mfg": "LEEFORD HEALTHCARE LTD",
+    "packaging": "30 G",
+    "strength": null
+  },
+  {
+    "id": 289860,
+    "name": "MASK 30 COTTON 1",
+    "cleaned": "MASK 30 COTTON 1",
+    "normalized": "MASK COTTON 1",
+    "mfg": "OXYGEN REMEDIES PVT LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289864,
+    "name": "MAX 30 RAZORS 1",
+    "cleaned": "MAX 30 RAZORS 1",
+    "normalized": "MAX RAZORS 1",
+    "mfg": "GEN BIOTEC PRIVATE LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 289865,
+    "name": "MAX 40 RAZORS 1",
+    "cleaned": "MAX 40 RAZORS 1",
+    "normalized": "MAX RAZORS 1",
+    "mfg": "MAXRELIEF HEALTH CARE",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290019,
+    "name": "MET XL AM 25/2.5MG TABLET 10'S",
+    "cleaned": "MET XL AM 25/2.5MG TABLET 10'S",
+    "normalized": "MET XL AM 25/2.5MG TABLET 10'S",
+    "mfg": "AJANTA PHARMA LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290020,
+    "name": "MET XL AM 25/2.5MG TABLET 15'S",
+    "cleaned": "MET XL AM 25/2.5MG TABLET 15'S",
+    "normalized": "MET XL AM 25/2.5MG TABLET 15'S",
+    "mfg": "AJANTA PHARMA LTD",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290026,
+    "name": "METBETIC GL 1/500 MG TABLET 10'S",
+    "cleaned": "METBETIC GL 1/500 MG TABLET 10'S",
+    "normalized": "METBETIC GL 1/500 MG TABLET 10'S",
+    "mfg": "ZYDUS CADILA HEALTHCARE LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290027,
+    "name": "METBETIC GL 1MG STRIP OF 15 TABLETS",
+    "cleaned": "METBETIC GL 1MG",
+    "normalized": "METBETIC GL 1MG",
+    "mfg": "CADILA PHARMACEUTICALS LTD",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290218,
+    "name": "MOOV  OINT 10 GM",
+    "cleaned": "MOOV OINT 10 GM",
+    "normalized": "MOOV OINT GM",
+    "mfg": "DR RECKEWEG",
+    "packaging": "10 GM",
+    "strength": null
+  },
+  {
+    "id": 290232,
+    "name": "MOOV 75  CREAM 15GM",
+    "cleaned": "MOOV 75 CREAM 15GM",
+    "normalized": "MOOV CREAM 15GM",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "15GM",
+    "strength": null
+  },
+  {
+    "id": 290242,
+    "name": "MOOV OINTMENT 35 GM",
+    "cleaned": "MOOV OINTMENT 35 GM",
+    "normalized": "MOOV OINTMENT GM",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "35 G",
+    "strength": null
+  },
+  {
+    "id": 290243,
+    "name": "MOOV PAIN RELIEF SPECIALIST CREAM REGULAR 15 GM",
+    "cleaned": "MOOV PAIN RELIEF SPECIALIST CREAM REGULAR 15 GM",
+    "normalized": "MOOV PAIN RELIEF SPECIALIST CREAM REGULAR GM",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "15 G",
+    "strength": null
+  },
+  {
+    "id": 290245,
+    "name": "MOOV PAIN RELIEF SPRAY BOTTLE OF 35 ML",
+    "cleaned": "MOOV PAIN RELIEF SPRAY",
+    "normalized": "MOOV PAIN RELIEF SPRAY",
+    "mfg": "FOREGEN HEALTHCARE PVT LTD",
+    "packaging": "35 ML",
+    "strength": null
+  },
+  {
+    "id": 290246,
+    "name": "MOOV PAIN RELIF SPRAY 25ML",
+    "cleaned": "MOOV PAIN RELIF SPRAY 25ML",
+    "normalized": "MOOV PAIN RELIF SPRAY 25ML",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "25ML",
+    "strength": null
+  },
+  {
+    "id": 290286,
+    "name": "MOXIKIND CV 500/125 MG CAPSULE 10",
+    "cleaned": "MOXIKIND CV 500/125 MG CAPSULE 10",
+    "normalized": "MOXIKIND CV 500/125 MG CAPSULE 10",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290340,
+    "name": "MY LOVE ALUM ALUM 1BOX",
+    "cleaned": "MY LOVE ALUM ALUM 1BOX",
+    "normalized": "MY LOVE ALUM ALUM 1BOX",
+    "mfg": "ABC",
+    "packaging": "1BOX",
+    "strength": null
+  },
+  {
+    "id": 290341,
+    "name": "MY PAN 1 CHOC 1",
+    "cleaned": "MY PAN 1 CHOC 1",
+    "normalized": "MY PAN 1 CHOC 1",
+    "mfg": "ESTRAGEN PHARMA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290371,
+    "name": "NANO NIKE SYP 60ML",
+    "cleaned": "NANO NIKE SYP 60ML",
+    "normalized": "NANO NIKE SYP 60ML",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 290388,
+    "name": "NASOCLEAR DROPS 15 ML",
+    "cleaned": "NASOCLEAR DROPS 15 ML",
+    "normalized": "NASOCLEAR DROPS ML",
+    "mfg": "null",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 290401,
+    "name": "NATURES GOLD KIT 104GM",
+    "cleaned": "NATURES GOLD KIT 104GM",
+    "normalized": "NATURES GOLD KIT 104GM",
+    "mfg": "NATURE HEALTH CARE",
+    "packaging": "104GM",
+    "strength": null
+  },
+  {
+    "id": 290402,
+    "name": "NATURES GOLD KIT CREAM 43GM",
+    "cleaned": "NATURES GOLD KIT CREAM 43GM",
+    "normalized": "NATURES GOLD KIT CREAM 43GM",
+    "mfg": "ESTRAGEN PHARMA",
+    "packaging": "43GM",
+    "strength": null
+  },
+  {
+    "id": 290412,
+    "name": "NAVRATNA 170 OIL 150ML",
+    "cleaned": "NAVRATNA 170 OIL 150ML",
+    "normalized": "NAVRATNA OIL 150ML",
+    "mfg": "UNIVERSAL LIFE SCIENCES",
+    "packaging": "150ML",
+    "strength": null
+  },
+  {
+    "id": 290431,
+    "name": "NAVRATNA OIL 1ML OIL 1",
+    "cleaned": "NAVRATNA OIL 1ML OIL 1",
+    "normalized": "NAVRATNA OIL 1ML OIL 1",
+    "mfg": "ZANDU AYURVEDA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290445,
+    "name": "NEBULIZER DEVICE 1",
+    "cleaned": "NEBULIZER DEVICE 1",
+    "normalized": "NEBULIZER DEVICE 1",
+    "mfg": "EASTERN MEDIKIT",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290448,
+    "name": "NEBULIZER SAI DEVICE 1 PACK",
+    "cleaned": "NEBULIZER SAI DEVICE 1 PACK",
+    "normalized": "NEBULIZER SAI DEVICE 1 PACK",
+    "mfg": "CUREMED BIOTECH",
+    "packaging": "1 PACK",
+    "strength": null
+  },
+  {
+    "id": 290456,
+    "name": "OIL 85 BOTTLE 190ML",
+    "cleaned": "OIL 85 BOTTLE 190ML",
+    "normalized": "OIL BOTTLE 190ML",
+    "mfg": "PARACHUT",
+    "packaging": "190ML",
+    "strength": null
+  },
+  {
+    "id": 290457,
+    "name": "NEEM OIL 50ML",
+    "cleaned": "NEEM OIL 50ML",
+    "normalized": "NEEM OIL 50ML",
+    "mfg": "SWASTIK PHARMACEUTICALS",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 290575,
+    "name": "NILGIRI OIL 5 ML",
+    "cleaned": "NILGIRI OIL 5 ML",
+    "normalized": "NILGIRI OIL 5 ML",
+    "mfg": "ARIHANT PHARMA PVT LTD",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 290797,
+    "name": "NUROKIND GOLD SACHET",
+    "cleaned": "NUROKIND GOLD SACHET",
+    "normalized": "NUROKIND GOLD SACHET",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 G",
+    "strength": null
+  },
+  {
+    "id": 290818,
+    "name": "NYCIL COOL CHANDAN POWDER 50 GM",
+    "cleaned": "NYCIL COOL CHANDAN POWDER 50 GM",
+    "normalized": "NYCIL COOL CHANDAN POWDER GM",
+    "mfg": "HEINZ INDIA LTD",
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 290819,
+    "name": "NYCIL COOL GULABJAL PRICKLY HEAT TALCUM POWDER - 75GM",
+    "cleaned": "NYCIL COOL GULABJAL PRICKLY HEAT TALCUM POWDER - 75GM",
+    "normalized": "NYCIL COOL GULABJAL PRICKLY HEAT TALCUM POWDER - 75GM",
+    "mfg": "ZYDUS WELLNESS PRODUCTS LTD",
+    "packaging": "75 G",
+    "strength": null
+  },
+  {
+    "id": 290823,
+    "name": "O VIT DROP 30ML",
+    "cleaned": "O VIT DROP 30ML",
+    "normalized": "O VIT DROP 30ML",
+    "mfg": "AYURVED",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 290824,
+    "name": "O VIT PLUS INJ 1'S",
+    "cleaned": "O VIT PLUS INJ 1'S",
+    "normalized": "O VIT PLUS INJ 1'S",
+    "mfg": "OSCAR REMEDIES PVT LTD",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 290829,
+    "name": "OIL 65 OIL 1",
+    "cleaned": "OIL 65 OIL 1",
+    "normalized": "OIL OIL 1",
+    "mfg": "SHIMANO HEALTHCARE PEIVATE LIMITED",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290868,
+    "name": "OIL 67 OIL 175ML",
+    "cleaned": "OIL 67 OIL 175ML",
+    "normalized": "OIL OIL 175ML",
+    "mfg": "PARACHUT",
+    "packaging": "175ML",
+    "strength": null
+  },
+  {
+    "id": 290873,
+    "name": "OIL 10 OIL 20ML",
+    "cleaned": "OIL 10 OIL 20ML",
+    "normalized": "OIL OIL 20ML",
+    "mfg": "PARACHUT",
+    "packaging": "20ML",
+    "strength": null
+  },
+  {
+    "id": 290876,
+    "name": "OIL 105 OIL 200ML",
+    "cleaned": "OIL 105 OIL 200ML",
+    "normalized": "OIL OIL 200ML",
+    "mfg": "PARACHUT",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 290877,
+    "name": "OIL 115 BOTTLE 175ML",
+    "cleaned": "OIL 115 BOTTLE 175ML",
+    "normalized": "OIL BOTTLE 175ML",
+    "mfg": "PARACHUT",
+    "packaging": "175ML",
+    "strength": null
+  },
+  {
+    "id": 290878,
+    "name": "OIL 117 OIL 250,L",
+    "cleaned": "OIL 117 OIL 250,L",
+    "normalized": "OIL OIL 250,L",
+    "mfg": "PARACHUT",
+    "packaging": "250,L",
+    "strength": null
+  },
+  {
+    "id": 290880,
+    "name": "OIL 150 BOTTLE 250ML",
+    "cleaned": "OIL 150 BOTTLE 250ML",
+    "normalized": "OIL BOTTLE 250ML",
+    "mfg": "PARACHUT",
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 290882,
+    "name": "OIL 172 BOTTLE 500ML",
+    "cleaned": "OIL 172 BOTTLE 500ML",
+    "normalized": "OIL BOTTLE 500ML",
+    "mfg": "PARACHUT",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 290883,
+    "name": "OIL 180 OIL 500 ML",
+    "cleaned": "OIL 180 OIL 500 ML",
+    "normalized": "OIL OIL 500 ML",
+    "mfg": "PARACHUT",
+    "packaging": "500 ML",
+    "strength": null
+  },
+  {
+    "id": 290945,
+    "name": "OMEE G  SACHET 1",
+    "cleaned": "OMEE G SACHET 1",
+    "normalized": "OMEE G SACHET 1",
+    "mfg": "ALKEM LABORATORIES LTD",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 290984,
+    "name": "OMNACORTIL 5MG SUSP 60ML",
+    "cleaned": "OMNACORTIL 5MG SUSP 60ML",
+    "normalized": "OMNACORTIL 5MG SUSP 60ML",
+    "mfg": "MACLEODS PHARMACEUTICALS",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 290991,
+    "name": "OMNIGEL 100 SPRAY 28GM",
+    "cleaned": "OMNIGEL 100 SPRAY 28GM",
+    "normalized": "OMNIGEL SPRAY 28GM",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "28GM",
+    "strength": null
+  },
+  {
+    "id": 290995,
+    "name": "OMNIGEL 217.8 SPRAY 78.6ML",
+    "cleaned": "OMNIGEL 217.8 SPRAY 78.6ML",
+    "normalized": "OMNIGEL 217.8 SPRAY 78.6ML",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "78.6ML",
+    "strength": null
+  },
+  {
+    "id": 290998,
+    "name": "OMNIGEL GEL 10GM",
+    "cleaned": "OMNIGEL GEL 10GM",
+    "normalized": "OMNIGEL GEL 10GM",
+    "mfg": "CIPLA GX",
+    "packaging": "10 G",
+    "strength": null
+  },
+  {
+    "id": 291003,
+    "name": "OMNIGEL SPRAY 50ML",
+    "cleaned": "OMNIGEL SPRAY 50ML",
+    "normalized": "OMNIGEL SPRAY 50ML",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 291037,
+    "name": "ORA SORE STRIP 10 TAB",
+    "cleaned": "ORA SORE STRIP 10 TAB",
+    "normalized": "ORA SORE STRIP TAB",
+    "mfg": "WINGS PHARMACEUTICALS PVT LTD",
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 291045,
+    "name": "PARA OIL 250ML",
+    "cleaned": "PARA OIL 250ML",
+    "normalized": "PARA OIL 250ML",
+    "mfg": "PARACHUT",
+    "packaging": "250ML",
+    "strength": null
+  },
+  {
+    "id": 291051,
+    "name": "ORALB 20 BRUSH 1",
+    "cleaned": "ORALB 20 BRUSH 1",
+    "normalized": "ORALB BRUSH 1",
+    "mfg": "GLAXOSMITHKLINE PHARMA",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291067,
+    "name": "ORGANIC INDIA MUSTARD OIL - 750ML",
+    "cleaned": "ORGANIC INDIA MUSTARD OIL - 750ML",
+    "normalized": "ORGANIC INDIA MUSTARD OIL - 750ML",
+    "mfg": "ORGANIC INDIA PRIVATE LIMITED",
+    "packaging": "750 ML",
+    "strength": null
+  },
+  {
+    "id": 291096,
+    "name": "ORTHO BALM BAM 50GM",
+    "cleaned": "ORTHO BALM BAM 50GM",
+    "normalized": "ORTHO BALM BAM 50GM",
+    "mfg": "AYURVED",
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 291116,
+    "name": "OTRIVIN BABY SALINE BOTTLE OF 10ML NASAL SPRAY",
+    "cleaned": "OTRIVIN BABY SALINE BOTTLE OF 10ML NASAL SPRAY",
+    "normalized": "OTRIVIN BABY SALINE BOTTLE OF 10ML NASAL SPRAY",
+    "mfg": "GLAXOSMITHKLINE",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 291168,
+    "name": "PAL VADI 50 1 1",
+    "cleaned": "PAL VADI 50 1 1",
+    "normalized": "PAL VADI 50 1 1",
+    "mfg": "GOOD MORNING",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291176,
+    "name": "PAMPERS NEW BORN BABY PANTS DIAPER - 60'S",
+    "cleaned": "PAMPERS NEW BORN BABY PANTS DIAPER - 60'S",
+    "normalized": "PAMPERS NEW BORN BABY PANTS DIAPER - 60'S",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "60 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291178,
+    "name": "PAMPERS SMALL 10`S",
+    "cleaned": "PAMPERS SMALL 10`S",
+    "normalized": "PAMPERS SMALL 10`S",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291179,
+    "name": "PAMPERS XL 10`S",
+    "cleaned": "PAMPERS XL 10`S",
+    "normalized": "PAMPERS XL 10`S",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "1 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291265,
+    "name": "PARIPATHADI KADHA 200ML",
+    "cleaned": "PARIPATHADI KADHA 200ML",
+    "normalized": "PARIPATHADI KADHA 200ML",
+    "mfg": "SANDU PHARMA",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 291268,
+    "name": "PARK 199 SPRAY 1",
+    "cleaned": "PARK 199 SPRAY 1",
+    "normalized": "PARK SPRAY 1",
+    "mfg": "PARK AVENUE",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291292,
+    "name": "PATA 295 PAST 600GM",
+    "cleaned": "PATA 295 PAST 600GM",
+    "normalized": "PATA PAST 600GM",
+    "mfg": "PATANJALI AYURVED LTD",
+    "packaging": "600GM",
+    "strength": null
+  },
+  {
+    "id": 291303,
+    "name": "PATA 60 PAST 50GM",
+    "cleaned": "PATA 60 PAST 50GM",
+    "normalized": "PATA PAST 50GM",
+    "mfg": "PATANJALI AYURVED LTD",
+    "packaging": "50GM",
+    "strength": null
+  },
+  {
+    "id": 291332,
+    "name": "PATANJALI DIVYA DHARA 10 ML",
+    "cleaned": "PATANJALI DIVYA DHARA 10 ML",
+    "normalized": "PATANJALI DIVYA DHARA ML",
+    "mfg": "PATANJALI AYURVED LTD",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 291357,
+    "name": "PD PUPPY FOOD 1.2KG",
+    "cleaned": "PD PUPPY FOOD 1.2KG",
+    "normalized": "PD PUPPY FOOD 1.2KG",
+    "mfg": "PEDIGREE",
+    "packaging": "1.2KG",
+    "strength": null
+  },
+  {
+    "id": 291426,
+    "name": "PET SAFA GRANULES 100 GM",
+    "cleaned": "PET SAFA GRANULES 100 GM",
+    "normalized": "PET SAFA GRANULES GM",
+    "mfg": "DIVISA HERBAL CARE PVT LTD",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 291436,
+    "name": "PHENSEDYL DX SYP 60ML",
+    "cleaned": "PHENSEDYL DX SYP 60ML",
+    "normalized": "PHENSEDYL DX SYP 60ML",
+    "mfg": "ABBOTT HEALTHCARE PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 291518,
+    "name": "POLYBION LC MANGO FLAVOUR BOTTLE OF 100ML SYRUP",
+    "cleaned": "POLYBION LC MANGO FLAVOUR BOTTLE OF 100ML SYRUP",
+    "normalized": "POLYBION LC MANGO FLAVOUR BOTTLE OF 100ML SYRUP",
+    "mfg": "MERCK LIMITED",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 291710,
+    "name": "PRESTO DISPO 1 4",
+    "cleaned": "PRESTO DISPO 1 4",
+    "normalized": "PRESTO DISPO 1 4",
+    "mfg": "PANDG",
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 291723,
+    "name": "PRO EASE COSMETIC 7P",
+    "cleaned": "PRO EASE COSMETIC 7P",
+    "normalized": "PRO EASE COSMETIC 7P",
+    "mfg": "PROEAS",
+    "packaging": "7P",
+    "strength": null
+  },
+  {
+    "id": 291724,
+    "name": "PRO EASE XL COTTON 6S",
+    "cleaned": "PRO EASE XL COTTON 6S",
+    "normalized": "PRO EASE XL COTTON 6S",
+    "mfg": "PANDG",
+    "packaging": "6S",
+    "strength": null
+  },
+  {
+    "id": 291761,
+    "name": "PROTIN GEN POWDER 200ML",
+    "cleaned": "PROTIN GEN POWDER 200ML",
+    "normalized": "PROTIN GEN POWDER 200ML",
+    "mfg": "MEDOX REMEDIES PVT LTD",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 291827,
+    "name": "PXL 120 PANT 1",
+    "cleaned": "PXL 120 PANT 1",
+    "normalized": "PXL PANT 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 291876,
+    "name": "R7 LIVER AND GALLBLADDER  DROP 30ML",
+    "cleaned": "R7 LIVER AND GALLBLADDER DROP 30ML",
+    "normalized": "R7 LIVER AND GALLBLADDER DROP 30ML",
+    "mfg": "RECKITT BENCKISER PVT LTD",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 291877,
+    "name": "R71 SCIATICA DROP 30ML",
+    "cleaned": "R71 SCIATICA DROP 30ML",
+    "normalized": "R71 SCIATICA DROP 30ML",
+    "mfg": "RECKET",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 291894,
+    "name": "RABI D 20/10 MG TABLET 10",
+    "cleaned": "RABI D 20/10 MG TABLET 10",
+    "normalized": "RABI D 20/10 MG TABLET 10",
+    "mfg": "ZEN PHARMA PVT LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 291994,
+    "name": "RED 60 PAST 100GM",
+    "cleaned": "RED 60 PAST 100GM",
+    "normalized": "RED PAST 100GM",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "100GM",
+    "strength": null
+  },
+  {
+    "id": 292017,
+    "name": "RELISPRAY 150 SPRAY 36GM",
+    "cleaned": "RELISPRAY 150 SPRAY 36GM",
+    "normalized": "RELISPRAY SPRAY 36GM",
+    "mfg": "REAL HEALTHCARE",
+    "packaging": "36GM",
+    "strength": null
+  },
+  {
+    "id": 292083,
+    "name": "RING 20 CREAM 5GM",
+    "cleaned": "RING 20 CREAM 5GM",
+    "normalized": "RING CREAM 5GM",
+    "mfg": "RECKNOR LIFESCIENCES PVT LTD",
+    "packaging": "5GM",
+    "strength": null
+  },
+  {
+    "id": 292084,
+    "name": "RING GUARD 5GM CREAM",
+    "cleaned": "RING GUARD 5GM CREAM",
+    "normalized": "RING GUARD 5GM CREAM",
+    "mfg": "PARAS PHARMACEUTICALS LTD",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 292104,
+    "name": "ROGAN BADAM BOTTLE 25 ML",
+    "cleaned": "ROGAN BADAM BOTTLE 25 ML",
+    "normalized": "ROGAN BADAM BOTTLE ML",
+    "mfg": "ZANDU AYURVEDA",
+    "packaging": "25 ML",
+    "strength": null
+  },
+  {
+    "id": 292105,
+    "name": "ROGAN DIMAG ROSHAN THAKUR 200ML",
+    "cleaned": "ROGAN DIMAG ROSHAN THAKUR 200ML",
+    "normalized": "ROGAN DIMAG ROSHAN THAKUR 200ML",
+    "mfg": "THAKUR",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 292115,
+    "name": "ROLL ON 40 PLASTIC 15ML",
+    "cleaned": "ROLL ON 40 PLASTIC 15ML",
+    "normalized": "ROLL ON PLASTIC 15ML",
+    "mfg": "AMRUTANJAN HEALTH CARE LIMITED",
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 292138,
+    "name": "ROSE WATER 52 BOTTLE 50ML",
+    "cleaned": "ROSE WATER 52 BOTTLE 50ML",
+    "normalized": "ROSE WATER BOTTLE 50ML",
+    "mfg": "DABUR INDIA LIMITED",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 292140,
+    "name": "ROSE WATER LIQUID 50ML",
+    "cleaned": "ROSE WATER LIQUID 50ML",
+    "normalized": "ROSE WATER LIQUID 50ML",
+    "mfg": "null",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 292157,
+    "name": "ROSYCAP ASP 10/150MG CAP 10'S",
+    "cleaned": "ROSYCAP ASP 10/150MG CAP 10'S",
+    "normalized": "ROSYCAP ASP 10/150MG CAP 10'S",
+    "mfg": "AKUMENTIS HEALTHCARE LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292158,
+    "name": "ROSYCAP ASP 10MG/75MG CAP 10'S",
+    "cleaned": "ROSYCAP ASP 10MG/75MG CAP 10'S",
+    "normalized": "ROSYCAP ASP 10MG/75MG CAP 10'S",
+    "mfg": "AKUMENTIS HEALTHCARE LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292159,
+    "name": "ROSYCAP ASP 20/150MG CAP",
+    "cleaned": "ROSYCAP ASP 20/150MG CAP",
+    "normalized": "ROSYCAP ASP 20/150MG CAP",
+    "mfg": "AKUMENTIS HEALTHCARE LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292182,
+    "name": "RUBIRED SYP 150ML",
+    "cleaned": "RUBIRED SYP 150ML",
+    "normalized": "RUBIRED SYP 150ML",
+    "mfg": "MACLEODS PHARMACEUTICALS",
+    "packaging": "150 ML",
+    "strength": null
+  },
+  {
+    "id": 292196,
+    "name": "SAFED MUSLI 145 POWDER 25GM",
+    "cleaned": "SAFED MUSLI 145 POWDER 25GM",
+    "normalized": "SAFED MUSLI POWDER 25GM",
+    "mfg": "SDL INDIA",
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 292212,
+    "name": "SANI OS SANITIZER SPRAY 60ML",
+    "cleaned": "SANI OS SANITIZER SPRAY 60ML",
+    "normalized": "SANI OS SANITIZER SPRAY 60ML",
+    "mfg": "SANIFY HEALTHCARE",
+    "packaging": "60ML",
+    "strength": null
+  },
+  {
+    "id": 292213,
+    "name": "SANITARY PAD PENQUIN COTTON 1PKT",
+    "cleaned": "SANITARY PAD PENQUIN COTTON 1PKT",
+    "normalized": "SANITARY PAD PENQUIN COTTON 1PKT",
+    "mfg": "CARLISLE LABORATORIES LTD",
+    "packaging": "1PKT",
+    "strength": null
+  },
+  {
+    "id": 292271,
+    "name": "SBL ALFALFA TONIC 30ML",
+    "cleaned": "SBL ALFALFA TONIC 30ML",
+    "normalized": "SBL ALFALFA TONIC 30ML",
+    "mfg": "SBL PVT LTD",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 292280,
+    "name": "SBL CALCAREA FLUORICA 1000C DROP OF 30ML",
+    "cleaned": "SBL CALCAREA FLUORICA 1000C DROP OF 30ML",
+    "normalized": "SBL CALCAREA FLUORICA 1000C DROP OF 30ML",
+    "mfg": "SBL HOMEOPATHY",
+    "packaging": "30ML",
+    "strength": null
+  },
+  {
+    "id": 292348,
+    "name": "SCALP VEIN NO.21G",
+    "cleaned": "SCALP VEIN NO.21G",
+    "normalized": "SCALP VEIN NO.21G",
+    "mfg": "SUTURES INDIA",
+    "packaging": "0 NO'S",
+    "strength": null
+  },
+  {
+    "id": 292389,
+    "name": "SELSUN SUSPENSION 60 ML",
+    "cleaned": "SELSUN SUSPENSION 60 ML",
+    "normalized": "SELSUN SUSPENSION ML",
+    "mfg": "ABBOTT INDIA LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292392,
+    "name": "SENQUEL F TOOTH PASTE 100GM",
+    "cleaned": "SENQUEL F TOOTH PASTE 100GM",
+    "normalized": "SENQUEL F TOOTH PASTE 100GM",
+    "mfg": "DR REDDY'S LABORATORIES LTD",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 292397,
+    "name": "SENSODENT KF PAST 125GM",
+    "cleaned": "SENSODENT KF PAST 125GM",
+    "normalized": "SENSODENT KF PAST 125GM",
+    "mfg": "INDICO PHARMACEUTICALS",
+    "packaging": "125GM",
+    "strength": null
+  },
+  {
+    "id": 292419,
+    "name": "SENSODYNE FRESH MINT 80GM",
+    "cleaned": "SENSODYNE FRESH MINT 80GM",
+    "normalized": "SENSODYNE FRESH MINT 80GM",
+    "mfg": "GLAXOSMITHKLINE",
+    "packaging": "80 G",
+    "strength": null
+  },
+  {
+    "id": 292428,
+    "name": "SENSODYNE RAPID RELIEF 70GM",
+    "cleaned": "SENSODYNE RAPID RELIEF 70GM",
+    "normalized": "SENSODYNE RAPID RELIEF 70GM",
+    "mfg": "GLAXOSMITHKLINE",
+    "packaging": "70 G",
+    "strength": null
+  },
+  {
+    "id": 292443,
+    "name": "SEPTILIN 2 SYR 200ML",
+    "cleaned": "SEPTILIN 2 SYR 200ML",
+    "normalized": "SEPTILIN 2 SYR 200ML",
+    "mfg": "HIMALAYA DRUG COMPANY",
+    "packaging": "200ML",
+    "strength": null
+  },
+  {
+    "id": 292462,
+    "name": "SET VET GEL 50ML",
+    "cleaned": "SET VET GEL 50ML",
+    "normalized": "SET VET GEL 50ML",
+    "mfg": "SET VET",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 292485,
+    "name": "SHADBINDU TAILAM DROP 15ML",
+    "cleaned": "SHADBINDU TAILAM DROP 15ML",
+    "normalized": "SHADBINDU TAILAM DROP 15ML",
+    "mfg": "NAGARJUN PHARMA",
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 292559,
+    "name": "SIMILAC ADVANCE BABY FOOD STAGE 1 INFANT FORMULA (UPTO 6 MONTHS) REFILL OF 400 G",
+    "cleaned": "SIMILAC ADVANCE BABY FOOD STAGE 1 INFANT FORMULA (UPTO 6 MONTHS) REFILL OF 400 G",
+    "normalized": "SIMILAC ADVANCE BABY FOOD STAGE 1 INFANT FORMULA (UPTO 6 MONTHS) REFILL OF 400 G",
+    "mfg": "ABBOTT HEALTHCARE PVT LTD",
+    "packaging": "400 G",
+    "strength": null
+  },
+  {
+    "id": 292565,
+    "name": "SINAREST AF SYP 60ML",
+    "cleaned": "SINAREST AF SYP 60ML",
+    "normalized": "SINAREST AF SYP 60ML",
+    "mfg": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292566,
+    "name": "SINAREST LP NEW 1.25/5/250 MG SYRUP 60 ML",
+    "cleaned": "SINAREST LP NEW 1.25/5/250 MG SYRUP 60 ML",
+    "normalized": "SINAREST LP NEW 1.25/5/250 MG SYRUP 60 ML",
+    "mfg": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292570,
+    "name": "SINAREST PLUS SUSPENSION 60ML",
+    "cleaned": "SINAREST PLUS SUSPENSION 60ML",
+    "normalized": "SINAREST PLUS SUSPENSION 60ML",
+    "mfg": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292571,
+    "name": "SINAREST SUSPENSION 60 ML",
+    "cleaned": "SINAREST SUSPENSION 60 ML",
+    "normalized": "SINAREST SUSPENSION ML",
+    "mfg": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292573,
+    "name": "SINAREST SYP 60ML",
+    "cleaned": "SINAREST SYP 60ML",
+    "normalized": "SINAREST SYP 60ML",
+    "mfg": "CENTAUR PHARMACEUTICALS PVT LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 292612,
+    "name": "SLOANS BAM BAM 10GM",
+    "cleaned": "SLOANS BAM BAM 10GM",
+    "normalized": "SLOANS BAM BAM 10GM",
+    "mfg": "SOLANS",
+    "packaging": "10GM",
+    "strength": null
+  },
+  {
+    "id": 292762,
+    "name": "STRETCH NIL LOTION 20ML",
+    "cleaned": "STRETCH NIL LOTION 20ML",
+    "normalized": "STRETCH NIL LOTION 20ML",
+    "mfg": "GUFIC BIOSCIENCES LTD",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 292789,
+    "name": "SUCRAFIL SUSP 200ML",
+    "cleaned": "SUCRAFIL SUSP 200ML",
+    "normalized": "SUCRAFIL SUSP 200ML",
+    "mfg": "FOURRTS INDIA LABORATORIES PVT LTD",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 292814,
+    "name": "SUKOON MASSAGE OIL 50ML",
+    "cleaned": "SUKOON MASSAGE OIL 50ML",
+    "normalized": "SUKOON MASSAGE OIL 50ML",
+    "mfg": "null",
+    "packaging": "50 ML",
+    "strength": null
+  },
+  {
+    "id": 292846,
+    "name": "SUNNY 130 PHYN 500ML",
+    "cleaned": "SUNNY 130 PHYN 500ML",
+    "normalized": "SUNNY PHYN 500ML",
+    "mfg": "CM COSMATIC",
+    "packaging": "500ML",
+    "strength": null
+  },
+  {
+    "id": 292881,
+    "name": "TELSAR BISO 5 MG STRIP OF 10 TAB",
+    "cleaned": "TELSAR BISO 5 MG STRIP OF 10 TAB",
+    "normalized": "TELSAR BISO 5 MG STRIP OF 10 TAB",
+    "mfg": "TORRENT PHARMACEUTICALS LTD",
+    "packaging": "10 TAB",
+    "strength": null
+  },
+  {
+    "id": 292890,
+    "name": "SURGICAL 45 RAZORS 1PCS",
+    "cleaned": "SURGICAL 45 RAZORS 1PCS",
+    "normalized": "SURGICAL RAZORS 1PCS",
+    "mfg": "RNGALLA FAMILY PVT LTD",
+    "packaging": "1PCS",
+    "strength": null
+  },
+  {
+    "id": 292912,
+    "name": "SWAMALA CLASSIC BOTTLE OF 200GM",
+    "cleaned": "SWAMALA CLASSIC BOTTLE OF 200GM",
+    "normalized": "SWAMALA CLASSIC BOTTLE OF 200GM",
+    "mfg": "SHREE DHOOTAPAPESHWAR",
+    "packaging": "200GM",
+    "strength": null
+  },
+  {
+    "id": 292947,
+    "name": "TAXIM 50 MG DRY SYRUP 30 ML",
+    "cleaned": "TAXIM 50 MG DRY SYRUP 30 ML",
+    "normalized": "TAXIM MG DRY SYRUP 30 ML",
+    "mfg": "ALKEM LABORATORIES LTD",
+    "packaging": "30 ML",
+    "strength": null
+  },
+  {
+    "id": 293006,
+    "name": "TELMIKIND CT 40MG STRIP OF 10 TABLETS",
+    "cleaned": "TELMIKIND CT 40MG",
+    "normalized": "TELMIKIND CT 40MG",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293012,
+    "name": "TELPRES CT 40/12.5MG TAB 15'S",
+    "cleaned": "TELPRES CT 40/12.5MG TAB 15'S",
+    "normalized": "TELPRES CT 40/12.5MG TAB 15'S",
+    "mfg": "ABBOTT HEALTHCARE PVT LTD",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293036,
+    "name": "TEMSAN AM 2.5MG TAB 15'S",
+    "cleaned": "TEMSAN AM 2.5MG TAB 15'S",
+    "normalized": "TEMSAN AM 2.5MG TAB 15'S",
+    "mfg": "EMCURE PHARMACEUTICALS LTD",
+    "packaging": "15 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293123,
+    "name": "TIGER BALM 8GM WHITE",
+    "cleaned": "TIGER BALM 8GM WHITE",
+    "normalized": "TIGER BALM 8GM WHITE",
+    "mfg": "ELDER PHARMACEUTICALS LTD",
+    "packaging": "21 ML",
+    "strength": null
+  },
+  {
+    "id": 293124,
+    "name": "TIGER BALM 9GM RED",
+    "cleaned": "TIGER BALM 9GM RED",
+    "normalized": "TIGER BALM 9GM RED",
+    "mfg": "RANGOON CHEMICAL WORKS",
+    "packaging": "9 G",
+    "strength": null
+  },
+  {
+    "id": 293130,
+    "name": "TIL TEL OIL 50ML",
+    "cleaned": "TIL TEL OIL 50ML",
+    "normalized": "TIL TEL OIL 50ML",
+    "mfg": "PARAS PHARMACEUTICALS LTD",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 293176,
+    "name": "TOPI GRAPHITES OINT 25GM",
+    "cleaned": "TOPI GRAPHITES OINT 25GM",
+    "normalized": "TOPI GRAPHITES OINT 25GM",
+    "mfg": "WILLCARE LIFESCIENCES PVT LTD",
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 293187,
+    "name": "TOPISAL 6% OINT 20GM",
+    "cleaned": "TOPISAL 6% OINT 20GM",
+    "normalized": "TOPISAL 6% OINT 20GM",
+    "mfg": "SYSTOPIC LABORATORIES",
+    "packaging": "20 G",
+    "strength": null
+  },
+  {
+    "id": 293248,
+    "name": "TRIPHALA CHURNA 120GM",
+    "cleaned": "TRIPHALA CHURNA 120GM",
+    "normalized": "TRIPHALA CHURNA 120GM",
+    "mfg": "BAIDYANATH AYURVEDA BHAVAN LTD",
+    "packaging": "120 G",
+    "strength": null
+  },
+  {
+    "id": 293250,
+    "name": "TRIPHALA CHURNA POWDER 60 GM",
+    "cleaned": "TRIPHALA CHURNA POWDER 60 GM",
+    "normalized": "TRIPHALA CHURNA POWDER GM",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "60 GM",
+    "strength": null
+  },
+  {
+    "id": 293264,
+    "name": "TRYPTOMER 10MG STRIP OF 30 TABLETS",
+    "cleaned": "TRYPTOMER 10MG",
+    "normalized": "TRYPTOMER 10MG",
+    "mfg": "WOCKHARDT LIMITED",
+    "packaging": "30 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293265,
+    "name": "TRYPTOMER 25MG STRIP OF 30 TABLETS",
+    "cleaned": "TRYPTOMER 25MG",
+    "normalized": "TRYPTOMER 25MG",
+    "mfg": "DR REDDY'S LAB (WOCKHARDT)",
+    "packaging": "30 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293279,
+    "name": "TUSQ DX 5/2/15MG SYRUP 100ML",
+    "cleaned": "TUSQ DX 5/2/15MG SYRUP 100ML",
+    "normalized": "TUSQ DX 5/2/15MG SYRUP 100ML",
+    "mfg": "BLUE CROSS LABORATORIES PRIVATE LIMITED",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 293299,
+    "name": "ULTRA D3 DROPS - VITAMIN D3 FOR INFANTS VITAMIN DROPS BOTTLE OF 15 ML",
+    "cleaned": "ULTRA D3 DROPS - VITAMIN D3 FOR INFANTS VITAMIN DROPS",
+    "normalized": "ULTRA D3 DROPS - VITAMIN D3 FOR INFANTS VITAMIN DROPS",
+    "mfg": "MEYER ORGANICS PVT LTD",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 293330,
+    "name": "URIKIND KM SACHET 5GM",
+    "cleaned": "URIKIND KM SACHET 5GM",
+    "normalized": "URIKIND KM SACHET 5GM",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "5 G",
+    "strength": null
+  },
+  {
+    "id": 293331,
+    "name": "URIKIND KM6 SACHET 1",
+    "cleaned": "URIKIND KM6 SACHET 1",
+    "normalized": "URIKIND KM6 SACHET 1",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "1 G",
+    "strength": null
+  },
+  {
+    "id": 293342,
+    "name": "V WASH 180 LIQUID 1",
+    "cleaned": "V WASH 180 LIQUID 1",
+    "normalized": "V WASH LIQUID 1",
+    "mfg": "LBCP",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293343,
+    "name": "V WASH PLUS LIQUID 100 ML",
+    "cleaned": "V WASH PLUS LIQUID 100 ML",
+    "normalized": "V WASH PLUS LIQUID ML",
+    "mfg": "VIWASH",
+    "packaging": "100 ML",
+    "strength": null
+  },
+  {
+    "id": 293353,
+    "name": "VALPARIN BOTTLE OF 200ML SOLUTION",
+    "cleaned": "VALPARIN BOTTLE OF 200ML SOLUTION",
+    "normalized": "VALPARIN BOTTLE OF 200ML SOLUTION",
+    "mfg": "SANOFI",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 293450,
+    "name": "VEET SILK AND FRESH HAIR REMOVAL CREAM MIXED 25 GM",
+    "cleaned": "VEET SILK AND FRESH HAIR REMOVAL CREAM MIXED 25 GM",
+    "normalized": "VEET SILK AND FRESH HAIR REMOVAL CREAM MIXED GM",
+    "mfg": "RECKITT BENCKISER",
+    "packaging": "25 G",
+    "strength": null
+  },
+  {
+    "id": 293536,
+    "name": "VICKS  TAB 1200",
+    "cleaned": "VICKS TAB 1200",
+    "normalized": "VICKS TAB 1200",
+    "mfg": "DR RECKEWEG",
+    "packaging": "1200",
+    "strength": null
+  },
+  {
+    "id": 293538,
+    "name": "VICKS 102 BOTTLE 1",
+    "cleaned": "VICKS 102 BOTTLE 1",
+    "normalized": "VICKS BOTTLE 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293541,
+    "name": "VICKS 170 BOTTLE 25",
+    "cleaned": "VICKS 170 BOTTLE 25",
+    "normalized": "VICKS BOTTLE 25",
+    "mfg": "PANDG",
+    "packaging": "25",
+    "strength": null
+  },
+  {
+    "id": 293542,
+    "name": "VICKS 199 CREAM 1",
+    "cleaned": "VICKS 199 CREAM 1",
+    "normalized": "VICKS CREAM 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293543,
+    "name": "VICKS 205 JAR 1",
+    "cleaned": "VICKS 205 JAR 1",
+    "normalized": "VICKS JAR 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293545,
+    "name": "VICKS 22 CREAM 1",
+    "cleaned": "VICKS 22 CREAM 1",
+    "normalized": "VICKS CREAM 1",
+    "mfg": "RECKET",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293546,
+    "name": "VICKS 23 BOTTLE 1",
+    "cleaned": "VICKS 23 BOTTLE 1",
+    "normalized": "VICKS BOTTLE 1",
+    "mfg": "RECKET",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293547,
+    "name": "VICKS 24 CREAM 1",
+    "cleaned": "VICKS 24 CREAM 1",
+    "normalized": "VICKS CREAM 1",
+    "mfg": "PROCTER & GAMBLE HEALTHCARE",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293551,
+    "name": "VICKS 47 CREAM 10ML",
+    "cleaned": "VICKS 47 CREAM 10ML",
+    "normalized": "VICKS CREAM 10ML",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "10ML",
+    "strength": null
+  },
+  {
+    "id": 293552,
+    "name": "VICKS 48 10ML BOTTLE",
+    "cleaned": "VICKS 48 10ML BOTTLE",
+    "normalized": "VICKS 48 10ML BOTTLE",
+    "mfg": "PANDG",
+    "packaging": "BOTTLE",
+    "strength": null
+  },
+  {
+    "id": 293554,
+    "name": "VICKS 495 DROP 495",
+    "cleaned": "VICKS 495 DROP 495",
+    "normalized": "VICKS DROP 495",
+    "mfg": "PANDG",
+    "packaging": "495",
+    "strength": null
+  },
+  {
+    "id": 293555,
+    "name": "VICKS 50 BOTTLE 5ML",
+    "cleaned": "VICKS 50 BOTTLE 5ML",
+    "normalized": "VICKS BOTTLE 5ML",
+    "mfg": "PANDG",
+    "packaging": "5ML",
+    "strength": null
+  },
+  {
+    "id": 293556,
+    "name": "VICKS 50 CREAM 7ML",
+    "cleaned": "VICKS 50 CREAM 7ML",
+    "normalized": "VICKS CREAM 7ML",
+    "mfg": "PANDG",
+    "packaging": "7ML",
+    "strength": null
+  },
+  {
+    "id": 293561,
+    "name": "VICKS 80 STRONG BOTTEL 15ML",
+    "cleaned": "VICKS 80 STRONG BOTTEL 15ML",
+    "normalized": "VICKS STRONG BOTTEL 15ML",
+    "mfg": "PANDG",
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 293563,
+    "name": "VICKS 89 ROLL ON 1",
+    "cleaned": "VICKS 89 ROLL ON 1",
+    "normalized": "VICKS ROLL ON 1",
+    "mfg": "VICKS",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293566,
+    "name": "VICKS ACTION 500 EXTRA",
+    "cleaned": "VICKS ACTION 500 EXTRA",
+    "normalized": "VICKS ACTION EXTRA",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "11 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293568,
+    "name": "VICKS ACTION 50MG GEL 1 PK",
+    "cleaned": "VICKS ACTION 50MG GEL 1 PK",
+    "normalized": "VICKS ACTION 50MG GEL 1 PK",
+    "mfg": "VICKS",
+    "packaging": "1 PK",
+    "strength": null
+  },
+  {
+    "id": 293569,
+    "name": "VICKS BABY  BAM 10ML",
+    "cleaned": "VICKS BABY BAM 10ML",
+    "normalized": "VICKS BABY BAM 10ML",
+    "mfg": "PANDG",
+    "packaging": "10ML",
+    "strength": null
+  },
+  {
+    "id": 293570,
+    "name": "VICKS BABY RUB CREAM 1",
+    "cleaned": "VICKS BABY RUB CREAM 1",
+    "normalized": "VICKS BABY RUB CREAM 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293573,
+    "name": "VICKS COUGH DROPS - 195 + 5 FREE",
+    "cleaned": "VICKS COUGH DROPS - 195 + 5 FREE",
+    "normalized": "VICKS COUGH DROPS - 195 + 5 FREE",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "200 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293574,
+    "name": "VICKS CREAM 50ML",
+    "cleaned": "VICKS CREAM 50ML",
+    "normalized": "VICKS CREAM 50ML",
+    "mfg": "PANDG",
+    "packaging": "50ML",
+    "strength": null
+  },
+  {
+    "id": 293575,
+    "name": "VICKS CTU KIT 200LTR",
+    "cleaned": "VICKS CTU KIT 200LTR",
+    "normalized": "VICKS CTU KIT 200LTR",
+    "mfg": "PANDG",
+    "packaging": "200LTR",
+    "strength": null
+  },
+  {
+    "id": 293576,
+    "name": "VICKS INHALER - 2 X 0.5ML",
+    "cleaned": "VICKS INHALER - 2 X 0.5ML",
+    "normalized": "VICKS INHALER - 2 X 0.5ML",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "2 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293580,
+    "name": "VICKS INHALER JUMBO PACK",
+    "cleaned": "VICKS INHALER JUMBO PACK",
+    "normalized": "VICKS INHALER JUMBO PACK",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "0 ",
+    "strength": null
+  },
+  {
+    "id": 293581,
+    "name": "VICKS JAR BIG 1300T",
+    "cleaned": "VICKS JAR BIG 1300T",
+    "normalized": "VICKS JAR BIG 1300T",
+    "mfg": "SUTURES INDIA",
+    "packaging": "1300 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293582,
+    "name": "VICKS RED 196 CREAM 4",
+    "cleaned": "VICKS RED 196 CREAM 4",
+    "normalized": "VICKS RED CREAM 4",
+    "mfg": "RECKITT & COLMAN OF INDIA LTD",
+    "packaging": "4",
+    "strength": null
+  },
+  {
+    "id": 293583,
+    "name": "VICKS ROLL-ON 8ML ROLLON 8 ML",
+    "cleaned": "VICKS ROLL-ON 8ML ROLLON 8 ML",
+    "normalized": "VICKS ROLL-ON 8ML ROLLON 8 ML",
+    "mfg": "VICKS",
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 293584,
+    "name": "VICKS VAPORAB 5GM GEL 25GM",
+    "cleaned": "VICKS VAPORAB 5GM GEL 25GM",
+    "normalized": "VICKS VAPORAB 5GM GEL 25GM",
+    "mfg": "VICKS",
+    "packaging": "25GM",
+    "strength": null
+  },
+  {
+    "id": 293585,
+    "name": "VICKS VAPORUB - 5 ML",
+    "cleaned": "VICKS VAPORUB - 5 ML",
+    "normalized": "VICKS VAPORUB - 5 ML",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "5 ML",
+    "strength": null
+  },
+  {
+    "id": 293587,
+    "name": "VICKS ZZZQUIL TAB 10",
+    "cleaned": "VICKS ZZZQUIL TAB 10",
+    "normalized": "VICKS ZZZQUIL TAB 10",
+    "mfg": "PANDG",
+    "packaging": "10",
+    "strength": null
+  },
+  {
+    "id": 293590,
+    "name": "VIGANEXT SACHET 1 PACK",
+    "cleaned": "VIGANEXT SACHET 1 PACK",
+    "normalized": "VIGANEXT SACHET 1 PACK",
+    "mfg": "MSN LABORATORIES",
+    "packaging": "1 PACK",
+    "strength": null
+  },
+  {
+    "id": 293659,
+    "name": "VOLINI GEL 40 GM",
+    "cleaned": "VOLINI GEL 40 GM",
+    "normalized": "VOLINI GEL GM",
+    "mfg": "RANBAXY LABORATORIES (SUN PHARMA)",
+    "packaging": "40 G",
+    "strength": null
+  },
+  {
+    "id": 293672,
+    "name": "VOVERAN INJ 1ML",
+    "cleaned": "VOVERAN INJ 1ML",
+    "normalized": "VOVERAN INJ 1ML",
+    "mfg": "NOVARTIS INDIA LTD",
+    "packaging": "1 ML",
+    "strength": null
+  },
+  {
+    "id": 293690,
+    "name": "WALAMYCIN SUSP 60ML",
+    "cleaned": "WALAMYCIN SUSP 60ML",
+    "normalized": "WALAMYCIN SUSP 60ML",
+    "mfg": "WALLACE PHARMACEUTICALS",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 293716,
+    "name": "WELMINIC P SYP 60ML",
+    "cleaned": "WELMINIC P SYP 60ML",
+    "normalized": "WELMINIC P SYP 60ML",
+    "mfg": "DELCURE LIFESCIENCES",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 293748,
+    "name": "WHISPER 8PAD COTTON 8PAD\\ COTTON 8",
+    "cleaned": "WHISPER 8PAD COTTON 8PAD\\ COTTON 8",
+    "normalized": "WHISPER 8PAD COTTON 8PAD\\ COTTON 8",
+    "mfg": "WISPER",
+    "packaging": "8",
+    "strength": null
+  },
+  {
+    "id": 293756,
+    "name": "WHISPER CHOICE SANITARY PADS EXTRA LARGE 6 PIECES",
+    "cleaned": "WHISPER CHOICE SANITARY PADS EXTRA LARGE 6 PIECES",
+    "normalized": "WHISPER CHOICE SANITARY PADS EXTRA LARGE 6 PIECES",
+    "mfg": "PROCTER & GAMBLE",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293758,
+    "name": "WHISPER CHOICE ULTRA 6 PIECES",
+    "cleaned": "WHISPER CHOICE ULTRA 6 PIECES",
+    "normalized": "WHISPER CHOICE ULTRA 6 PIECES",
+    "mfg": "null",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293759,
+    "name": "WHISPER CHOICE ULTRA SANITARY PADS EXTRA LARGE 6 PIECES",
+    "cleaned": "WHISPER CHOICE ULTRA SANITARY PADS EXTRA LARGE 6 PIECES",
+    "normalized": "WHISPER CHOICE ULTRA SANITARY PADS EXTRA LARGE 6 PIECES",
+    "mfg": "null",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293761,
+    "name": "WHISPER CHOICE ULTRA XL WINGS PADS 6'S",
+    "cleaned": "WHISPER CHOICE ULTRA XL WINGS PADS 6'S",
+    "normalized": "WHISPER CHOICE ULTRA XL WINGS PADS 6'S",
+    "mfg": "null",
+    "packaging": "6 NO'S",
+    "strength": null
+  },
+  {
+    "id": 293763,
+    "name": "WHISPER PANT M 1 1",
+    "cleaned": "WHISPER PANT M 1 1",
+    "normalized": "WHISPER PANT M 1 1",
+    "mfg": "PANDG",
+    "packaging": "1",
+    "strength": null
+  },
+  {
+    "id": 293780,
+    "name": "WHITE TONE FACE POWDER 70GM",
+    "cleaned": "WHITE TONE FACE POWDER 70GM",
+    "normalized": "WHITE TONE FACE POWDER 70GM",
+    "mfg": "VINI COSMETICS PVT LTD",
+    "packaging": "70 G",
+    "strength": null
+  },
+  {
+    "id": 293792,
+    "name": "WIKORYL AF DROPS 10ML",
+    "cleaned": "WIKORYL AF DROPS 10ML",
+    "normalized": "WIKORYL AF DROPS 10ML",
+    "mfg": "ALEMBIC PHARMACEUTICALS",
+    "packaging": "10 ML",
+    "strength": null
+  },
+  {
+    "id": 293881,
+    "name": "YARDLE 135 POWDER 125GM",
+    "cleaned": "YARDLE 135 POWDER 125GM",
+    "normalized": "YARDLE POWDER 125GM",
+    "mfg": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "packaging": "125GM",
+    "strength": null
+  },
+  {
+    "id": 293888,
+    "name": "YARDLEY LONDON LACE SATIN TALC - 100 GM",
+    "cleaned": "YARDLEY LONDON LACE SATIN TALC - 100 GM",
+    "normalized": "YARDLEY LONDON LACE SATIN TALC - 100 GM",
+    "mfg": "WIPRO ENTERPRISES PVT LTD.",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 293889,
+    "name": "YARDLEY TALC ENG LAVENDER TALC 50 GM",
+    "cleaned": "YARDLEY TALC ENG LAVENDER TALC 50 GM",
+    "normalized": "YARDLEY TALC ENG LAVENDER TALC GM",
+    "mfg": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "packaging": "50 GM",
+    "strength": null
+  },
+  {
+    "id": 293890,
+    "name": "YARDLEY TALC GENTLEMAN TALC 50 GM",
+    "cleaned": "YARDLEY TALC GENTLEMAN TALC 50 GM",
+    "normalized": "YARDLEY TALC GENTLEMAN TALC GM",
+    "mfg": "RAYMOND PHARMACEUTICAL PVT LTD",
+    "packaging": "50 GM",
+    "strength": null
+  },
+  {
+    "id": 293902,
+    "name": "Z POWDER 100GM",
+    "cleaned": "Z POWDER 100GM",
+    "normalized": "Z POWDER 100GM",
+    "mfg": "ARGUS COSMETICS",
+    "packaging": "100 G",
+    "strength": null
+  },
+  {
+    "id": 293903,
+    "name": "Z POWDER 50GM",
+    "cleaned": "Z POWDER 50GM",
+    "normalized": "Z POWDER 50GM",
+    "mfg": "ARGUS COSMETICS",
+    "packaging": "50 G",
+    "strength": null
+  },
+  {
+    "id": 293913,
+    "name": "Z&D DRY SYP 20 ML",
+    "cleaned": "Z&D DRY SYP 20 ML",
+    "normalized": "Z&D DRY SYP 20 ML",
+    "mfg": "DS",
+    "packaging": "20 ML",
+    "strength": null
+  },
+  {
+    "id": 293927,
+    "name": "ZANDU 44 BALAM 15ML",
+    "cleaned": "ZANDU 44 BALAM 15ML",
+    "normalized": "ZANDU BALAM 15ML",
+    "mfg": "DR REDDY'S LABORATORIES LTD",
+    "packaging": "15ML",
+    "strength": null
+  },
+  {
+    "id": 293934,
+    "name": "ZANDU BALM 8ML",
+    "cleaned": "ZANDU BALM 8ML",
+    "normalized": "ZANDU BALM 8ML",
+    "mfg": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 293936,
+    "name": "ZANDU BALM SACHET 4.5ML",
+    "cleaned": "ZANDU BALM SACHET 4.5ML",
+    "normalized": "ZANDU BALM SACHET 4.5ML",
+    "mfg": "null",
+    "packaging": "4 ML",
+    "strength": null
+  },
+  {
+    "id": 293937,
+    "name": "ZANDU BALM TUBE 25GM",
+    "cleaned": "ZANDU BALM TUBE 25GM",
+    "normalized": "ZANDU BALM TUBE 25GM",
+    "mfg": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "packaging": "25 G",
+    "strength": null
+  },
+  {
+    "id": 293938,
+    "name": "ZANDU BAM  8GM",
+    "cleaned": "ZANDU BAM 8GM",
+    "normalized": "ZANDU BAM 8GM",
+    "mfg": "DR REDDY'S LABORATORIES LTD",
+    "packaging": "8GM",
+    "strength": null
+  },
+  {
+    "id": 293948,
+    "name": "ZANDU ULTRA POWER BALM 8 ML",
+    "cleaned": "ZANDU ULTRA POWER BALM 8 ML",
+    "normalized": "ZANDU ULTRA POWER BALM 8 ML",
+    "mfg": "ZANDU PHARMACEUTICALS WORKS LTD",
+    "packaging": "8 ML",
+    "strength": null
+  },
+  {
+    "id": 294011,
+    "name": "ZINDA TILISMATH LIQUID 15 ML",
+    "cleaned": "ZINDA TILISMATH LIQUID 15 ML",
+    "normalized": "ZINDA TILISMATH LIQUID ML",
+    "mfg": "KARKHANA ZINDA TILISMATH",
+    "packaging": "15 ML",
+    "strength": null
+  },
+  {
+    "id": 294039,
+    "name": "ZUKANORM M 50/500MG TABLET 10'S",
+    "cleaned": "ZUKANORM M 50/500MG TABLET 10'S",
+    "normalized": "ZUKANORM M 50/500MG TABLET 10'S",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "10 NO'S",
+    "strength": null
+  },
+  {
+    "id": 294072,
+    "name": "IBUGESIC PLUS SUSP 60ML",
+    "cleaned": "IBUGESIC PLUS SUSP 60ML",
+    "normalized": "IBUGESIC PLUS SUSP 60ML",
+    "mfg": "CIPLA LIMITED",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 294144,
+    "name": "CREMAFFIN MINT CONSTIPATION SYRUP  BOTTLE OF 200 ML",
+    "cleaned": "CREMAFFIN MINT CONSTIPATION SYRUP",
+    "normalized": "CREMAFFIN MINT CONSTIPATION SYRUP",
+    "mfg": "ABBOTT HEALTHCARE PVT LTD",
+    "packaging": "200 ML",
+    "strength": null
+  },
+  {
+    "id": 294174,
+    "name": "BOROLINE 10 CREAM 7GM",
+    "cleaned": "BOROLINE 10 CREAM 7GM",
+    "normalized": "BOROLINE CREAM 7GM",
+    "mfg": "BOROLINE",
+    "packaging": "7GM",
+    "strength": null
+  },
+  {
+    "id": 294184,
+    "name": "CODISTAR DX SYP 60ML",
+    "cleaned": "CODISTAR DX SYP 60ML",
+    "normalized": "CODISTAR DX SYP 60ML",
+    "mfg": "MANKIND PHARMACEUTICALS LTD",
+    "packaging": "60 ML",
+    "strength": null
+  },
+  {
+    "id": 294230,
+    "name": "SITOPALADI  CURN 30GM",
+    "cleaned": "SITOPALADI CURN 30GM",
+    "normalized": "SITOPALADI CURN 30GM",
+    "mfg": "BAIDYANATH CONSUMER LTD",
+    "packaging": "30GM",
+    "strength": null
+  },
+  {
+    "id": 294251,
+    "name": "DOXY 100MG STRIP OF 8 TABLETS",
+    "cleaned": "DOXY 100MG",
+    "normalized": "DOXY 100MG",
+    "mfg": "USV PVT LTD",
+    "packaging": "8 NO'S",
+    "strength": null
+  }
+]

@@ -10,6 +10,7 @@
     "dev:server:watch": "tsx watch --exclude \".wwebjs_auth/**\" --exclude \"pharmarack_profile/**\" --exclude \"data/**\" --exclude \"uploads/**\" --exclude \"dist/**\" --exclude \"dist-pkg/**\" --exclude \".understand-anything/**\" --exclude \"*.log\" --exclude \"crash_log*\" --exclude \"*.sqlite*\" --exclude \"*.db*\" src/bootstrap.ts",
     "dev:client": "npm run dev --prefix frontend",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests --forceExit",
+    "audit:images": "tsx scripts/audit_and_correct_catalog_images.mjs",
     "guardrails": "node scripts/performance-guardrails.mjs",
     "analyze:bundle": "node scripts/analyze-frontend-bundle.mjs",
     "drill": "node scripts/backup-restore-drill.mjs",

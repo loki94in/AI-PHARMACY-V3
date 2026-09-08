@@ -179,18 +179,61 @@ function readInventoryMedicines() {
   return products;
 }
 
+const GENERIC_CATEGORY_WORDS = new Set([
+  'adult', 'cotton', 'baby', 'surgical', 'dispo', 'disposable', 'bandage', 'gauze',
+  'gloves', 'mask', 'powder', 'soap', 'cream', 'oil', 'gel', 'shampoo', 'lotion',
+  'drops', 'syrup', 'tablet', 'capsule', 'injection', 'hot', 'cold', 'digital',
+  'test', 'kit', 'strip', 'blood', 'bp', 'pulse', 'balm', 'diaper', 'sanitary',
+  'pad', 'pads', 'roll', 'wool', 'needle', 'syringe', 'wipes', 'tape', 'paste'
+]);
+
 // Check if candidate product is a genuine brand match
 function isBrandMatch(query, candidateName) {
   if (!candidateName || !query) return false;
   const cleanQ = query.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
   const cleanCand = candidateName.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
-  const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 3 && !['tab', 'tablet', 'tablets', 'cap', 'capsule', 'capsules', 'syp', 'syrup', 'inj', 'injection', 'drop', 'drops', 'pack', 'bottle', 'strip'].includes(w));
-  if (qWords.length === 0) return true;
-  const brand = qWords[0];
+  const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 2 && !['tab', 'tablet', 'tablets', 'cap', 'capsule', 'capsules', 'syp', 'syrup', 'inj', 'injection', 'drop', 'drops', 'pack', 'bottle', 'strip', 'box'].includes(w));
+  if (qWords.length === 0) return false;
+
+  // Filter generic category words to find distinctive brand word
+  let brand = qWords.find(w => !GENERIC_CATEGORY_WORDS.has(w)) || qWords[0];
+  if (GENERIC_CATEGORY_WORDS.has(brand) && qWords.length === 1) {
+    // Lone generic word without distinctive brand cannot safely match
+    return false;
+  }
+
+  // Check special false matches (e.g. Vicks Vaporub matching Head & Shoulder or Vicks Inhaler)
+  if (cleanCand.includes('vicks vaporub') && !cleanQ.includes('vaporub') && !cleanQ.includes('balam') && !cleanQ.includes('balm')) {
+    return false;
+  }
+
   const candWords = new Set(cleanCand.split(/\s+/));
   const compactQ = cleanQ.replace(/\s+/g, '');
   const compactCand = cleanCand.replace(/\s+/g, '');
   return candWords.has(brand) || cleanCand.includes(brand) || compactCand.includes(brand);
+}
+
+// Check dosage form conflict
+function hasDosageConflict(query, candidateName) {
+  const q = query.toLowerCase();
+  const c = candidateName.toLowerCase();
+  const isQSyrup = /\b(syp|syrup|susp|suspension)\b/.test(q);
+  const isQTab = /\b(tab|tablet|tablets|dt)\b/.test(q);
+  const isQCap = /\b(cap|capsule|capsules)\b/.test(q);
+  const isQInj = /\b(inj|injection)\b/.test(q);
+  const isQTop = /\b(gel|cream|ointment)\b/.test(q);
+
+  const isCTab = /\b(tab|tablet|tablets)\b/.test(c);
+  const isCCap = /\b(cap|capsule|capsules)\b/.test(c);
+  const isCSyp = /\b(syp|syrup|susp|suspension)\b/.test(c);
+  const isCInj = /\b(inj|injection)\b/.test(c);
+  const isCTop = /\b(gel|cream|ointment)\b/.test(c);
+
+  if (isQSyrup && (isCTab || isCCap || isCInj)) return true;
+  if (isQTab && (isCSyp || isCInj || isCTop)) return true;
+  if (isQCap && (isCSyp || isCInj || isCTop)) return true;
+  if (isQInj && (isCTab || isCCap || isCSyp)) return true;
+  return false;
 }
 
 // Fetch images for a medicine from PharmEasy CDN API, prioritizing maximum views (front, back, side, combo)
@@ -212,15 +255,19 @@ async function fetchImagesForMedicine(query) {
   const prods = data?.data?.products || [];
   if (prods.length === 0) return null;
 
-  // Filter candidates that have images
-  const candidatesWithImages = prods.filter(c => (c.damImages && c.damImages.length > 0) || Boolean(c.image));
+  // Filter candidates that have images AND genuinely match the brand without dosage conflict
+  const candidatesWithImages = prods.filter(c => {
+    const hasImg = (c.damImages && c.damImages.length > 0) || Boolean(c.image);
+    if (!hasImg) return false;
+    if (!isBrandMatch(query, c.name)) return false;
+    if (hasDosageConflict(query, c.name)) return false;
+    return true;
+  });
+
   if (candidatesWithImages.length === 0) return null;
 
-  // Sort: brand matches first, then candidate with the highest number of angles (front, back, side, combo)
+  // Sort by candidate with the highest number of angles (front, back, side, combo)
   candidatesWithImages.sort((a, b) => {
-    const aBrand = isBrandMatch(query, a.name) ? 1 : 0;
-    const bBrand = isBrandMatch(query, b.name) ? 1 : 0;
-    if (aBrand !== bBrand) return bBrand - aBrand;
     const aImgs = a.damImages?.length || (a.image ? 1 : 0);
     const bImgs = b.damImages?.length || (b.image ? 1 : 0);
     return bImgs - aImgs;
