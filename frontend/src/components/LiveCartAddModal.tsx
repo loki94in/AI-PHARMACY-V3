@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap, WifiOff } from 'lucide-react';
+import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, Store, Tag, Zap, WifiOff, Trash2 } from 'lucide-react';
 import { api, type SpecialOrder, type Refill } from '../services/api';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -870,6 +870,76 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       setIsRefreshing(false);
     }
   };
+
+  const [deletingCartKey, setDeletingCartKey] = useState<string | null>(null);
+
+  const handleDeleteLiveCartItem = async (dist: Distributor, item: CartLineItem) => {
+    const itemKey = `${dist.storeId}_${item.productCode || item.productId || item.productName}`;
+    if (deletingCartKey === itemKey) return;
+    setDeletingCartKey(itemKey);
+
+    // 1. Optimistic UI update in modal
+    setCartDistributors(prev => {
+      const next = prev.map(d => {
+        if (d.storeId !== dist.storeId) return d;
+        const remaining = d.items.filter(i =>
+          (item.productCode && i.productCode === item.productCode)
+            ? false
+            : (item.productId && i.productId === item.productId)
+              ? false
+              : i.productName !== item.productName
+        );
+        return {
+          ...d,
+          items: remaining,
+          lineTotal: remaining.reduce((sum, it) => sum + ((it.ptr || 0) * (it.qty || 1)), 0)
+        };
+      }).filter(d => d.items.length > 0);
+      cachedCartDistributors = next;
+      return next;
+    });
+
+    toastEvent.trigger(`Removing "${item.productName}" from live cart...`, 'info');
+
+    // 2. Call delete API
+    try {
+      const res = await api.deletePharmarackCartItem({
+        storeId: dist.storeId,
+        productId: item.productId,
+        productCode: item.productCode,
+        productName: item.productName,
+        company: item.company,
+        packaging: item.packaging,
+        ptr: item.ptr,
+        mrp: item.mrp,
+        storeName: dist.storeName
+      });
+      if (res && res.success) {
+        toastEvent.trigger(`Removed "${item.productName}" from live cart`, 'success');
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      } else {
+        toastEvent.trigger(res?.error || 'Failed to remove from live cart', 'error');
+        fetchLiveCartSummary(true);
+      }
+    } catch (err: unknown) {
+      console.warn('Delete cart item error in modal:', err);
+      toastEvent.trigger('Failed to remove item from live cart', 'error');
+      fetchLiveCartSummary(true);
+    } finally {
+      setDeletingCartKey(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleCartChanged = () => {
+      fetchLiveCartSummary(true);
+    };
+    window.addEventListener('refresh-pharmarack-cart', handleCartChanged);
+    return () => {
+      window.removeEventListener('refresh-pharmarack-cart', handleCartChanged);
+    };
+  }, [isOpen]);
 
   const checkSession = useCallback(async () => {
     try {
@@ -2660,7 +2730,24 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                             </span>
                           </div>
                           <div className="text-right shrink-0 flex flex-col items-end">
-                            <span className="font-bold text-text">Qty: {item.qty}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-text">Qty: {item.qty}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteLiveCartItem(dist, item);
+                                }}
+                                title={`Delete ${item.productName} from live cart`}
+                                className="p-0.5 rounded text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                              >
+                                {deletingCartKey === `${dist.storeId}_${item.productCode || item.productId || item.productName}` ? (
+                                  <Loader2 size={12} className="animate-spin text-rose-400" />
+                                ) : (
+                                  <Trash2 size={12} />
+                                )}
+                              </button>
+                            </div>
                             {item.ptr > 0 && <span className="text-[9px] text-muted font-mono mt-0.5">₹{(item.ptr * item.qty).toFixed(2)}</span>}
                           </div>
                         </div>
