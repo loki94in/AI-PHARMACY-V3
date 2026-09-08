@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown } from 'lucide-react';
+import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown, Truck } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
+import { useStore } from '../context/StoreContext';
 
 // Indian Public & National Holidays (2025-2027 reference)
 const INDIAN_HOLIDAYS: Record<string, string> = {
@@ -81,13 +82,19 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     return [];
   });
 
+  // Active store context for per-store ordering and delivery management
+  const { activeStore } = useStore();
+
   // Timer Pacing state (seconds)
   const [timerSec, setTimerSec] = useState<number>(10);
 
-  // Pharmacy Operating Hours & Weekly Off Day state
+  // Pharmacy Operating Hours, Weekly Off Day & Delivery Timetable state
   const [shopWeeklyOff, setShopWeeklyOff] = useState<string>('Monday');
   const [shopOpenTime, setShopOpenTime] = useState<string>('09:00');
   const [shopCloseTime, setShopCloseTime] = useState<string>('22:00');
+  const [cutoffTime, setCutoffTime] = useState<string>('23:00');
+  const [deliveryStart, setDeliveryStart] = useState<string>('19:00');
+  const [deliveryEnd, setDeliveryEnd] = useState<string>('21:00');
   const [pharmacyClosedDates, setPharmacyClosedDates] = useState<string[]>([]);
 
   // Month Calendar Popover State
@@ -124,6 +131,11 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           if (res.data.pharmacy_weekly_off) setShopWeeklyOff(res.data.pharmacy_weekly_off);
           if (res.data.pharmacy_open_time) setShopOpenTime(res.data.pharmacy_open_time);
           if (res.data.pharmacy_close_time) setShopCloseTime(res.data.pharmacy_close_time);
+          if (res.data.pharmacy_cutoff_time || res.data.order_cutoff_time) {
+            setCutoffTime(res.data.pharmacy_cutoff_time || res.data.order_cutoff_time);
+          }
+          if (res.data.delivery_window_start) setDeliveryStart(res.data.delivery_window_start);
+          if (res.data.delivery_window_end) setDeliveryEnd(res.data.delivery_window_end);
           if (res.data.pharmacy_closed_dates) {
             try {
               setPharmacyClosedDates(JSON.parse(res.data.pharmacy_closed_dates));
@@ -203,6 +215,27 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     }).catch(() => {});
   };
 
+  const handleCutoffChange = (cutoff: string) => {
+    setCutoffTime(cutoff);
+    apiClient.post('/settings/save', {
+      pharmacy_cutoff_time: cutoff,
+      order_cutoff_time: cutoff
+    }).then(() => {
+      toastEvent.trigger(`Order cutoff time set to ${cutoff}`, 'info');
+    }).catch(() => {});
+  };
+
+  const handleDeliveryWindowChange = (start: string, end: string) => {
+    setDeliveryStart(start);
+    setDeliveryEnd(end);
+    apiClient.post('/settings/save', {
+      delivery_window_start: start,
+      delivery_window_end: end
+    }).then(() => {
+      toastEvent.trigger(`Delivery timetable window set: ${start} - ${end}`, 'info');
+    }).catch(() => {});
+  };
+
   const togglePauseDate = (dateStr: string) => {
     if (pausedDates.includes(dateStr)) {
       const updated = pausedDates.filter(d => d !== dateStr);
@@ -221,13 +254,13 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     toastEvent.trigger(`Auto-send delay set to ${sec}s per order`, 'info');
   };
 
-  // Generate 21-day rolling date strip (-3 days ago to +17 days ahead)
+  // Generate 60-day rolling date strip (-7 days ago to +52 days ahead to fill widescreen displays)
   const dateCards = useMemo(() => {
     const cards: DateCardItem[] = [];
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-    for (let offset = -3; offset <= 17; offset++) {
+    for (let offset = -7; offset <= 52; offset++) {
       const d = new Date(now);
       d.setDate(now.getDate() + offset);
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -267,13 +300,13 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
   const scrollLeft = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: -220, behavior: 'smooth' });
+      scrollContainerRef.current.scrollBy({ left: -320, behavior: 'smooth' });
     }
   };
 
   const scrollRight = () => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: 220, behavior: 'smooth' });
+      scrollContainerRef.current.scrollBy({ left: 320, behavior: 'smooth' });
     }
   };
 
@@ -402,12 +435,20 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
 
       {/* Pharmacy Schedule & Operating Hours Strip */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1 bg-bg3/30 rounded-xl border border-glass-border/30 text-xs">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Active Store Indicator */}
+          {activeStore && (
+            <div className="flex items-center gap-1 text-[11px] font-bold text-text bg-bg px-2 py-0.5 rounded-lg border border-border/80 shadow-2xs">
+              <Store size={12} className="text-primary shrink-0" />
+              <span className="truncate max-w-[120px]">{activeStore.name}</span>
+            </div>
+          )}
+
           {/* Shop Off Calendar Popover Trigger */}
           <div className="relative" ref={calendarPopoverRef}>
             <div className="flex items-center gap-1.5">
               <Store size={13} className="text-emerald-600 shrink-0" />
-              <span className="text-[11px] font-bold text-muted">Shop Off Day:</span>
+              <span className="text-[11px] font-bold text-muted">Shop Off:</span>
               <button
                 type="button"
                 onClick={() => setIsCalendarOpen(prev => !prev)}
@@ -657,60 +698,103 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           </div>
 
           {/* Shop Hours: Open - Close */}
-          <div className="flex items-center gap-1.5">
-            <Clock size={13} className="text-emerald-600 shrink-0" />
-            <span className="text-[11px] font-bold text-muted">Store Hours:</span>
+          <div className="flex items-center gap-1">
+            <Clock size={12} className="text-emerald-600 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Store:</span>
             <input
               type="time"
               value={shopOpenTime}
               onChange={(e) => handleTimeChange(e.target.value, shopCloseTime)}
               className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
+              title="Store Open Time"
             />
-            <span className="text-muted text-[10px] font-bold">to</span>
+            <span className="text-muted text-[10px] font-bold">-</span>
             <input
               type="time"
               value={shopCloseTime}
               onChange={(e) => handleTimeChange(shopOpenTime, e.target.value)}
               className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
+              title="Store Close Time"
+            />
+          </div>
+
+          {/* Order Cutoff Time */}
+          <div className="flex items-center gap-1">
+            <Clock size={12} className="text-amber-500 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Cutoff:</span>
+            <input
+              type="time"
+              value={cutoffTime}
+              onChange={(e) => handleCutoffChange(e.target.value)}
+              className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
+              title="Order Cutoff Time (Orders after this rollover to next delivery)"
+            />
+          </div>
+
+          {/* Delivery Timetable Window */}
+          <div className="flex items-center gap-1">
+            <Truck size={12} className="text-sky-500 shrink-0" />
+            <span className="text-[11px] font-bold text-muted">Delivery:</span>
+            <input
+              type="time"
+              value={deliveryStart}
+              onChange={(e) => handleDeliveryWindowChange(e.target.value, deliveryEnd)}
+              className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
+              title="Delivery Window Start Time"
+            />
+            <span className="text-muted text-[10px] font-bold">-</span>
+            <input
+              type="time"
+              value={deliveryEnd}
+              onChange={(e) => handleDeliveryWindowChange(deliveryStart, e.target.value)}
+              className="bg-bg border border-border rounded-lg px-1.5 py-0.5 text-[11px] font-mono font-bold text-text focus:outline-none focus:border-primary shadow-2xs"
+              title="Delivery Window End Time"
             />
           </div>
         </div>
 
         {/* Legend / Status Info */}
-        <div className="flex items-center gap-3 text-[10px] text-muted font-medium flex-wrap">
+        <div className="flex items-center gap-2.5 text-[10px] text-muted font-medium flex-wrap">
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-            <span>Auto Dispatch</span>
+            <span>Auto</span>
           </span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
-            <span>Distributor Paused</span>
+            <span>Paused</span>
           </span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span>
-            <span>Shop Closed / Holiday</span>
+            <span>Off / Sun</span>
           </span>
-          <span className="text-[10px] text-muted/70 italic hidden xl:inline">
-            (Click any day to pause/resume dispatch)
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-sky-500 inline-block"></span>
+            <span>Today</span>
           </span>
         </div>
       </div>
 
-      {/* Date Strip: Modern Calendar Day Tiles with High Contrast & Smooth Scrolling */}
-      <div className="relative flex items-center w-full min-w-0">
+      {/* Date Strip: Compact Number-Only Bar (Direct Click to Pause/Resume) */}
+      <div className="relative flex items-center w-full min-w-0 bg-bg3/20 rounded-xl px-1.5 py-1 border border-glass-border/30">
         <button
           type="button"
           onClick={scrollLeft}
-          className="shrink-0 p-1 mr-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
+          className="shrink-0 p-1 mr-1.5 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
           title="Scroll earlier dates"
         >
-          <ChevronLeft size={14} />
+          <ChevronLeft size={13} />
         </button>
+
+        {/* Current Month & Year Indicator */}
+        <div className="shrink-0 hidden sm:flex items-center gap-1 mr-2 px-2.5 py-1 rounded-lg bg-bg border border-border/70 text-[11px] font-bold text-muted shadow-2xs">
+          <Calendar size={12} className="text-primary shrink-0" />
+          <span>{new Date().toLocaleDateString('en-IN', { month: 'short' })} {new Date().getFullYear()}</span>
+        </div>
 
         <div
           ref={scrollContainerRef}
           onWheel={handleWheel}
-          className="flex-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-1 px-0.5 min-w-0"
+          className="flex-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-0.5 px-0.5 min-w-0"
         >
           {dateCards.map((card) => {
             const isRed = card.isSunday || Boolean(card.holidayName) || card.isShopClosed;
@@ -722,101 +806,52 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
                 type="button"
                 onClick={() => togglePauseDate(card.dateStr)}
                 className={`
-                  group relative shrink-0 flex flex-col items-center justify-between
-                  w-[68px] sm:w-[72px] h-[64px] py-1.5 px-1 rounded-xl border
-                  transition-all duration-150 cursor-pointer select-none text-center
+                  group relative shrink-0 flex items-center justify-center
+                  w-9 h-9 rounded-lg border transition-all duration-150 cursor-pointer select-none
                   ${card.isPaused
-                    ? 'bg-amber-500/10 border-amber-500/60 ring-1 ring-amber-500/30 hover:border-amber-500 shadow-2xs hover:shadow-xs'
+                    ? 'bg-amber-500/20 text-amber-600 border-amber-400 font-black shadow-2xs ring-1 ring-amber-400/40 hover:bg-amber-500/30'
                     : card.isToday
-                      ? 'bg-sky-500/10 border-sky-500 ring-2 ring-sky-500/30 shadow-xs'
-                      : card.isShopClosed
-                        ? 'bg-rose-500/10 border-rose-400/50 hover:border-rose-400 shadow-2xs'
-                        : isRed
-                          ? 'bg-rose-500/5 border-rose-300/50 hover:border-rose-400 shadow-2xs'
-                          : 'bg-bg hover:bg-bg2 border-border hover:border-glass-border shadow-2xs hover:shadow-xs'
+                      ? 'bg-sky-500/20 text-sky-700 border-sky-500 ring-2 ring-sky-400/50 font-black hover:bg-sky-500/30'
+                      : card.isShopClosed || isRed
+                        ? 'bg-rose-500/15 text-rose-600 border-rose-400/40 font-black hover:bg-rose-500/25'
+                        : 'bg-bg hover:bg-bg2 border-border hover:border-glass-border text-text font-bold'
                   }
-                  hover:-translate-y-0.5 active:scale-95
+                  hover:scale-105 active:scale-95
                 `}
                 title={`${card.dayName}, ${card.dateNum} ${card.monthName} ${card.dateStr.split('-')[0]} ${
-                  card.isShopClosed
-                    ? '• Shop Closed'
-                    : card.holidayName
-                      ? `• ${card.holidayName}`
-                      : card.isSunday
-                        ? '• Sunday'
-                        : '• Auto-dispatch Active'
-                } — Click to ${card.isPaused ? 'resume auto-dispatch' : 'pause auto-dispatch'}`}
+                  card.isPaused
+                    ? '• PAUSED'
+                    : card.isShopClosed
+                      ? '• Shop Closed'
+                      : card.holidayName
+                        ? `• Holiday: ${card.holidayName}`
+                        : card.isSunday
+                          ? '• Sunday'
+                          : '• Auto-dispatch Active'
+                } — Click to ${card.isPaused ? 'RESUME auto-dispatch' : 'PAUSE auto-dispatch'}`}
               >
-                {/* Top: Day name + Month */}
-                <div className="w-full flex items-center justify-between px-1 leading-none">
-                  <span
-                    className={`text-[10px] font-black uppercase tracking-wider ${
-                      card.isPaused
-                        ? 'text-amber-700'
-                        : card.isToday
-                          ? 'text-sky-700'
-                          : card.isShopClosed || isRed
-                            ? 'text-rose-600'
-                            : 'text-muted'
-                    }`}
-                  >
-                    {card.dayName}
-                  </span>
-                  <span
-                    className={`text-[9px] font-semibold ${
-                      card.isToday ? 'text-sky-600 font-bold' : 'text-muted/80'
-                    }`}
-                  >
-                    {card.monthName}
-                  </span>
-                </div>
-
-                {/* Middle: Date Number */}
-                <div className="flex items-center justify-center -my-0.5">
-                  <span
-                    className={`text-base font-black leading-none tracking-tight ${
-                      card.isPaused
-                        ? 'text-amber-800'
-                        : card.isToday
-                          ? 'text-sky-800'
-                          : card.isShopClosed || isRed
-                            ? 'text-rose-700'
-                            : 'text-text'
-                    }`}
-                  >
+                {/* Day Number (with tiny Month tag on 1st of each month) */}
+                <div className="flex flex-col items-center justify-center leading-none">
+                  {card.dateNum === 1 && (
+                    <span className="text-[7px] font-black uppercase tracking-tighter opacity-80 leading-none mb-0.5">
+                      {card.monthName}
+                    </span>
+                  )}
+                  <span className="text-xs font-black leading-none">
                     {card.dateNum}
                   </span>
                 </div>
 
-                {/* Bottom: Status Badge */}
-                <div className="w-full flex items-center justify-center px-0.5">
+                {/* State Micro-Indicator Dot */}
+                <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center pointer-events-none">
                   {card.isPaused ? (
-                    <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8px] font-black bg-amber-500 text-white uppercase tracking-wider leading-tight shadow-2xs">
-                      <Pause size={7} strokeWidth={3} /> Paused
-                    </span>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 border border-bg shadow-2xs"></span>
                   ) : card.isToday ? (
-                    <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[8px] font-black bg-sky-500 text-white uppercase tracking-wider leading-tight shadow-2xs">
-                      Today
-                    </span>
-                  ) : card.isShopClosed ? (
-                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-black bg-red-500 text-white uppercase tracking-wider leading-tight truncate max-w-[58px]">
-                      Shop Off
-                    </span>
-                  ) : card.holidayName ? (
-                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-bold bg-rose-100 text-rose-700 border border-rose-300/60 leading-tight truncate max-w-[58px]">
-                      {card.holidayName}
-                    </span>
-                  ) : card.isSunday ? (
-                    <span className="inline-flex items-center px-1 py-0.2 rounded text-[8px] font-bold bg-rose-100 text-rose-700 border border-rose-300/60 leading-tight">
-                      Sunday
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[8px] font-extrabold text-emerald-600 leading-tight">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      <span>Auto</span>
-                    </span>
-                  )}
-                </div>
+                    <span className="w-2 h-2 rounded-full bg-sky-500 border border-bg shadow-2xs"></span>
+                  ) : card.isShopClosed || isRed ? (
+                    <span className="w-2 h-2 rounded-full bg-rose-500 border border-bg shadow-2xs"></span>
+                  ) : null}
+                </span>
               </button>
             );
           })}
@@ -825,10 +860,10 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         <button
           type="button"
           onClick={scrollRight}
-          className="shrink-0 p-1 ml-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
+          className="shrink-0 p-1 ml-1.5 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
           title="Scroll later dates"
         >
-          <ChevronRight size={14} />
+          <ChevronRight size={13} />
         </button>
       </div>
 
