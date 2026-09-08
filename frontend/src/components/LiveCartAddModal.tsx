@@ -337,9 +337,18 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [isOpen, setIsOpen] = useState(true);
   
   const handleClose = () => {
+    setPendingAdds([]);
+    pendingAddsCache.length = 0;
     setIsOpen(false);
     onClose();
   };
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPendingAdds([]);
+      pendingAddsCache.length = 0;
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     // Proactively pre-warm WhatsApp and Pharmarack session when user opens Live Cart modal
@@ -753,23 +762,43 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     }
   };
 
-  const getRefillItemInCart = (refill: Refill) => {
-    const refillName = refill.medicine_name || '';
+  const cartLookup = useMemo(() => {
+    const exactNameMap = new Map<string, any>();
+    for (const dist of cartDistributors) {
+      for (const item of dist.items || []) {
+        const name = (item.productName || '').trim().toLowerCase();
+        if (name && !exactNameMap.has(name)) {
+          exactNameMap.set(name, { ...item, distributor: dist.storeName });
+        }
+      }
+    }
+    return exactNameMap;
+  }, [cartDistributors]);
+
+  const getRefillItemInCart = useCallback((refill: Refill) => {
+    const refillName = (refill.medicine_name || '').trim().toLowerCase();
     if (!refillName) return null;
+    const exact = cartLookup.get(refillName);
+    if (exact) return exact;
     const { matchedItem, result } = findBestCartMatchForOrder({ product: refillName }, cartDistributors);
     if (result && result.isMatch) {
       return matchedItem;
     }
     return null;
-  };
+  }, [cartLookup, cartDistributors]);
 
-  const getOrderCartMatch = (order: SpecialOrder) => {
+  const getOrderCartMatch = useCallback((order: SpecialOrder) => {
+    const orderName = (order.product || '').trim().toLowerCase();
+    const exact = cartLookup.get(orderName);
+    if (exact) {
+      return { item: exact, result: { isMatch: true, score: 100 } };
+    }
     const { matchedItem, result } = findBestCartMatchForOrder(order, cartDistributors);
     if (result && result.isMatch) {
       return { item: matchedItem, result };
     }
     return null;
-  };
+  }, [cartLookup, cartDistributors]);
 
   const autocompleteRef = useRef<HTMLDivElement>(null);
   const productInputRef = useRef<HTMLInputElement>(null);
@@ -1438,7 +1467,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       hadSourceRefill: activeSourceRefillId !== undefined
     };
     setPendingAdds(prev => {
-      const next = [...prev, record];
+      const next = [...prev, record].slice(-2);
       syncPendingAddsCache(next);
       return next;
     });
@@ -1519,11 +1548,35 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     });
   }, [reconOrders, addedReconMedicines, isItemSkipped]);
 
+  const orderCartMatches = useMemo(() => {
+    const map = new Map<number, { item: any; result: any }>();
+    if (cartDistributors.length === 0 || pendingOrders.length === 0) return map;
+    for (const order of pendingOrders) {
+      const match = getOrderCartMatch(order);
+      if (match?.item) {
+        map.set(order.id, match);
+      }
+    }
+    return map;
+  }, [pendingOrders, cartDistributors, getOrderCartMatch]);
+
+  const refillCartMatches = useMemo(() => {
+    const map = new Map<number | string, any>();
+    if (cartDistributors.length === 0 || pendingRefills.length === 0) return map;
+    for (const refill of pendingRefills) {
+      const matched = getRefillItemInCart(refill);
+      if (matched) {
+        map.set(refill.id, matched);
+      }
+    }
+    return map;
+  }, [pendingRefills, cartDistributors, getRefillItemInCart]);
+
   const specialOrderRows = useMemo(() => {
     return pendingOrders.map(order => {
       const itemKey = `order-${order.id}`;
       const isSkipped = isItemSkipped(itemKey, order.product);
-      const cartMatch = getOrderCartMatch(order);
+      const cartMatch = orderCartMatches.get(order.id);
       const inCart = Boolean(cartMatch?.item);
       const matchScore = cartMatch?.result?.score || 0;
       return {
@@ -1535,13 +1588,13 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         matchScore
       };
     });
-  }, [pendingOrders, isItemSkipped, cartDistributors]);
+  }, [pendingOrders, isItemSkipped, orderCartMatches]);
 
   const refillRows = useMemo(() => {
     return pendingRefills.map(refill => {
       const itemKey = `refill-${refill.id}`;
       const isSkipped = isItemSkipped(itemKey, refill.medicine_name || '');
-      const inCart = Boolean(getRefillItemInCart(refill));
+      const inCart = Boolean(refillCartMatches.get(refill.id));
       const refillQty = Math.max(1, Number(refill.quantity_needed) || 1);
       return {
         category: 'refill' as const,
@@ -1552,7 +1605,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         refillQty
       };
     });
-  }, [pendingRefills, isItemSkipped, cartDistributors]);
+  }, [pendingRefills, isItemSkipped, refillCartMatches]);
 
   const minStockRows = useMemo(() => {
     return autoRefillItems.map(item => {
@@ -2296,10 +2349,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               {/* Form Body */}
               <form id="live-cart-add-form" onSubmit={handleSubmit} className="space-y-4">
 
-                {/* Stage-style pending adds: truthful adding → added / failed+Retry */}
+                {/* Stage-style pending adds: truthful adding → added / failed+Retry (capped to 2, clean compact display) */}
                 {pendingAdds.length > 0 && (
-                  <div className="flex flex-col gap-1.5 max-h-[92px] overflow-y-auto scrollbar-thin">
-                    {pendingAdds.map(pa => (
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    {pendingAdds.slice(-2).map(pa => (
                       <div
                         key={pa.id}
                         className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${
