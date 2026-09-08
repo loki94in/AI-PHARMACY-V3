@@ -32,6 +32,7 @@ import {
   Building2,
   Clock,
   Edit,
+  Edit3,
   Menu,
   Truck,
   Package,
@@ -76,6 +77,8 @@ const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { StoreSelector } from './StoreSelector';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
+import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
+import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
 import { api, apiClient, isCompactInventoryCacheReady, setCompactInventoryCache } from '../services/api';
 import type { SpecialOrder, Refill, AutomationNotification } from '../services/api';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -2342,6 +2345,7 @@ const QuickAssistSidebar = memo(({
     phone?: string;
     items: Array<{ id: number; product: string; qty: number }>;
   } | null>(null);
+  const [editingGroup, setEditingGroup] = useState<QuickAssistEditGroup | null>(null);
 
   // Expand / collapse state for grouped patients (collapsed by default)
   const [expandedRefillKeys, setExpandedRefillKeys] = useState<Set<string>>(new Set());
@@ -2386,11 +2390,27 @@ const QuickAssistSidebar = memo(({
     });
   };
 
-  useOnClickOutside(sidebarRef, () => {
+  useOnClickOutside(sidebarRef, (event) => {
+    // Do not collapse sidebar if an edit or arrival modal is currently open
+    if (arrivalModalGroup || editingGroup) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.z-modal, [role="dialog"], .glass-panel, [data-modal]')) {
+      return;
+    }
     if (expanded) {
       setExpanded(false);
     }
   });
+
+  // Clear modal states whenever the sidebar collapses
+  useEffect(() => {
+    if (!expanded) {
+      setEditingGroup(null);
+      setArrivalModalGroup(null);
+    }
+  }, [expanded]);
 
   const handleAcknowledgeAll = async (items: Array<{ id: number; hold_for_stock: number }>) => {
     try {
@@ -2999,7 +3019,11 @@ const QuickAssistSidebar = memo(({
 
     return (
       <div
-        onClick={() => setExpanded(true)}
+        onClick={() => {
+          setEditingGroup(null);
+          setArrivalModalGroup(null);
+          setExpanded(true);
+        }}
         className="w-10 h-full min-h-0 overflow-hidden bg-bg2 border-l border-border flex flex-col items-center py-4 gap-4 hover:bg-bg3 hover:text-text transition-all duration-200 cursor-pointer shrink-0 z-20 select-none shadow-sm"
         title="Expand Quick Assist"
       >
@@ -3296,6 +3320,31 @@ const QuickAssistSidebar = memo(({
                           <Check size={10} />
                           <span>Complete All</span>
                         </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingGroup({
+                              type: 'refill',
+                              title: 'Edit Refill Schedule',
+                              customerName: group.patient_name,
+                              customerPhone: group.patient_phone || '',
+                              items: group.medicines.map(m => ({
+                                id: m.id,
+                                product: m.medicine_name,
+                                qty: m.quantity_needed,
+                                interval_days: m.refill_interval_days,
+                                hold_for_stock: m.hold_for_stock,
+                                next_refill_date: m.next_refill_date
+                              }))
+                            });
+                          }}
+                          className="py-0.5 px-2 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border text-[9px] font-bold uppercase transition-colors flex items-center gap-1 cursor-pointer"
+                          title={`Edit refill details for ${group.patient_name}`}
+                        >
+                          <Edit3 size={10} />
+                          <span>Edit</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -3418,6 +3467,32 @@ const QuickAssistSidebar = memo(({
                       >
                         {isProcessing ? <Loader2 size={11} className="animate-spin" /> : <ShoppingCart size={11} />}
                         Bill in POS
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingGroup({
+                            type: 'website_order',
+                            title: 'Edit Website Order',
+                            customerName: group.requester,
+                            customerPhone: group.phone || '',
+                            items: group.items.map(i => ({
+                              id: i.id,
+                              product: i.product,
+                              qty: i.qty,
+                              status: i.status,
+                              priority: i.priority,
+                              notes: i.notes || ''
+                            }))
+                          });
+                        }}
+                        className="py-1 px-2 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                        title="Edit website order details"
+                      >
+                        <Edit3 size={11} />
+                        <span>Edit</span>
                       </button>
                       <button
                         disabled={isProcessing}
@@ -3608,6 +3683,32 @@ const QuickAssistSidebar = memo(({
                         </>
                       )}
                       <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingGroup({
+                            type: 'special_request',
+                            title: 'Edit Special Request',
+                            customerName: group.requester,
+                            customerPhone: group.phone || '',
+                            items: group.items.map(i => ({
+                              id: i.id,
+                              product: i.product,
+                              qty: i.qty,
+                              status: i.status,
+                              priority: i.priority,
+                              notes: (i as any).notes || ''
+                            }))
+                          });
+                        }}
+                        className="py-1 px-2 rounded bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border disabled:opacity-50 text-[10px] font-bold tracking-wide uppercase transition-colors flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                        title="Edit special request details, quantities, or arrival/delay status"
+                      >
+                        <Edit3 size={11} />
+                        <span>Edit</span>
+                      </button>
+                      <button
                         disabled={isProcessing}
                         onClick={() => handleUpdateGroupStatus(group, 'Cancelled')}
                         className="py-1 px-2 rounded bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-500 text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
@@ -3728,6 +3829,27 @@ const QuickAssistSidebar = memo(({
               queryClient.invalidateQueries({ queryKey: ['orders'] });
               specialOrdersEvent.triggerUpdated();
               window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+              onActionComplete();
+            }}
+          />
+        )}
+        {editingGroup && (
+          <QuickAssistOrderEditModal
+            isOpen={!!editingGroup}
+            onClose={() => setEditingGroup(null)}
+            editGroup={editingGroup}
+            onOpenArrivalModal={(arrGroup) => {
+              setEditingGroup(null);
+              setArrivalModalGroup(arrGroup);
+            }}
+            onSuccess={() => {
+              setEditingGroup(null);
+              queryClient.invalidateQueries({ queryKey: ['orders'] });
+              queryClient.invalidateQueries({ queryKey: ['refills'] });
+              specialOrdersEvent.triggerUpdated();
+              refillEvent.triggerRefresh();
+              window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+              window.dispatchEvent(new CustomEvent('refresh-refills'));
               onActionComplete();
             }}
           />
