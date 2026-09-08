@@ -298,17 +298,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     }
   }, []);
 
-  const scrollLeft = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: -320, behavior: 'smooth' });
-    }
-  };
 
-  const scrollRight = () => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollBy({ left: 320, behavior: 'smooth' });
-    }
-  };
 
   const scrollToToday = () => {
     if (todayCardRef.current && scrollContainerRef.current) {
@@ -774,17 +764,8 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         </div>
       </div>
 
-      {/* Date Strip: Compact Number-Only Bar (Direct Click to Pause/Resume) */}
-      <div className="relative flex items-center w-full min-w-0 bg-bg3/20 rounded-xl px-1.5 py-1 border border-glass-border/30">
-        <button
-          type="button"
-          onClick={scrollLeft}
-          className="shrink-0 p-1 mr-1.5 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
-          title="Scroll earlier dates"
-        >
-          <ChevronLeft size={13} />
-        </button>
-
+      {/* Date Strip: Clean Number-Only Bar (Direct Click to Pause/Resume, No Sliding Bar) */}
+      <div className="relative flex items-center w-full min-w-0 bg-bg3/20 rounded-xl px-2 py-1 border border-glass-border/30">
         {/* Current Month & Year Indicator */}
         <div className="shrink-0 hidden sm:flex items-center gap-1 mr-2 px-2.5 py-1 rounded-lg bg-bg border border-border/70 text-[11px] font-bold text-muted shadow-2xs">
           <Calendar size={12} className="text-primary shrink-0" />
@@ -794,7 +775,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
         <div
           ref={scrollContainerRef}
           onWheel={handleWheel}
-          className="flex-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar scroll-smooth py-0.5 px-0.5 min-w-0"
+          className="flex-1 flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden scroll-smooth py-0.5 px-0.5 min-w-0"
         >
           {dateCards.map((card) => {
             const isRed = card.isSunday || Boolean(card.holidayName) || card.isShopClosed;
@@ -856,15 +837,6 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             );
           })}
         </div>
-
-        <button
-          type="button"
-          onClick={scrollRight}
-          className="shrink-0 p-1 ml-1.5 rounded-lg bg-bg border border-border hover:bg-bg2 text-muted hover:text-text transition-all shadow-2xs cursor-pointer z-10"
-          title="Scroll later dates"
-        >
-          <ChevronRight size={13} />
-        </button>
       </div>
 
     </div>
