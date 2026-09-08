@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
+import { StoreSelector } from '../../components/StoreSelector';
 import { toastEvent } from '../../services/events';
 
 // Module-level state cache for instant SPA re-hydration
@@ -340,12 +341,9 @@ export default function WebsiteOrders() {
           </div>
         </div>
 
-        {/* Store Badge & Refresh */}
+        {/* Store Selector & Refresh */}
         <div className="flex items-center gap-2 self-start lg:self-auto">
-          <div className="px-3 py-1.5 rounded-xl bg-bg2 border border-border flex items-center gap-2 text-xs font-semibold text-text">
-            <StoreIcon size={14} className="text-primary" />
-            <span>Active Store: <strong className="text-primary">{activeStore?.name || `Store #${activeStoreId}`}</strong></span>
-          </div>
+          <StoreSelector showPrefix />
           <button
             onClick={() => fetchOrders(false)}
             disabled={loading}

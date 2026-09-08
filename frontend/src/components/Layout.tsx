@@ -75,7 +75,6 @@ const MobileConnectionModal = lazy(() => import('./MobileConnectionModal').then(
 const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
 
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
-import { StoreSelector } from './StoreSelector';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
 import type { QuickAssistEditGroup } from './QuickAssistOrderEditModal';
@@ -2318,22 +2317,19 @@ const Topbar = memo(({
           )}
 
 
-          {/* Store Switcher */}
-          <StoreSelector />
-
           {/* Live Cart Integrated Countdown Pill Button */}
           <LiveCartCountdownPill />
 
           {/* Quick Special Request Shortcut Button */}
           <button
+            type="button"
             onClick={() => quickOrderEvent.triggerOpen()}
             onMouseEnter={() => api.warmupPharmarackSession()}
-            className="px-2.5 py-1.5 rounded-xl transition-all duration-200 flex items-center gap-1.5 border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer text-xs font-bold shrink-0"
+            className="relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border border-glass-border bg-glass-bg text-muted hover:text-text hover:bg-bg3/60 cursor-pointer group shrink-0"
             title="Quick Special Request (Alt+O)"
             aria-label="Quick special request"
           >
-            <Zap size={14} className="text-amber-400 shrink-0" />
-            <span className="hidden md:inline">Quick Request</span>
+            <ClipboardPlus size={18} className="text-amber-400 group-hover:scale-110 transition-transform" />
           </button>
 
           {/* Single Shared WhatsApp Status Indicator & Automation Hub Launchpad */}

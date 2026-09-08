@@ -315,10 +315,13 @@ __export(storeSettingsService_exports, {
   getConfiguredPharmacyName: () => getConfiguredPharmacyName,
   getEmailRetentionLimit: () => getEmailRetentionLimit,
   getInvoiceWhatsAppRecipients: () => getInvoiceWhatsAppRecipients,
+  getPharmacyOperatingSchedule: () => getPharmacyOperatingSchedule,
   getPharmacyOwnerPhone: () => getPharmacyOwnerPhone,
+  getStoreGoogleMapsUrl: () => getStoreGoogleMapsUrl,
   getStoreMedicalName: () => getStoreMedicalName,
   getStoreMedicalNameAndPhone: () => getStoreMedicalNameAndPhone,
-  getStorePhone: () => getStorePhone
+  getStorePhone: () => getStorePhone,
+  savePharmacyOperatingSchedule: () => savePharmacyOperatingSchedule
 });
 async function getConfiguredPharmacyName(dbInstance) {
   try {
@@ -522,9 +525,33 @@ async function getEmailRetentionLimit(dbInstance) {
   }
   return 15;
 }
+async function getStoreGoogleMapsUrl(dbInstance) {
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const row = await db2.get(
+      `SELECT value FROM app_settings 
+       WHERE key IN ('google_maps_url', 'store_map_link', 'maps_url', 'google_map_url') 
+         AND value IS NOT NULL 
+         AND TRIM(value) != '' 
+       ORDER BY CASE key 
+         WHEN 'google_maps_url' THEN 1 
+         WHEN 'store_map_link' THEN 2 
+         WHEN 'maps_url' THEN 3 
+         ELSE 4 END 
+       LIMIT 1`
+    );
+    if (row && row.value && row.value.trim()) {
+      return row.value.trim();
+    }
+  } catch (err) {
+    console.warn("[StoreSettings] Error resolving Google Maps URL:", err);
+  }
+  return "";
+}
 async function buildOrderReadyNotificationMessage(requesterName, productName, qty = 1, dbInstance, lang = "en") {
   const storeName = await getStoreMedicalName(dbInstance);
   const storePhone = await getStorePhone(dbInstance);
+  const mapUrl = await getStoreGoogleMapsUrl(dbInstance);
   const name = formatCustomerName(requesterName);
   const phone = storePhone ? storePhone.trim() : "";
   if (lang === "hi") {
@@ -535,16 +562,23 @@ async function buildOrderReadyNotificationMessage(requesterName, productName, qt
 \u0906\u092A\u0915\u093E \u0911\u0930\u094D\u0921\u0930:
 \u2022 ${productName} \xD7 ${qty || 1}
 
-\u{1F4CD} \u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 \u092A\u0930 \u0906\u0915\u0930 \u0905\u092A\u0928\u0940 \u0926\u0935\u093E\u0908 \u092A\u094D\u0930\u093E\u092A\u094D\u0924 \u0915\u0930\u0947\u0902\u0964`;
-    if (phone) {
-      msg2 += `
+`;
+    if (mapUrl) {
+      msg2 += `\u{1F5FA}\uFE0F \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u092A\u0924\u093E \u0914\u0930 \u092E\u0948\u092A \u0921\u093E\u092F\u0930\u0947\u0915\u094D\u0936\u0928: ${mapUrl}
 
-\u{1F4DE} \u0938\u0939\u093E\u092F\u0924\u093E \u0915\u0947 \u0932\u093F\u090F, \u0939\u092E\u0947\u0902 ${phone} \u092A\u0930 \u0915\u0949\u0932 \u0915\u0930\u0947\u0902\u0964`;
+`;
+    } else {
+      msg2 += `\u{1F4CD} \u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 \u092A\u0930 \u0906\u0915\u0930 \u0905\u092A\u0928\u0940 \u0926\u0935\u093E\u0908 \u092A\u094D\u0930\u093E\u092A\u094D\u0924 \u0915\u0930\u0947\u0902\u0964
+
+`;
     }
-    msg2 += `
+    if (phone) {
+      msg2 += `\u{1F4DE} \u0938\u0939\u093E\u092F\u0924\u093E \u0915\u0947 \u0932\u093F\u090F, \u0939\u092E\u0947\u0902 ${phone} \u092A\u0930 \u0915\u0949\u0932 \u0915\u0930\u0947\u0902\u0964
 
-${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
-    return msg2;
+`;
+    }
+    msg2 += `${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
+    return msg2.trim();
   }
   if (lang === "mr") {
     let msg2 = `\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${name}, \u{1F44B}
@@ -554,16 +588,23 @@ ${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u09
 \u0906\u092A\u0932\u0940 \u0911\u0930\u094D\u0921\u0930:
 \u2022 ${productName} \xD7 ${qty || 1}
 
-\u{1F4CD} \u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0938\u094B\u092F\u0940\u0928\u0941\u0938\u093E\u0930 \u0906\u092E\u091A\u094D\u092F\u093E \u0926\u0941\u0915\u093E\u0928\u093E\u0932\u093E \u092D\u0947\u091F \u0926\u0947\u090A\u0928 \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E\u0935\u0947\u0964`;
-    if (phone) {
-      msg2 += `
+`;
+    if (mapUrl) {
+      msg2 += `\u{1F5FA}\uFE0F \u0926\u0941\u0915\u093E\u0928\u093E\u091A\u093E \u092A\u0924\u094D\u0924\u093E \u0906\u0923\u093F \u092E\u0945\u092A \u0921\u093E\u092F\u0930\u0947\u0915\u094D\u0936\u0928: ${mapUrl}
 
-\u{1F4DE} \u092E\u0926\u0924\u0940\u0938\u093E\u0920\u0940, \u0906\u092E\u094D\u0939\u093E\u0932\u093E ${phone} \u0935\u0930 \u0915\u0949\u0932 \u0915\u0930\u093E.`;
+`;
+    } else {
+      msg2 += `\u{1F4CD} \u0915\u0943\u092A\u092F\u093E \u0906\u092A\u0932\u094D\u092F\u093E \u0938\u094B\u092F\u0940\u0928\u0941\u0938\u093E\u0930 \u0906\u092E\u091A\u094D\u092F\u093E \u0926\u0941\u0915\u093E\u0928\u093E\u0932\u093E \u092D\u0947\u091F \u0926\u0947\u090A\u0928 \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E\u0935\u0947\u0964
+
+`;
     }
-    msg2 += `
+    if (phone) {
+      msg2 += `\u{1F4DE} \u092E\u0926\u0924\u0940\u0938\u093E\u0920\u0940, \u0906\u092E\u094D\u0939\u093E\u0932\u093E ${phone} \u0935\u0930 \u0915\u0949\u0932 \u0915\u0930\u093E.
 
-${storeName} \u091A\u0940 \u0928\u093F\u0935\u0921 \u0915\u0947\u0932\u094D\u092F\u093E\u092C\u0926\u094D\u0926\u0932 \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
-    return msg2;
+`;
+    }
+    msg2 += `${storeName} \u091A\u0940 \u0928\u093F\u0935\u0921 \u0915\u0947\u0932\u094D\u092F\u093E\u092C\u0926\u094D\u0926\u0932 \u0927\u0928\u094D\u092F\u0935\u093E\u0926!`;
+    return msg2.trim();
   }
   let msg = `Hi ${name}, \u{1F44B}
 
@@ -572,20 +613,28 @@ Great news! \u{1F389} Your requested medicine is now ready for pickup at ${store
 Your Order:
 \u2022 ${productName} \xD7 ${qty || 1}
 
-\u{1F4CD} Please visit our store at your convenience to collect your medicine.`;
-  if (phone) {
-    msg += `
+`;
+  if (mapUrl) {
+    msg += `\u{1F5FA}\uFE0F Store Location & Directions: ${mapUrl}
 
-\u{1F4DE} For any assistance, call us at ${phone}.`;
+`;
+  } else {
+    msg += `\u{1F4CD} Please visit our store at your convenience to collect your medicine.
+
+`;
   }
-  msg += `
+  if (phone) {
+    msg += `\u{1F4DE} For any assistance, call us at ${phone}.
 
-Thank you for choosing ${storeName}. We look forward to serving you!`;
-  return msg;
+`;
+  }
+  msg += `Thank you for choosing ${storeName}!`;
+  return msg.trim();
 }
 async function buildMultiOrderNotificationMessage(requesterName, items, dbInstance, lang = "en") {
   const storeName = await getStoreMedicalName(dbInstance);
   const storePhone = await getStorePhone(dbInstance);
+  const mapUrl = await getStoreGoogleMapsUrl(dbInstance);
   const name = formatCustomerName(requesterName);
   const phone = storePhone ? storePhone.trim() : "";
   const arrivedItems = items.filter((i) => i.status === "arrived");
@@ -600,9 +649,15 @@ async function buildMultiOrderNotificationMessage(requesterName, items, dbInstan
 `;
       msg2 += `\u{1F4E6} \u0924\u0948\u092F\u093E\u0930 \u0926\u0935\u093E\u0907\u092F\u093E\u0902:
 ` + arrivedItems.map((i) => `\u2022 ${i.productName} \xD7 ${i.qty || 1}`).join("\n");
-      msg2 += `
+      if (mapUrl) {
+        msg2 += `
+
+\u{1F5FA}\uFE0F \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u092A\u0924\u093E \u0914\u0930 \u092E\u0948\u092A \u0921\u093E\u092F\u0930\u0947\u0915\u094D\u0936\u0928: ${mapUrl}`;
+      } else {
+        msg2 += `
 
 \u{1F4CD} \u0915\u0943\u092A\u092F\u093E \u0905\u092A\u0928\u0940 \u0938\u0941\u0935\u093F\u0927\u093E\u0928\u0941\u0938\u093E\u0930 \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 \u092A\u0930 \u0906\u0915\u0930 \u0905\u092A\u0928\u0940 \u0926\u0935\u093E\u0907\u092F\u093E\u0902 \u092A\u094D\u0930\u093E\u092A\u094D\u0924 \u0915\u0930\u0947\u0902\u0964`;
+      }
     } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
       msg2 += `\u0906\u092A\u0915\u0947 \u0911\u0930\u094D\u0921\u0930 \u0915\u093E \u0905\u092A\u0921\u0947\u091F (${storeName}):
 
@@ -613,9 +668,15 @@ async function buildMultiOrderNotificationMessage(requesterName, items, dbInstan
 
 \u23F3 \u0906\u0928\u0947 \u092E\u0947\u0902 \u0925\u094B\u0921\u093C\u093E \u0938\u092E\u092F (\u0906\u0924\u0947 \u0939\u0940 \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947):
 ` + delayedItems.map((i) => `\u2022 ${i.productName} \xD7 ${i.qty || 1}${i.expectedDate ? ` (\u0905\u092A\u0947\u0915\u094D\u0937\u093F\u0924: ${i.expectedDate})` : ""}${i.delayReason ? ` - ${i.delayReason}` : ""}`).join("\n");
-      msg2 += `
+      if (mapUrl) {
+        msg2 += `
+
+\u{1F5FA}\uFE0F \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u092A\u0924\u093E \u0914\u0930 \u092E\u0948\u092A \u0921\u093E\u092F\u0930\u0947\u0915\u094D\u0936\u0928: ${mapUrl}`;
+      } else {
+        msg2 += `
 
 \u{1F4CD} \u0924\u0948\u092F\u093E\u0930 \u0926\u0935\u093E\u0907\u092F\u093E\u0902 \u0906\u092A \u0926\u0941\u0915\u093E\u0928 \u0938\u0947 \u0915\u092D\u0940 \u092D\u0940 \u0932\u0947 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902\u0964 \u092C\u093E\u0915\u0940 \u0926\u0935\u093E\u0907\u092F\u093E\u0902 \u092A\u0939\u0941\u0902\u091A\u0924\u0947 \u0939\u0940 \u0939\u092E \u0924\u0941\u0930\u0902\u0924 \u0938\u0942\u091A\u093F\u0924 \u0915\u0930\u0947\u0902\u0917\u0947!`;
+      }
     } else {
       msg2 += `\u0906\u092A\u0915\u0947 \u0911\u0930\u094D\u0921\u0930 \u0915\u093E \u0905\u092A\u0921\u0947\u091F (${storeName}):
 
@@ -643,9 +704,15 @@ ${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u09
 `;
     msg += `\u{1F4E6} Ready for Pickup:
 ` + arrivedItems.map((i) => `\u2022 ${i.productName} \xD7 ${i.qty || 1}`).join("\n");
-    msg += `
+    if (mapUrl) {
+      msg += `
+
+\u{1F5FA}\uFE0F Store Location & Directions: ${mapUrl}`;
+    } else {
+      msg += `
 
 \u{1F4CD} Please visit our store at your convenience to collect your medicines.`;
+    }
   } else if (arrivedItems.length > 0 && delayedItems.length > 0) {
     msg += `Order status update from ${storeName}:
 
@@ -656,9 +723,15 @@ ${storeName} \u0915\u094B \u091A\u0941\u0928\u0928\u0947 \u0915\u0947 \u0932\u09
 
 \u23F3 Slightly Delayed / In Transit:
 ` + delayedItems.map((i) => `\u2022 ${i.productName} \xD7 ${i.qty || 1}${i.expectedDate ? ` (Exp: ${i.expectedDate})` : ""}${i.delayReason ? ` - ${i.delayReason}` : ""}`).join("\n");
-    msg += `
+    if (mapUrl) {
+      msg += `
+
+\u{1F5FA}\uFE0F Store Location & Directions: ${mapUrl}`;
+    } else {
+      msg += `
 
 \u{1F4CD} You can collect the ready medicines anytime. We will notify you as soon as the rest arrive!`;
+    }
   } else {
     msg += `Order status update from ${storeName}:
 
@@ -676,6 +749,63 @@ We are actively arranging them and will notify you immediately once received.`;
 
 Thank you for choosing ${storeName}!`;
   return msg;
+}
+async function getPharmacyOperatingSchedule(dbInstance) {
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const rows = await db2.all(
+      `SELECT key, value FROM app_settings 
+       WHERE key IN ('pharmacy_open_time', 'pharmacy_close_time', 'pharmacy_weekly_off', 'pharmacy_closed_dates')`
+    );
+    const map = new Map(rows.map((r) => [String(r.key), String(r.value)]));
+    let closedDates = [];
+    try {
+      const rawDates = map.get("pharmacy_closed_dates");
+      if (rawDates) {
+        closedDates = JSON.parse(rawDates);
+      }
+    } catch {
+    }
+    return {
+      openTime: map.get("pharmacy_open_time") || "09:00",
+      closeTime: map.get("pharmacy_close_time") || "22:00",
+      weeklyOff: map.get("pharmacy_weekly_off") || "Monday",
+      closedDates: Array.isArray(closedDates) ? closedDates : []
+    };
+  } catch (err) {
+    console.warn("[StoreSettings] Failed to fetch operating schedule:", err);
+    return {
+      openTime: "09:00",
+      closeTime: "22:00",
+      weeklyOff: "Monday",
+      closedDates: []
+    };
+  }
+}
+async function savePharmacyOperatingSchedule(schedule, dbInstance) {
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const stmt = await db2.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
+    try {
+      if (schedule.openTime !== void 0) {
+        await stmt.run(["pharmacy_open_time", schedule.openTime]);
+      }
+      if (schedule.closeTime !== void 0) {
+        await stmt.run(["pharmacy_close_time", schedule.closeTime]);
+      }
+      if (schedule.weeklyOff !== void 0) {
+        await stmt.run(["pharmacy_weekly_off", schedule.weeklyOff]);
+      }
+      if (schedule.closedDates !== void 0) {
+        await stmt.run(["pharmacy_closed_dates", JSON.stringify(schedule.closedDates)]);
+      }
+    } finally {
+      await stmt.finalize();
+    }
+  } catch (err) {
+    console.warn("[StoreSettings] Failed to save operating schedule:", err);
+    throw err;
+  }
 }
 var init_storeSettingsService = __esm({
   "src/services/storeSettingsService.ts"() {
@@ -1412,6 +1542,32 @@ function stringSimilarity(a, b) {
   const distance = editDistance(a, b);
   return 1 - distance / maxLen;
 }
+function getCompatibleItemTypes(dosageForm) {
+  if (!dosageForm) return [];
+  const df = dosageForm.toUpperCase().trim();
+  if (df === "SYRUP" || df === "LIQUID" || df === "SUSPENSION") {
+    return ["BOTTLE", "LIQUID", "SYP", "SUSP", "DROP", "SOLUTION", "ELIXIR"];
+  }
+  if (df === "TABLET" || df === "CAPSULE") {
+    return ["STRIP", "TAB", "CAP", "BOX", "PACK", "STRIP OF", "TABLET", "CAPSULE"];
+  }
+  if (df === "DROPS") {
+    return ["BOTTLE", "DROP", "DROPS", "EYE DROP", "EAR DROP"];
+  }
+  if (df === "INJECTION" || df === "INFUSION") {
+    return ["INJECTION", "VIAL", "AMPOULE", "INFUSION", "PRE-FILLED SYRINGE", "I V VIAL", "I V AMPOULE", "DRY VIAL"];
+  }
+  if (df === "CREAM" || df === "OINTMENT" || df === "GEL" || df === "LOTION") {
+    return ["TUBE", "CREAM", "OINT", "GEL", "LOTION"];
+  }
+  return [df];
+}
+function isItemTypeCompatible(dosageForm, itemType) {
+  if (!dosageForm || !itemType) return false;
+  const compatible = getCompatibleItemTypes(dosageForm);
+  const it = itemType.toUpperCase().trim();
+  return compatible.some((c) => it.includes(c) || c.includes(it));
+}
 function levenshteinSimilarity(s1, s2) {
   const maxLen = Math.max(s1.length, s2.length);
   if (maxLen === 0) return 1;
@@ -1517,14 +1673,22 @@ function enhancedSimilarity(s1, s2) {
   let levSim = levenshteinSimilarity(clean1, clean2);
   if (clean2.startsWith(clean1) || clean1.startsWith(clean2)) {
     const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = 0.75 + 0.25 * ratio;
+    levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
   } else if (clean2.includes(clean1) || clean1.includes(clean2)) {
     const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.7 + 0.2 * ratio);
+    levSim = Math.max(levSim, 0.75 + 0.2 * ratio);
+  }
+  const words1 = norm1.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  const words2 = norm2.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  if (words1.length > 0 && words2.length > 0) {
+    const containedCount = words1.filter((w) => words2.some((w2) => w2.startsWith(w) || w.startsWith(w2))).length;
+    if (containedCount === words1.length) {
+      levSim = Math.max(levSim, 0.9);
+    }
   }
   const phoneSim = phoneticSimilarity(clean1, clean2);
   const ngramSim = ngramSimilarity(clean1, clean2, 2);
-  let score = levSim * 0.5 + phoneSim * 0.3 + ngramSim * 0.2;
+  let score = levSim * 0.6 + phoneSim * 0.2 + ngramSim * 0.2;
   const nums1 = norm1.match(/\d+/g) || [];
   const nums2 = norm2.match(/\d+/g) || [];
   if (nums1.length > 0) {
@@ -1546,6 +1710,9 @@ var init_productNameFilterService = __esm({
     import_path5 = __toESM(require("path"), 1);
     ProductNameFilterService = class {
       medicineNames = [];
+      getMedicineNames() {
+        return this.medicineNames;
+      }
       initialized = false;
       dbPath;
       DEFAULT_THRESHOLD = 0.8;
@@ -1713,31 +1880,36 @@ var init_productNameFilterService = __esm({
         WHERE medicines_fts MATCH ?`;
           const fts5SafeQuery = `"${normalizedOcr.replace(/[^a-z0-9 ]/g, " ").trim().replace(/\s+/g, " ")}"`;
           const fts5Params = [fts5SafeQuery];
-          if (dosageForm) {
-            fts5Sql += " AND m.item_type = ?";
-            fts5Params.push(dosageForm);
-          }
           if (mrp && mrp > 0) {
             const low = mrp * (1 - mrpTolerance);
             const high = mrp * (1 + mrpTolerance);
             fts5Sql += " AND m.mrp BETWEEN ? AND ?";
             fts5Params.push(low, high);
           }
-          fts5Sql += " LIMIT 20";
+          fts5Sql += " LIMIT 30";
           const ftsRows = await db2.all(fts5Sql, fts5Params);
           if (ftsRows && ftsRows.length > 0) {
             fts5Used = true;
             for (const row of ftsRows) {
               const nameSim = enhancedSimilarity(normalizedOcr, row.name.toLowerCase());
-              const dosageMatch = dosageForm && row.item_type ? row.item_type === dosageForm ? 1 : 0 : 0.5;
-              const mrpMatch = mrp && row.mrp ? 1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp) : 0.5;
-              let apiMatch = 0.5;
+              const dosageMatch = dosageForm && row.item_type ? isItemTypeCompatible(dosageForm, row.item_type) ? 1 : 0.2 : null;
+              const mrpMatch = mrp && row.mrp ? 1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp) : null;
+              let apiMatch = null;
               if (rawOcrText && row.api_reference) {
                 const apiTokens = row.api_reference.toLowerCase().split(/[^a-z0-9]+/);
                 const hasTokenMatch = apiTokens.some((token) => token.length > 3 && rawOcrText.toLowerCase().includes(token));
-                apiMatch = hasTokenMatch ? 1 : 0.2;
+                apiMatch = hasTokenMatch ? 1 : 0.4;
               }
-              const combinedScore = 0.4 * nameSim + 0.2 * dosageMatch + 0.2 * mrpMatch + 0.2 * apiMatch;
+              let combinedScore;
+              if (dosageMatch !== null && mrpMatch !== null) {
+                combinedScore = 0.45 * nameSim + 0.25 * dosageMatch + 0.2 * mrpMatch + 0.1 * (apiMatch ?? 0.5);
+              } else if (dosageMatch !== null) {
+                combinedScore = 0.7 * nameSim + 0.2 * dosageMatch + 0.1 * (apiMatch ?? 0.5);
+              } else if (mrpMatch !== null) {
+                combinedScore = 0.7 * nameSim + 0.2 * mrpMatch + 0.1 * (apiMatch ?? 0.5);
+              } else {
+                combinedScore = apiMatch !== null && apiMatch > 0.5 ? 0.85 * nameSim + 0.15 * apiMatch : nameSim;
+              }
               if (combinedScore >= minConfidenceThreshold) {
                 scoredMatches.push({ name: row.name, score: combinedScore });
               }
@@ -3855,21 +4027,20 @@ function extractMedicineCandidates(text) {
 function detectDosageForm(text) {
   if (!text) return null;
   const patterns = [
-    [/\b(?:tab(?:let)?s?)\b/i, "Tablet"],
+    [/\b(?:tab(?:let)?s?|caplets?)\b/i, "Tablet"],
     [/\b(?:cap(?:sule)?s?)\b/i, "Capsule"],
-    [/\b(?:syp|syrup)\b/i, "Syrup"],
-    [/\b(?:susp(?:ension)?)\b/i, "Suspension"],
-    [/\b(?:inj(?:ection)?)\b/i, "Injection"],
+    [/\b(?:liquid|oral\s*solution|solution|syrup|syp|elixir)\b/i, "Syrup"],
+    [/\b(?:susp(?:ension)?|oral\s*suspension)\b/i, "Suspension"],
+    [/\b(?:inj(?:ection)?|infusion)\b/i, "Injection"],
     [/\b(?:gel)\b/i, "Gel"],
     [/\b(?:cream)\b/i, "Cream"],
-    [/\b(?:drops?|eye\s*drops?|ear\s*drops?)\b/i, "Drops"],
+    [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, "Drops"],
     [/\b(?:oint(?:ment)?)\b/i, "Ointment"],
     [/\b(?:lotion)\b/i, "Lotion"],
     [/\b(?:powder)\b/i, "Powder"],
     [/\b(?:spray)\b/i, "Spray"],
-    [/\b(?:inh(?:aler)?)\b/i, "Inhaler"],
-    [/\b(?:sachet)\b/i, "Sachet"],
-    [/\b(?:solution)\b/i, "Solution"]
+    [/\b(?:inh(?:aler)?|respules?)\b/i, "Inhaler"],
+    [/\b(?:sachet)\b/i, "Sachet"]
   ];
   for (const [regex, form] of patterns) {
     if (regex.test(text)) return form;
@@ -3881,6 +4052,60 @@ function isRepeatRequest(text) {
   const lower = text.toLowerCase().trim();
   const repeatWords = ["same", "wahi", "wohi", "repeat", "fir se", "phir se", "same order", "last wala"];
   return repeatWords.some((w) => lower.includes(w));
+}
+function isRefillConfirmationResponse(text) {
+  if (!text) return false;
+  const cleaned = text.trim();
+  const lower = cleaned.toLowerCase().replace(/[.,!?;:()_~#*`]/g, " ").replace(/\s+/g, " ").trim();
+  const confirmationTokens = [
+    "refill",
+    "yes",
+    "confirm",
+    "confirmed",
+    "send",
+    "ok",
+    "okay",
+    "ha",
+    "haan",
+    "haa",
+    "ho",
+    "hoye",
+    "chalel",
+    "bhej do",
+    "bhejo",
+    "dedo",
+    "de do",
+    "chahiye",
+    "pathva",
+    "pathav",
+    "dya",
+    "daya",
+    "lagta",
+    "lagte",
+    "lagtan",
+    "ready rakho",
+    "pack kar do",
+    "pack kardo"
+  ];
+  if (confirmationTokens.some((t) => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
+    return true;
+  }
+  const devanagariTokens = [
+    "\u0939\u093E\u0901",
+    "\u0939\u093E\u0902",
+    "\u0939\u093E",
+    "\u0939\u094B",
+    "\u0939\u094B\u092F",
+    "\u092A\u093E\u0920\u0935\u093E",
+    "\u0926\u094D\u092F\u093E",
+    "\u0932\u093E\u0917\u0924\u0902",
+    "\u092D\u0947\u091C \u0926\u094B",
+    "\u092D\u0947\u091C\u094B",
+    "\u0926\u0947 \u0926\u094B",
+    "\u091A\u093E\u0939\u093F\u090F",
+    "\u0914\u0937\u0927"
+  ];
+  return devanagariTokens.some((t) => cleaned.includes(t));
 }
 function detectNonAllopathicKind(name) {
   const lower = String(name || "").toLowerCase();
@@ -5303,6 +5528,11 @@ var init_aiCameraService = __esm({
        * Load all API composition and drug generic words from the database
        * dynamically to ignore them during OCR fuzzy matching.
        */
+      KNOWN_APIS = /* @__PURE__ */ new Set();
+      /**
+       * Load all API composition and drug generic words from the database
+       * dynamically to track known active ingredients.
+       */
       async loadDatabaseIgnoreList() {
         if (this.ignoreListLoaded) return;
         try {
@@ -5314,7 +5544,7 @@ var init_aiCameraService = __esm({
               for (const word of words) {
                 const cleanWord = word.trim().toLowerCase();
                 if (cleanWord.length > 2) {
-                  this.STOP_WORDS.add(cleanWord);
+                  this.KNOWN_APIS.add(cleanWord);
                 }
               }
             }
@@ -5327,7 +5557,7 @@ var init_aiCameraService = __esm({
                 for (const word of words) {
                   const cleanWord = word.trim().toLowerCase();
                   if (cleanWord.length > 2) {
-                    this.STOP_WORDS.add(cleanWord);
+                    this.KNOWN_APIS.add(cleanWord);
                   }
                 }
               }
@@ -5336,7 +5566,7 @@ var init_aiCameraService = __esm({
                 for (const word of words) {
                   const cleanWord = word.trim().toLowerCase();
                   if (cleanWord.length > 2) {
-                    this.STOP_WORDS.add(cleanWord);
+                    this.KNOWN_APIS.add(cleanWord);
                   }
                 }
               }
@@ -5356,7 +5586,7 @@ var init_aiCameraService = __esm({
             console.warn("[AiCamera] Could not load permanently_ignored_words:", piwErr);
           }
           this.ignoreListLoaded = true;
-          console.log(`[AiCamera] Dynamically loaded drug generic/API ignore list from DB. Total stop words: ${this.STOP_WORDS.size}`);
+          console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}`);
         } catch (err) {
           console.error("[AiCamera] Failed to load database ignore list:", err);
         }
@@ -5475,6 +5705,56 @@ var init_aiCameraService = __esm({
         "lab",
         "labs",
         "care",
+        // Pharmacopoeia standards & Rx markers (often read with dots or OCR misread as 1.p., etc.)
+        "ip",
+        "bp",
+        "usp",
+        "1p",
+        "ep",
+        "nf",
+        "rx",
+        // Package and storage filler words
+        "flavour",
+        "flavor",
+        "flav",
+        "taste",
+        "sugar",
+        "free",
+        "contains",
+        "composition",
+        "keep",
+        "out",
+        "reach",
+        "children",
+        "store",
+        "cool",
+        "dry",
+        "place",
+        "protect",
+        "light",
+        "storage",
+        "warning",
+        "caution",
+        "schedule",
+        "prescription",
+        "physician",
+        "directed",
+        "dosage",
+        "shake",
+        "well",
+        "before",
+        "use",
+        "external",
+        "only",
+        "net",
+        "weight",
+        "vol",
+        "volume",
+        "bottle",
+        "carton",
+        "box",
+        "pack",
+        "packings",
         // Route / administration descriptors (NOT brand names)
         "ophthalmic",
         "oral",
@@ -5505,11 +5785,18 @@ var init_aiCameraService = __esm({
       /**
        * Returns candidate search tokens from an OCR text line by:
        * 1. Splitting into words
-       * 2. Removing stop words, single-char tokens, and pure-numeric tokens
+       * 2. Stripping leading/trailing punctuation and non-alphanumeric noise (e.g. 3%% -> 3, (baclof) -> baclof)
+       * 3. Removing stop words, single-char tokens, pure-numeric tokens, and pharmacopoeia markers
        * Only the remaining "uncertain" / unknown words are worth fuzzy-matching.
        */
       extractCandidateTokens(line) {
-        return line.split(/[\s,;:|()\[\]{}\/\\]+/).map((w) => w.trim().toLowerCase()).filter((w) => w.length > 2 && !this.STOP_WORDS.has(w) && !/^\d+$/.test(w));
+        return line.split(/[\s,;:|()\[\]{}\/\\]+/).map((w) => w.trim().toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "")).filter((w) => {
+          if (w.length < 3) return false;
+          if (this.STOP_WORDS.has(w)) return false;
+          if (/^\d+[%a-z]*$/i.test(w)) return false;
+          if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
+          return true;
+        });
       }
       /**
        * If the OCR text already contains a recognizable API / composition pattern
@@ -5590,19 +5877,19 @@ var init_aiCameraService = __esm({
       detectDosageForm(text) {
         if (!text) return null;
         const patterns = [
-          [/\b(?:tab(?:let)?s?)\b/i, "Tablet"],
+          [/\b(?:tab(?:let)?s?|caplets?)\b/i, "Tablet"],
           [/\b(?:cap(?:sule)?s?)\b/i, "Capsule"],
-          [/\b(?:syp|syrup)\b/i, "Syrup"],
-          [/\b(?:susp(?:ension)?)\b/i, "Suspension"],
-          [/\b(?:inj(?:ection)?)\b/i, "Injection"],
+          [/\b(?:liquid|oral\s*solution|solution|syrup|syp|elixir)\b/i, "Syrup"],
+          [/\b(?:susp(?:ension)?|oral\s*suspension)\b/i, "Suspension"],
+          [/\b(?:inj(?:ection)?|infusion)\b/i, "Injection"],
           [/\b(?:gel)\b/i, "Gel"],
           [/\b(?:cream)\b/i, "Cream"],
-          [/\b(?:drops?|eye\s*drops?|ear\s*drops?)\b/i, "Drops"],
+          [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, "Drops"],
           [/\b(?:oint(?:ment)?)\b/i, "Ointment"],
           [/\b(?:lotion)\b/i, "Lotion"],
           [/\b(?:powder)\b/i, "Powder"],
           [/\b(?:spray)\b/i, "Spray"],
-          [/\b(?:inh(?:aler)?)\b/i, "Inhaler"],
+          [/\b(?:inh(?:aler)?|respules?)\b/i, "Inhaler"],
           [/\b(?:sachet)\b/i, "Sachet"]
         ];
         for (const [regex, form] of patterns) {
@@ -5682,28 +5969,46 @@ var init_aiCameraService = __esm({
             await this.loadDatabaseIgnoreList();
             await productNameFilterService.initialize();
             const candidateLines = localOcrResult.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 2 && l.length < 100).map((line) => ({ original: line, tokens: this.extractCandidateTokens(line) })).filter((item) => item.tokens.length > 0);
+            const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
+            let bestLineMatches = [];
+            let bestLineScore = 0;
             for (const item of candidateLines) {
               const cleanedLine = item.tokens.join(" ");
               const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
                 minConfidenceThreshold: 0.65,
+                dosageForm: detectedDosageForm || void 0,
                 rawOcrText: localOcrResult.text
               });
-              if (filterResult.matches.length > 0) {
-                matches = filterResult.matches;
-                break;
-              }
-              for (const token of item.tokens) {
-                if (token.length < 4) continue;
-                const tokenResult = await productNameFilterService.filterProductNames(token, {
-                  minConfidenceThreshold: 0.7,
-                  rawOcrText: localOcrResult.text
-                });
-                if (tokenResult.matches.length > 0) {
-                  matches = tokenResult.matches;
+              const lineScore = filterResult.topScore ?? 0;
+              if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
+                bestLineScore = lineScore;
+                bestLineMatches = filterResult.matches;
+                if (bestLineScore >= 0.88) {
                   break;
                 }
               }
-              if (matches.length > 0) break;
+            }
+            if (bestLineMatches.length > 0) {
+              matches = bestLineMatches;
+            } else {
+              for (const item of candidateLines) {
+                for (const token of item.tokens) {
+                  if (token.length < 4) continue;
+                  const tokenResult = await productNameFilterService.filterProductNames(token, {
+                    minConfidenceThreshold: 0.7,
+                    dosageForm: detectedDosageForm || void 0,
+                    rawOcrText: localOcrResult.text
+                  });
+                  const tokenScore = tokenResult.topScore ?? 0;
+                  if (tokenResult.matches.length > 0 && tokenScore > bestLineScore) {
+                    bestLineScore = tokenScore;
+                    bestLineMatches = tokenResult.matches;
+                    if (bestLineScore >= 0.88) break;
+                  }
+                }
+                if (bestLineMatches.length > 0) break;
+              }
+              matches = bestLineMatches;
             }
           } catch (err) {
             console.error("[AiCamera] Fuzzy match failed:", err);
@@ -6591,6 +6896,9 @@ var init_scanGateAlgorithms = __esm({
       "cap",
       "syrup",
       "syp",
+      "liquid",
+      "oral solution",
+      "solution",
       "suspension",
       "susp",
       "injection",
@@ -6608,10 +6916,10 @@ var init_scanGateAlgorithms = __esm({
       "spray",
       "inhaler",
       "sachet",
-      "solution",
-      "tonic"
+      "tonic",
+      "elixir"
     ];
-    STRENGTH_RE = /\b\d+\s?(mg|mcg|g|ml|iu|%|w\/v|wv|gm)\b/i;
+    STRENGTH_RE = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|%|w\/v|wv|gm)(?:\s*\/\s*(?:ml|g|gm))?\b/i;
     GATE_VARIANTS = [
       {
         id: "V1",
@@ -6632,7 +6940,10 @@ var init_scanGateAlgorithms = __esm({
           const name = (potentialName || "").trim();
           if (!name || !isPlausibleMedicineName(name)) return "skip";
           const t = ocrText.toLowerCase();
-          const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx);
+          if (hasStrongDoc(t)) return "skip";
+          const nameLower = name.toLowerCase();
+          const isKnownName = Boolean(ctx?.knownApis && (ctx.knownApis.has(nameLower) || hasKnownApi(nameLower, ctx)));
+          const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName;
           return hasSignal ? "identify" : "skip";
         }
       },
@@ -8718,6 +9029,12 @@ async function ensureOrderTimingSchema(db2) {
     if (refCols.length > 0 && !refNames.has("refill_schedule_version")) {
       await db2.run("ALTER TABLE patient_refills ADD COLUMN refill_schedule_version INTEGER DEFAULT 1");
     }
+    if (refCols.length > 0 && !refNames.has("patient_confirmed")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0");
+    }
+    if (refCols.length > 0 && !refNames.has("confirmed_at")) {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL");
+    }
   } catch (_) {
   }
   const defaultTimingSettings = [
@@ -9776,6 +10093,8 @@ async function ensureSchema(dbPath) {
       reminder_sent_at DATETIME DEFAULT NULL,
       reminder_job_id INTEGER DEFAULT NULL,
       reminder_occurrence_date DATETIME DEFAULT NULL,
+      patient_confirmed INTEGER DEFAULT 0,
+      confirmed_at DATETIME DEFAULT NULL,
       FOREIGN KEY(medicine_id) REFERENCES medicines(id),
       FOREIGN KEY(customer_id) REFERENCES customers(id)
     );
@@ -10320,6 +10639,8 @@ async function ensureSchema(dbPath) {
       ["patient_refills", "reminder_sent_at", "ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL"],
       ["patient_refills", "reminder_job_id", "ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL"],
       ["patient_refills", "reminder_occurrence_date", "ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL"],
+      ["patient_refills", "patient_confirmed", "ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0"],
+      ["patient_refills", "confirmed_at", "ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL"],
       ["special_orders", "customer_id", "ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL"],
       ["special_orders", "date", "ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP"],
       ["special_orders", "product", "ALTER TABLE special_orders ADD COLUMN product TEXT"],
@@ -11531,6 +11852,11 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_window_offset', '0')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_open_time', '09:00')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_close_time', '22:00')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_weekly_off', 'Monday')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_closed_dates', '[]')");
     const doctorAlters = [
       `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
       `ALTER TABLE doctors ADD COLUMN speciality TEXT`
@@ -11744,7 +12070,8 @@ async function ensureSchema(dbPath) {
         { name: "Refill Reminder", category: "Patients", body: "Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery." },
         { name: "Payment Dues Reminder", category: "Patients", body: "Dear {{name}}, your bill invoice #{{invoice}} of \u20B9{{amount}} is due. Kindly let us know if you need assistance with payment." },
         { name: "Stock Availability Inquiry", category: "Distributors", body: "Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you." },
-        { name: "General Reply", category: "General", body: "Hello! Thank you for contacting AI Pharmacy. How can we help you today?" }
+        { name: "General Reply", category: "General", body: "Hello! Thank you for contacting AI Pharmacy. How can we help you today?" },
+        { name: "Store Location & Directions", category: "General", body: "Hello {{name}}, our pharmacy is located at:\n\u{1F4CD} https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!" }
       ];
       for (const t of seedTemplates) {
         await db2.run(
@@ -11752,9 +12079,26 @@ async function ensureSchema(dbPath) {
           [t.name, t.category, t.body, now, now]
         );
       }
+    } else {
+      const locTmpl = await db2.get("SELECT id FROM whatsapp_message_templates WHERE name = 'Store Location & Directions'");
+      if (!locTmpl) {
+        const now = Date.now();
+        await db2.run(
+          "INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+          ["Store Location & Directions", "General", "Hello {{name}}, our pharmacy is located at:\n\u{1F4CD} https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!", now, now]
+        );
+      }
     }
     try {
       await db2.run("ALTER TABLE compliance_logs ADD COLUMN missing_license INTEGER DEFAULT 0");
+    } catch {
+    }
+    try {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0");
+    } catch {
+    }
+    try {
+      await db2.run("ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL");
     } catch {
     }
     try {
@@ -13392,6 +13736,14 @@ async function getSuggestedMappingFromHeaders(headers, db2) {
   return suggested;
 }
 function extractBillAmount(text) {
+  const netMatch = (text || "").match(NET_BILL_AMOUNT_PATTERN);
+  if (netMatch && netMatch[1]) {
+    const rawNum2 = netMatch[1].replace(/,/g, "").trim();
+    const parsed2 = parseFloat(rawNum2);
+    if (!isNaN(parsed2) && parsed2 > 0) {
+      return `\u20B9${parsed2.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+  }
   const amtMatch = (text || "").match(BILL_AMOUNT_PATTERN);
   if (!amtMatch) return "";
   const rawNum = (amtMatch[1] || amtMatch[2] || amtMatch[3] || amtMatch[4] || "").replace(/,/g, "").trim();
@@ -13468,9 +13820,19 @@ function parseRecordTypeInvoice(csvRecords, filename) {
   let invoice_no = "";
   let invoice_date = "";
   let total_amount = 0;
+  let global_cd_per = 0;
+  let cd_amount = 0;
   const items = [];
   const headerRow = csvRecords.find((row) => row[0]?.trim() === "H");
   if (headerRow) {
+    const p12 = parseFloat(headerRow[12] || "0");
+    if (!isNaN(p12) && p12 > 0 && p12 <= 100) {
+      global_cd_per = p12;
+    }
+    const p13 = parseFloat(headerRow[13] || "0");
+    if (!isNaN(p13) && p13 > 0) {
+      cd_amount = p13;
+    }
     if (headerRow[5] && isNaN(Number(headerRow[5])) && headerRow[5].trim().length > 3 && !headerRow[5].includes("/") && !headerRow[5].includes("-")) {
       distributor_name = headerRow[5].trim();
       invoice_no = headerRow[3] ? headerRow[3].trim() : "";
@@ -13514,7 +13876,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
           expiry_date: expiry,
           cgst_per: gst / 2,
           sgst_per: gst / 2,
-          cd_per: 0,
+          cd_per: global_cd_per,
           cd_rs: 0,
           manufacturer: mfgB,
           hsn_code: hsnB,
@@ -13530,7 +13892,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
             expiry_date: expiry,
             cgst_per: gst / 2,
             sgst_per: gst / 2,
-            cd_per: 0,
+            cd_per: global_cd_per,
             cd_rs: 0
           }
         });
@@ -13563,7 +13925,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
           expiry_date: expiry,
           cgst_per: gst / 2,
           sgst_per: gst / 2,
-          cd_per: 0,
+          cd_per: global_cd_per,
           cd_rs,
           manufacturer: mfg,
           hsn_code: hsn,
@@ -13579,7 +13941,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
             expiry_date: expiry,
             cgst_per: gst / 2,
             sgst_per: gst / 2,
-            cd_per: 0,
+            cd_per: global_cd_per,
             cd_rs
           }
         });
@@ -13597,6 +13959,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
     invoice_no,
     invoice_date,
     total_amount,
+    global_cd_per,
     items
   };
 }
@@ -14195,7 +14558,7 @@ function isNonMedicineNoise(name) {
   }
   return false;
 }
-var import_imap_simple, import_mailparser, import_nodemailer, import_path16, import_fs14, import_url14, import_sync, XLSX, __filename13, __dirname13, getDbPath, getUploadsDir, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
+var import_imap_simple, import_mailparser, import_nodemailer, import_path16, import_fs14, import_url14, import_sync, XLSX, __filename13, __dirname13, getDbPath, getUploadsDir, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
 var init_emailService = __esm({
   "src/services/emailService.ts"() {
     "use strict";
@@ -14224,7 +14587,8 @@ var init_emailService = __esm({
     __dirname13 = import_path16.default.dirname(__filename13);
     getDbPath = () => config.dbPath;
     getUploadsDir = () => process.env.UPLOADS_DIR || import_path16.default.resolve(getAppDataDir(), "uploads");
-    BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*amount|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
+    NET_BILL_AMOUNT_PATTERN = /(?:(?:net\s*(?:amt|amount|payable|value)|grand\s*total|final\s*(?:bill|amount)|bill\s*amount|inv(?:oice)?\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?))/i;
+    BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*(?:amt|amount|payable|value)|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
     EmailService = class {
       imapConfig;
       smtpTransporter = null;
@@ -15132,6 +15496,7 @@ AI Pharmacy Team`
                 invoice_no = recordData.invoice_no;
                 invoice_date = recordData.invoice_date;
                 total_amount = recordData.total_amount;
+                global_cd_per = recordData.global_cd_per || 0;
                 items = recordData.items;
               } else {
                 records = (0, import_sync.parse)(fileBuffer, { columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
@@ -15151,6 +15516,7 @@ AI Pharmacy Team`
                   invoice_no = recordData.invoice_no;
                   invoice_date = recordData.invoice_date;
                   total_amount = recordData.total_amount;
+                  global_cd_per = recordData.global_cd_per || 0;
                   items = recordData.items;
                 } else {
                   records = XLSX.utils.sheet_to_json(sheet);
@@ -17757,6 +18123,16 @@ var init_notificationService = __esm({
             console.log(`[DistributorNotif] No matching purchase found for invoice_no: ${invoiceNo}. Skipping.`);
             return false;
           }
+          const alreadySentInv = await db2.get(
+            `SELECT id FROM automation_notifications 
+         WHERE reference_id = ? AND type = 'distributor_invoice_order' AND status IN ('sent', 'pending')
+         LIMIT 1`,
+            [`inv_${purchase.invoice_no}`]
+          );
+          if (alreadySentInv) {
+            console.log(`[DistributorNotif] Distributor notification for invoice ${purchase.invoice_no} was already sent/queued. Suppressing duplicate.`);
+            return true;
+          }
           const rawPhone = purchase.distributor_phone || "";
           if (!rawPhone.trim()) {
             console.warn(`[DistributorNotif] Distributor ${purchase.distributor_name} has no WhatsApp number in profile. Skipping.`);
@@ -17858,7 +18234,7 @@ var init_notificationService = __esm({
       /**
        * Send WhatsApp order notification to distributor and delivery boy(s) when Pharmarack cart items are ordered.
        */
-      async notifyDistributorCartOrder(storeName, storeId, items, deliveryPersons) {
+      async notifyDistributorCartOrder(storeName, storeId, items, deliveryPersons, options) {
         let db2 = null;
         try {
           db2 = await dbManager.getConnection();
@@ -17973,32 +18349,51 @@ Mobile: ${formatDisplayPhone(clean)}
           const uniqueDistPhones = Array.from(new Set(distPhones));
           let sentCount = 0;
           let suppressedCount = 0;
-          if (uniqueDistPhones.length > 0) {
-            for (const phone of uniqueDistPhones) {
-              try {
-                const queueId = await whatsappQueueWorker.enqueue(
-                  phone,
-                  message,
-                  "distributor_cart_order",
-                  storeName
-                );
-                sentCount++;
-                await db2.run(
-                  `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-                  ["distributor_cart_order", storeName, phone, message, "sent", `store_${storeId}`]
-                );
-              } catch (err) {
-                console.error(`[CartOrderNotif] Failed to notify distributor ${storeName} at ${phone}:`, err);
-                await db2.run(
-                  `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                  ["distributor_cart_order", storeName, phone, message, "failed", err.message || "Unknown error", `store_${storeId}`]
-                );
+          if (options?.skipDistributor) {
+            console.log(`[CartOrderNotif] skipDistributor requested for ${storeName} (order already dispatched from UI). Skipping second distributor message.`);
+            suppressedCount++;
+          } else if (uniqueDistPhones.length > 0) {
+            const todayDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+            const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1e3;
+            const alreadySentRow = await db2.get(
+              `SELECT id FROM automation_notifications 
+           WHERE (recipient_name = ? OR reference_id = ?) 
+             AND type = 'distributor_cart_order' 
+             AND status IN ('sent', 'pending')
+             AND (DATE(created_at) = ? OR created_at >= ?)
+           LIMIT 1`,
+              [storeName, `store_${storeId}`, todayDate, new Date(twoHoursAgo).toISOString()]
+            );
+            if (alreadySentRow) {
+              console.log(`[CartOrderNotif] Order message for ${storeName} was already queued/sent today. Suppressing duplicate distributor WhatsApp send.`);
+              suppressedCount++;
+            } else {
+              for (const phone of uniqueDistPhones) {
+                try {
+                  const queueId = await whatsappQueueWorker.enqueue(
+                    phone,
+                    message,
+                    "distributor_cart_order",
+                    storeName
+                  );
+                  sentCount++;
+                  await db2.run(
+                    `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                    ["distributor_cart_order", storeName, phone, message, "sent", `store_${storeId}`]
+                  );
+                } catch (err) {
+                  console.error(`[CartOrderNotif] Failed to notify distributor ${storeName} at ${phone}:`, err);
+                  await db2.run(
+                    `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    ["distributor_cart_order", storeName, phone, message, "failed", err.message || "Unknown error", `store_${storeId}`]
+                  );
+                }
               }
             }
           }
-          return { ok: sentCount > 0, sentCount, suppressedCount: 0 };
+          return { ok: sentCount > 0 || suppressedCount > 0, sentCount, suppressedCount };
         } catch (err) {
           console.error("[CartOrderNotif] Error sending cart order notifications:", err);
           return { ok: false, sentCount: 0, suppressedCount: 0 };
@@ -18175,6 +18570,10 @@ ${mrpLine}
           );
           if (!reminder) {
             console.warn(`[DistributorReminder] Reminder ID ${reminderId} not found.`);
+            return false;
+          }
+          if (reminder.status && reminder.status !== "Pending" && !customMessage) {
+            console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
             return false;
           }
           const recipientPhone = reminder.distributor_phone || reminder.dist_phone;
@@ -18709,6 +19108,69 @@ async function handleInbound(msg) {
     await startupSyncCoordinator.waitForCartSync();
     const customer = await lookupCustomer(phone);
     const isNewCustomer = !customer;
+    if (isRefillConfirmationResponse(body)) {
+      const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
+      if (cleanDigits) {
+        const db2 = await dbManager.getConnection();
+        const pendingRefills = await db2.all(
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+           FROM patient_refills pr
+           JOIN medicines m ON m.id = pr.medicine_id
+           WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
+             AND pr.is_active = 1
+             AND pr.status NOT IN ('completed', 'canceled')
+           ORDER BY pr.id DESC`,
+          [`%${cleanDigits}`, `%${cleanDigits}%`]
+        );
+        if (pendingRefills && pendingRefills.length > 0) {
+          const primaryRefill = pendingRefills[0];
+          const refillIds = pendingRefills.map((r) => r.id);
+          const placeholders = refillIds.map(() => "?").join(",");
+          await db2.run(
+            `UPDATE patient_refills 
+             SET patient_confirmed = 1, confirmed_at = datetime('now')
+             WHERE id IN (${placeholders})`,
+            refillIds
+          );
+          eventService.broadcast("refill_updated", {
+            at: Date.now(),
+            confirmed_id: primaryRefill.id,
+            confirmed_phone: cleanDigits,
+            patient_phone: primaryRefill.patient_phone,
+            patient_name: primaryRefill.patient_name,
+            refill_count: pendingRefills.length
+          });
+          try {
+            const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+            const sched = await getPharmacyOperatingSchedule2(db2);
+            const storeName = await getStoreMedicalName4(db2);
+            const storePhone = await getStorePhone3(db2);
+            const phoneSuffix = storePhone ? `
+\u{1F4DE} ${storePhone}` : "";
+            const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
+            const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
+
+Thank you ${primaryRefill.patient_name}! Your regular prescription for:
+${medListText}
+has been confirmed.
+
+\u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
+Our team will keep your medicines ready for collection.${phoneSuffix}`;
+            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker2.enqueue(
+              phone,
+              ackMsg,
+              "refill_reminder",
+              primaryRefill.patient_name
+            );
+          } catch (ackErr) {
+            console.warn("[Intent Service] Refill confirmation acknowledgment note:", ackErr);
+          }
+          console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);
+          return;
+        }
+      }
+    }
     const parsed = parseMessage(body);
     let scispacyNames = [];
     if (body.trim().length > 3) {
@@ -19223,9 +19685,25 @@ async function handleOcrComplete(data) {
   ].filter(Boolean).join(" ");
   Promise.all([
     lookupCustomer(phone),
-    dbManager.getConnection().then((db2) => db2.all("SELECT api FROM api_substances"))
-  ]).then(async ([customer, rows]) => {
-    const knownApis = new Set(rows.map((r) => (r.api || "").toLowerCase()));
+    dbManager.getConnection().then(async (db2) => {
+      const apiRows = await db2.all("SELECT api FROM api_substances").catch(() => []);
+      const refRows = await db2.all("SELECT name, composition1 FROM medicine_reference").catch(() => []);
+      const combined = [
+        ...apiRows.map((r) => r.api),
+        ...refRows.map((r) => r.name),
+        ...refRows.map((r) => r.composition1)
+      ];
+      return combined.filter(Boolean);
+    })
+  ]).then(async ([customer, apiNames]) => {
+    const knownApis = new Set(apiNames.map((s) => String(s).toLowerCase().trim()));
+    const medNames = productNameFilterService.getMedicineNames();
+    if (medNames && medNames.length > 0) {
+      for (const m of medNames.slice(0, 5e3)) {
+        const first = m.split(/\s+/)[0]?.toLowerCase();
+        if (first && first.length >= 4) knownApis.add(first);
+      }
+    }
     const allNames = [finalName, ...cappedExtras];
     const captionCandidates = extractMedicineCandidates(messageBody || "");
     const passingNames = [];
@@ -20995,6 +21473,19 @@ var init_whatsappQueueWorker = __esm({
           }
         }
         const fileJsonStr = file ? JSON.stringify(file) : null;
+        const isDistributorOrder = type === "pharmarack_distributor_order" || type === "distributor_cart_order";
+        if (!options?.skipDedupe && isDistributorOrder) {
+          const fifteenMinsAgo = now - 15 * 60 * 1e3;
+          const recentDistQueue = await db2.get(
+            `SELECT id, status FROM whatsapp_send_queue
+         WHERE number = ? AND type IN ('pharmarack_distributor_order', 'distributor_cart_order') AND created_at >= ? LIMIT 1`,
+            [cleanPhone, fifteenMinsAgo]
+          );
+          if (recentDistQueue?.id) {
+            console.log(`[Queue Safeguard] Suppressed duplicate distributor order enqueue for ${cleanPhone} (last enqueued within 15m, queue ID: ${recentDistQueue.id}, status: ${recentDistQueue.status}).`);
+            return recentDistQueue.id;
+          }
+        }
         const dedupeGuard = options?.skipDedupe ? `WHERE NOT EXISTS (SELECT 1 FROM whatsapp_send_queue WHERE id = -1)` : `WHERE NOT EXISTS (
           SELECT 1 FROM whatsapp_send_queue WHERE number = ? AND message = ? AND created_at >= ?
         )`;
@@ -22480,24 +22971,33 @@ async function checkAllRefills(db2) {
      WHERE pr.status = 'pending' AND pr.is_active = 1`
   );
   let noticeDays = 3;
+  let operatingSchedule = { openTime: "09:00", closeTime: "22:00", weeklyOff: "Monday", closedDates: [] };
   try {
     const setting = await db2.get("SELECT value FROM app_settings WHERE key = 'refill_notice_days'");
     if (setting && setting.value) {
       noticeDays = parseInt(setting.value, 10) || 3;
     }
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    operatingSchedule = await getPharmacyOperatingSchedule2(db2);
   } catch (err) {
-    console.error("Failed to load refill_notice_days setting:", err);
+    console.error("Failed to load refill notice settings:", err);
   }
   const outOfStockRefills = [];
   const today = /* @__PURE__ */ new Date();
   today.setHours(0, 0, 0, 0);
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const weeklyOffLower = (operatingSchedule.weeklyOff || "monday").toLowerCase();
   for (const refill of activeRefills) {
     const nextDate = new Date(refill.next_refill_date);
     nextDate.setHours(0, 0, 0, 0);
     const diffTime = nextDate.getTime() - today.getTime();
     const diffDays = Math.round(diffTime / (1e3 * 60 * 60 * 24));
-    const highlightTrigger = diffDays <= noticeDays;
-    const orderTrigger = diffDays <= noticeDays;
+    const dueDayName = dayNames[nextDate.getDay()];
+    const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : "";
+    const isDueOnClosedDay = dueDayName === weeklyOffLower || operatingSchedule.closedDates.includes(dateYmd);
+    const effectiveNoticeDays = isDueOnClosedDay ? noticeDays + 1 : noticeDays;
+    const highlightTrigger = diffDays <= effectiveNoticeDays;
+    const orderTrigger = diffDays <= effectiveNoticeDays;
     if (!orderTrigger && !highlightTrigger) {
       continue;
     }
@@ -23909,8 +24409,8 @@ var init_inventory = __esm({
     router.get("/", async (req, res) => {
       let db2;
       const page = parseInt(req.query.page) || 1;
-      const search = (req.query.search || "").trim();
-      const medicine = (req.query.medicine || "").trim();
+      const search = (req.query.search || "").trim().replace(/\s+/g, " ");
+      const medicine = (req.query.medicine || "").trim().replace(/\s+/g, " ");
       const id = (req.query.id || "").trim();
       const batch = (req.query.batch || "").trim();
       const expiry = (req.query.expiry || "").trim();
@@ -23919,13 +24419,15 @@ var init_inventory = __esm({
       const mrp = (req.query.mrp || "").trim();
       const rack = (req.query.rack || "").trim();
       const stock_filter = (req.query.stock_filter || "").trim();
-      const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter);
+      const online_filter = (req.query.online_filter || "").trim().toLowerCase();
+      const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter || online_filter);
       const limit = req.query.limit !== void 0 ? parseInt(req.query.limit) : hasFilters ? 200 : 100;
       try {
         db2 = await dbManager.getConnection();
         let baseQuery = `
       FROM inventory_master im
       LEFT JOIN medicines m ON im.medicine_id = m.id
+      LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
       WHERE 1=1
     `;
         const params = [];
@@ -23936,12 +24438,16 @@ var init_inventory = __esm({
           params.push(targetStoreId, targetStoreId);
         }
         if (search) {
+          const searchTokens = search.split(/\s+/).filter(Boolean);
+          const tokenLike = searchTokens.length > 1 ? `%${searchTokens.join("%")}%` : `%${search}%`;
           baseQuery += ` AND (m.name LIKE ? OR m.item_code = ? OR im.batch_no LIKE ?)`;
-          params.push(`%${search}%`, search, `%${search}%`);
+          params.push(tokenLike, search, tokenLike);
         }
         if (medicine) {
+          const medTokens = medicine.split(/\s+/).filter(Boolean);
+          const tokenLike = medTokens.length > 1 ? `%${medTokens.join("%")}%` : `%${medicine}%`;
           baseQuery += ` AND m.name LIKE ?`;
-          params.push(`%${medicine}%`);
+          params.push(tokenLike);
         }
         if (batch) {
           baseQuery += ` AND im.batch_no LIKE ?`;
@@ -23990,6 +24496,11 @@ var init_inventory = __esm({
         } else if (stock_filter === "positive") {
           baseQuery += ` AND COALESCE(im.is_active, 1) = 1 AND (im.quantity > 0 OR im.loose_quantity > 0)`;
         }
+        if (online_filter === "online") {
+          baseQuery += ` AND pcv.is_portal_visible = 1`;
+        } else if (online_filter === "offline") {
+          baseQuery += ` AND (pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`;
+        }
         if (limit === 0) {
           const rows2 = await db2.all(`
         SELECT im.*, 
@@ -24001,7 +24512,9 @@ var init_inventory = __esm({
                m.sell_price as sell_price,
                m.cgst_per as cgst_per,
                m.sgst_per as sgst_per,
-               m.pack_size as pack_size
+               m.pack_size as pack_size,
+               COALESCE(pcv.is_portal_visible, 0) as is_online,
+               COALESCE(pcv.is_website_visible, 0) as is_website_visible
         ${baseQuery}
         ORDER BY COALESCE(m.name, im.batch_no) ASC, im.id DESC
       `, params);
@@ -24009,7 +24522,7 @@ var init_inventory = __esm({
         }
         const offset = (page - 1) * limit;
         let totalItems;
-        const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter]);
+        const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter, online_filter]);
         const cachedCount = inventoryCountCache.get(countKey);
         if (cachedCount && Date.now() - cachedCount.ts < INVENTORY_COUNT_TTL_MS) {
           totalItems = cachedCount.total;
@@ -24029,7 +24542,9 @@ var init_inventory = __esm({
              m.sell_price as sell_price,
              m.cgst_per as cgst_per,
              m.sgst_per as sgst_per,
-             m.pack_size as pack_size
+             m.pack_size as pack_size,
+             COALESCE(pcv.is_portal_visible, 0) as is_online,
+             COALESCE(pcv.is_website_visible, 0) as is_website_visible
       ${baseQuery}
       ORDER BY COALESCE(m.name, im.batch_no) ASC, im.id DESC
       LIMIT ? OFFSET ?
@@ -24375,7 +24890,8 @@ var init_inventory = __esm({
     router.get("/catalog-search", async (req, res) => {
       let db2;
       try {
-        const q = (req.query.q || "").trim();
+        const rawQ = (req.query.q || "").trim();
+        const q = rawQ.replace(/\s+/g, " ");
         db2 = await dbManager.getConnection();
         if (!q || q.length < 2) {
           const defaultRows = await db2.all(
@@ -24385,7 +24901,8 @@ var init_inventory = __esm({
           );
           return res.json(defaultRows);
         }
-        const prefixQ = `${q}%`;
+        const qTokens = q.split(/\s+/).filter(Boolean);
+        const prefixQ = qTokens.length > 1 ? `${qTokens.join("%")}%` : `${q}%`;
         const rows = [];
         const seenIds = /* @__PURE__ */ new Set();
         const prefixRows = await db2.all(
@@ -24442,12 +24959,13 @@ var init_inventory = __esm({
               }
             }
           } catch (_) {
+            const fallbackLike = qTokens.length > 1 ? `%${qTokens.join("%")}%` : `%${q}%`;
             const fallbackRows = await db2.all(
               `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
            FROM medicines
            WHERE name LIKE ?
            ORDER BY name ASC LIMIT 30`,
-              [`%${q}%`]
+              [fallbackLike]
             ).catch(() => []);
             for (const r of fallbackRows) {
               if (!seenIds.has(r.id)) {
@@ -25011,6 +25529,56 @@ var init_inventory = __esm({
       } catch (err) {
         console.error("Error toggling allow_loose_sale:", err);
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
+      }
+    });
+    router.post("/toggle-online", async (req, res) => {
+      try {
+        const { medicine_id, medicine_ids, is_online } = req.body;
+        const onlineVal = is_online ? 1 : 0;
+        const ids = Array.isArray(medicine_ids) ? medicine_ids.map(Number).filter((n) => !isNaN(n)) : medicine_id != null && !isNaN(Number(medicine_id)) ? [Number(medicine_id)] : [];
+        if (ids.length === 0) {
+          return res.status(400).json({ error: "medicine_id or medicine_ids array is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const placeholders = ids.map(() => "(?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
+        const values = [];
+        ids.forEach((id) => values.push(id, onlineVal, onlineVal));
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+       VALUES ${placeholders}
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = excluded.is_portal_visible,
+         is_website_visible = excluded.is_website_visible,
+         updated_at = CURRENT_TIMESTAMP`,
+          values
+        );
+        inventoryCache.invalidate();
+        res.json({ success: true, count: ids.length, is_online: onlineVal === 1 });
+      } catch (err) {
+        console.error("Error toggling online visibility:", err);
+        res.status(500).json({ error: err.message || "Failed to toggle online status" });
+      }
+    });
+    router.post("/publish-all-in-stock", async (req, res) => {
+      try {
+        const { is_online = true } = req.body;
+        const onlineVal = is_online ? 1 : 0;
+        const db2 = await dbManager.getConnection();
+        await db2.run(`
+      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
+      FROM inventory_master im
+      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        is_portal_visible = excluded.is_portal_visible,
+        is_website_visible = excluded.is_website_visible,
+        updated_at = CURRENT_TIMESTAMP
+    `, [onlineVal, onlineVal]);
+        inventoryCache.invalidate();
+        res.json({ success: true, is_online: onlineVal === 1 });
+      } catch (err) {
+        console.error("Error publishing in-stock medicines:", err);
+        res.status(500).json({ error: err.message || "Failed to publish in-stock medicines" });
       }
     });
     inventory_default = router;
@@ -41681,7 +42249,7 @@ async function allocateDynamicReminderTimes(db2, todayStr2) {
     const reminders = await db2.all(
       `SELECT id, distributor_name, scheduled_send_time, last_reminded_at, status
        FROM distributor_dispatch_reminders
-       WHERE date = ? AND status != 'No Order Today'
+       WHERE date = ? AND status = 'Pending'
        ORDER BY id ASC`,
       [todayStr2]
     );
@@ -41823,8 +42391,8 @@ async function checkAndSendAutoReminders() {
       `SELECT r.id, r.distributor_name, r.distributor_phone, r.scheduled_send_time, d.phone as master_phone
        FROM distributor_dispatch_reminders r
        LEFT JOIN distributors d ON r.distributor_id = d.id
-       WHERE r.date = ? AND r.status != 'No Order Today'
-         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at) != ?)`,
+       WHERE r.date = ? AND r.status = 'Pending'
+         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at, 'localtime') != ?)`,
       [todayStr2, todayStr2]
     );
     const dueReminders = [];
@@ -44577,12 +45145,13 @@ async function searchOfflineCatalogFallback(q, storeId, isMapped) {
             rate: p.distributorPrice !== null && p.distributorPrice !== void 0 ? Number(p.distributorPrice) : null,
             mrp: p.mrp !== null && p.mrp !== void 0 ? Number(p.mrp) : null,
             mapped: p.isMapped,
-            stock: p.availability || "High",
+            stock: "Offline",
             scheme: "",
             productId: p.storeId ? p.storeId * 1e5 + 1 : 1,
             productCode: "",
             company: p.manufacturer || "",
-            storeId: p.storeId || 1
+            storeId: p.storeId || 1,
+            isOffline: true
           });
         }
       }
@@ -44643,13 +45212,14 @@ async function searchOfflineCatalogFallback(q, storeId, isMapped) {
                 rate: lp.rate !== null && lp.rate !== void 0 ? Number(lp.rate) : null,
                 mrp: lp.mrp !== null && lp.mrp !== void 0 ? Number(lp.mrp) : null,
                 mapped: mappedStatus,
-                stock: stockDisplay,
+                stock: "Offline",
                 scheme: lp.scheme ? `${lp.scheme}%` : "",
                 productId: lp.medicineId || 1,
                 productCode: String(lp.medicineId || ""),
                 company: lp.company || "",
                 storeId: lp.distributorId || 1,
-                isLocalPharmacy: true
+                isLocalPharmacy: true,
+                isOffline: true
               });
             }
           }
@@ -44680,13 +45250,14 @@ async function searchOfflineCatalogFallback(q, storeId, isMapped) {
                   rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
                   mrp: bm.mrp ? Number(bm.mrp) : null,
                   mapped: true,
-                  stock: bm.currentStock > 0 ? bm.currentStock >= 10 ? "High" : String(bm.currentStock) : "Low",
+                  stock: "Offline",
                   scheme: "",
                   productId: bm.medicineId || 1,
                   productCode: String(bm.medicineId || ""),
                   company: bm.company || "",
                   storeId: defaultDistributor?.id || 1,
-                  isLocalPharmacy: true
+                  isLocalPharmacy: true,
+                  isOffline: true
                 });
               }
             }
@@ -45763,8 +46334,7 @@ var init_pharmarack = __esm({
             }
           }
           const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
-          const hasValidCode = Boolean(item.productCode);
-          if ((!hasValidId || !hasValidCode) && token) {
+          if (!hasValidId && token) {
             try {
               let cleanKeyword = (item.productName || item.product || item.name || "").trim();
               cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -46003,14 +46573,20 @@ var init_pharmarack = __esm({
       return res.json({ success: true, queued: true, message: "Item queued for silent live cart deletion" });
     });
     router13.post("/cart/notify-manual", async (req, res) => {
-      const { storeId, storeName, deliveryPersons, items } = req.body;
+      const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;
       if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Missing distributor info or items list" });
       }
       try {
-        const result = await notificationService.notifyDistributorCartOrder(storeName, Number(storeId), items, deliveryPersons || []);
+        const result = await notificationService.notifyDistributorCartOrder(
+          storeName,
+          Number(storeId),
+          items,
+          deliveryPersons || [],
+          { skipDistributor: !!skipDistributor }
+        );
         if (result.ok) {
-          res.json({ success: true, message: "Notifications sent successfully via WhatsApp!", sentCount: result.sentCount, suppressedCount: result.suppressedCount });
+          res.json({ success: true, message: "Notifications processed successfully via WhatsApp!", sentCount: result.sentCount, suppressedCount: result.suppressedCount });
         } else {
           res.status(500).json({ error: "Failed to send WhatsApp messages." });
         }
@@ -49523,48 +50099,77 @@ function parseIntervalDays(val) {
   if (typeof val === "number") return val;
   return 30;
 }
-function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en", dueDateStr) {
+function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en", dueDateStr, scheduleOpts) {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || "en").toLowerCase();
+  const openT = scheduleOpts?.openTime || "09:00";
+  const closeT = scheduleOpts?.closeTime || "22:00";
+  const weeklyOff = scheduleOpts?.weeklyOff || "Monday";
+  const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
   if (cleanLang === "hi") {
-    const medList = items.map((m) => `\xE2\u20AC\xA2 ${m.medicine_name || "\xE0\xA4\xA6\xE0\xA4\xB5\xE0\xA4\xBE\xE0\xA4\u02C6"} (\xE0\xA4\xAE\xE0\xA4\xBE\xE0\xA4\xA4\xE0\xA5\x8D\xE0\xA4\xB0\xE0\xA4\xBE: ${m.quantity_needed || 1})`).join("\n");
+    const medList = items.map((m) => `\u2022 ${m.medicine_name || "\u0926\u0935\u093E\u0908"} (\u092E\u093E\u0924\u094D\u0930\u093E: ${m.quantity_needed || 1})`).join("\n");
     const dueSuffix = dueDateStr ? `
 
-\xE0\xA4\xA4\xE0\xA4\xBE\xE0\xA4\xB0\xE0\xA5\u20AC\xE0\xA4\u2013: ${dueDateStr}` : "";
-    return `\xF0\u0178\u201D\u201D *\xE0\xA4\xA6\xE0\xA4\xB5\xE0\xA4\xBE\xE0\xA4\u02C6 \xE0\xA4\xB0\xE0\xA4\xBF\xE0\xA4\xAB\xE0\xA4\xBF\xE0\xA4\xB2 \xE0\xA4\xB0\xE0\xA4\xBF\xE0\xA4\xAE\xE0\xA4\xBE\xE0\xA4\u2021\xE0\xA4\u201A\xE0\xA4\xA1\xE0\xA4\xB0 \xE2\u20AC\u201D ${pharmacyName}*
+\u0924\u093E\u0930\u0940\u0916: ${dueDateStr}` : "";
+    let timingSection = `
+\u{1F552} \u0926\u0941\u0915\u093E\u0928 \u0915\u093E \u0938\u092E\u092F: ${openT} \u0938\u0947 ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0915\u094B \u092C\u0902\u0926 \u0930\u0939\u0947\u0917\u0940\u0964 \u0915\u0943\u092A\u092F\u093E \u0938\u092E\u092F \u0938\u0947 \u092A\u0939\u0932\u0947 \u0926\u0935\u093E\u0908 \u0932\u0947 \u0932\u0947\u0902!`;
+    }
+    const cta = `
 
-\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\u2021 ${pName},
-\xE0\xA4\u2020\xE0\xA4\xAA\xE0\xA4\u2022\xE0\xA5\u20AC \xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xAE\xE0\xA4\xBF\xE0\xA4\xA4 \xE0\xA4\xA6\xE0\xA4\xB5\xE0\xA4\xBE\xE0\xA4\u02C6 \xE0\xA4\u2022\xE0\xA4\xBE \xE0\xA4\xB0\xE0\xA4\xBF\xE0\xA4\xAB\xE0\xA4\xBF\xE0\xA4\xB2 \xE0\xA4\xB8\xE0\xA4\xAE\xE0\xA4\xAF \xE0\xA4\u2020 \xE0\xA4\u2014\xE0\xA4\xAF\xE0\xA4\xBE \xE0\xA4\xB9\xE0\xA5\u02C6:
+\u2753 \u0915\u094D\u092F\u093E \u0906\u092A \u0926\u0935\u093E\u0908 \u0924\u0948\u092F\u093E\u0930 \u0915\u0930\u0935\u093E\u0928\u093E \u091A\u093E\u0939\u0924\u0947 \u0939\u0948\u0902?
+\u{1F449} *\u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0947 \u0932\u093F\u090F "REFILL" \u092F\u093E "\u0939\u093E\u0901" \u0932\u093F\u0916\u0915\u0930 \u0909\u0924\u094D\u0924\u0930 \u0926\u0947\u0902\u0964*`;
+    return `\u{1F514} *\u0926\u0935\u093E\u0908 \u0930\u093F\u092B\u093C\u093F\u0932 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
 
-${medList}${dueSuffix}
+\u0928\u092E\u0938\u094D\u0924\u0947 ${pName},
+\u0906\u092A\u0915\u0940 \u0928\u093F\u092F\u092E\u093F\u0924 \u0926\u0935\u093E\u0908 \u0915\u093E \u0930\u093F\u092B\u093C\u093F\u0932 \u0938\u092E\u092F \u0906 \u0917\u092F\u093E \u0939\u0948:
 
-*\xE0\xA4\u2022\xE0\xA5\u0192\xE0\xA4\xAA\xE0\xA4\xAF\xE0\xA4\xBE \xE0\xA4\xA1\xE0\xA4\xBF\xE0\xA4\xB2\xE0\xA5\u20AC\xE0\xA4\xB5\xE0\xA4\xB0\xE0\xA5\u20AC \xE0\xA4\xAF\xE0\xA4\xBE \xE0\xA4\xAA\xE0\xA4\xBF\xE0\xA4\u2022\xE0\xA4\u2026\xE0\xA4\xAA \xE0\xA4\u2022\xE0\xA5\u20AC \xE0\xA4\xAA\xE0\xA5\x81\xE0\xA4\xB7\xE0\xA5\x8D\xE0\xA4\u0178\xE0\xA4\xBF \xE0\xA4\u2022\xE0\xA5\u2021 \xE0\xA4\xB2\xE0\xA4\xBF\xE0\xA4\x8F \xE0\xA4\u2030\xE0\xA4\xA4\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA4\xB0 \xE0\xA4\xA6\xE0\xA5\u2021\xE0\xA4\u201A\xE0\xA5\xA4*`;
+${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === "mr") {
-    const medList = items.map((m) => `\xE2\u20AC\xA2 ${m.medicine_name || "\xE0\xA4\u201D\xE0\xA4\xB7\xE0\xA4\xA7"} (\xE0\xA4\xAA\xE0\xA5\x8D\xE0\xA4\xB0\xE0\xA4\xAE\xE0\xA4\xBE\xE0\xA4\xA3: ${m.quantity_needed || 1})`).join("\n");
+    const medList = items.map((m) => `\u2022 ${m.medicine_name || "\u0914\u0937\u0927"} (\u092A\u094D\u0930\u092E\u093E\u0923: ${m.quantity_needed || 1})`).join("\n");
     const dueSuffix = dueDateStr ? `
 
-\xE0\xA4\xA6\xE0\xA4\xBF\xE0\xA4\xA8\xE0\xA4\xBE\xE0\xA4\u201A\xE0\xA4\u2022: ${dueDateStr}` : "";
-    return `\xF0\u0178\u201D\u201D *\xE0\xA4\u201D\xE0\xA4\xB7\xE0\xA4\xA7 \xE0\xA4\xB0\xE0\xA4\xBF\xE0\xA4\xAB\xE0\xA4\xBF\xE0\xA4\xB2 \xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xAE\xE0\xA4\xB0\xE0\xA4\xA3\xE0\xA4\xAA\xE0\xA4\xA4\xE0\xA5\x8D\xE0\xA4\xB0 \xE2\u20AC\u201D ${pharmacyName}*
+\u0926\u093F\u0928\u093E\u0902\u0915: ${dueDateStr}` : "";
+    let timingSection = `
+\u{1F552} \u0926\u0941\u0915\u093E\u0928\u093E\u091A\u0940 \u0935\u0947\u0933: ${openT} \u0924\u0947 ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0906\u092E\u091A\u0947 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0932\u093E \u092C\u0902\u0926 \u0930\u093E\u0939\u0940\u0932. \u0915\u0943\u092A\u092F\u093E \u0906\u0927\u0940\u091A \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E!`;
+    }
+    const cta = `
 
-\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\u2022\xE0\xA4\xBE\xE0\xA4\xB0 ${pName},
-\xE0\xA4\u2020\xE0\xA4\xAA\xE0\xA4\xB2\xE0\xA5\x8D\xE0\xA4\xAF\xE0\xA4\xBE \xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xAE\xE0\xA4\xBF\xE0\xA4\xA4 \xE0\xA4\u201D\xE0\xA4\xB7\xE0\xA4\xA7\xE0\xA4\xBE\xE0\xA4\u201A\xE0\xA4\u0161\xE0\xA5\u20AC \xE0\xA4\xB0\xE0\xA4\xBF\xE0\xA4\xAB\xE0\xA4\xBF\xE0\xA4\xB2 \xE0\xA4\u2022\xE0\xA4\xB0\xE0\xA4\xA3\xE0\xA5\x8D\xE0\xA4\xAF\xE0\xA4\xBE\xE0\xA4\u0161\xE0\xA5\u20AC \xE0\xA4\xB5\xE0\xA5\u2021\xE0\xA4\xB3 \xE0\xA4\x9D\xE0\xA4\xBE\xE0\xA4\xB2\xE0\xA5\u20AC \xE0\xA4\u2020\xE0\xA4\xB9\xE0\xA5\u2021:
+\u2753 \u0924\u0941\u092E\u094D\u0939\u093E\u0932\u093E \u0939\u0940 \u0914\u0937\u0927\u0947 \u0924\u092F\u093E\u0930 \u0939\u0935\u0940 \u0906\u0939\u0947\u0924 \u0915\u093E?
+\u{1F449} *\u0928\u093F\u0936\u094D\u091A\u093F\u0924\u0940\u0938\u093E\u0920\u0940 "REFILL" \u0915\u093F\u0902\u0935\u093E "\u0939\u094B" \u0932\u093F\u0939\u0942\u0928 \u0909\u0924\u094D\u0924\u0930 \u0926\u094D\u092F\u093E\u0964*`;
+    return `\u{1F514} *\u0914\u0937\u0927 \u0930\u093F\u092B\u093F\u0932 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
 
-${medList}${dueSuffix}
+\u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${pName},
+\u0906\u092A\u0932\u094D\u092F\u093E \u0928\u093F\u092F\u092E\u093F\u0924 \u0914\u0937\u0927\u093E\u0902\u091A\u0940 \u0930\u093F\u092B\u093F\u0932 \u0915\u0930\u0923\u094D\u092F\u093E\u091A\u0940 \u0935\u0947\u0933 \u091D\u093E\u0932\u0940 \u0906\u0939\u0947:
 
-*\xE0\xA4\u2022\xE0\xA5\u0192\xE0\xA4\xAA\xE0\xA4\xAF\xE0\xA4\xBE \xE0\xA4\xA1\xE0\xA4\xBF\xE0\xA4\xB2\xE0\xA4\xBF\xE0\xA4\xB5\xE0\xA5\x8D\xE0\xA4\xB9\xE0\xA4\xB0\xE0\xA5\u20AC \xE0\xA4\u2022\xE0\xA4\xBF\xE0\xA4\u201A\xE0\xA4\xB5\xE0\xA4\xBE \xE0\xA4\xAA\xE0\xA4\xBF\xE0\xA4\u2022\xE0\xA4\u2026\xE0\xA4\xAA \xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xB6\xE0\xA5\x8D\xE0\xA4\u0161\xE0\xA4\xBF\xE0\xA4\xA4 \xE0\xA4\u2022\xE0\xA4\xB0\xE0\xA4\xA3\xE0\xA5\x8D\xE0\xA4\xAF\xE0\xA4\xBE\xE0\xA4\xB8\xE0\xA4\xBE\xE0\xA4\xA0\xE0\xA5\u20AC \xE0\xA4\u2030\xE0\xA4\xA4\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA4\xB0 \xE0\xA4\xA6\xE0\xA5\x8D\xE0\xA4\xAF\xE0\xA4\xBE.*`;
+${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
-    const medList = items.map((m) => `\xE2\u20AC\xA2 ${m.medicine_name || "Medicine"} (Qty: ${m.quantity_needed || 1})`).join("\n");
+    const medList = items.map((m) => `\u2022 ${m.medicine_name || "Medicine"} (Qty: ${m.quantity_needed || 1})`).join("\n");
     const dueSuffix = dueDateStr ? `
 
 Due Date: ${dueDateStr}` : "";
-    return `\xF0\u0178\u201D\u201D *MEDICINE REFILL REMINDER \xE2\u20AC\u201D ${pharmacyName}*
+    let timingSection = `
+\u{1F552} Store Hours: ${openT} to ${closeT}`;
+    if (isOffDayUpcoming) {
+      timingSection += `
+\u26A0\uFE0F Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+    }
+    const cta = `
+
+\u2753 Would you like us to prepare your regular medicines?
+\u{1F449} *Reply "REFILL" or "YES" to confirm.*
+*(Store open ${openT} - ${closeT})*`;
+    return `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${pharmacyName}*
 
 Dear ${pName},
 Your regular prescription is due for refill:
 
-${medList}${dueSuffix}
-
-*Please reply to confirm delivery or pickup.*`;
+${medList}${dueSuffix}${timingSection}${cta}`;
   }
 }
 var import_express19, import_path46, import_fs41, import_url39, __filename37, __dirname37, DB_PATH23, router19, refillsTableInitialized, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
@@ -50065,7 +50670,9 @@ var init_refills = __esm({
               packaging: row.packaging || null,
               pack_size: row.pack_size || 1,
               batch_quantity: stock?.batch_quantity || 0,
-              batch_loose_quantity: stock?.batch_loose_quantity || 0
+              batch_loose_quantity: stock?.batch_loose_quantity || 0,
+              patient_confirmed: row.patient_confirmed || 0,
+              confirmed_at: row.confirmed_at || null
             });
           }
         }
@@ -50699,11 +51306,18 @@ var init_refills = __esm({
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
         }
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const nextRefillDateObj = refill.next_refill_date ? new Date(refill.next_refill_date) : /* @__PURE__ */ new Date();
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const dueDayName = dayNames[nextRefillDateObj.getDay()];
+        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
         const msg = buildRefillReminderMessage(
           patientName,
           [{ medicine_name: refill.medicine_name || "Prescribed Medicine", quantity_needed: refill.quantity_needed || 1 }],
           medicalName,
-          lang
+          lang,
+          void 0,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
         );
         let pdfPath = void 0;
         try {
@@ -50820,11 +51434,18 @@ var init_refills = __esm({
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
         }
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : /* @__PURE__ */ new Date();
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const dueDayName = dayNames[earliestDue.getDay()];
+        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
         const msg = buildRefillReminderMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
-          lang
+          lang,
+          void 0,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -50914,12 +51535,19 @@ var init_refills = __esm({
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
         }
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const tomorrowDate = /* @__PURE__ */ new Date();
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const tomorrowDayName = dayNames[tomorrowDate.getDay()];
+        const isOffDayUpcoming = tomorrowDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
         const msg = buildRefillReminderMessage(
           patientName,
           unsent.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          tomorrowDateStr
+          tomorrowDateStr,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -50999,12 +51627,18 @@ var init_refills = __esm({
         if (refillReminderEnabledRow?.value === "false") {
           return res.status(409).json({ error: "Refill reminder automation is disabled. Enable it in the Automation Hub to send reminders." });
         }
+        const sched = await getPharmacyOperatingSchedule(db2);
+        const earliestDue = unsentRows[0]?.next_refill_date ? new Date(unsentRows[0].next_refill_date) : /* @__PURE__ */ new Date();
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const dueDayName = dayNames[earliestDue.getDay()];
+        const isOffDayUpcoming = dueDayName.toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase() || dayNames[((/* @__PURE__ */ new Date()).getDay() + 1) % 7].toLowerCase() === (sched.weeklyOff || "Monday").toLowerCase();
         const msg = buildRefillReminderMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
           medicalName,
           lang,
-          refillDate
+          refillDate,
+          { openTime: sched.openTime, closeTime: sched.closeTime, weeklyOff: sched.weeklyOff, isOffDayUpcoming }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -52425,7 +53059,8 @@ var init_websiteOrders = __esm({
     };
     router25.get("/medicines/search", async (req, res) => {
       try {
-        const query = (req.query.query || "").trim();
+        const rawQuery = (req.query.query || "").trim();
+        const query = rawQuery.replace(/\s+/g, " ");
         const storeId = parseInt(req.query.store_id || "1", 10) || 1;
         const limit = Math.min(parseInt(req.query.limit || "20", 10) || 20, 50);
         if (!query) {
@@ -52434,6 +53069,9 @@ var init_websiteOrders = __esm({
         const db2 = await dbManager.getConnection();
         const normalizedQuery = normalizeProductName(query);
         const prefix = getThreeWordPrefix(query);
+        const tokens = query.split(/\s+/).filter(Boolean);
+        const tokenPrefix = tokens.length > 1 ? `${tokens.join("%")}%` : `${query}%`;
+        const tokenLike = tokens.length > 1 ? `%${tokens.join("%")}%` : `%${query}%`;
         const medicines = await db2.all(
           `SELECT m.id, m.name, m.canonical_name, m.normalized_name, m.product_code, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category,
               ci.image_path as image_url
@@ -52443,7 +53081,7 @@ var init_websiteOrders = __esm({
          AND (m.status IS NULL OR m.status = 'ACTIVE')
        ORDER BY m.name ASC
        LIMIT ?`,
-          [`${prefix || normalizedQuery}%`, `${query}%`, limit]
+          [`${prefix || normalizedQuery}%`, tokenPrefix, limit]
         ).catch(() => []);
         if (medicines.length < 5 && query.length >= 2) {
           const existingIds = new Set(medicines.map((m) => m.id));
@@ -52456,7 +53094,7 @@ var init_websiteOrders = __esm({
            AND (m.status IS NULL OR m.status = 'ACTIVE')
          ORDER BY m.name ASC
          LIMIT ?`,
-            [`%${normalizedQuery}%`, `%${query}%`, limit]
+            [`%${normalizedQuery}%`, tokenLike, limit]
           ).catch(() => []);
           for (const f of fallbackRows) {
             if (!existingIds.has(f.id)) {
@@ -52708,6 +53346,11 @@ ${upiUri}
 
 \u{1F3E2} Fulfillment: In-Store Pickup
 Please collect and pay at our pharmacy counter.`;
+            const mapUrl = await getStoreGoogleMapsUrl(db2);
+            if (mapUrl) {
+              confirmMsg += `
+\u{1F5FA}\uFE0F Navigation Link: ${mapUrl}`;
+            }
           }
           try {
             await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
@@ -53157,7 +53800,13 @@ Thank you!
             const cleanPhone = String(order.phone).replace(/\D/g, "");
             const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
             const medicalName = await getStoreMedicalName(db2);
-            const readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!
+            const mapUrl = await getStoreGoogleMapsUrl(db2);
+            let readyMsg = `Hello ${order.requester}, your order #${orderId} at ${medicalName} is ready for pickup/delivery!`;
+            if (mapUrl) {
+              readyMsg += `
+\u{1F5FA}\uFE0F Navigation Link: ${mapUrl}`;
+            }
+            readyMsg += `
 
 Thank you for your payment.`;
             await whatsappQueueWorker.enqueue(formattedPhone, readyMsg, "order_ready_notification", order.requester);
@@ -57346,122 +57995,77 @@ ${upiUri}
     router26.get("/public-catalog", async (req, res) => {
       try {
         const category = String(req.query.category || "all").toLowerCase();
-        const search = String(req.query.search || "").trim().toLowerCase();
+        const search = String(req.query.search || "").trim();
         const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
         const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "40"), 10)));
-        const { catalog, images } = loadCatalogAndImages();
+        const offset = (page - 1) * limit;
+        const { images } = loadCatalogAndImages();
         const db2 = await dbManager.getConnection();
-        const isApprovedRefillCategory = (item) => {
-          const c = (item.category || "").toLowerCase();
-          const n = (item.name || "").toUpperCase();
-          return c.includes("diabet") || c.includes("bp") || c.includes("cardiac") || c.includes("heart") || c.includes("thyroid") || c.includes("tb") || c.includes("tuber") || n.includes("R-CINEX") || n.includes("PYZINA") || n.includes("COMBUTOL");
-        };
-        let filtered = catalog.filter(isApprovedRefillCategory);
-        if (category && category !== "all") {
-          if (category.includes("diabet")) {
-            filtered = filtered.filter((i) => i.category.toLowerCase().includes("diabet"));
-          } else if (category.includes("bp") || category.includes("cardiac") || category.includes("heart") || category.includes("blood") || category.includes("pressure")) {
-            filtered = filtered.filter((i) => i.category.toLowerCase().includes("cardiac") || i.category.toLowerCase().includes("bp"));
-          } else if (category.includes("thyroid")) {
-            filtered = filtered.filter((i) => i.category.toLowerCase().includes("thyroid"));
-          } else if (category.includes("tb") || category.includes("tuber")) {
-            filtered = filtered.filter(
-              (i) => i.category.toLowerCase().includes("tb") || i.category.toLowerCase().includes("tuber") || i.name.toUpperCase().includes("R-CINEX") || i.name.toUpperCase().includes("PYZINA") || i.name.toUpperCase().includes("COMBUTOL")
-            );
-          }
-        }
+        const conditions = ["pcv.is_portal_visible = 1"];
+        const params = [];
         if (search) {
-          filtered = filtered.filter(
-            (i) => i.name.toLowerCase().includes(search) || i.composition.toLowerCase().includes(search) || i.manufacturer.toLowerCase().includes(search)
-          );
-          if (filtered.length < 30) {
-            const existingNames = new Set(filtered.map((f) => f.name.toUpperCase().trim()));
-            const dbMatches = await db2.all(
-              `SELECT m.id, m.name, m.generic_name, m.strength, m.packaging, m.manufacturer, m.category, m.mrp, m.sell_price
-           FROM medicines m
-           WHERE m.name LIKE ? OR m.generic_name LIKE ?
-           ORDER BY m.name ASC
-           LIMIT 30`,
-              [`%${search}%`, `%${search}%`]
-            ).catch(() => []);
-            for (const dbm of dbMatches) {
-              const key = (dbm.name || "").toUpperCase().trim();
-              if (key && !existingNames.has(key)) {
-                filtered.push({
-                  category: dbm.category || "General Medicine",
-                  name: dbm.name,
-                  pack: dbm.packaging || "",
-                  schedule: "",
-                  composition: dbm.generic_name || "",
-                  manufacturer: dbm.manufacturer || "",
-                  mrp: Number(dbm.mrp || 0),
-                  sell_price: Number(dbm.sell_price || dbm.mrp || 0)
-                });
-                existingNames.add(key);
-              }
-            }
-          }
+          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+          const s = `%${search}%`;
+          params.push(s, s, s);
         }
-        const totalCount = filtered.length;
-        const startIndex = (page - 1) * limit;
-        const paginated = filtered.slice(startIndex, startIndex + limit);
+        if (category && category !== "all") {
+          conditions.push(`LOWER(m.category) LIKE ?`);
+          params.push(`%${category}%`);
+        }
+        const where = conditions.join(" AND ");
+        const totalRow = await db2.get(
+          `SELECT COUNT(*) as n FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE ${where}`,
+          params
+        ).catch(() => ({ n: 0 }));
+        const rows = await db2.all(
+          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
+              m.packaging, m.strength, m.pack_size,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty,
+              COALESCE(pcv.featured_rank, 0) as featured_rank
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE ${where}
+       ORDER BY pcv.featured_rank DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        ).catch(() => []);
         const enriched = [];
-        for (const item of paginated) {
-          const dbMed = await db2.get(
-            `SELECT m.id, m.mrp, m.sell_price, m.generic_name, m.strength, m.pack_size,
-                COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
-         FROM medicines m
-         WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
-            [item.name, `${item.name.split(" ")[0]}%`]
-          ).catch(() => null);
+        for (const med of rows) {
           let imageUrl = null;
           let allImages = {};
           let gallery = [];
-          if (dbMed && dbMed.id) {
-            const resolved = await catalogImageService.resolveProductImages(dbMed.id);
-            if (resolved && resolved.primaryUrl) {
-              imageUrl = resolved.primaryUrl;
-              allImages = resolved.images;
-              gallery = resolved.gallery;
-            }
+          const resolved = await catalogImageService.resolveProductImages(med.id);
+          if (resolved && resolved.primaryUrl) {
+            imageUrl = resolved.primaryUrl;
+            allImages = resolved.images;
+            gallery = resolved.gallery;
           }
-          const imgData = images[item.name];
-          if (imgData && imgData.images) {
+          const imgData = images[med.name];
+          if (imgData && imgData.images && gallery.length < 2) {
             const stateGallery = catalogImageService.extractGalleryFromState(imgData);
-            if (stateGallery.length > 0) {
-              if (gallery.length === 0) {
-                gallery = stateGallery;
-                const primaryItem = stateGallery.find((g) => g.is_primary) || stateGallery[0];
-                imageUrl = primaryItem?.url || null;
-                stateGallery.forEach((g) => {
-                  allImages[g.type] = g;
-                });
-              } else if (gallery.length < 4) {
-                const existingTypes = new Set(gallery.map((g) => g.type));
-                for (const sg of stateGallery) {
-                  if (!existingTypes.has(sg.type) && gallery.length < 4) {
-                    gallery.push(sg);
-                    existingTypes.add(sg.type);
-                    allImages[sg.type] = sg;
-                  }
-                }
-              }
+            if (stateGallery.length > 0 && gallery.length === 0) {
+              gallery = stateGallery;
+              const primary = stateGallery.find((g) => g.is_primary) || stateGallery[0];
+              imageUrl = primary?.url || null;
+              stateGallery.forEach((g) => {
+                allImages[g.type] = g;
+              });
             }
           }
-          const stockQty = Number(dbMed?.stock_qty || 0);
-          const resolvedMrp = Number(dbMed?.mrp || item.mrp || 0);
-          const resolvedSellPrice = Number(dbMed?.sell_price || item.sell_price || resolvedMrp || 0);
           enriched.push({
-            id: dbMed?.id,
-            name: item.name,
-            category: item.category,
-            pack: item.pack || dbMed?.pack_size || "",
-            composition: item.composition || dbMed?.generic_name || "",
-            manufacturer: item.manufacturer,
-            mrp: resolvedMrp,
-            sell_price: resolvedSellPrice,
-            stock_qty: stockQty,
-            in_stock: stockQty > 0,
+            id: med.id,
+            name: med.name,
+            category: med.category || "General",
+            pack: med.packaging || med.pack_size || "",
+            composition: med.generic_name || "",
+            manufacturer: med.manufacturer || "",
+            mrp: Number(med.mrp || 0),
+            sell_price: Number(med.sell_price || med.mrp || 0),
+            stock_qty: Number(med.stock_qty || 0),
+            in_stock: Number(med.stock_qty || 0) > 0,
+            featured_rank: med.featured_rank || 0,
             image_url: imageUrl,
             images: allImages,
             gallery
@@ -57473,8 +58077,8 @@ ${upiUri}
           search,
           page,
           limit,
-          total_count: totalCount,
-          total_pages: Math.ceil(totalCount / limit),
+          total_count: totalRow?.n || 0,
+          total_pages: Math.ceil((totalRow?.n || 0) / limit),
           medicines: enriched
         });
       } catch (err) {
@@ -57482,37 +58086,23 @@ ${upiUri}
         res.status(500).json({ error: "Failed to fetch catalog: " + err.message });
       }
     });
-    router26.get("/categories-summary", (req, res) => {
-      const { catalog } = loadCatalogAndImages();
-      const summary = {
-        all: 0,
-        diabetic: 0,
-        bp_cardiac: 0,
-        thyroid: 0,
-        tb: 0
-      };
-      catalog.forEach((item) => {
-        const c = (item.category || "").toLowerCase();
-        const n = (item.name || "").toUpperCase();
-        let isAllowed = false;
-        if (c.includes("diabet")) {
-          summary.diabetic++;
-          isAllowed = true;
-        } else if (c.includes("cardiac") || c.includes("bp")) {
-          summary.bp_cardiac++;
-          isAllowed = true;
-        } else if (c.includes("thyroid")) {
-          summary.thyroid++;
-          isAllowed = true;
-        } else if (c.includes("tb") || c.includes("tuber") || n.includes("R-CINEX") || n.includes("PYZINA") || n.includes("COMBUTOL")) {
-          summary.tb++;
-          isAllowed = true;
-        }
-        if (isAllowed) {
-          summary.all++;
-        }
-      });
-      res.json({ success: true, summary });
+    router26.get("/categories-summary", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT m.category, COUNT(*) as n
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE pcv.is_portal_visible = 1
+       GROUP BY m.category
+       ORDER BY n DESC`
+        ).catch(() => []);
+        const totalEnabled = rows.reduce((s, r) => s + (r.n || 0), 0);
+        res.json({ success: true, total: totalEnabled, by_category: rows });
+      } catch (err) {
+        console.error("[CustomerPortal] categories-summary error:", err);
+        res.status(500).json({ error: "Failed to load category summary" });
+      }
     });
     router26.get("/standalone-catalog", (req, res) => {
       const filePath = import_path49.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
@@ -57804,6 +58394,177 @@ ${upiUri}
       } catch (err) {
         console.error("[CustomerPortal] Refill error:", err);
         res.status(500).json({ error: "Failed to create refill order" });
+      }
+    });
+    router26.get("/admin/catalog-visibility", async (req, res) => {
+      try {
+        const search = String(req.query.search || "").trim();
+        const filter = String(req.query.filter || "all").toLowerCase();
+        const category = String(req.query.category || "").trim();
+        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "50"), 10)));
+        const offset = (page - 1) * limit;
+        const db2 = await dbManager.getConnection();
+        const conditions = [];
+        const params = [];
+        if (search) {
+          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+          const s = `%${search}%`;
+          params.push(s, s, s);
+        }
+        if (category) {
+          conditions.push(`LOWER(m.category) LIKE ?`);
+          params.push(`%${category.toLowerCase()}%`);
+        }
+        if (filter === "enabled" || filter === "online") {
+          conditions.push(`pcv.is_portal_visible = 1`);
+        } else if (filter === "disabled" || filter === "offline") {
+          conditions.push(`(pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`);
+        } else if (filter === "with_image") {
+          conditions.push(`EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1)`);
+        } else if (filter === "in_stock") {
+          conditions.push(`EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0))`);
+        }
+        const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        const totalRow = await db2.get(
+          `SELECT COUNT(*) as n
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}`,
+          params
+        ).catch(() => ({ n: 0 }));
+        const rows = await db2.all(
+          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price, m.packaging,
+              COALESCE(pcv.is_portal_visible, 0) as is_portal_visible,
+              COALESCE(pcv.is_website_visible, 0) as is_website_visible,
+              COALESCE(pcv.featured_rank, 0) as featured_rank,
+              pcv.updated_at as visibility_updated_at,
+              (SELECT ci.image_path FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1 LIMIT 1) as primary_image,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}
+       ORDER BY pcv.featured_rank DESC, is_portal_visible DESC, stock_qty DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        ).catch(() => []);
+        const countsRow = await db2.get(
+          `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN pcv.is_portal_visible = 1 THEN 1 ELSE 0 END) as enabled_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) THEN 1 ELSE 0 END) as with_image_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0)) THEN 1 ELSE 0 END) as in_stock_count
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id`
+        ).catch(() => ({ total: 0, enabled_count: 0, with_image_count: 0, in_stock_count: 0 }));
+        res.json({
+          success: true,
+          page,
+          limit,
+          total_count: totalRow?.n || 0,
+          total_pages: Math.ceil((totalRow?.n || 0) / limit),
+          stats: {
+            total_medicines: countsRow?.total || 0,
+            portal_enabled: countsRow?.enabled_count || 0,
+            with_image: countsRow?.with_image_count || 0,
+            in_stock: countsRow?.in_stock_count || 0
+          },
+          medicines: rows
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility error:", err);
+        res.status(500).json({ error: "Failed to load catalog visibility" });
+      }
+    });
+    router26.put("/admin/catalog-visibility/:medicineId", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        if (isNaN(medicineId)) return res.status(400).json({ error: "Invalid medicine ID" });
+        const { is_portal_visible, is_website_visible, featured_rank } = req.body;
+        const db2 = await dbManager.getConnection();
+        const portalVal = is_portal_visible != null ? is_portal_visible ? 1 : 0 : null;
+        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, featured_rank, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = COALESCE(excluded.is_portal_visible, is_portal_visible),
+         is_website_visible = COALESCE(excluded.is_website_visible, is_website_visible),
+         featured_rank = COALESCE(excluded.featured_rank, featured_rank),
+         updated_at = CURRENT_TIMESTAMP`,
+          [
+            medicineId,
+            portalVal,
+            websiteVal,
+            featured_rank != null ? parseInt(String(featured_rank), 10) : null
+          ]
+        );
+        const updated = await db2.get(
+          `SELECT m.id, m.name, pcv.is_portal_visible, pcv.is_website_visible, pcv.featured_rank
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE m.id = ?`,
+          [medicineId]
+        );
+        res.json({ success: true, medicine: updated });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility PUT error:", err);
+        res.status(500).json({ error: "Failed to update visibility" });
+      }
+    });
+    router26.post("/admin/catalog-visibility/bulk", async (req, res) => {
+      try {
+        const { medicine_ids, is_portal_visible, is_website_visible } = req.body;
+        if (!Array.isArray(medicine_ids) || medicine_ids.length === 0) {
+          return res.status(400).json({ error: "medicine_ids array is required" });
+        }
+        if (medicine_ids.length > 500) {
+          return res.status(400).json({ error: "Max 500 medicines per bulk operation" });
+        }
+        const db2 = await dbManager.getConnection();
+        const portalVal = is_portal_visible ? 1 : 0;
+        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
+        const placeholders = medicine_ids.map(() => "(?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
+        const values = [];
+        medicine_ids.forEach((id) => values.push(id, portalVal, websiteVal));
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+       VALUES ${placeholders}
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = excluded.is_portal_visible,
+         is_website_visible = excluded.is_website_visible,
+         updated_at = CURRENT_TIMESTAMP`,
+          values
+        );
+        res.json({
+          success: true,
+          updated_count: medicine_ids.length,
+          is_portal_visible: portalVal === 1
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility bulk error:", err);
+        res.status(500).json({ error: "Failed to bulk update visibility" });
+      }
+    });
+    router26.post("/admin/catalog-visibility/publish-in-stock", async (req, res) => {
+      try {
+        const { is_online = true } = req.body;
+        const onlineVal = is_online ? 1 : 0;
+        const db2 = await dbManager.getConnection();
+        await db2.run(`
+      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
+      FROM inventory_master im
+      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        is_portal_visible = excluded.is_portal_visible,
+        is_website_visible = excluded.is_website_visible,
+        updated_at = CURRENT_TIMESTAMP
+    `, [onlineVal, onlineVal]);
+        res.json({ success: true, is_online: onlineVal === 1 });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility publish-in-stock error:", err);
+        res.status(500).json({ error: "Failed to publish in-stock medicines" });
       }
     });
     customerPortal_default = router26;
@@ -60229,7 +60990,8 @@ var init_sales = __esm({
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        const search = req.query.search || "";
+        const rawSearch = req.query.search || "";
+        const search = rawSearch.trim().replace(/\s+/g, " ");
         const date_from = req.query.date_from || "";
         const date_to = req.query.date_to || "";
         const batch = req.query.batch || "";
@@ -60245,9 +61007,10 @@ var init_sales = __esm({
         const params = [];
         const isStrictDate = req.query.strict_date === "true";
         if (search) {
+          const searchTokens = search.split(/\s+/).filter(Boolean);
+          const tokenLike = searchTokens.length > 1 ? `%${searchTokens.join("%")}%` : `%${search}%`;
           whereClauses.push("(si.invoice_no LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR d.name LIKE ? OR EXISTS (SELECT 1 FROM sale_items sale_it JOIN inventory_master inv_m ON sale_it.inventory_id = inv_m.id JOIN medicines m_search ON inv_m.medicine_id = m_search.id WHERE sale_it.invoice_id = si.id AND (inv_m.batch_no LIKE ? OR m_search.name LIKE ?)))");
-          const s = `%${search}%`;
-          params.push(s, s, s, s, s, s);
+          params.push(tokenLike, tokenLike, tokenLike, tokenLike, tokenLike, tokenLike);
         }
         if (date_from && (!search || isStrictDate)) {
           whereClauses.push("DATE(si.date, 'localtime') >= DATE(?)");
@@ -60372,8 +61135,11 @@ var init_sales = __esm({
       let db2;
       try {
         db2 = await dbManager.getConnection();
-        const cleanQuery = query.trim();
+        const cleanQuery = query.trim().replace(/\s+/g, " ");
         const isNumeric = /^\d+(\.\d+)?$/.test(cleanQuery);
+        const queryTokens = cleanQuery.split(/\s+/).filter(Boolean);
+        const tokenPrefixQuery = queryTokens.length > 1 ? `${queryTokens.join("%")}%` : `${cleanQuery}%`;
+        const tokenLikeQuery = queryTokens.length > 1 ? `%${queryTokens.join("%")}%` : `%${cleanQuery}%`;
         let rows = [];
         if (isNumeric) {
           const exactQuery = cleanQuery;
@@ -60468,7 +61234,7 @@ var init_sales = __esm({
             rows = await db2.all(sql, [exactQuery, prefixQuery, prefixQuery]);
           }
         } else {
-          const prefixQuery = `${cleanQuery}%`;
+          const prefixQuery = tokenPrefixQuery;
           const prefixSql = `
         SELECT 
           m.id AS medicine_id, 
@@ -60509,7 +61275,7 @@ var init_sales = __esm({
       `;
           rows = await db2.all(prefixSql, [prefixQuery]);
           if (rows.length < 15 && cleanQuery.length >= 3) {
-            const likeQuery = `%${cleanQuery}%`;
+            const likeQuery = tokenLikeQuery;
             const fallbackSql = `
           SELECT 
             m.id AS medicine_id, 
@@ -65956,13 +66722,16 @@ var init_returns = __esm({
           return res.status(400).json({ error: "Medicine name query is required" });
         }
         db2 = await dbManager.getConnection();
-        const cleanName = String(name).trim();
+        const cleanName = String(name).trim().replace(/\s+/g, " ");
+        const tokens = cleanName.split(/\s+/).filter(Boolean);
+        const prefixQ = tokens.length > 1 ? `${tokens.join("%")}%` : `${cleanName}%`;
+        const infixQ = tokens.length > 1 ? `%${tokens.join("%")}%` : `%${cleanName}%`;
         const medicines = await db2.all(
           `SELECT id, name FROM medicines 
        WHERE name LIKE ? OR name LIKE ? 
        ORDER BY CASE WHEN name LIKE ? THEN 0 ELSE 1 END ASC, name ASC 
        LIMIT 15`,
-          [`${cleanName}%`, `%${cleanName}%`, `${cleanName}%`]
+          [prefixQ, infixQ, prefixQ]
         );
         if (medicines.length === 0) {
           return res.json([]);
@@ -65986,11 +66755,14 @@ var init_returns = __esm({
         query += ` ORDER BY p.date DESC LIMIT 100`;
         const purchaseRecords = await db2.all(query, params);
         const cleanLower = cleanName.toLowerCase();
+        const compactClean = cleanLower.replace(/[^a-z0-9]/g, "");
         purchaseRecords.sort((a, b) => {
           const nameA = String(a.medicine_name || "").toLowerCase();
           const nameB = String(b.medicine_name || "").toLowerCase();
-          const aStarts = nameA.startsWith(cleanLower);
-          const bStarts = nameB.startsWith(cleanLower);
+          const compactA = nameA.replace(/[^a-z0-9]/g, "");
+          const compactB = nameB.replace(/[^a-z0-9]/g, "");
+          const aStarts = nameA.startsWith(cleanLower) || compactClean.length > 0 && compactA.startsWith(compactClean);
+          const bStarts = nameB.startsWith(cleanLower) || compactClean.length > 0 && compactB.startsWith(compactClean);
           if (aStarts && !bStarts) return -1;
           if (!aStarts && bStarts) return 1;
           const nameCmp = nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
@@ -67059,6 +67831,23 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const cleanPhone = String(order.phone || "").replace(/\D/g, "");
   if (!cleanPhone) return false;
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const last10 = cleanPhone.slice(-10);
+  const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+  if (!options?.forceResend) {
+    const recentQueue = await db2.get(
+      `SELECT id, created_at FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+    );
+    if (recentQueue) {
+      console.log(`[Arrival Safeguard] Suppressed duplicate arrival notification for ${cleanPhone} (already queued within 60m, queue ID: ${recentQueue.id}).`);
+      return false;
+    }
+  }
   const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
   const lang = custRow?.language || "en";
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
@@ -67417,6 +68206,40 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    router36.get("/check-arrival-notified", async (req, res) => {
+      try {
+        const rawPhone = String(req.query.phone || "").replace(/\D/g, "");
+        if (!rawPhone || rawPhone.length < 7) {
+          return res.json({ recentlyNotified: false });
+        }
+        const last10 = rawPhone.slice(-10);
+        const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+        const db2 = await dbManager.getConnection();
+        const recent = await db2.get(
+          `SELECT id, created_at, status FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'special_order'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+          [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+        );
+        if (recent) {
+          const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recent.created_at)) / 6e4));
+          return res.json({
+            recentlyNotified: true,
+            minutesAgo,
+            queueId: recent.id,
+            status: recent.status
+          });
+        }
+        return res.json({ recentlyNotified: false });
+      } catch (err) {
+        console.error("Check arrival notified error:", err);
+        res.json({ recentlyNotified: false });
+      }
+    });
     router36.post("/:id/notify-arrival", async (req, res) => {
       const { id } = req.params;
       try {
@@ -67429,8 +68252,9 @@ var init_orders = __esm({
         if (!order.phone) {
           return res.status(400).json({ error: "Order has no associated phone number" });
         }
+        const isForce = req.body?.force_resend === true;
         const isResend = Number(order.notified) === 1 || Number(order.notification_count) > 0;
-        const queued = await enqueueArrivalWhatsApp(db2, order, { skipDedupe: isResend });
+        const queued = await enqueueArrivalWhatsApp(db2, order, { skipDedupe: isResend, forceResend: isForce });
         let newCount = Number(order.notification_count || 0);
         if (queued) {
           newCount += 1;
@@ -67441,7 +68265,7 @@ var init_orders = __esm({
           success: true,
           whatsapp_queued: queued,
           notification_count: newCount,
-          message: queued ? "Arrival notification queued successfully via WhatsApp" : "No phone stored for this order; nothing was sent"
+          message: queued ? "Arrival notification queued successfully via WhatsApp" : "Arrival message was already queued in the last 60 minutes (or no phone stored)"
         });
       } catch (err) {
         console.error("Notify arrival error:", err);
@@ -67449,7 +68273,7 @@ var init_orders = __esm({
       }
     });
     router36.post("/batch-notify-arrival", async (req, res) => {
-      const { order_ids, items, custom_message, lang: reqLang } = req.body;
+      const { order_ids, items, custom_message, lang: reqLang, force_resend } = req.body;
       if (!Array.isArray(order_ids) || order_ids.length === 0) {
         return res.status(400).json({ error: "order_ids array is required" });
       }
@@ -67466,6 +68290,29 @@ var init_orders = __esm({
           return res.status(400).json({ error: "Customer phone number is missing" });
         }
         const formattedPhone = firstPhone.length === 10 ? `91${firstPhone}` : firstPhone;
+        const last10 = firstPhone.slice(-10);
+        const sixtyMinutesAgoMs = Date.now() - 60 * 60 * 1e3;
+        if (!force_resend) {
+          const recentQueue = await db2.get(
+            `SELECT id, created_at, status FROM whatsapp_send_queue
+         WHERE (number LIKE ? OR number LIKE ?)
+           AND type = 'special_order'
+           AND status NOT IN ('cancelled', 'failed_perm')
+           AND created_at >= ?
+         ORDER BY created_at DESC LIMIT 1`,
+            [`%${last10}%`, `%${formattedPhone}%`, sixtyMinutesAgoMs]
+          );
+          if (recentQueue) {
+            const minutesAgo = Math.max(1, Math.round((Date.now() - Number(recentQueue.created_at)) / 6e4));
+            return res.status(409).json({
+              error: `An arrival notification was already queued for this customer ${minutesAgo} minute(s) ago.`,
+              code: "RECENTLY_NOTIFIED",
+              already_queued: true,
+              minutes_ago: minutesAgo,
+              recent_queue_id: recentQueue.id
+            });
+          }
+        }
         const custRow = await db2.get("SELECT language FROM customers WHERE phone = ? LIMIT 1", [firstPhone]);
         const lang = reqLang || orders[0].language || custRow?.language || "en";
         const requesterName = orders[0].requester || "Customer";
@@ -70712,6 +71559,129 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    router45.get("/medicines/:id/composition-intelligence", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const db2 = await dbManager.getConnection();
+        const medicine = await db2.get(
+          "SELECT id, name, generic_name, manufacturer, api_reference, mrp, sell_price FROM medicines WHERE id = ?",
+          [id]
+        );
+        if (!medicine) {
+          await dbManager.close();
+          return res.status(404).json({ error: "Medicine not found" });
+        }
+        const apiRef = medicine.api_reference || medicine.generic_name || "";
+        let inStockAlts = [];
+        let purchaseHistory = [];
+        const salesSummary = { total_units_sold: 0, last_sold_date: null };
+        let masterBrandsCount = 0;
+        let masterBrandsSample = [];
+        const images = await db2.all(
+          `SELECT id, image_type, image_path, thumbnail_path, verification_status, confidence_score, is_primary
+       FROM catalog_images
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY is_primary DESC,
+         CASE COALESCE(image_type, 'combined')
+           WHEN 'front' THEN 1
+           WHEN 'combined' THEN 2
+           WHEN 'back' THEN 3
+           WHEN 'box' THEN 4
+           WHEN 'tablet' THEN 5
+           ELSE 6 END,
+         id DESC`,
+          [id]
+        );
+        if (apiRef) {
+          inStockAlts = await db2.all(
+            `SELECT im.id as inventory_id, m.id as medicine_id, m.name as medicine_name, m.manufacturer,
+                im.batch_no, im.expiry_date, im.quantity, im.loose_quantity,
+                COALESCE(im.mrp, m.mrp, 0) as mrp, im.unit_price, im.rack_location
+         FROM inventory_master im
+         JOIN medicines m ON im.medicine_id = m.id
+         WHERE im.quantity > 0 AND (
+           (m.api_reference IS NOT NULL AND m.api_reference != '' AND LOWER(m.api_reference) = LOWER(?))
+           OR (m.generic_name IS NOT NULL AND m.generic_name != '' AND LOWER(m.generic_name) = LOWER(?))
+         )
+         ORDER BY im.quantity DESC
+         LIMIT 20`,
+            [apiRef, apiRef]
+          );
+          for (const alt of inStockAlts) {
+            const img = await db2.get(
+              `SELECT image_path, thumbnail_path, image_type
+           FROM catalog_images
+           WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+           ORDER BY is_primary DESC, id ASC LIMIT 1`,
+              [alt.medicine_id]
+            );
+            if (img) {
+              alt.primary_image_path = img.thumbnail_path || img.image_path;
+              alt.image_type = img.image_type;
+            }
+          }
+          purchaseHistory = await db2.all(
+            `SELECT pi.id, p.id as purchase_id, p.invoice_no, p.date as purchase_date,
+                COALESCE(d.name, 'Direct / Unknown') as distributor_name,
+                m.name as medicine_name, pi.batch_no, pi.expiry_date, pi.quantity, pi.cost_price, pi.mrp
+         FROM purchase_items pi
+         JOIN purchases p ON pi.purchase_id = p.id
+         LEFT JOIN distributors d ON p.distributor_id = d.id
+         JOIN medicines m ON pi.medicine_id = m.id
+         WHERE (
+           pi.medicine_id = ?
+           OR (m.api_reference IS NOT NULL AND m.api_reference != '' AND LOWER(m.api_reference) = LOWER(?))
+         )
+         ORDER BY p.date DESC
+         LIMIT 20`,
+            [id, apiRef]
+          );
+          const salesData = await db2.get(
+            `SELECT SUM(si.quantity) as total_qty, MAX(s.date) as last_date
+         FROM sale_items si
+         JOIN sales_invoices s ON si.invoice_id = s.id
+         LEFT JOIN inventory_master im ON si.inventory_id = im.id
+         LEFT JOIN medicines m ON im.medicine_id = m.id
+         WHERE im.medicine_id = ? OR (m.api_reference IS NOT NULL AND LOWER(m.api_reference) = LOWER(?))`,
+            [id, apiRef]
+          );
+          if (salesData) {
+            salesSummary.total_units_sold = salesData.total_qty || 0;
+            salesSummary.last_sold_date = salesData.last_date || null;
+          }
+          const countRow = await db2.get(
+            `SELECT count(*) as c FROM medicines
+         WHERE (api_reference IS NOT NULL AND LOWER(api_reference) = LOWER(?))
+            OR (generic_name IS NOT NULL AND LOWER(generic_name) = LOWER(?))`,
+            [apiRef, apiRef]
+          );
+          masterBrandsCount = countRow ? countRow.c : 0;
+          masterBrandsSample = await db2.all(
+            `SELECT id, name, manufacturer, mrp FROM medicines
+         WHERE (api_reference IS NOT NULL AND LOWER(api_reference) = LOWER(?))
+            OR (generic_name IS NOT NULL AND LOWER(generic_name) = LOWER(?))
+         ORDER BY name ASC
+         LIMIT 40`,
+            [apiRef, apiRef]
+          );
+        }
+        await dbManager.close();
+        res.json({
+          medicine,
+          api_reference: apiRef,
+          images,
+          in_stock_alternatives: inStockAlts,
+          purchase_history: purchaseHistory,
+          sales_history: salesSummary,
+          master_brands_count: masterBrandsCount,
+          master_brands_sample: masterBrandsSample
+        });
+      } catch (error) {
+        await dbManager.close();
+        console.error("Failed to get composition intelligence:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
     router45.post("/medicines/seed-master", async (req, res) => {
       try {
         const { seedMasterMedicines: seedMasterMedicines2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
@@ -72632,10 +73602,26 @@ ${order.items || "Standard Pharmacy Order"}
             console.log(`[Queue Safeguard] Delivery boy phone matches distributor phone for ${order.storeName}. Skipping duplicate summary send.`);
           }
           const alreadyPlacedToday = await db2.get(
-            `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND store_name = ? LIMIT 1`,
+            `SELECT id, items_json FROM pharmarack_placed_orders WHERE order_date = ? AND store_name = ? ORDER BY id DESC LIMIT 1`,
             [today, order.storeName]
           );
           if (alreadyPlacedToday) {
+            let isSameItems = false;
+            try {
+              const placedItems = typeof alreadyPlacedToday.items_json === "string" ? JSON.parse(alreadyPlacedToday.items_json) : alreadyPlacedToday.items_json;
+              if (Array.isArray(placedItems) && Array.isArray(order.items) && placedItems.length === order.items.length) {
+                const placedCodes = placedItems.map((it) => it.productCode || it.productName || it.name || "").sort().join(",");
+                const orderCodes = order.items.map((it) => it.productCode || it.productName || it.name || "").sort().join(",");
+                if (placedCodes && placedCodes === orderCodes) {
+                  isSameItems = true;
+                }
+              }
+            } catch (_) {
+            }
+            if (isSameItems) {
+              console.log(`[Queue Safeguard] Exact identical order for ${order.storeName} was already placed today (${today}). Suppressing duplicate batch enqueue.`);
+              continue;
+            }
             console.log(`[Queue Safeguard] Order for ${order.storeName} was already placed today (${today}). Enqueuing fresh items delta.`);
           }
           const distQueueId = await whatsappQueueWorker.enqueue(
@@ -74384,6 +75370,8 @@ var init_server = __esm({
     }));
     app.use(import_express53.default.json({ limit: "15mb" }));
     app.use("/uploads", import_express53.default.static(UPLOAD_DIR2));
+    app.use("/products", import_express53.default.static(import_path62.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express53.default.static(import_path62.default.resolve(process.cwd(), "uploads/products")));
     app.use("/data/search_screenshots", import_express53.default.static(import_path62.default.join(getAppDataDir(), "data", "search_screenshots")));
     app.use("/data/inbound_media", import_express53.default.static(import_path62.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
