@@ -939,18 +939,24 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   }, [isOpen, checkSession]);
 
   useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     const handleRefresh = () => {
-      if (isOpen) {
+      if (!isOpen) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
         Promise.allSettled([
           fetchLiveCartSummary(true),
           fetchPendingRefills(),
           fetchReconOrders(),
           fetchIgnoredWords()
         ]);
-      }
+      }, 500);
     };
     window.addEventListener('refresh-pharmarack-cart', handleRefresh);
-    return () => window.removeEventListener('refresh-pharmarack-cart', handleRefresh);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener('refresh-pharmarack-cart', handleRefresh);
+    };
   }, [isOpen]);
 
   // Instant Autofocus on mount (<10ms)
@@ -1270,10 +1276,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         fetchPendingRefills().catch(() => {});
       }
 
-      // Silent modal-side preview refresh, then auto-clear the settled chip
-      Promise.allSettled([fetchCart()]).finally(() => {
-        window.setTimeout(() => dismissPendingAdd(record.id), 4000);
-      });
+      // Auto-clear the settled chip after brief confirmation
+      window.setTimeout(() => dismissPendingAdd(record.id), 4000);
     } catch (cartErr: unknown) {
       console.error('Failed to add live cart item:', cartErr);
       const apiErr = cartErr as LocalApiError;

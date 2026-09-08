@@ -67,6 +67,50 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const [editMessage, setEditMessage] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Live in-flight animation state for currently sending WhatsApp message (matching WhatsApp Automation Hub)
+  const [activeSending, setActiveSending] = useState<{
+    id?: string;
+    recipient: string;
+    progress: number;
+    secondsLeft: number;
+    completed: boolean;
+    type?: string;
+  } | null>(null);
+
+  const activeSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastAnimatedTargetRef = useRef<string | null>(null);
+
+  const startSendAnimation = (recipient: string, type?: string, durationSec = 10) => {
+    if (activeSendTimerRef.current) clearInterval(activeSendTimerRef.current);
+    const totalSteps = durationSec * 10;
+    let currentStep = 0;
+
+    setActiveSending({
+      recipient,
+      progress: 0,
+      secondsLeft: durationSec,
+      completed: false,
+      type,
+    });
+
+    activeSendTimerRef.current = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      currentStep++;
+      const percent = Math.min(100, Math.round((currentStep / totalSteps) * 100));
+      const secsLeft = Math.max(0, Math.ceil(durationSec - currentStep / 10));
+
+      if (currentStep >= totalSteps) {
+        if (activeSendTimerRef.current) clearInterval(activeSendTimerRef.current);
+        setActiveSending(prev => (prev ? { ...prev, progress: 100, secondsLeft: 0, completed: true } : null));
+        setTimeout(() => {
+          setActiveSending(null);
+        }, 2000);
+      } else {
+        setActiveSending(prev => (prev ? { ...prev, progress: percent, secondsLeft: secsLeft } : null));
+      }
+    }, 100);
+  };
+
   const toggleExpand = (id: number) => {
     setExpandedIds(prev => ({ ...prev, [id]: !prev[id] }));
   };
@@ -89,6 +133,16 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
         setDelayCreditBill(cachedDelayCreditBill);
         setDelayDistributor(cachedDelayDistributor);
         setDelayDeliveryBoy(cachedDelayDeliveryBoy);
+      }
+      const sendingCount = data?.counts?.sending || 0;
+      if (data?.activeTargetName && sendingCount > 0) {
+        const targetKey = `${data.currentSendingItemId || data.activeTargetName}`;
+        if (lastAnimatedTargetRef.current !== targetKey) {
+          lastAnimatedTargetRef.current = targetKey;
+          startSendAnimation(data.activeTargetName, 'Queue Dispatch', 10);
+        }
+      } else if (sendingCount === 0) {
+        lastAnimatedTargetRef.current = null;
       }
       syncPollTimer(data);
     } catch (err) {
@@ -119,11 +173,16 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sanctioned SSE queue-event refresh flow per AGENTS.md
     fetchStatus(false);
     const unsub = whatsappQueueEvent.subscribeUpdated(() => fetchStatus(true));
+    const unsubSend = messageSendEvent.subscribeSendProgress((detail) => {
+      startSendAnimation(detail.recipient, detail.messagePreview, detail.durationSec || 10);
+    });
     const handleSse = () => fetchStatus(true);
     window.addEventListener('sse-wa-queue-updated', handleSse);
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (activeSendTimerRef.current) clearInterval(activeSendTimerRef.current);
       unsub();
+      unsubSend();
       window.removeEventListener('sse-wa-queue-updated', handleSse);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only + event subscriptions, fetchStatus is stable-in-practice
@@ -695,6 +754,38 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
 
         {/* Live Status & Quick Actions Bar */}
         <div className="p-4 bg-bg2/40 border-b border-glass-border/30 space-y-3 shrink-0">
+          {/* Live Active Sending Card (0-100% Progress + 10-0s Countdown Animation matching WhatsApp Automation Hub) */}
+          {activeSending && (
+            <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/30 shadow-md space-y-2 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Send size={13} className={`text-sky-400 ${activeSending.completed ? '' : 'animate-bounce'}`} />
+                  <span className="text-xs font-bold text-text truncate">
+                    {activeSending.completed ? `✓ Sent to ${activeSending.recipient}` : `Sending WhatsApp to ${activeSending.recipient}`}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 shrink-0">
+                  {activeSending.completed ? '100% Complete' : `${activeSending.progress}% (${activeSending.secondsLeft}s left)`}
+                </span>
+              </div>
+
+              <div className="w-full h-1.5 bg-bg border border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
+                <div
+                  className="h-full rounded-full transition-all duration-150 relative bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400"
+                  style={{ width: `${Math.min(100, Math.max(0, activeSending.progress))}%` }}
+                >
+                  <div className="absolute right-0 top-0 bottom-0 w-2 bg-sky-100 rounded-full shadow-sm shadow-sky-400/50" />
+                </div>
+              </div>
+
+              {activeSending.type && (
+                <div className="text-[10px] text-muted truncate">
+                  Type: {activeSending.type}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Live Progress Bar & Comprehensive Metric Chips */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold">

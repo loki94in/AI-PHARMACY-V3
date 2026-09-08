@@ -1208,13 +1208,12 @@ router.post('/cart/add', async (req, res) => {
         }
       }
 
-      // If productCode or productId is missing/0, resolve exact PrProductId.
+      // If productId is missing/0, resolve exact PrProductId.
       // Fast path first: a recent autocomplete/search for the SAME product name
       // already carries the real ids — reuse it instead of paying another
       // OpenSearch round trip (exact normalized-name match only, never guessed).
       const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
-      const hasValidCode = Boolean(item.productCode);
-      if ((!hasValidId || !hasValidCode) && token) {
+      if (!hasValidId && token) {
         try {
           let cleanKeyword = (item.productName || item.product || item.name || '').trim();
           cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, '').trim();

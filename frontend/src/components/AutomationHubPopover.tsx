@@ -76,6 +76,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   } | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastAnimatedItemKeyRef = useRef<string | null>(null);
 
   const loadData = async (silent = isHydrated || cachedCatalog.length > 0) => {
     if (!silent) setLoading(true);
@@ -96,9 +97,15 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
       setUnresolvedCount(summaryRes.unresolvedFailuresCount || 0);
       if (readinessRes) setReadiness(readinessRes);
 
-      // If backend reports an active sending item and no local timer is running, start 10s countdown
-      if (summaryRes.activeSendingItem && !activeSending) {
-        startSendAnimation(summaryRes.activeSendingItem.targetName, summaryRes.activeSendingItem.type, 10);
+      // If backend reports an active sending item and we haven't animated this item yet, start countdown
+      if (summaryRes.activeSendingItem) {
+        const itemKey = `${summaryRes.activeSendingItem.id || summaryRes.activeSendingItem.targetName}`;
+        if (lastAnimatedItemKeyRef.current !== itemKey) {
+          lastAnimatedItemKeyRef.current = itemKey;
+          startSendAnimation(summaryRes.activeSendingItem.targetName, summaryRes.activeSendingItem.type, 10);
+        }
+      } else {
+        lastAnimatedItemKeyRef.current = null;
       }
     } catch (err) {
       console.error('Failed to load automation hub data:', err);
@@ -134,6 +141,7 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
     });
 
     timerRef.current = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       currentStep++;
       const percent = Math.min(100, Math.round((currentStep / totalSteps) * 100));
       const secsLeft = Math.max(0, Math.ceil(durationSec - (currentStep / 10)));
@@ -143,7 +151,6 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
         setActiveSending(prev => prev ? { ...prev, progress: 100, secondsLeft: 0, completed: true } : null);
         setTimeout(() => {
           setActiveSending(null);
-          loadData();
         }, 2000);
       } else {
         setActiveSending(prev => prev ? { ...prev, progress: percent, secondsLeft: secsLeft } : null);

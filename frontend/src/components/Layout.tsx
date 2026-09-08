@@ -1000,14 +1000,21 @@ const LiveCartCountdownPill: React.FC = memo(() => {
 
   useEffect(() => {
     loadCartData();
-    window.addEventListener('refresh-pharmarack-cart', loadCartData);
-    window.addEventListener('pharmarack-session-updated', loadCartData);
-    window.addEventListener('sse-pharmarack-refreshed', loadCartData);
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    const debouncedLoad = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(loadCartData, 600);
+    };
+
+    window.addEventListener('refresh-pharmarack-cart', debouncedLoad);
+    window.addEventListener('pharmarack-session-updated', debouncedLoad);
+    window.addEventListener('sse-pharmarack-refreshed', debouncedLoad);
     window.addEventListener('focus', loadCartData);
     return () => {
-      window.removeEventListener('refresh-pharmarack-cart', loadCartData);
-      window.removeEventListener('pharmarack-session-updated', loadCartData);
-      window.removeEventListener('sse-pharmarack-refreshed', loadCartData);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener('refresh-pharmarack-cart', debouncedLoad);
+      window.removeEventListener('pharmarack-session-updated', debouncedLoad);
+      window.removeEventListener('sse-pharmarack-refreshed', debouncedLoad);
       window.removeEventListener('focus', loadCartData);
     };
   }, [loadCartData]);
@@ -1112,6 +1119,110 @@ const LiveCartCountdownPill: React.FC = memo(() => {
   );
 });
 LiveCartCountdownPill.displayName = 'LiveCartCountdownPill';
+
+// ──────────────────────────────────────────────
+// Isolated Live Sending Countdown Chip
+// Renders the in-flight WhatsApp sending animation (0-100%, 10s-0s) in an
+// isolated leaf node so Topbar and parent pages never re-render on progress ticks.
+// ──────────────────────────────────────────────
+interface LiveSendProgressChipProps {
+  recipient: string;
+  durationSec?: number;
+  completed?: boolean;
+  type?: string;
+  waSent?: number;
+  waPending?: number;
+  waFailed?: number;
+  onClick?: () => void;
+  showQueueCounts?: boolean;
+}
+
+const LiveSendProgressChip = memo(({
+  recipient,
+  durationSec = 10,
+  completed = false,
+  waSent = 0,
+  waPending = 0,
+  waFailed = 0,
+  onClick,
+  showQueueCounts = true,
+}: LiveSendProgressChipProps) => {
+  const [progress, setProgress] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState(durationSec);
+  const [isDone, setIsDone] = useState(completed);
+
+  useEffect(() => {
+    if (completed) {
+      setProgress(100);
+      setSecondsLeft(0);
+      setIsDone(true);
+      return;
+    }
+
+    setIsDone(false);
+    setProgress(0);
+    setSecondsLeft(durationSec);
+
+    const totalSteps = durationSec * 10;
+    let currentStep = 0;
+
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      currentStep++;
+      const pct = Math.min(100, Math.round((currentStep / totalSteps) * 100));
+      const secs = Math.max(0, Math.ceil(durationSec - (currentStep / 10)));
+      setProgress(pct);
+      setSecondsLeft(secs);
+
+      if (currentStep >= totalSteps) {
+        clearInterval(timer);
+        setProgress(100);
+        setSecondsLeft(0);
+        setIsDone(true);
+      }
+    }, 100);
+
+    return () => clearInterval(timer);
+  }, [recipient, durationSec, completed]);
+
+  return (
+    <div
+      onClick={onClick}
+      className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in"
+      title="Click to open Dispatch & Messaging Hub"
+    >
+      <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <SendIcon size={12} className={`text-sky-400 shrink-0 ${isDone ? '' : 'animate-bounce'}`} />
+          <span className="truncate text-text font-bold text-xs tracking-tight">
+            {isDone ? `✓ Sent to ${recipient}` : `Sending WhatsApp to ${recipient}`}
+          </span>
+          <span className="text-[10px] font-mono font-bold text-sky-400 shrink-0">
+            {isDone ? '100% Complete' : `${progress}% (${secondsLeft}s left)`}
+          </span>
+        </div>
+
+        {showQueueCounts && (
+          <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
+            {waSent > 0 && <span className="text-emerald-400">✓ {waSent}</span>}
+            {waPending > 0 && <span className="text-amber-400">⏰ {waPending}</span>}
+            {waFailed > 0 && <span className="text-rose-400 animate-bounce">⚠️ {waFailed}</span>}
+          </div>
+        )}
+      </div>
+
+      <div className="w-full h-1.5 bg-bg border border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
+        <div
+          className="h-full rounded-full transition-all duration-150 relative bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400"
+          style={{ width: `${Math.min(100, Math.max(0, isDone ? 100 : progress))}%` }}
+        >
+          <div className="absolute right-0 top-0 bottom-0 w-2 bg-sky-100 rounded-full shadow-sm shadow-sky-400/50" />
+        </div>
+      </div>
+    </div>
+  );
+});
+LiveSendProgressChip.displayName = 'LiveSendProgressChip';
 
 // ──────────────────────────────────────────────
 // Topbar
@@ -1325,6 +1436,18 @@ const Topbar = memo(({
     }
   }, []);
 
+  // Active Manual/Automated Message Send Meta (stable metadata, only updates on start, complete, and dismiss)
+  const [activeSendMeta, setActiveSendMeta] = useState<{
+    id: string;
+    recipient: string;
+    type?: string;
+    durationSec: number;
+    completed: boolean;
+  } | null>(null);
+  const activeSendMetaRef = useRef(activeSendMeta);
+  activeSendMetaRef.current = activeSendMeta;
+  const lastAnimatedSendingKeyRef = useRef<string | null>(null);
+
   const fetchWhatsAppQueueStatus = useCallback(async () => {
     try {
       const { api } = await import('../services/api.js');
@@ -1340,6 +1463,17 @@ const Topbar = memo(({
         const sending = qData.counts?.sending || 0;
         const active = pending > 0 || sending > 0 || !!qData.isProcessing;
         setIsQueueActive(active);
+
+        // Live in-flight sync: start countdown ONCE per sending target, never loop on polls
+        if (qData.activeTargetName && sending > 0) {
+          const sendingKey = `${qData.currentSendingItemId || qData.activeTargetName}`;
+          if (lastAnimatedSendingKeyRef.current !== sendingKey && !activeSendMetaRef.current) {
+            lastAnimatedSendingKeyRef.current = sendingKey;
+            messageSendEvent.triggerSendProgress(qData.activeTargetName, 'Queue Dispatch', 10);
+          }
+        } else if (sending === 0) {
+          lastAnimatedSendingKeyRef.current = null;
+        }
 
         if (Array.isArray(qData.recentItems)) {
           qData.recentItems.forEach((item) => {
@@ -1385,7 +1519,6 @@ const Topbar = memo(({
     });
 
     window.addEventListener('focus', handleRefreshStatus);
-    window.addEventListener('refresh-pharmarack-cart', handleRefreshStatus);
     window.addEventListener('pharmarack-auth-changed', handleRefreshStatus);
     window.addEventListener('sse-wa-status-changed', handleRefreshStatus);
     window.addEventListener('sse-pharmarack-refreshed', fetchServicesStatus);
@@ -1393,7 +1526,6 @@ const Topbar = memo(({
     return () => {
       unsubReadiness();
       window.removeEventListener('focus', handleRefreshStatus);
-      window.removeEventListener('refresh-pharmarack-cart', handleRefreshStatus);
       window.removeEventListener('pharmarack-auth-changed', handleRefreshStatus);
       window.removeEventListener('sse-wa-status-changed', handleRefreshStatus);
       window.removeEventListener('sse-pharmarack-refreshed', fetchServicesStatus);
@@ -1439,51 +1571,35 @@ const Topbar = memo(({
     };
   }, [compactCacheLoaded, isQueueActive, fetchWhatsAppQueueStatus, fetchServicesStatus, onOpenWaQueue]);
 
-  // Active Manual/Automated Message Send 10-second Progress state
-  const [activeMsgProgress, setActiveMsgProgress] = useState<{
-    id: string;
-    recipient: string;
-    progress: number;
-    secondsLeft: number;
-    completed: boolean;
-  } | null>(null);
-
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | undefined = undefined;
+    let doneTimer: ReturnType<typeof setTimeout> | undefined;
+    let clearTimer: ReturnType<typeof setTimeout> | undefined;
+
     const unsubSend = messageSendEvent.subscribeSendProgress((detail) => {
       const durationSec = detail.durationSec || 10;
-      const totalSteps = durationSec * 10; // 100ms ticks
-      let currentStep = 0;
+      if (doneTimer) clearTimeout(doneTimer);
+      if (clearTimer) clearTimeout(clearTimer);
 
-      if (timer) clearInterval(timer);
-
-      setActiveMsgProgress({
+      setActiveSendMeta({
         id: detail.id || `msg-${Date.now()}`,
         recipient: detail.recipient,
-        progress: 0,
-        secondsLeft: durationSec,
+        type: detail.messagePreview,
+        durationSec,
         completed: false,
       });
 
-      timer = setInterval(() => {
-        currentStep++;
-        const percent = Math.min(100, Math.round((currentStep / totalSteps) * 100));
-        const secsLeft = Math.max(0, Math.ceil(durationSec - (currentStep / 10)));
+      doneTimer = setTimeout(() => {
+        setActiveSendMeta(prev => (prev ? { ...prev, completed: true } : null));
 
-        if (currentStep >= totalSteps) {
-          clearInterval(timer);
-          setActiveMsgProgress(prev => prev ? { ...prev, progress: 100, secondsLeft: 0, completed: true } : null);
-          setTimeout(() => {
-            setActiveMsgProgress(null);
-          }, 3000);
-        } else {
-          setActiveMsgProgress(prev => prev ? { ...prev, progress: percent, secondsLeft: secsLeft } : null);
-        }
-      }, 100);
+        clearTimer = setTimeout(() => {
+          setActiveSendMeta(null);
+        }, 2500);
+      }, durationSec * 1000);
     });
 
     return () => {
-      if (timer) clearInterval(timer);
+      if (doneTimer) clearTimeout(doneTimer);
+      if (clearTimer) clearTimeout(clearTimer);
       unsubSend();
     };
   }, []);
@@ -1584,21 +1700,21 @@ const Topbar = memo(({
     }> = [];
 
     // 0. Active Manual/Automated Message Send (Highest Priority 10s Animation)
-    if (activeMsgProgress) {
+    if (activeSendMeta) {
       items.push({
-        id: activeMsgProgress.id,
+        id: activeSendMeta.id,
         type: 'whatsapp',
-        title: activeMsgProgress.completed ? `✓ Message Delivered to ${activeMsgProgress.recipient}` : `Sending Message to ${activeMsgProgress.recipient}`,
-        subtitle: activeMsgProgress.completed ? '✓ Delivery confirmed (100% Complete)' : `▶ Dispatching: ${activeMsgProgress.progress}% loaded • ${activeMsgProgress.secondsLeft}s countdown remaining`,
-        progress: activeMsgProgress.progress,
-        badge: activeMsgProgress.completed ? '100% Done' : `${activeMsgProgress.progress}% (${activeMsgProgress.secondsLeft}s)`,
+        title: activeSendMeta.completed ? `✓ Message Delivered to ${activeSendMeta.recipient}` : `Sending Message to ${activeSendMeta.recipient}`,
+        subtitle: activeSendMeta.completed ? '✓ Delivery confirmed (100% Complete)' : `▶ Dispatching live to ${activeSendMeta.recipient}...`,
+        progress: activeSendMeta.completed ? 100 : 50,
+        badge: activeSendMeta.completed ? '100% Done' : 'Sending...',
         color: 'emerald',
         icon: <SendIcon size={12} className="text-emerald-400 animate-pulse shrink-0" />
       });
     }
 
     // 0.5. WhatsApp Readiness Waking Progress (0-100%)
-    if (waReadiness && waReadiness.isInitializing && waReadiness.progress > 0 && waReadiness.progress < 100 && !activeMsgProgress) {
+    if (waReadiness && waReadiness.isInitializing && waReadiness.progress > 0 && waReadiness.progress < 100 && !activeSendMeta) {
       items.push({
         id: 'wa-waking',
         type: 'whatsapp',
@@ -1692,7 +1808,7 @@ const Topbar = memo(({
 
 
     return items;
-  }, [activeMsgProgress, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate]);
+  }, [activeSendMeta, waQueueDetail, isWaActive, isWaRecentlyDone, backupStatus, catalogJob, ocrStatus, onOpenWaQueue, navigate]);
 
 
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -1872,7 +1988,7 @@ const Topbar = memo(({
           {(() => {
             // Metrics for Storage-Style Progress Bar
             const waSent = waQueueDetail?.counts?.sent || 0;
-            const waSending = (waQueueDetail?.counts?.sending || 0) + (activeMsgProgress && !activeMsgProgress.completed ? 1 : 0);
+            const waSending = (waQueueDetail?.counts?.sending || 0) + (activeSendMeta && !activeSendMeta.completed ? 1 : 0);
             const waPending = waQueueDetail?.counts?.pending || 0;
             const waFailed = (waQueueDetail?.counts?.failed_offline || 0) + (waQueueDetail?.counts?.failed_perm || 0);
             const waTotal = waSent + waSending + waPending + waFailed;
@@ -1884,6 +2000,24 @@ const Topbar = memo(({
 
             // 1. EXPANDED HUB VIEW (On Hover - 1580ms grace delay buffer)
             if (isHoverExpanded) {
+              if (activeSendMeta && !activeSendMeta.completed) {
+                return (
+                  <LiveSendProgressChip
+                    recipient={activeSendMeta.recipient}
+                    durationSec={activeSendMeta.durationSec}
+                    completed={activeSendMeta.completed}
+                    waSent={waSent}
+                    waPending={waPending}
+                    waFailed={waFailed}
+                    onClick={() => {
+                      if (onOpenAutomationHub) onOpenAutomationHub();
+                      else if (onOpenWaQueue) onOpenWaQueue();
+                    }}
+                    showQueueCounts={true}
+                  />
+                );
+              }
+
               return (
                 <div
                   onClick={() => {
@@ -1922,7 +2056,7 @@ const Topbar = memo(({
                   </div>
 
                   {/* Multi-Segment Storage-Style Progress Bar */}
-                  <div className="w-full h-1.5 bg-bg border border-glass-border/60 rounded-full overflow-hidden flex shadow-inner">
+                  <div className="w-full h-1.5 bg-bg border border-glass-border/60 rounded-full overflow-hidden flex relative shadow-inner">
                     {sentPct > 0 && (
                       <div
                         className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
@@ -1962,30 +2096,21 @@ const Topbar = memo(({
             // 2. CONTEXTUAL AUTO-FOCUS MODES (When NOT Hovered)
 
             // (A) Active Live Send in Progress
-            if (activeMsgProgress && !activeMsgProgress.completed) {
+            if (activeSendMeta && !activeSendMeta.completed) {
               return (
-                <div
-                  onClick={onOpenWaQueue}
-                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in"
-                >
-                  <div className="flex items-center justify-between gap-2 text-xs font-semibold">
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                      <SendIcon size={12} className="text-emerald-400 animate-pulse shrink-0" />
-                      <span className="truncate text-text font-bold text-xs tracking-tight">
-                        Sending to {activeMsgProgress.recipient}...
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-mono font-bold text-emerald-400 shrink-0">
-                      {activeMsgProgress.progress}% ({activeMsgProgress.secondsLeft}s)
-                    </span>
-                  </div>
-                  <div className="w-full h-1 bg-bg border-t border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
-                    <div
-                      className="h-full rounded-full transition-all duration-300 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400"
-                      style={{ width: `${activeMsgProgress.progress}%` }}
-                    />
-                  </div>
-                </div>
+                <LiveSendProgressChip
+                  recipient={activeSendMeta.recipient}
+                  durationSec={activeSendMeta.durationSec}
+                  completed={activeSendMeta.completed}
+                  waSent={waSent}
+                  waPending={waPending}
+                  waFailed={waFailed}
+                  onClick={() => {
+                    if (onOpenAutomationHub) onOpenAutomationHub();
+                    else if (onOpenWaQueue) onOpenWaQueue();
+                  }}
+                  showQueueCounts={true}
+                />
               );
             }
 
