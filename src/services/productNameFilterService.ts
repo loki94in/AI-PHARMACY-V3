@@ -36,6 +36,143 @@ function stringSimilarity(a: string, b: string): number {
   return 1 - distance / maxLen;
 }
 
+export const UMBRELLA_PHARMA_BRANDS = new Set([
+  'BAIDYANATH', 'BAID', 'DABUR', 'DAB', 'HIMALAYA', 'HIM', 'PATANJALI', 'PAT',
+  'ZANDU', 'ZAN', 'HAMDARD', 'SBL', 'SCHWABE', 'BEARDO', 'AYUR'
+]);
+
+export function extractUmbrellaFormulation(name: string): { brand: string | null; formulation: string | null } {
+  if (!name) return { brand: null, formulation: null };
+  const clean = name.toUpperCase().replace(/[-_.,/()\[\]]/g, ' ');
+  const words = clean.split(/\s+/).filter(w => w.length >= 2);
+  if (words.length === 0) return { brand: null, formulation: null };
+
+  const brandIdx = words.findIndex(w => UMBRELLA_PHARMA_BRANDS.has(w));
+  if (brandIdx === -1) return { brand: null, formulation: null };
+
+  const brand = words[brandIdx];
+  const stopTokens = new Set([
+    'MG', 'ML', 'GM', 'G', 'MCG', 'IU', '%', 'TAB', 'TABLET', 'TABLETS',
+    'CAP', 'CAPSULE', 'CAPSULES', 'SYP', 'SYRUP', 'SUSP', 'SUSPENSION',
+    'INJ', 'INJECTION', 'OINT', 'OINTMENT', 'GEL', 'CREAM', 'LOTION',
+    'PACK', 'BOX', 'STRIP', 'BOTTLE', 'JAR', 'TUBE', 'NEW', 'SUPER',
+    'EXTRA', 'PLUS', 'PURE', 'ORIGINAL', 'REGULAR', 'FORTE', 'ADVANCED'
+  ]);
+
+  const formulationWords = words.filter((w, idx) =>
+    idx !== brandIdx && !/^\d+$/.test(w) && !stopTokens.has(w)
+  );
+
+  return {
+    brand,
+    formulation: formulationWords.length > 0 ? formulationWords.join(' ') : null
+  };
+}
+
+export function extractDrugStrength(text: string): { strength: string | null; numericVal: number | null; unit: string | null } {
+  if (!text) return { strength: null, numericVal: null, unit: null };
+  const m = text.match(/\b(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*(MG|MCG|IU|%)\b/i);
+  if (!m) return { strength: null, numericVal: null, unit: null };
+  const numericVal = parseFloat(m[1]);
+  return {
+    strength: `${m[1]}${m[2].toUpperCase()}`,
+    numericVal: isNaN(numericVal) ? null : numericVal,
+    unit: m[2].toUpperCase()
+  };
+}
+
+export function extractVolumeOrWeight(text: string): { amount: string | null; numericVal: number | null; unit: string | null } {
+  if (!text) return { amount: null, numericVal: null, unit: null };
+  const m = text.match(/\b(\d+(?:\.\d+)?)\s*(ML|GM|G|KG|LTR|L)\b/i);
+  if (!m) return { amount: null, numericVal: null, unit: null };
+  let unit = m[2].toUpperCase();
+  if (unit === 'G') unit = 'GM';
+  const numericVal = parseFloat(m[1]);
+  return {
+    amount: `${m[1]}${unit}`,
+    numericVal: isNaN(numericVal) ? null : numericVal,
+    unit
+  };
+}
+
+export const FORMULATION_MODIFIERS = new Set([
+  // Combinations & Active Additions
+  'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
+  'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
+  // Release Modifiers
+  'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
+  // Form / Dispersibility
+  'DT', 'MD', 'SL', 'OD'
+]);
+
+export function stripPharmacopoeiaMarkers(text: string): string {
+  if (!text) return '';
+  return text.replace(/\b(ip|bp|usp|1p|ep|nf|rx|i\.p\.?|b\.p\.?|u\.s\.p\.?|1\.p\.?)\b/gi, ' ')
+             .replace(/\s+/g, ' ')
+             .trim();
+}
+
+export function extractFormulationModifiers(name: string): Set<string> {
+  if (!name) return new Set();
+  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
+  const words = clean.split(/\s+/).filter(Boolean);
+  const found = new Set<string>();
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    // Skip single letter 'D' if preceded by 'VITAMIN' or 'VIT' (e.g. Vitamin D3)
+    if (w === 'D' && i > 0 && (words[i - 1] === 'VITAMIN' || words[i - 1] === 'VIT')) {
+      continue;
+    }
+    if (FORMULATION_MODIFIERS.has(w)) {
+      found.add(w);
+    }
+  }
+  return found;
+}
+
+export function hasFormulationModifierConflict(name1: string, name2: string): boolean {
+  if (!name1 || !name2) return false;
+  const mods1 = extractFormulationModifiers(name1);
+  const mods2 = extractFormulationModifiers(name2);
+
+  // Both have no modifiers (e.g. plain DYTOR 10 vs plain DYTOR 20) -> no modifier conflict
+  if (mods1.size === 0 && mods2.size === 0) return false;
+
+  // One is plain and the other is modified (e.g. DYTOR vs DYTOR PLUS or DYTOR COMBIKIT; PAN vs PAN D)
+  if (mods1.size === 0 && mods2.size > 0) return true;
+  if (mods2.size === 0 && mods1.size > 0) return true;
+
+  // Both have modifiers -> ensure identical modifier set (e.g. TELMA H vs TELMA AM)
+  for (const m of mods1) {
+    if (!mods2.has(m)) return true;
+  }
+  for (const m of mods2) {
+    if (!mods1.has(m)) return true;
+  }
+
+  return false;
+}
+
+export function isModalityConflict(s1: string, s2: string): boolean {
+  const upper1 = s1.toUpperCase();
+  const upper2 = s2.toUpperCase();
+
+  const isBalm1 = /\b(VAPORUB|BALM|AMRUTANJAN|IODEX|MOOV|FAST RELIEF)\b/.test(upper1);
+  const isBalm2 = /\b(VAPORUB|BALM|AMRUTANJAN|IODEX|MOOV|FAST RELIEF)\b/.test(upper2);
+
+  const isInhaler1 = /\b(INHALER|RESPULE|RESPULES|ROTACAP|ROTACAPS|NASAL SPRAY)\b/.test(upper1);
+  const isInhaler2 = /\b(INHALER|RESPULE|RESPULES|ROTACAP|ROTACAPS|NASAL SPRAY)\b/.test(upper2);
+
+  const isLozenge1 = /\b(COUGH\s*DROPS?|LOZENGES?|STREPSILS|THROAT\s*DROPS?)\b/.test(upper1);
+  const isLozenge2 = /\b(COUGH\s*DROPS?|LOZENGES?|STREPSILS|THROAT\s*DROPS?)\b/.test(upper2);
+
+  if ((isBalm1 && (isInhaler2 || isLozenge2)) || (isBalm2 && (isInhaler1 || isLozenge1))) return true;
+  if ((isInhaler1 && isLozenge2) || (isInhaler2 && isLozenge1)) return true;
+
+  return false;
+}
+
 export function getCompatibleItemTypes(dosageForm?: string): string[] {
   if (!dosageForm) return [];
   const df = dosageForm.toUpperCase().trim();
@@ -46,13 +183,31 @@ export function getCompatibleItemTypes(dosageForm?: string): string[] {
     return ['STRIP', 'TAB', 'CAP', 'BOX', 'PACK', 'STRIP OF', 'TABLET', 'CAPSULE'];
   }
   if (df === 'DROPS') {
-    return ['BOTTLE', 'DROP', 'DROPS', 'EYE DROP', 'EAR DROP'];
+    return ['BOTTLE', 'DROP', 'DROPS', 'EYE DROP', 'EAR DROP', 'NASAL DROP'];
   }
   if (df === 'INJECTION' || df === 'INFUSION') {
     return ['INJECTION', 'VIAL', 'AMPOULE', 'INFUSION', 'PRE-FILLED SYRINGE', 'I V VIAL', 'I V AMPOULE', 'DRY VIAL'];
   }
   if (df === 'CREAM' || df === 'OINTMENT' || df === 'GEL' || df === 'LOTION') {
     return ['TUBE', 'CREAM', 'OINT', 'GEL', 'LOTION'];
+  }
+  if (df === 'BALM') {
+    return ['BALM', 'JAR', 'TUBE', 'RUB', 'OINT'];
+  }
+  if (df === 'INHALER') {
+    return ['INHALER', 'RESPULE', 'ROTACAP', 'DEVICE', 'CAN'];
+  }
+  if (df === 'POWDER') {
+    return ['POWDER', 'JAR', 'BOTTLE', 'CAN', 'GRANULES'];
+  }
+  if (df === 'SOAP') {
+    return ['SOAP', 'BAR', 'WASH'];
+  }
+  if (df === 'OIL') {
+    return ['OIL', 'TAIL', 'TAILA', 'BOTTLE'];
+  }
+  if (df === 'SACHET') {
+    return ['SACHET', 'POUCH', 'PACKET', 'GRANULES'];
   }
   return [df];
 }
@@ -62,6 +217,35 @@ export function isItemTypeCompatible(dosageForm?: string, itemType?: string): bo
   const compatible = getCompatibleItemTypes(dosageForm);
   const it = itemType.toUpperCase().trim();
   return compatible.some(c => it.includes(c) || c.includes(it));
+}
+
+export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: string): boolean {
+  if (!dosageForm || !itemTypeOrName) return false;
+  const df = dosageForm.toUpperCase().trim();
+  const it = itemTypeOrName.toUpperCase().trim();
+
+  const isSolidOral = df === 'TABLET' || df === 'CAPSULE';
+  const isLiquidOral = df === 'SYRUP' || df === 'LIQUID' || df === 'SUSPENSION';
+  const isInjectable = df === 'INJECTION' || df === 'INFUSION';
+  const isTopical = df === 'CREAM' || df === 'OINTMENT' || df === 'GEL' || df === 'LOTION' || df === 'BALM';
+  const isInhaler = df === 'INHALER';
+  const isDrops = df === 'DROPS';
+
+  const itIsSolidOral = /\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES|CAPLET)\b/.test(it);
+  const itIsLiquidOral = /\b(SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|ORAL SOLUTION)\b/.test(it);
+  const itIsInjectable = /\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(it);
+  const itIsTopical = /\b(CREAM|OINT|OINTMENT|GEL|LOTION|BALM)\b/.test(it);
+  const itIsInhaler = /\b(INHALER|RESPULE|ROTACAP)\b/.test(it);
+  const itIsDrops = /\b(DROPS?|EYE DROP|EAR DROP)\b/.test(it);
+
+  if (isSolidOral && (itIsLiquidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
+  if (isLiquidOral && (itIsSolidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
+  if (isInjectable && (itIsSolidOral || itIsLiquidOral || itIsTopical || itIsInhaler)) return true;
+  if (isTopical && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsInhaler)) return true;
+  if (isInhaler && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsTopical || itIsDrops)) return true;
+  if (isDrops && (itIsSolidOral || itIsLiquidOral || itIsInjectable || isInhaler)) return true;
+
+  return false;
 }
 
 // Helper function to calculate similarity using Levenshtein distance
@@ -173,22 +357,59 @@ export function enhancedSimilarity(s1: string, s2: string): number {
   const norm1 = s1.toLowerCase().trim();
   const norm2 = s2.toLowerCase().trim();
 
+  // Strip standalone pharmacopoeia standards (IP, BP, USP, etc.) so regulatory markers don't warp similarity
+  const pStripped1 = stripPharmacopoeiaMarkers(norm1);
+  const pStripped2 = stripPharmacopoeiaMarkers(norm2);
+
   // Convert to lowercase and clean for character-based matching
-  const clean1 = norm1.replace(/[^a-z0-9]/g, '');
-  const clean2 = norm2.replace(/[^a-z0-9]/g, '');
+  const clean1 = pStripped1.replace(/[^a-z0-9]/g, '');
+  const clean2 = pStripped2.replace(/[^a-z0-9]/g, '');
 
   if (clean1 === clean2) return 1.0; // Exact match after cleaning
 
+  // 1. Modality conflict guard (e.g. Vicks Vaporub balm vs Vicks Inhaler stick vs Vicks Cough Drops)
+  if (isModalityConflict(s1, s2)) {
+    return 0.20;
+  }
+
+  // 2. Umbrella brand formulation disambiguation (e.g. Dabur Honey vs Dabur Glucose D)
+  const umb1 = extractUmbrellaFormulation(s1);
+  const umb2 = extractUmbrellaFormulation(s2);
+  if (umb1.brand && umb2.brand && umb1.brand === umb2.brand) {
+    if (umb1.formulation && umb2.formulation) {
+      const f1 = umb1.formulation.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const f2 = umb2.formulation.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (f1 !== f2 && !f1.includes(f2) && !f2.includes(f1)) {
+        return 0.20;
+      }
+    }
+  }
+
+  // 3. Formulation modifier conflict guard (e.g. plain DYTOR vs DYTOR PLUS or DYTOR COMBIKIT; PAN 40 vs PAN D)
+  if (hasFormulationModifierConflict(s1, s2)) {
+    return 0.20;
+  }
+
   // Calculate individual similarities
   let levSim = levenshteinSimilarity(clean1, clean2);
-  
-  // Prefix & Substring match boost
-  if (clean2.startsWith(clean1) || clean1.startsWith(clean2)) {
-    const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
-  } else if (clean2.includes(clean1) || clean1.includes(clean2)) {
-    const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.75 + 0.20 * ratio);
+
+  // Bounded prefix & substring match (prevent common 3-4 letter medical stems like "derma", "cipl" from falsely inflating)
+  const isGenericStem = /^(derma?|cipl?|para?|cefi?|azith?|amox?|clot?|panto?|omep?|ator?|mont?)$/i.test(clean1) ||
+                        /^(derma?|cipl?|para?|cefi?|azith?|amox?|clot?|panto?|omep?|ator?|mont?)$/i.test(clean2);
+  const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
+
+  if ((clean2.startsWith(clean1) || clean1.startsWith(clean2)) && !isGenericStem) {
+    const shorter = clean1.length < clean2.length ? clean1 : clean2;
+    const isWholeWord = new RegExp(`\\b${shorter}\\b`, 'i').test(s1) || new RegExp(`\\b${shorter}\\b`, 'i').test(s2);
+    if (isWholeWord || ratio >= 0.75) {
+      levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
+    }
+  } else if ((clean2.includes(clean1) || clean1.includes(clean2)) && !isGenericStem) {
+    const shorter = clean1.length < clean2.length ? clean1 : clean2;
+    const isWholeWord = new RegExp(`\\b${shorter}\\b`, 'i').test(s1) || new RegExp(`\\b${shorter}\\b`, 'i').test(s2);
+    if (isWholeWord || ratio >= 0.80) {
+      levSim = Math.max(levSim, 0.75 + 0.20 * ratio);
+    }
   }
 
   // Token containment boost (e.g. "baclof liquid" tokens all in "baclof liquid strawberry flav 100ml")
@@ -206,16 +427,32 @@ export function enhancedSimilarity(s1: string, s2: string): number {
 
   let score = (levSim * 0.6) + (phoneSim * 0.2) + (ngramSim * 0.2);
 
-  // Strength & Number alignment check (e.g. 500mg vs 200mg)
-  const nums1: string[] = norm1.match(/\d+/g) || [];
-  const nums2: string[] = norm2.match(/\d+/g) || [];
+  // Unit-aware drug strength vs volume vs pack size check (never match pack count "10" as drug strength)
+  const str1 = extractDrugStrength(s1);
+  const str2 = extractDrugStrength(s2);
 
-  if (nums1.length > 0) {
-    const matchingNums = nums1.filter(n => nums2.includes(n));
-    if (matchingNums.length > 0) {
-      score = Math.min(1.0, score + 0.15); // Boost matching dosage strength
+  if (str1.strength && str2.strength) {
+    if (str1.strength === str2.strength) {
+      score = Math.min(1.0, score + 0.15); // Matching active dosage strength boost
     } else {
-      score = Math.max(0.0, score - 0.25); // Penalize conflicting dosage strength
+      score = Math.max(0.0, score - 0.35); // Penalize conflicting dosage strength (e.g. 500mg vs 250mg)
+    }
+  } else {
+    // Check volume/weight equivalence (e.g. 450ml vs 455ml)
+    const vol1 = extractVolumeOrWeight(s1);
+    const vol2 = extractVolumeOrWeight(s2);
+    if (vol1.amount && vol2.amount && vol1.unit === vol2.unit) {
+      const isEquivVolume = (vol1.numericVal === 450 && vol2.numericVal === 455) || (vol1.numericVal === 455 && vol2.numericVal === 450);
+      if (vol1.amount === vol2.amount || isEquivVolume) {
+        score = Math.min(1.0, score + 0.10);
+      } else {
+        const vRatio = (vol1.numericVal && vol2.numericVal)
+          ? Math.max(vol1.numericVal, vol2.numericVal) / Math.min(vol1.numericVal, vol2.numericVal)
+          : 1;
+        if (vRatio >= 4.0) {
+          score = Math.max(0.0, score - 0.30); // Extreme pack size difference (e.g. 50ml vs 500ml)
+        }
+      }
     }
   }
 
@@ -436,8 +673,11 @@ export class ProductNameFilterService {
 
     // Cache key covers every input that can change the result. Internet-fallback lookups are
     // skipped (not cached) — that path is rare, opt-in, and time-sensitive by nature.
+    const rawStrength = rawOcrText ? (extractDrugStrength(rawOcrText).strength || '') : '';
+    const rawVolume = rawOcrText ? (extractVolumeOrWeight(rawOcrText).amount || '') : '';
+    const rawMods = rawOcrText ? Array.from(extractFormulationModifiers(rawOcrText)).sort().join(',') : '';
     const cacheKey = !enableInternetFallback
-      ? `${normalizedOcr}|${dosageForm || ''}|${mrp || ''}|${minConfidenceThreshold}`
+      ? `${normalizedOcr}|${dosageForm || ''}|${mrp || ''}|${rawStrength}|${rawVolume}|${rawMods}|${minConfidenceThreshold}`
       : null;
     if (cacheKey && this.filterCache.has(cacheKey)) {
       const cached = this.filterCache.get(cacheKey)!;
@@ -481,8 +721,9 @@ export class ProductNameFilterService {
         fts5Used = true;
         for (const row of ftsRows) {
           const nameSim = enhancedSimilarity(normalizedOcr, row.name.toLowerCase());
+          const dosageConflict = isItemTypeConflicting(dosageForm, row.item_type || row.name);
           const dosageMatch = dosageForm && row.item_type
-            ? (isItemTypeCompatible(dosageForm, row.item_type) ? 1.0 : 0.2)
+            ? (isItemTypeCompatible(dosageForm, row.item_type) ? 1.0 : (dosageConflict ? -0.5 : 0.2))
             : null;
           const mrpMatch = mrp && row.mrp ? (1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp)) : null;
           
@@ -491,6 +732,38 @@ export class ProductNameFilterService {
             const apiTokens = row.api_reference.toLowerCase().split(/[^a-z0-9]+/);
             const hasTokenMatch = apiTokens.some((token: string) => token.length > 3 && rawOcrText.toLowerCase().includes(token));
             apiMatch = hasTokenMatch ? 1.0 : 0.4;
+          }
+
+          // Strength & Volume cross-check confirmation against raw OCR text
+          let strengthConflict = false;
+          let strengthMatch = false;
+          if (rawOcrText) {
+            const ocrStr = extractDrugStrength(rawOcrText);
+            const medStr = extractDrugStrength(row.name);
+            if (ocrStr.strength && medStr.strength) {
+              if (ocrStr.strength === medStr.strength) {
+                strengthMatch = true;
+              } else {
+                strengthConflict = true;
+              }
+            }
+          }
+
+          let volumeConflict = false;
+          let volumeMatch = false;
+          if (rawOcrText && !strengthConflict && !strengthMatch) {
+            const ocrVol = extractVolumeOrWeight(rawOcrText);
+            const medVol = extractVolumeOrWeight(row.name);
+            if (ocrVol.amount && medVol.amount && ocrVol.unit === medVol.unit) {
+              const vRatio = (ocrVol.numericVal && medVol.numericVal)
+                ? Math.max(ocrVol.numericVal, medVol.numericVal) / Math.min(ocrVol.numericVal, medVol.numericVal)
+                : 1;
+              if (vRatio >= 1.5) {
+                volumeConflict = true;
+              } else if (ocrVol.amount === medVol.amount) {
+                volumeMatch = true;
+              }
+            }
           }
 
           // Dynamic weighting: if mrp/dosage are unknown (normal for front-of-pack camera scan),
@@ -509,6 +782,29 @@ export class ProductNameFilterService {
               : nameSim;
           }
 
+          // Strict clinical dosage form conflict penalty (e.g. tablet vs syrup)
+          if (dosageConflict) {
+            combinedScore = Math.max(0.0, combinedScore - 0.40);
+          }
+
+          // Packaging active strength confirmation boost or severe conflict penalty
+          if (strengthMatch) {
+            combinedScore = Math.min(1.0, combinedScore + 0.20);
+          } else if (strengthConflict) {
+            combinedScore = Math.max(0.0, combinedScore - 0.50);
+          } else if (volumeMatch) {
+            combinedScore = Math.min(1.0, combinedScore + 0.10);
+          } else if (volumeConflict) {
+            combinedScore = Math.max(0.0, combinedScore - 0.35);
+          }
+
+          // Formulation modifier conflict check (e.g. plain DYTOR vs DYTOR PLUS / COMBIKIT; PAN 40 vs PAN D)
+          const modifierConflict = hasFormulationModifierConflict(ocrText, row.name) ||
+            (rawOcrText ? hasFormulationModifierConflict(rawOcrText, row.name) : false);
+          if (modifierConflict) {
+            combinedScore = Math.max(0.0, combinedScore - 0.45);
+          }
+
           if (combinedScore >= minConfidenceThreshold) {
             scoredMatches.push({ name: row.name, score: combinedScore });
           }
@@ -523,7 +819,26 @@ export class ProductNameFilterService {
     // the O(n) scan over ~286k names is expensive, so only pay for it when FTS5 has nothing)
     if (!fts5Used || scoredMatches.length < 1) {
       for (const medicineName of this.medicineNames) {
-        const similarityScore = enhancedSimilarity(normalizedOcr, medicineName.toLowerCase());
+        if (dosageForm && isItemTypeConflicting(dosageForm, medicineName)) {
+          continue; // Clinical conflict: e.g. tablet vs syrup in medicine title
+        }
+        let similarityScore = enhancedSimilarity(normalizedOcr, medicineName.toLowerCase());
+        if (rawOcrText) {
+          const ocrStr = extractDrugStrength(rawOcrText);
+          const medStr = extractDrugStrength(medicineName);
+          if (ocrStr.strength && medStr.strength) {
+            if (ocrStr.strength === medStr.strength) {
+              similarityScore = Math.min(1.0, similarityScore + 0.20);
+            } else {
+              similarityScore = Math.max(0.0, similarityScore - 0.50);
+            }
+          }
+          if (hasFormulationModifierConflict(rawOcrText, medicineName)) {
+            similarityScore = Math.max(0.0, similarityScore - 0.45);
+          }
+        } else if (hasFormulationModifierConflict(normalizedOcr, medicineName)) {
+          similarityScore = Math.max(0.0, similarityScore - 0.45);
+        }
         if (similarityScore >= minConfidenceThreshold) {
           // Avoid duplicates from FTS5 results
           if (!scoredMatches.some(m => m.name === medicineName)) {

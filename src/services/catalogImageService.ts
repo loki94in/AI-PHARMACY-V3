@@ -909,7 +909,9 @@ export class CatalogImageService {
     const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
     const rejectedHashes = new Set(rejections.map(r => r.rejected_image_hash).filter(Boolean));
 
-    const cleanQuery = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim();
+    const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim();
+    const strength = this.extractStrength(med.strength || '') || this.extractStrength(med.name);
+    const cleanQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
     const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
 
     let products: any[] = [];
@@ -943,6 +945,15 @@ export class CatalogImageService {
       const candidateUrl = frontImg.url.split('?')[0];
       if (rejectedUrls.has(candidateUrl)) {
         continue; // Skip previously rejected URL
+      }
+
+      // Vetting check: verify brand match and no strength conflict before accepting candidate
+      const matchCheck = this.computeConfidence(med, {
+        name: prod.name,
+        manufacturer: prod.manufacturer
+      });
+      if (matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch) {
+        continue;
       }
 
       selectedCandidate = prod;
@@ -2475,9 +2486,12 @@ export class CatalogImageService {
     );
     const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
 
-    const baseQuery = queryOverride && queryOverride.trim() 
-      ? queryOverride.trim()
-      : (this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim());
+    let baseQuery = queryOverride && queryOverride.trim();
+    if (!baseQuery) {
+      const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim();
+      const strength = this.extractStrength(med.strength || '') || this.extractStrength(med.name);
+      baseQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
+    }
 
     // Contextual query enhancement based on desired image angle
     let cleanQuery = baseQuery;

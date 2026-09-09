@@ -366,7 +366,22 @@ interface ScanResultInfo {
   capturedImage?: string;
   scanImage?: string;
   rawOcrText?: string;
-  medicineInfo?: { batchNumber?: string; potentialName?: string; mrp?: number | string; packaging?: string | null; expiryDate?: string; costPrice?: number | string | null };
+  medicineInfo?: {
+    batchNumber?: string;
+    potentialName?: string;
+    mrp?: number | string;
+    packaging?: string | null;
+    expiryDate?: string;
+    costPrice?: number | string | null;
+    strength?: string;
+    strengthConfirmed?: boolean;
+    strengthConflict?: boolean;
+    modifierConflict?: boolean;
+    volumeConfirmed?: boolean;
+    confirmationNote?: string;
+    dosageForm?: string;
+  };
+  matches?: string[];
 }
 
 interface SavedBillItemRow {
@@ -3110,11 +3125,13 @@ const POS = () => {
 
     const info = result.medicineInfo || {};
     const batchQuery = info.batchNumber;
-    const nameQuery = info.potentialName || (result.text ? result.text.split('\n')[0] : '');
+    const matchesList = Array.isArray(result.matches) ? result.matches : [];
+    const nameQuery = info.potentialName || (matchesList.length > 0 ? matchesList[0] : (result.text ? result.text.split('\n')[0] : ''));
+    const targetStrength = (info.strength || '').toUpperCase().trim();
     const mrpQuery = info.mrp ? String(info.mrp) : '';
 
     // Helper to perform the search chain locally
-    const executeSearchChain = async () => {
+    const executeSearchChain = async (): Promise<{ item: PosBatchItem | null; warning?: string }> => {
       const compactInventory = getCompactInventoryCache();
       const mapped = compactInventory.map(item => ({
         ...item,
@@ -3126,42 +3143,99 @@ const POS = () => {
       // Step 1: Search by batch number (highest precision)
       if (batchQuery && batchQuery.trim().length > 1) {
         const batchTerm = batchQuery.trim().toLowerCase();
-        const matches = mapped.filter(m => m.batch_no && m.batch_no.toLowerCase().includes(batchTerm));
-        if (matches.length > 0) {
-          const exact = matches.find(m => m.batch_no.toLowerCase() === batchTerm);
-          return exact || matches[0];
+        const batchMatches = mapped.filter(m => m.batch_no && m.batch_no.toLowerCase().includes(batchTerm));
+        if (batchMatches.length > 0) {
+          const exact = batchMatches.find(m => m.batch_no.toLowerCase() === batchTerm);
+          return { item: exact || batchMatches[0] };
         }
       }
 
-      // Step 2: Search by medicine name (standard lookup)
+      // Helper to check if a medicine item matches the detected packaging strength
+      const itemMatchesStrength = (medName: string, str: string) => {
+        if (!str) return true;
+        const normMed = medName.toUpperCase();
+        const numOnly = str.replace(/[^0-9.]/g, '');
+        return normMed.includes(str) || (numOnly && new RegExp(`\\b${numOnly}\\s*(?:MG|ML|GM|G|IU)?\\b`, 'i').test(normMed));
+      };
+
+      // Step 2: Prioritize backend-vetted result.matches (already checked against the 12 micro-logics,
+      // formulation modifiers, and packaging strength confirmation!)
+      for (const matchedName of matchesList) {
+        const normMatched = matchedName.trim().toLowerCase();
+        const invCandidates = mapped.filter(m => {
+          const name = (m.medicine_name || m.name || '').toLowerCase();
+          return name === normMatched || name.includes(normMatched) || normMatched.includes(name);
+        });
+
+        if (invCandidates.length > 0) {
+          if (targetStrength) {
+            const strengthMatchingBatch = invCandidates.find(c => itemMatchesStrength(c.medicine_name || c.name || '', targetStrength));
+            if (strengthMatchingBatch) {
+              return { item: strengthMatchingBatch };
+            }
+          } else {
+            return { item: invCandidates[0] };
+          }
+        }
+      }
+
+      // Step 3: Search local inventory by nameQuery
       if (nameQuery && nameQuery.trim().length > 1) {
         const nameTerm = nameQuery.trim().toLowerCase();
-        const matches = filterLocalInventory(nameTerm, mapped);
-        if (matches.length > 0) {
-          const exact = matches.find(m => (m.medicine_name || '').toLowerCase() === nameTerm);
-          return exact || matches[0];
+        const filtered = filterLocalInventory(nameTerm, mapped);
+        if (filtered.length > 0) {
+          if (targetStrength) {
+            const strengthMatches = filtered.filter(m => itemMatchesStrength(m.medicine_name || m.name || '', targetStrength));
+            if (strengthMatches.length > 0) {
+              const exact = strengthMatches.find(m => (m.medicine_name || '').toLowerCase() === nameTerm);
+              return { item: exact || strengthMatches[0] };
+            } else {
+              // Target strength exists in packaging, but inventory only has different strengths (e.g. 10mg instead of 20mg)
+              return {
+                item: null,
+                warning: `Scanned ${nameQuery} (${targetStrength}) is out of stock. Did not substitute with different strength batches (${filtered[0].medicine_name}).`
+              };
+            }
+          } else {
+            const exact = filtered.find(m => (m.medicine_name || '').toLowerCase() === nameTerm);
+            return { item: exact || filtered[0] };
+          }
         }
       }
 
-      // Step 3: Search by MRP (fallback lookup)
+      // Step 4: Search by MRP (fallback lookup)
       if (mrpQuery && mrpQuery.trim().length > 0) {
         const mrpVal = Number(mrpQuery.trim());
         if (!isNaN(mrpVal)) {
           const matches = mapped.filter(m => Math.abs(m.mrp - mrpVal) < 0.01);
-          if (matches.length > 0) return matches[0];
+          if (matches.length > 0) {
+            if (targetStrength) {
+              const strMatch = matches.find(m => itemMatchesStrength(m.medicine_name || m.name || '', targetStrength));
+              if (strMatch) return { item: strMatch };
+            } else {
+              return { item: matches[0] };
+            }
+          }
         }
       }
 
-      return null;
+      return { item: null };
     };
 
-    executeSearchChain().then(matched => {
+    executeSearchChain().then(({ item: matched, warning }) => {
+      if (warning) {
+        toastEvent.trigger(warning, 'error');
+      }
+
       if (matched) {
         fetchDetailsAndAddToCart({
           ...matched,
           scanImage: result.capturedImage,
           rawOcrText: result.text
         });
+        if (info.confirmationNote) {
+          toastEvent.trigger(info.confirmationNote, info.strengthConfirmed ? 'success' : 'info');
+        }
       } else {
         // Add as custom manual entry from scan details
         let extractedPackSize = 1;
@@ -3178,7 +3252,7 @@ const POS = () => {
           expiry: info.expiryDate || '',
           mrp: Number(info.mrp || 0),
           costPrice: info.costPrice != null ? Number(info.costPrice) : 0,
-          salts: 'OCR Scan Entry',
+          salts: info.confirmationNote || 'OCR Scan Entry',
           packSize: extractedPackSize,
           scanImage: result.capturedImage,
           rawOcrText: result.text,

@@ -1,7 +1,13 @@
 // AI Camera Service for OCR processing using Tesseract.js (offline capable)
 import { createWorker } from 'tesseract.js';
 import { Jimp } from 'jimp';
-import { productNameFilterService } from './productNameFilterService.js';
+import {
+  productNameFilterService,
+  extractDrugStrength,
+  extractVolumeOrWeight,
+  extractFormulationModifiers,
+  hasFormulationModifierConflict
+} from './productNameFilterService.js';
 import { isPlausibleMedicineName } from './intentKeywords.js';
 import { onnxOcrService } from './onnxOcrService.js';
 import { onlineDataEnricher } from './onlineDataEnricher.js';
@@ -168,12 +174,13 @@ class AICameraService {
     'pharma','pharmaceuticals','laboratories','lab','labs','care',
     // Pharmacopoeia standards & Rx markers (often read with dots or OCR misread as 1.p., etc.)
     'ip', 'bp', 'usp', '1p', 'ep', 'nf', 'rx',
-    // Package and storage filler words
+    // Package, commercial promo, and storage filler words
     'flavour', 'flavor', 'flav', 'taste', 'sugar', 'free', 'contains', 'composition',
     'keep', 'out', 'reach', 'children', 'store', 'cool', 'dry', 'place', 'protect',
     'light', 'storage', 'warning', 'caution', 'schedule', 'prescription',
     'physician', 'directed', 'dosage', 'shake', 'well', 'before', 'use', 'external', 'only',
     'net', 'weight', 'vol', 'volume', 'bottle', 'carton', 'box', 'pack', 'packings',
+    'offer', 'bogo', 'combo', 'promo', 'extra', 'worth', 'save', 'special',
     // Route / administration descriptors (NOT brand names)
     'ophthalmic','oral','topical','intravenous','subcutaneous','nasal','rectal',
     'vaginal','otic','dermal','buccal','sublingual','inhaled','iv','im',
@@ -305,10 +312,15 @@ class AICameraService {
       [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, 'Drops'],
       [/\b(?:oint(?:ment)?)\b/i, 'Ointment'],
       [/\b(?:lotion)\b/i, 'Lotion'],
-      [/\b(?:powder)\b/i, 'Powder'],
+      [/\b(?:powder|dusting\s*powder)\b/i, 'Powder'],
       [/\b(?:spray)\b/i, 'Spray'],
-      [/\b(?:inh(?:aler)?|respules?)\b/i, 'Inhaler'],
-      [/\b(?:sachet)\b/i, 'Sachet'],
+      [/\b(?:inh(?:aler)?|respules?|rotacaps?)\b/i, 'Inhaler'],
+      [/\b(?:sachet|granules)\b/i, 'Sachet'],
+      [/\b(?:balm|vaporub|rub)\b/i, 'Balm'],
+      [/\b(?:soap|bar|facewash|bodywash)\b/i, 'Soap'],
+      [/\b(?:oil|tail|taila)\b/i, 'Oil'],
+      [/\b(?:shampoo)\b/i, 'Shampoo'],
+      [/\b(?:serum)\b/i, 'Serum'],
     ];
     for (const [regex, form] of patterns) {
       if (regex.test(text)) return form;
@@ -406,10 +418,12 @@ class AICameraService {
         await productNameFilterService.initialize();
 
         // Filter lines down to only those containing actual candidate (brand name) tokens
+        // Also exclude promotional banner lines (e.g. "FREE 50g HONEY", "BUY 1 GET 1", "SPECIAL OFFER")
         const candidateLines = localOcrResult.text
           .split('\n')
           .map(l => l.trim())
           .filter(l => l.length > 2 && l.length < 100)
+          .filter(l => !/\b(free\b|buy\s+\d+\s+get|special\s+offer|promo\s+pack|extra\s+\d+|save\s+rs)/i.test(l))
           .map(line => ({ original: line, tokens: this.extractCandidateTokens(line) }))
           .filter(item => item.tokens.length > 0);
 
@@ -492,7 +506,8 @@ class AICameraService {
           const toks = this.extractCandidateTokens(line);
           return { line, joined: toks.join(' ') };
         })
-        .filter(c => c.joined.length > 0 && isPlausibleMedicineName(c.joined));
+        .filter(c => c.joined.length > 0 && isPlausibleMedicineName(c.joined))
+        .filter(c => !/\b(free\b|offer\b|bogo|combo|promo|extra\s+\d+|save\s+rs|special\s+offer)/i.test(c.line));
       if (cands.length > 0) {
         // Score each candidate line. A real brand name is usually a single
         // coherent capitalized word. OCR noise tends to be short fragments
@@ -513,6 +528,64 @@ class AICameraService {
         brandName = cands[0].joined;
       }
     }
+    // Packaging cross-check and confirmation gate
+    const detectedDrugStrength = extractDrugStrength(localOcrResult.text);
+    const detectedVolume = extractVolumeOrWeight(localOcrResult.text);
+
+    if (matches.length > 0) {
+      // Re-sort matches to ensure exact packaging strength match AND formulation alignment is #1
+      matches.sort((a, b) => {
+        const aStr = extractDrugStrength(a);
+        const bStr = extractDrugStrength(b);
+        const aStrengthMatch = detectedDrugStrength.strength && aStr.strength === detectedDrugStrength.strength ? 1 : 0;
+        const bStrengthMatch = detectedDrugStrength.strength && bStr.strength === detectedDrugStrength.strength ? 1 : 0;
+        if (aStrengthMatch !== bStrengthMatch) {
+          return bStrengthMatch - aStrengthMatch;
+        }
+
+        const aModConflict = hasFormulationModifierConflict(localOcrResult.text, a) ? 1 : 0;
+        const bModConflict = hasFormulationModifierConflict(localOcrResult.text, b) ? 1 : 0;
+        if (aModConflict !== bModConflict) {
+          return aModConflict - bModConflict; // non-conflicting comes first
+        }
+
+        const aVol = extractVolumeOrWeight(a);
+        const bVol = extractVolumeOrWeight(b);
+        const aVolMatch = detectedVolume.amount && aVol.amount === detectedVolume.amount ? 1 : 0;
+        const bVolMatch = detectedVolume.amount && bVol.amount === detectedVolume.amount ? 1 : 0;
+        return bVolMatch - aVolMatch;
+      });
+
+      const topMed = matches[0];
+      const topMedStrength = extractDrugStrength(topMed);
+      const topMedModConflict = hasFormulationModifierConflict(localOcrResult.text, topMed);
+
+      if (detectedDrugStrength.strength) {
+        if (topMedStrength.strength === detectedDrugStrength.strength && !topMedModConflict) {
+          finalInfo.strengthConfirmed = true;
+          finalInfo.confirmationNote = `Verified: packaging strength (${detectedDrugStrength.strength}) confirmed.`;
+        } else if (topMedStrength.strength !== detectedDrugStrength.strength) {
+          finalInfo.strengthConfirmed = false;
+          finalInfo.strengthConflict = true;
+          finalInfo.confirmationNote = `Packaging shows ${detectedDrugStrength.strength}, candidate is ${topMedStrength.strength || 'unspecified'}.`;
+        } else if (topMedModConflict) {
+          finalInfo.strengthConfirmed = false;
+          finalInfo.modifierConflict = true;
+          finalInfo.confirmationNote = `Formulation conflict: Packaging modifier does not match candidate.`;
+        }
+      } else if (detectedVolume.amount) {
+        const topVol = extractVolumeOrWeight(topMed);
+        if (topVol.amount === detectedVolume.amount) {
+          finalInfo.volumeConfirmed = true;
+          finalInfo.confirmationNote = `Verified: packaging volume (${detectedVolume.amount}) confirmed.`;
+        }
+      }
+
+      if (topMedModConflict) {
+        finalInfo.modifierConflict = true;
+      }
+    }
+
     const rawName = matches.length > 0 ? matches[0] : brandName;
     // Resolve the API/brand fragment to the canonical generic tablet name so the
     // scan carries the proper medicine name (e.g. "ithromycin" → "Azithromycin"),
@@ -523,8 +596,12 @@ class AICameraService {
     finalInfo.genericName = resolvedGeneric || undefined;
     finalInfo.potentialName = resolvedGeneric || rawName;
 
-    const strengthMatch = localOcrResult.text.match(/\d+\s*(?:mg|g|ml|μg|iu)/i);
-    if (strengthMatch) finalInfo.strength = strengthMatch[0];
+    if (detectedDrugStrength.strength) {
+      finalInfo.strength = detectedDrugStrength.strength;
+    } else {
+      const strengthMatch = localOcrResult.text.match(/\d+\s*(?:mg|g|ml|μg|iu)/i);
+      if (strengthMatch) finalInfo.strength = strengthMatch[0];
+    }
 
     const batchMatch = localOcrResult.text.match(/(?:batch|b\.?no\.?|lot|#)\s*[:\-]?\s*([A-Z0-9\-]+)/i);
     if (batchMatch) finalInfo.batchNumber = batchMatch[1];

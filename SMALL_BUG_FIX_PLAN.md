@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P1-18 — Dytor 20 & Dytor 10 Packaging Image Cross-Connection & Strength Search Hardening
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. Dytor 20mg displayed or was linked with Dytor 10mg packaging images.<br>2. In Catalog Image Verification and POS details, Dytor 20mg showed blank blister plastic or 10mg candidate images, while Dytor 10mg showed Dytor E Combikit or Dytor Plus combo images.<br>3. Stray files named `dytor-20mg-tab-candidate-*.jpg` on disk were exact byte duplicates of Dytor 10mg. |
+| **Root cause** | 1. `extractCoreBrand(raw)` in `src/services/catalogImageService.ts` stripped dosage strengths (`20MG`), reducing the online search query for `DYTOR 20MG TAB` to bare `"DYTOR"`. This returned mixed-strength results from PharmEasy containing Dytor 10, 20, 40, and Combikits.<br>2. `downloadNextCandidate()` accepted the first search product with an image without vetting whether its strength conflicted with the target medicine, downloading `dytor-10mg-side.jpg` as a `dytor-20mg-tab-candidate-*.jpg` file.<br>3. In `catalog_images`, Dytor 20mg primary (`is_primary = 1`) pointed to `dytor-20mg-front.jpg` (clear blister bubbles with no printed brand/strength text) while the genuine printed packaging foil with `Torsemide Tablets IP 20 mg` / `DYTOR-20` (`dytor-20mg-back.jpg`) was `is_primary = 0`.<br>4. Dytor 10mg had Combikit/Plus images set to `is_primary = 1`, hiding the authentic `dytor-10mg-side.jpg` (OCR verified `DYTOR-10 10mg`). |
+| **How it was fixed** | 1. Updated `downloadNextCandidate()` and `searchCandidates()` in `src/services/catalogImageService.ts` to preserve extracted active strength in the search query (e.g. `"DYTOR 20MG"`).<br>2. Added mandatory pre-acceptance vetting in `downloadNextCandidate()` checking `matchCheck.signals.strengthConflict` and `brandMatch` before candidate selection.<br>3. Deleted all stray `dytor-20mg-tab-candidate-*.jpg` files from both `frontend/public/products/` and `uploads/products/`.<br>4. Updated `catalog_images` atomically: set `dytor-20mg-back.jpg` (OCR verified `DYTOR-20 20mg`) as `is_primary = 1` for all 20mg records (IDs 287067, 294248, 144279); set `dytor-10mg-side.jpg` (OCR verified `DYTOR-10 10mg`) as `is_primary = 1` for 10mg records (IDs 294291, 277966); deactivated and de-primaried all Combikit/Plus images attached to standard Dytor 10.<br>5. Also verified and set printed foil packaging as primary for Dytor 40mg and Dytor 5mg. |
+| **Priority** | P1 |
+| **What not to touch** | Multi-angle gallery storage; candidate search override flow; verification status lifecycle (`APPROVED`, `HIGH_CONFIDENCE`, `REPLACED`). |
+| **Verified by** | `scripts/fix_dytor_catalog_images.mjs` (all Dytor records verified); `scripts/verify_disk_images.mjs` (10,821/10,821 valid, 0 missing, 0 zero-byte); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-17 — AI Camera & Product Name Matcher Logic Errors Hardening
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. AI Camera scanning packaging like Dabur Honey or Himalaya Liv 52 matched wrong formulations from the same brand (e.g. Dabur Glucose D or Himalaya Cystone).<br>2. OCR scanning Vicks Vaporub matched Vicks Inhaler or Cough Drops due to shared brand token.<br>3. Blister pack count (e.g. 10 tablets) masked active dosage strength differences (e.g. 500mg vs 250mg) due to naive digit matching.<br>4. Camera OCR scanning promotional packaging (e.g. 'FREE 50g HONEY WITH THIS PACK') extracted the promotional gift instead of the actual medicine.<br>5. Clinical dosage form conflicts (e.g. Tablet vs Syrup) were weakly dampened rather than rejected. |
+| **Root cause** | 1. `enhancedSimilarity` in `src/services/productNameFilterService.ts` used global Levenshtein/n-gram without umbrella formulation disambiguation (`Dabur`, `Himalaya`, `Patanjali`, etc.).<br>2. Naive digit regex (`\d+`) matched pack counts against active strengths without checking units ($mg$ vs $ml$ vs tablets).<br>3. Modality conflicts between topical balms, oral lozenges, and nasal inhalers were unconstrained.<br>4. Unbounded prefix matching (`startsWith()`) artificially boosted 3-4 letter medical stems like `derma` against `dermatouch` with 92% similarity.<br>5. `aiCameraService` lacked promotional banner suppression in candidate extraction and fallback brand selection. |
+| **How it was fixed** | 1. Implemented `extractUmbrellaFormulation()` penalizing conflicting formulations under umbrella brands to $\le 0.20$.<br>2. Added unit-aware `extractDrugStrength()` ($mg, mcg, iu, \%$) and `extractVolumeOrWeight()` ($ml, gm, g$); conflicting active strengths are penalized $-0.35$.<br>3. Implemented `isModalityConflict()` barring cross-matching between balms, inhalers, and lozenges ($\le 0.20$).<br>4. Bounded prefix matching requiring whole-word token boundary verification.<br>5. Implemented `isItemTypeConflicting()` in `productNameFilterService.ts` applying a $-0.40$ clinical conflict penalty in FTS5 and candidate filtering.<br>6. Expanded `detectDosageForm()` in `aiCameraService.ts` for `Balm`, `Soap`, `Oil`, `Shampoo`, `Serum`, `Powder`, `Sachet`, and `Respules`.<br>7. Added promo banner suppression in `aiCameraService.ts` candidate line extraction and fallback brand selection. |
+| **Priority** | P1 |
+| **What not to touch** | `filterProductNames()` external interface and response signature; cached OCR corrections in SQLite; camera offline Tesseract/ONNX fallback paths. |
+| **Verified by** | `scripts/test_aicamera_improvements.ts` (17/17 PASS); `tests/services/productNameFilterService.test.ts` (7/7 PASS); `tests/catalogImageVerification.test.ts` (13/13 PASS); `tests/aiCamera.test.ts` (4/4 PASS); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-16 — Master Catalog Image AI Verification Hardening & Complete 100% Download & Attachment (Skip=0, Not Found=0)
 
 | Field | Content |
@@ -304,6 +326,17 @@
 | **Priority** | P1 |
 | **What not to touch** | `auth_failure` handler already rejected correctly — unchanged. Manual `retryAllFailed()` remains the revival path for already-burned `failed_perm` items. |
 | **Verified by** | `tsc --noEmit` clean; simulated QR-timeout now fails sends fast with actionable error instead of hanging; queued items created pre-restore stay `pending` and dispatch once the client reports ready. |
+
+### [Fixed] P1-18 — AI Camera & Packaging Catalog Cross-Check and Modifier Safety Architecture
+
+| Field | Content |
+|-------|---------|
+| **What the user saw** | Dytor 20 (`DYTOR 20`) showed an image of Dytor 10 (`DYTOR 10`) in the catalog, and camera scans had risk of cross-matching plain medicines to combo/kit variants (e.g. Dytor vs Dytor Plus / Dytor Combikit) or selecting wrong-strength inventory batches during POS checkout. |
+| **Root cause** | Four compounding gaps: (1) `catalogImageService` online candidate downloader stripped dosage numbers and took first image blindly without candidate strength vetting, (2) Dytor 20 primary images pointed to transparent blister bubble fronts rather than printed foil backs, (3) `productNameFilterService` and `aiCameraService` lacked formulation modifier conflict gating (plain vs Plus, Combikit, DS, Forte, D, DSR, H, AM) and similarity comparisons penalized pharmacopoeia standards tokens (`IP`, `BP`), (4) POS `handleScanResult` ignored backend-ranked strength confirmations and did a naive local name prefix match that could select wrong strength batches. |
+| **How it was fixed** | (1) Repaired `data/app.db` catalog images: Dytor 20 primary image linked to verified printed foil back (`dytor-20mg-back.jpg`), wrong Plus/Combikit images deactivated, and 10,821 disk images validated; (2) `productNameFilterService.ts`: added `extractFormulationModifiers()`, `hasFormulationModifierConflict()`, and `stripPharmacopoeiaMarkers()`, applying -0.45 modifier conflict penalty in `enhancedSimilarity`, FTS5 scoring, and full-array search; (3) `aiCameraService.ts`: added packaging cross-check confirmation gate and re-ranking, exposing `strengthConfirmed`, `volumeConfirmed`, `modifierConflict`, and `confirmationNote`; (4) `AICamera.tsx`: integrated real-time verification feedback badge (`✓ Strength Confirmed` in green or `⚠ Check Packaging` in amber); (5) `POS/index.tsx`: prioritized backend `result.matches` and enforced strength-matching inventory batch selection with active protection against silent wrong-strength batch fallback. |
+| **Priority** | P1 |
+| **What not to touch** | Keep offline OCR fallback intact; preserve semantic Tailwind tokens in AICamera modal; do not invent batches when out of stock. |
+| **Verified by** | `scripts/test_aicamera_strength_confirmation.mjs` 7/7 PASS; `tests/services/productNameFilterService.test.ts` 7/7 PASS; `npm run build:client` PASS; `npm run guardrails` clean (0 violations); knowledge graph auto-synced. |
 
 ---
 
