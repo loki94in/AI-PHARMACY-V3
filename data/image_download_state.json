@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-08T18:03:30.781Z",
+  "last_updated": "2026-09-09T04:36:50.877Z",
   "products": {
     "COTTON 30 COTTON 20GM [HIRAL LABS LTD]": {
       "status": "purged_incorrect",
@@ -10,14 +10,14 @@
     "ADULT DIAPER WETEX PULL UP MED COTTON 1 [GENTECH HEALTHCARE LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Medisuperdry Adult Diaper Pull-Up Pants Xxl High Absorbency 152-203 Cm 10 Piece | Pack Of 1",
-      "updated_at": "2026-09-08T17:57:14.822Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.108Z"
     },
     "ADULT DIAPER WETEX PULL UP XL COTTON 10 [GENTECH HEALTHCARE LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.572Z"
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AZILAB  SUSP 200ML [AUZTUS LABORATORIES PVT LTD]": {
       "status": "unverified",
@@ -3325,19 +3325,19 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.573Z"
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "ADULT DIPER 525 M 10 [FRIENDS PHARMACEUTICALS PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Adult Diaper Tape Style (M)-10|Anti Bacterial And Odour Lock Technology - Waist 28-45 Inch",
-      "updated_at": "2026-09-08T17:57:14.822Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "ADULT DIPER 580 L 10 [FRINDS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Adult Diaper Tape Style (L)-10 | Anti Bacterial And Odour Lock Technology-Waist 38-54 Inch",
-      "updated_at": "2026-09-08T17:57:14.822Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "ADVENT 228.5MG TANGY ORANG FLAVOUR KIDS DRY SYRUP 30ML [CIPLA LIMITED]": {
       "status": "success",
@@ -12830,8 +12830,8 @@
     "AYUR 115 SUNSCREEM  1 [AYURVED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pure Aura Baby Sunscreen | Spf 30 Kids Sunscreen | 100% Mineral & Ayurvedic 6M To 8 Yrs 50 Gm",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR 35 LOTION 50 ML [AYURVED]": {
       "status": "success",
@@ -12909,8 +12909,8 @@
     "AYUR 70 SUNSCREEM 50ML [AYURVED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pure Aura Baby Sunscreen | Spf 30 Kids Sunscreen | 100% Mineral & Ayurvedic 6M To 8 Yrs 50 Gm",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR 75 LOTION 100ML [HINDUSTAN AYURVED & MEDICAL RESEARCH]": {
       "status": "unverified",
@@ -12997,19 +12997,10 @@
       }
     },
     "AYUR CLINSING MILK  LOTION 50 ML [AYURVED]": {
-      "status": "success",
-      "matched_name": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
-      "slug": "ayur-clinsing-milk-lotion-50-ml",
-      "images": {
-        "side": {
-          "fileName": "ayur-clinsing-milk-lotion-50-ml-side.jpg",
-          "url": "/products/ayur-clinsing-milk-lotion-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/ayur-clinsing-milk-lotion-50-ml-side.jpg",
-          "bytes": 86540
-        }
-      },
-      "updated_at": "2026-09-02T17:41:23.147Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR COLD WAX WAX 150GM [FARM HONEY]": {
       "status": "unverified",
@@ -13060,8 +13051,8 @@
     "AYUR LIP BALAM 5ML [AYURVED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tnw The Natural Wash Herbal Beetroot Lip Balm An Ayurvedic Balm For Soft And Supple Lips - 5 Gm",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR MOIST LOTION 100ML": {
       "status": "unverified",
@@ -13102,49 +13093,22 @@
       "verified": true
     },
     "AYUR MOIST LOTION 50 ML [AYURLAB HERBALS PVT LTD]": {
-      "status": "success",
-      "matched_name": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
-      "slug": "ayur-moist-lotion-50-ml",
-      "images": {
-        "side": {
-          "fileName": "ayur-moist-lotion-50-ml-side.jpg",
-          "url": "/products/ayur-moist-lotion-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/ayur-moist-lotion-50-ml-side.jpg",
-          "bytes": 86540
-        }
-      },
-      "updated_at": "2026-09-02T17:41:34.562Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR MOSTURIZER LOTION 50 ML [AYURVED]": {
-      "status": "success",
-      "matched_name": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
-      "slug": "ayur-mosturizer-lotion-50-ml",
-      "images": {
-        "side": {
-          "fileName": "ayur-mosturizer-lotion-50-ml-side.jpg",
-          "url": "/products/ayur-mosturizer-lotion-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/ayur-mosturizer-lotion-50-ml-side.jpg",
-          "bytes": 86540
-        }
-      },
-      "updated_at": "2026-09-02T17:41:36.030Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sensur Ayurvedic Fast Pain Relief Lotion 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYUR SUNCREEN LOTION 1 [HINDUSTAN AYURVED & MEDICAL RESEARCH]": {
-      "status": "success",
-      "matched_name": "Pure Aura Baby Sunscreen | Spf 30 Kids Sunscreen | 100% Mineral & Ayurvedic 6M To 8 Yrs 50 Gm",
-      "slug": "ayur-suncreen-lotion-1",
-      "images": {
-        "side": {
-          "fileName": "ayur-suncreen-lotion-1-side.jpg",
-          "url": "/products/ayur-suncreen-lotion-1-side.jpg",
-          "uploadsUrl": "/uploads/products/ayur-suncreen-lotion-1-side.jpg",
-          "bytes": 52260
-        }
-      },
-      "updated_at": "2026-09-02T17:41:37.425Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pure Aura Baby Sunscreen | Spf 30 Kids Sunscreen | 100% Mineral & Ayurvedic 6M To 8 Yrs 50 Gm",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "AYURMIST 4G LIVER TONIC SYR 300ML [SMART WELLNESS]": {
       "status": "unverified",
@@ -13991,25 +13955,10 @@
       "verified": true
     },
     "B 29 STRIP OF 10 TABLETS [CORONA REMEDIES PVT LTD]": {
-      "status": "success",
-      "matched_name": "B 29 Strip Of 15 Tablets",
-      "slug": "b-29",
-      "images": {
-        "front": {
-          "fileName": "b-29-front.jpg",
-          "url": "/products/b-29-front.jpg",
-          "uploadsUrl": "/uploads/products/b-29-front.jpg",
-          "bytes": 91914
-        },
-        "back": {
-          "fileName": "b-29-back.jpg",
-          "url": "/products/b-29-back.jpg",
-          "uploadsUrl": "/uploads/products/b-29-back.jpg",
-          "bytes": 99683
-        }
-      },
-      "updated_at": "2026-09-02T17:42:50.264Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "B 29 Strip Of 15 Tablets",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "B 29 SYRUP 200 ML [CORONA LABORATORIES]": {
       "status": "not_found",
@@ -14203,13 +14152,13 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BABY DRY SHEET COTTON 1 [HANDH]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Oyo Baby Baby Waterproof Dry Sheet Cotton Bed Protector 100Cm X 70Cm (Pack Of 2) Dark Sea Blue",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BABY TEETHER 60 PASTIC 1UNIT [AUTO FLOW]": {
       "status": "unverified",
@@ -14362,8 +14311,8 @@
     "BAI GOKSHURADHI  KADHA 200ML [BAIDYANATH CONSUMER LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Baidyanath Asli Ayurved Mahamanjisthadi Kadha | Ayurvedic Blood Purifier 200 Ml (Pack Of 3)",
-      "updated_at": "2026-09-08T17:59:29.843Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAID ABHAYARISHTA SYP 227ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "purged_incorrect",
@@ -14456,19 +14405,10 @@
       "verified": true
     },
     "BAID DRAKSHASAV LIQUID 450ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Sarswatarista Liquid 450 Ml",
-      "slug": "baid-drakshasav-liquid-450ml",
-      "images": {
-        "front": {
-          "fileName": "baid-drakshasav-liquid-450ml-front.jpg",
-          "url": "/products/baid-drakshasav-liquid-450ml-front.jpg",
-          "uploadsUrl": "/uploads/products/baid-drakshasav-liquid-450ml-front.jpg",
-          "bytes": 40480
-        }
-      },
-      "updated_at": "2026-09-02T17:43:39.956Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Sarswatarista Liquid 450 Ml",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAID KUTAJGHAN BATI [BAIDYANATH CONSUMER LTD]": {
       "status": "purged_incorrect",
@@ -14477,31 +14417,10 @@
       "updated_at": "2026-09-08T18:03:22.574Z"
     },
     "BAID LAGHUMALINI BASANT RAS TAB [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Asli Ayurved Basant Kusumakar Ras With Gold Silver And Pearl 30 Tab",
-      "slug": "baid-laghumalini-basant-ras-tab",
-      "images": {
-        "front": {
-          "fileName": "baid-laghumalini-basant-ras-tab-front.jpg",
-          "url": "/products/baid-laghumalini-basant-ras-tab-front.jpg",
-          "uploadsUrl": "/uploads/products/baid-laghumalini-basant-ras-tab-front.jpg",
-          "bytes": 54838
-        },
-        "side": {
-          "fileName": "baid-laghumalini-basant-ras-tab-side.jpg",
-          "url": "/products/baid-laghumalini-basant-ras-tab-side.jpg",
-          "uploadsUrl": "/uploads/products/baid-laghumalini-basant-ras-tab-side.jpg",
-          "bytes": 72290
-        },
-        "back": {
-          "fileName": "baid-laghumalini-basant-ras-tab-back.jpg",
-          "url": "/products/baid-laghumalini-basant-ras-tab-back.jpg",
-          "uploadsUrl": "/uploads/products/baid-laghumalini-basant-ras-tab-back.jpg",
-          "bytes": 56801
-        }
-      },
-      "updated_at": "2026-09-02T17:43:43.408Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Asli Ayurved Basant Kusumakar Ras With Gold Silver And Pearl 30 Tab",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAID MAHASUDARSHAN CHURNA [BAIDYANATH CONSUMER LTD]": {
       "status": "purged_incorrect",
@@ -14564,25 +14483,10 @@
       "verified": true
     },
     "BAID SITOPALADI CHURNA [BAIDYANATH CONSUMER LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Asli Ayurved Isabgol Psyllium Husk Powder | Constipation Relief | 200G",
-      "slug": "baid-sitopaladi-churna",
-      "images": {
-        "front": {
-          "fileName": "baid-sitopaladi-churna-front.jpg",
-          "url": "/products/baid-sitopaladi-churna-front.jpg",
-          "uploadsUrl": "/uploads/products/baid-sitopaladi-churna-front.jpg",
-          "bytes": 88351
-        },
-        "side": {
-          "fileName": "baid-sitopaladi-churna-side.jpg",
-          "url": "/products/baid-sitopaladi-churna-side.jpg",
-          "uploadsUrl": "/uploads/products/baid-sitopaladi-churna-side.jpg",
-          "bytes": 130620
-        }
-      },
-      "updated_at": "2026-09-02T17:43:51.844Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Asli Ayurved Isabgol Psyllium Husk Powder | Constipation Relief | 200G",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAIDYANATH ABHAYARISHTA LIQUID 225 ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "unverified",
@@ -14641,19 +14545,10 @@
       "verified": true
     },
     "BAIDYANATH AVIPATHIKAR CHURNA POWDER 60 GM [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Asli Ayurved Sitopaladi Churna 60 Gm",
-      "slug": "baidyanath-avipathikar-churna-powder-60-gm",
-      "images": {
-        "side": {
-          "fileName": "baidyanath-avipathikar-churna-powder-60-gm-side.jpg",
-          "url": "/products/baidyanath-avipathikar-churna-powder-60-gm-side.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-avipathikar-churna-powder-60-gm-side.jpg",
-          "bytes": 62415
-        }
-      },
-      "updated_at": "2026-09-02T17:43:56.616Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Asli Ayurved Sitopaladi Churna 60 Gm",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAIDYANATH CHITRAKADI BATI - 80 TABLETS [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "success",
@@ -14829,31 +14724,10 @@
       "verified": true
     },
     "BAIDYANATH LODHRASAV LIQUID 450 ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Kumari Asav Liquid 450 Ml",
-      "slug": "baidyanath-lodhrasav-liquid-450-ml",
-      "images": {
-        "front": {
-          "fileName": "baidyanath-lodhrasav-liquid-450-ml-front.jpg",
-          "url": "/products/baidyanath-lodhrasav-liquid-450-ml-front.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-lodhrasav-liquid-450-ml-front.jpg",
-          "bytes": 59625
-        },
-        "side": {
-          "fileName": "baidyanath-lodhrasav-liquid-450-ml-side.jpg",
-          "url": "/products/baidyanath-lodhrasav-liquid-450-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-lodhrasav-liquid-450-ml-side.jpg",
-          "bytes": 120370
-        },
-        "back": {
-          "fileName": "baidyanath-lodhrasav-liquid-450-ml-back.jpg",
-          "url": "/products/baidyanath-lodhrasav-liquid-450-ml-back.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-lodhrasav-liquid-450-ml-back.jpg",
-          "bytes": 137364
-        }
-      },
-      "updated_at": "2026-09-02T17:44:17.398Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Kumari Asav Liquid 450 Ml",
+      "updated_at": "2026-09-09T04:27:20.110Z"
     },
     "BAIDYANATH MAHANARAYAN TEL  JOINT PAIN OIL  BOTTLE OF 100 ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "success",
@@ -14916,25 +14790,10 @@
       "verified": true
     },
     "BAIDYANATH PATHRINA - 50 TABLETS [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Asli Ayurved Prostaid | Urinary Track Infection | 50 Tablets ( Pack Of 2 )",
-      "slug": "baidyanath-pathrina---50-tablets",
-      "images": {
-        "front": {
-          "fileName": "baidyanath-pathrina---50-tablets-front.jpg",
-          "url": "/products/baidyanath-pathrina---50-tablets-front.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-pathrina---50-tablets-front.jpg",
-          "bytes": 72416
-        },
-        "side": {
-          "fileName": "baidyanath-pathrina---50-tablets-side.jpg",
-          "url": "/products/baidyanath-pathrina---50-tablets-side.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-pathrina---50-tablets-side.jpg",
-          "bytes": 94791
-        }
-      },
-      "updated_at": "2026-09-02T17:44:24.922Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Asli Ayurved Prostaid | Urinary Track Infection | 50 Tablets ( Pack Of 2 )",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAIDYANATH PUNARNAVARISHTA LIQUID 227 ML [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "purged_incorrect",
@@ -14982,31 +14841,10 @@
       "verified": true
     },
     "BAIDYANATH SHULWARJINI BATI TABLET 40 [BAIDYANATH AYURVEDA BHAVAN LTD]": {
-      "status": "success",
-      "matched_name": "Baidyanath Arshoghni Bati Tablet 40",
-      "slug": "baidyanath-shulwarjini-bati-tablet-40",
-      "images": {
-        "front": {
-          "fileName": "baidyanath-shulwarjini-bati-tablet-40-front.jpg",
-          "url": "/products/baidyanath-shulwarjini-bati-tablet-40-front.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-shulwarjini-bati-tablet-40-front.jpg",
-          "bytes": 36737
-        },
-        "side": {
-          "fileName": "baidyanath-shulwarjini-bati-tablet-40-side.jpg",
-          "url": "/products/baidyanath-shulwarjini-bati-tablet-40-side.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-shulwarjini-bati-tablet-40-side.jpg",
-          "bytes": 36631
-        },
-        "back": {
-          "fileName": "baidyanath-shulwarjini-bati-tablet-40-back.jpg",
-          "url": "/products/baidyanath-shulwarjini-bati-tablet-40-back.jpg",
-          "uploadsUrl": "/uploads/products/baidyanath-shulwarjini-bati-tablet-40-back.jpg",
-          "bytes": 41585
-        }
-      },
-      "updated_at": "2026-09-02T17:44:34.069Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Arshoghni Bati Tablet 40",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAIDYANATH SUTSHEKHAR RAS TABLET 30 [BAIDYANATH AYURVEDA BHAVAN LTD]": {
       "status": "success",
@@ -15070,8 +14908,8 @@
     "BAJAJ  OIL 45ML [BAJAJ PHARMACEUTICALS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 10 OIL 10ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "unverified",
@@ -15111,38 +14949,38 @@
     "BAJAJ 133 OIL 150ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 138 OIL 138ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 142 OIL 190 ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 195 OIL 1 [BAJAJ HEALTHCARE LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T17:59:29.844Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 205 OIL 285 ML [BAJAJ PHARMACEUTICALS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 305 OIL 305ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 33 OIL 50ML [BAJAJ PHARMACEUTICALS]": {
       "status": "unverified",
@@ -15187,8 +15025,8 @@
     "BAJAJ 69 OIL 70ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ 70 OIL 50ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "unverified",
@@ -15210,8 +15048,8 @@
     "BAJAJ 72 OIL 80ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bajaj Almond Drops Hair Oil - 650Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAJAJ OIL 200ML [BAJAJ CONSUMER CARE LTD.]": {
       "status": "unverified",
@@ -15670,8 +15508,8 @@
     "BAM BAID BAM 10 GM [BAIDYANATH CONSUMER LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Sebamed Baby Cleansing Bar | Ph 5.5 | For Delicate Skin | 100 Gm",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "BAMBU CHARHOL MASK 10 [SANKET]": {
       "status": "unverified",
@@ -15712,7 +15550,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "updated_at": "2026-09-09T04:36:50.870Z"
     },
     "BANDAGE 5 COTTON 2' 3Y [SARGICAL]": {
       "status": "unverified",
@@ -21878,8 +21716,8 @@
     "CAL SULPH 200 DROP 30ML [SBL HOMEOPATHY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Calshine P 800Iu Bottle Of 30Ml Oral Drops",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "CALACARE LOTION 100ML [INTAS PHARMACEUTICALS LTD GX]": {
       "status": "unverified",
@@ -23944,8 +23782,8 @@
     "CANDITRAL SB 130 STRIP 10 TAB [GLENMARK PHARMACEUTICALS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Canditral Sb 130Mg Strip Of 10 Capsules",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "CAPNEA BOTTLE OF 1 ML ORAL SOLUTION [CIPLA LIMITED]": {
       "status": "success",
@@ -24329,19 +24167,10 @@
       "verified": true
     },
     "CASTOR 70 OIL 1 [L AND L]": {
-      "status": "success",
-      "matched_name": "Tnw The Natural Wash Castor Oil For Hair Skin & Nails Organic Virgin Cold Pressed Oil - 100 Ml",
-      "slug": "castor-70-oil-1",
-      "images": {
-        "side": {
-          "fileName": "castor-70-oil-1-side.jpg",
-          "url": "/products/castor-70-oil-1-side.jpg",
-          "uploadsUrl": "/uploads/products/castor-70-oil-1-side.jpg",
-          "bytes": 77608
-        }
-      },
-      "updated_at": "2026-09-02T17:57:24.641Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Tnw The Natural Wash Castor Oil For Hair Skin & Nails Organic Virgin Cold Pressed Oil - 100 Ml",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "CASTOR 75 OIL 100 [PARAS PHARMACEUTICALS LTD]": {
       "status": "success",
@@ -24471,14 +24300,14 @@
     "CASTOR OIL 400ML [MULTIPHAR]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tnw The Natural Wash Castor Oil For Hair Skin & Nails Organic Virgin Cold Pressed Oil - 100 Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "CASTOR OIL 450 ML [NATURE HOME ASIA]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tnw The Natural Wash Castor Oil For Hair Skin & Nails Organic Virgin Cold Pressed Oil - 100 Ml",
-      "updated_at": "2026-09-08T18:03:22.574Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "CASTOR OIL 50ML [MULTIPHAR]": {
       "status": "purged_incorrect",
@@ -35965,8 +35794,8 @@
     "COTTON 130 COTTON 200GMS [AMIT PHARMACY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Paper Stick Cotton Swabs - 100 Sticks/200 Swabs",
-      "updated_at": "2026-09-08T17:57:14.823Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "COTTON 15 COTTON 1 [GEN BIOTEC PRIVATE LIMITED]": {
       "status": "purged_incorrect",
@@ -35996,7 +35825,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "COTTON ABSORBANT OTHER 20GM [ADMAK PHARMACEUTICALS PVT LTD]": {
       "status": "purged_incorrect",
@@ -36024,14 +35853,14 @@
     "COTTON BANDAGE 4X12 COTTON 4' 12M [BANAJI HOMEOPATHIC PHARMACY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pharmeasy Absorbent Cotton Role 125 Gm Net Wt",
-      "updated_at": "2026-09-08T17:57:14.823Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "COTTON EAR BUDS 6 [TULIP LAB PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Bamboo Cotton Ear Buds - 80 Sticks/160 Swabs",
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "COUGHFIZ COFGEL CAP 15CAP [WELLMEND PHARMACEUTICAL PVT]": {
       "status": "unverified",
@@ -38870,8 +38699,8 @@
     "DABUR 32 DANTMANJAN 1 [DABUR INDIA LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Dabur Hajmola | Imli | 120 Tablets",
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR 35 PAST 60GM [DABUR INDIA LIMITED]": {
       "status": "unverified",
@@ -39323,14 +39152,14 @@
     "DABUR HONEY 1 KG [DABUR INDIA LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Softovac Sf Constipation Powder Bottle Of 250 G Pack Of 2+ Free Dabur Honey 50G",
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR HONEY 1.2 KG [DABUR INDIA LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Softovac Sf Constipation Powder Bottle Of 250 G Pack Of 2+ Free Dabur Honey 50G",
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR HONEY 100 GM [DABUR INDIA LIMITED]": {
       "status": "success",
@@ -39481,61 +39310,22 @@
       }
     },
     "DABUR LAL 115 OIL 1 [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Keratex Oil 100 Ml",
-      "slug": "dabur-lal-115-oil-1",
-      "images": {
-        "front": {
-          "fileName": "dabur-lal-115-oil-1-front.jpg",
-          "url": "/products/dabur-lal-115-oil-1-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-115-oil-1-front.jpg",
-          "bytes": 47157
-        }
-      },
-      "updated_at": "2026-09-02T18:17:41.384Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Keratex Oil 100 Ml",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR LAL 195 OIL 135 [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Amla Hair Oil - 550 Ml | For Strong | Long And Thick Hair | Nourishes Scalp (Pack Of 2)",
-      "slug": "dabur-lal-195-oil-135",
-      "images": {
-        "front": {
-          "fileName": "dabur-lal-195-oil-135-front.jpg",
-          "url": "/products/dabur-lal-195-oil-135-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-195-oil-135-front.jpg",
-          "bytes": 96285
-        },
-        "side": {
-          "fileName": "dabur-lal-195-oil-135-side.jpg",
-          "url": "/products/dabur-lal-195-oil-135-side.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-195-oil-135-side.jpg",
-          "bytes": 83558
-        }
-      },
-      "updated_at": "2026-09-02T18:17:43.089Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Amla Hair Oil - 550 Ml | For Strong | Long And Thick Hair | Nourishes Scalp (Pack Of 2)",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR LAL 35 POWDER 1 [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Naturecare Isabgol Constipation Relief Powder Bottle Of 100 Gm",
-      "slug": "dabur-lal-35-powder-1",
-      "images": {
-        "front": {
-          "fileName": "dabur-lal-35-powder-1-front.jpg",
-          "url": "/products/dabur-lal-35-powder-1-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-35-powder-1-front.jpg",
-          "bytes": 49868
-        },
-        "side": {
-          "fileName": "dabur-lal-35-powder-1-side.jpg",
-          "url": "/products/dabur-lal-35-powder-1-side.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-35-powder-1-side.jpg",
-          "bytes": 54425
-        }
-      },
-      "updated_at": "2026-09-02T18:17:44.647Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Naturecare Isabgol Constipation Relief Powder Bottle Of 100 Gm",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR LAL 425 OIL 500ML [DABUR INDIA LIMITED]": {
       "status": "unverified",
@@ -39573,25 +39363,10 @@
       }
     },
     "DABUR LAL 55 OIL 1 [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Amla Hair Oil - 550 Ml | For Strong | Long And Thick Hair | Nourishes Scalp (Pack Of 2)",
-      "slug": "dabur-lal-55-oil-1",
-      "images": {
-        "front": {
-          "fileName": "dabur-lal-55-oil-1-front.jpg",
-          "url": "/products/dabur-lal-55-oil-1-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-55-oil-1-front.jpg",
-          "bytes": 96285
-        },
-        "side": {
-          "fileName": "dabur-lal-55-oil-1-side.jpg",
-          "url": "/products/dabur-lal-55-oil-1-side.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-55-oil-1-side.jpg",
-          "bytes": 83558
-        }
-      },
-      "updated_at": "2026-09-02T18:17:48.267Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Amla Hair Oil - 550 Ml | For Strong | Long And Thick Hair | Nourishes Scalp (Pack Of 2)",
+      "updated_at": "2026-09-09T04:27:20.111Z"
     },
     "DABUR LAL 85 POWDER 150GM [DABUR LAL]": {
       "status": "unverified",
@@ -39697,31 +39472,10 @@
       }
     },
     "DABUR LAL TAIL 50 ML [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Shrigopal Tail 50Ml",
-      "slug": "dabur-lal-tail-50-ml",
-      "images": {
-        "front": {
-          "fileName": "dabur-lal-tail-50-ml-front.jpg",
-          "url": "/products/dabur-lal-tail-50-ml-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-tail-50-ml-front.jpg",
-          "bytes": 54347
-        },
-        "combo": {
-          "fileName": "dabur-lal-tail-50-ml-combo.jpg",
-          "url": "/products/dabur-lal-tail-50-ml-combo.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-tail-50-ml-combo.jpg",
-          "bytes": 81493
-        },
-        "side": {
-          "fileName": "dabur-lal-tail-50-ml-side.jpg",
-          "url": "/products/dabur-lal-tail-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/dabur-lal-tail-50-ml-side.jpg",
-          "bytes": 39110
-        }
-      },
-      "updated_at": "2026-09-02T18:17:59.596Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Shrigopal Tail 50Ml",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "DABUR LAL TAIL 60ML [DABUR INDIA LIMITED]": {
       "status": "unverified",
@@ -39917,19 +39671,10 @@
       "verified": true
     },
     "DABUR TAIL 110 OIL 100ML [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Dabur Keratex Oil 100 Ml",
-      "slug": "dabur-tail-110-oil-100ml",
-      "images": {
-        "front": {
-          "fileName": "dabur-tail-110-oil-100ml-front.jpg",
-          "url": "/products/dabur-tail-110-oil-100ml-front.jpg",
-          "uploadsUrl": "/uploads/products/dabur-tail-110-oil-100ml-front.jpg",
-          "bytes": 47157
-        }
-      },
-      "updated_at": "2026-09-02T18:18:12.246Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Dabur Keratex Oil 100 Ml",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "DABUR TAIL 20 OIL 20ML [DABUR INDIA LIMITED]": {
       "status": "unverified",
@@ -41766,7 +41511,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "DERMACO SALICYLIC FACE ACID 30ML [CM COSMATIC]": {
       "status": "success",
@@ -42767,8 +42512,8 @@
     "DETTOL 49 WIPES 1 [RECKITT & COLMAN OF INDIA LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Dettol Multi Use Skin & Surface Wipes | Original | 80 Unit",
-      "updated_at": "2026-09-08T18:03:22.575Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "DETTOL 550ML LIQUID BOTTLE [RECKITT BENCKISER]": {
       "status": "success",
@@ -44849,8 +44594,8 @@
     "DISPOSABLE 10ML SYRANGE 1PCS [HMD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Bold Care 404 Extra Dotted Condom For Men |576 Dots |Ribbed Condom With Disposable Pouches - 10 Pcs.",
-      "updated_at": "2026-09-08T17:57:14.823Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "DISPOSABLE CAP KRV SINGLE PACK CAP 1PCS [UNITED LABORATORIES INDIA PVT LTD]": {
       "status": "unverified",
@@ -55313,31 +55058,10 @@
       }
     },
     "FB 50 BOTTLE 1 [BONNE SANTE THERAPEUTICS INDIA LTD]": {
-      "status": "success",
-      "matched_name": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
-      "slug": "fb-50-bottle-1",
-      "images": {
-        "box-front": {
-          "fileName": "fb-50-bottle-1-box-front.jpg",
-          "url": "/products/fb-50-bottle-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-50-bottle-1-box-front.jpg",
-          "bytes": 63767
-        },
-        "front": {
-          "fileName": "fb-50-bottle-1-front.jpg",
-          "url": "/products/fb-50-bottle-1-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-50-bottle-1-front.jpg",
-          "bytes": 25673
-        },
-        "box-back": {
-          "fileName": "fb-50-bottle-1-box-back.jpg",
-          "url": "/products/fb-50-bottle-1-box-back.jpg",
-          "uploadsUrl": "/uploads/products/fb-50-bottle-1-box-back.jpg",
-          "bytes": 58854
-        }
-      },
-      "updated_at": "2026-09-02T18:38:55.377Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FB 70 BOTTLE 125ML [SMAYAN HEALTHCARE PRIVATE LIMITED]": {
       "status": "not_found",
@@ -55361,31 +55085,10 @@
       "updated_at": "2026-09-03T10:23:20.116Z"
     },
     "FB 85 BOTTLE 1 [MAYA SA]": {
-      "status": "success",
-      "matched_name": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
-      "slug": "fb-85-bottle-1",
-      "images": {
-        "box-front": {
-          "fileName": "fb-85-bottle-1-box-front.jpg",
-          "url": "/products/fb-85-bottle-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-85-bottle-1-box-front.jpg",
-          "bytes": 63767
-        },
-        "front": {
-          "fileName": "fb-85-bottle-1-front.jpg",
-          "url": "/products/fb-85-bottle-1-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-85-bottle-1-front.jpg",
-          "bytes": 25673
-        },
-        "box-back": {
-          "fileName": "fb-85-bottle-1-box-back.jpg",
-          "url": "/products/fb-85-bottle-1-box-back.jpg",
-          "uploadsUrl": "/uploads/products/fb-85-bottle-1-box-back.jpg",
-          "bytes": 58854
-        }
-      },
-      "updated_at": "2026-09-02T18:39:02.415Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FB 90 BOTTLE 125ML [MAYA]": {
       "status": "not_found",
@@ -55395,31 +55098,10 @@
       "updated_at": "2026-09-03T10:23:20.132Z"
     },
     "FB 95 BOTTLE 1 [MAYA]": {
-      "status": "success",
-      "matched_name": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
-      "slug": "fb-95-bottle-1",
-      "images": {
-        "box-front": {
-          "fileName": "fb-95-bottle-1-box-front.jpg",
-          "url": "/products/fb-95-bottle-1-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-95-bottle-1-box-front.jpg",
-          "bytes": 63767
-        },
-        "front": {
-          "fileName": "fb-95-bottle-1-front.jpg",
-          "url": "/products/fb-95-bottle-1-front.jpg",
-          "uploadsUrl": "/uploads/products/fb-95-bottle-1-front.jpg",
-          "bytes": 25673
-        },
-        "box-back": {
-          "fileName": "fb-95-bottle-1-box-back.jpg",
-          "url": "/products/fb-95-bottle-1-box-back.jpg",
-          "uploadsUrl": "/uploads/products/fb-95-bottle-1-box-back.jpg",
-          "bytes": 58854
-        }
-      },
-      "updated_at": "2026-09-02T18:39:07.042Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Combihale Fb 200Mcg Bottle Of 120Md 7.2Gm Metered Dose Inhaler",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FB110 BOTTLE 1 [DELUX]": {
       "status": "unverified",
@@ -55445,25 +55127,10 @@
       }
     },
     "FB120 BOTTLE 1PCS [HELLO]": {
-      "status": "success",
-      "matched_name": "Airz Fb 120Md Box Of 7.2Gm Metered Dose Inhaler",
-      "slug": "fb120-bottle-1pcs",
-      "images": {
-        "box-front": {
-          "fileName": "fb120-bottle-1pcs-box-front.jpg",
-          "url": "/products/fb120-bottle-1pcs-box-front.jpg",
-          "uploadsUrl": "/uploads/products/fb120-bottle-1pcs-box-front.jpg",
-          "bytes": 56392
-        },
-        "side": {
-          "fileName": "fb120-bottle-1pcs-side.jpg",
-          "url": "/products/fb120-bottle-1pcs-side.jpg",
-          "uploadsUrl": "/uploads/products/fb120-bottle-1pcs-side.jpg",
-          "bytes": 31613
-        }
-      },
-      "updated_at": "2026-09-02T18:39:10.340Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Airz Fb 120Md Box Of 7.2Gm Metered Dose Inhaler",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FB45 BOTTLE 1 [BONNE SANTE THERAPEUTICS INDIA LTD]": {
       "status": "unverified",
@@ -57528,40 +57195,16 @@
       }
     },
     "FLAMINGO HINGED KNEE CAP SIZE MEDIUM [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Flamingo Knee Cap Single Size Medium",
-      "slug": "flamingo-hinged-knee-cap-size-medium",
-      "images": {
-        "box-front": {
-          "fileName": "flamingo-hinged-knee-cap-size-medium-box-front.jpg",
-          "url": "/products/flamingo-hinged-knee-cap-size-medium-box-front.jpg",
-          "uploadsUrl": "/uploads/products/flamingo-hinged-knee-cap-size-medium-box-front.jpg",
-          "bytes": 46527
-        },
-        "side": {
-          "fileName": "flamingo-hinged-knee-cap-size-medium-side.jpg",
-          "url": "/products/flamingo-hinged-knee-cap-size-medium-side.jpg",
-          "uploadsUrl": "/uploads/products/flamingo-hinged-knee-cap-size-medium-side.jpg",
-          "bytes": 82503
-        }
-      },
-      "updated_at": "2026-09-02T18:41:53.071Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Flamingo Knee Cap Single Size Medium",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FLAMINGO HINGED KNEE CAP SIZE SMALL [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Flamingo Hinged Knee Cap Support Brace Sleeves | Size-Xl",
-      "slug": "flamingo-hinged-knee-cap-size-small",
-      "images": {
-        "side": {
-          "fileName": "flamingo-hinged-knee-cap-size-small-side.jpg",
-          "url": "/products/flamingo-hinged-knee-cap-size-small-side.jpg",
-          "uploadsUrl": "/uploads/products/flamingo-hinged-knee-cap-size-small-side.jpg",
-          "bytes": 46306
-        }
-      },
-      "updated_at": "2026-09-02T18:41:54.518Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Flamingo Hinged Knee Cap Support Brace Sleeves | Size-Xl",
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "FLAMINGO LUMBAR SACRO BELT LARGE 1'S [FLAMINGO PHARMACEUTICALS]": {
       "status": "success",
@@ -63048,7 +62691,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "GIILET 33 BLADE 1 [PANDG]": {
       "status": "unverified",
@@ -65578,8 +65221,8 @@
     "GLOVES   NO 8 RUBBER 1 [GAMMEX]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Slaney Slanex Latex Examination Gloves - Medium Size",
-      "updated_at": "2026-09-08T17:57:14.824Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "GLOVES 1500 LATEX 1PC [AUGMENT REMEDIES EXPORT]": {
       "status": "purged_incorrect",
@@ -65590,8 +65233,8 @@
     "GLOVES 990 PLASTIC 100PCS [NULIFE PHARMACEUTICALS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Latex Medical Examination Hand Gloves  Box Of 100",
-      "updated_at": "2026-09-08T17:57:14.824Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "GLOVES NO 6 RUBBER 1 [GAMMEX]": {
       "status": "unverified",
@@ -65619,14 +65262,14 @@
     "GLOVES NO 7.5 RUBBER 1 [GAMMEX]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Slaney Slanex Latex Examination Gloves - Medium Size",
-      "updated_at": "2026-09-08T17:57:14.824Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "GLOVES UNICARE GLOVES 100PCS [UNITECH HEALTHCARE PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Surgicare Sterile Gloves Box Of 25 Pcs. Size 7",
-      "updated_at": "2026-09-08T17:57:14.824Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.112Z"
     },
     "GLUCON-D REGULAR HEALTH DRINK REFILL OF 1 KG [ZYDUS WELLNESS PRODUCTS LTD]": {
       "status": "purged_incorrect",
@@ -68671,8 +68314,8 @@
     "GOOD HOME SOUL BLOSSO ROOM FRESHNER 160G": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Good Home Lavender Spray - Room & Air Freshner (2 X 130 Ml)",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "GOOD NIGHT ACTIV COMBI PACK [LABORATE PHARMACEUTICALS INDIA LTD]": {
       "status": "purged_incorrect",
@@ -72458,20 +72101,20 @@
     "HIM 100 WIPES 1 [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Purifying Neem | Prevents Pimples | Face Wash | 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 100 WIPES 25 [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Purifying Neem | Prevents Pimples | Face Wash | 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 130 OIL 100ML [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 40 POWDER 40GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "success",
@@ -72509,8 +72152,8 @@
     "HIM 45 WIPES 12 [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Baby Gentle Baby Wipes 12'S",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 65 PRICKY HEAT POWDER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -72561,14 +72204,14 @@
     "HIM 90 LOTION 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Althea Lotion 100Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 95 LOTION 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Althea Lotion 100Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM 99 WIPES 72 [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -72607,8 +72250,8 @@
     "HIM ALOVERA GEL 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Moisturizing Aloe Vera | Face Gel | 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 100  LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "success",
@@ -72628,62 +72271,62 @@
     "HIM BABY 100 MASAGE OIL 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 100 POWDER 100GM [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 100 PRIKY   POWDER 100GM [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 105 POWDER 100GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 110 BASTHWASH 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Shampoo 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 110 LOTION 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 115 LOTION 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 115 OIL 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 115 POWDER 100GM [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 120 OIL 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 125 MASSAGE 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -72694,8 +72337,8 @@
     "HIM BABY 130 MESSAGE 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 135 POWD 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -72706,20 +72349,20 @@
     "HIM BABY 140 CREAM 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Cream | Extra Soft 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 140 MESSAGE OIL 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 145 POWDER 1 [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 150 CREAM 100GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -72741,56 +72384,56 @@
     "HIM BABY 150 OIL 100ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 150 POWDER 200GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 165 CREAM 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Cream | Extra Soft 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 165 LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 170 LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 175 LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 180 OIL 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 195 LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 195 POWDER 200GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 200 MESSAHE OIL 200ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -72802,7 +72445,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 210 MESSAGE 200ML [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -72813,8 +72456,8 @@
     "HIM BABY 235 POWDER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 250 POWDER 400GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -72826,25 +72469,25 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 40  POWDER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 400 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 42 POWDER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 45 MOIST WIPES 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 50 POWDER 50GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -72941,31 +72584,31 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 65 MESSAGE 1 [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 72 POWDER 100GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 75 CREAM 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 80 CREAM 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Cream | Extra Soft 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 80 POWDER 80GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -72999,8 +72642,8 @@
     "HIM BABY 83 POWDER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 85  CREAM 50ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -73012,7 +72655,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 95 CREAM 50 GM [HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -73023,20 +72666,20 @@
     "HIM BABY 95 LOTION 1 [COCONUT HCL]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Lotion 400 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 95 POWDER 100GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 100 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY 99 WIPES 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABY BRUSH 1 [CM COSMATIC]": {
       "status": "purged_incorrect",
@@ -73065,8 +72708,8 @@
     "HIM BABY WIPES 48 WIPES 12 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Baby Gentle Baby Wipes 12'S",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BABYP 90 POWDER 100GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -73111,14 +72754,14 @@
     "HIM BEBY 40 POWDER 40GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Powder 400 Gm",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BEBY 48 WIPES 12 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Baby Gentle Baby Wipes 12'S",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM BEBY 80 POWDER. 80GM [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -73187,8 +72830,8 @@
     "HIM COCO 85 LOTION 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Althea Lotion 100Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM COMPLETE CARE PASTE 275GM": {
       "status": "purged_incorrect",
@@ -73317,8 +72960,8 @@
     "HIM MESSAGE 180 OIL 125 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Body Massage Oil | Bottle 100 Ml",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM MESSAGE 55 OIL 50ML [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
@@ -73475,7 +73118,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM WIPES 200 PAPER 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -73504,13 +73147,13 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM WIPS WIPS 24 [THE HIMALAYA DRUG COMPANY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Himalaya Gentle Baby Wipes | Extra Soft | Packet 24 Wipes",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIM WLN 10 SACHET 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "unverified",
@@ -73590,25 +73233,10 @@
       "verified": true
     },
     "HIMALAYA ANTI-RASH CREAM 20GM": {
-      "status": "success",
-      "matched_name": "Himalaya Baby Rash Relief+ Pure Cow Gee Cream 20 Gm",
-      "slug": "himalaya-anti-rash-cream-20gm",
-      "images": {
-        "box-front": {
-          "fileName": "himalaya-anti-rash-cream-20gm-box-front.jpg",
-          "url": "/products/himalaya-anti-rash-cream-20gm-box-front.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-anti-rash-cream-20gm-box-front.jpg",
-          "bytes": 49223
-        },
-        "front": {
-          "fileName": "himalaya-anti-rash-cream-20gm-front.jpg",
-          "url": "/products/himalaya-anti-rash-cream-20gm-front.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-anti-rash-cream-20gm-front.jpg",
-          "bytes": 31709
-        }
-      },
-      "updated_at": "2026-09-02T19:04:16.566Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Himalaya Baby Rash Relief+ Pure Cow Gee Cream 20 Gm",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIMALAYA ASHVAGANDHA CAP 120'S [THE HIMALAYA DRUG COMPANY]": {
       "status": "success",
@@ -73677,37 +73305,10 @@
       "updated_at": "2026-09-02T19:04:22.420Z"
     },
     "HIMALAYA CONFIDO TABLETS - 60'S [HIMALAYA]": {
-      "status": "success",
-      "matched_name": "Himalaya Kapikachhu | For Men | Improves Vigour | Tablets | 60 No's",
-      "slug": "himalaya-confido-tablets---60s",
-      "images": {
-        "front": {
-          "fileName": "himalaya-confido-tablets---60s-front.jpg",
-          "url": "/products/himalaya-confido-tablets---60s-front.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-confido-tablets---60s-front.jpg",
-          "bytes": 34146
-        },
-        "combo": {
-          "fileName": "himalaya-confido-tablets---60s-combo.jpg",
-          "url": "/products/himalaya-confido-tablets---60s-combo.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-confido-tablets---60s-combo.jpg",
-          "bytes": 62114
-        },
-        "side": {
-          "fileName": "himalaya-confido-tablets---60s-side.jpg",
-          "url": "/products/himalaya-confido-tablets---60s-side.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-confido-tablets---60s-side.jpg",
-          "bytes": 37619
-        },
-        "back": {
-          "fileName": "himalaya-confido-tablets---60s-back.jpg",
-          "url": "/products/himalaya-confido-tablets---60s-back.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-confido-tablets---60s-back.jpg",
-          "bytes": 39884
-        }
-      },
-      "updated_at": "2026-09-02T19:04:23.993Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Himalaya Kapikachhu | For Men | Improves Vigour | Tablets | 60 No's",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIMALAYA CYSTONE TABLETS - 60'S [HIMALAYA]": {
       "status": "success",
@@ -73858,19 +73459,10 @@
       }
     },
     "HIMALAYA HIMCOLIN GEL - 30G [HIMALAYA]": {
-      "status": "success",
-      "matched_name": "Himalaya V Gel 30 Gm",
-      "slug": "himalaya-himcolin-gel---30g",
-      "images": {
-        "side": {
-          "fileName": "himalaya-himcolin-gel---30g-side.jpg",
-          "url": "/products/himalaya-himcolin-gel---30g-side.jpg",
-          "uploadsUrl": "/uploads/products/himalaya-himcolin-gel---30g-side.jpg",
-          "bytes": 35551
-        }
-      },
-      "updated_at": "2026-09-02T19:04:35.473Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Himalaya V Gel 30 Gm",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HIMALAYA KOFLET LOZENGENS 175 [THE HIMALAYA DRUG COMPANY]": {
       "status": "success",
@@ -75310,19 +74902,10 @@
       }
     },
     "HONEY 450 LIQUID 1KG [DABUR INDIA LIMITED]": {
-      "status": "success",
-      "matched_name": "Baidyanath Ayurved Pure Honey 1Kg | C4 Approved Unadulterated Honey",
-      "slug": "honey-450-liquid-1kg",
-      "images": {
-        "side": {
-          "fileName": "honey-450-liquid-1kg-side.jpg",
-          "url": "/products/honey-450-liquid-1kg-side.jpg",
-          "uploadsUrl": "/uploads/products/honey-450-liquid-1kg-side.jpg",
-          "bytes": 72223
-        }
-      },
-      "updated_at": "2026-09-02T19:06:09.247Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Baidyanath Ayurved Pure Honey 1Kg | C4 Approved Unadulterated Honey",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HONEY 59 LIQUID 1 [BAIDYANATH CONSUMER LTD]": {
       "status": "success",
@@ -75425,19 +75008,10 @@
       }
     },
     "HONEY BAIDHNAATH HONEY BOTTLE [AYURVED]": {
-      "status": "success",
-      "matched_name": "Zandu Pure Honey Health Food Bottle Of 500 Gm",
-      "slug": "honey-baidhnaath-honey-bottle",
-      "images": {
-        "side": {
-          "fileName": "honey-baidhnaath-honey-bottle-side.jpg",
-          "url": "/products/honey-baidhnaath-honey-bottle-side.jpg",
-          "uploadsUrl": "/uploads/products/honey-baidhnaath-honey-bottle-side.jpg",
-          "bytes": 72265
-        }
-      },
-      "updated_at": "2026-09-02T19:06:16.909Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pure Honey Health Food Bottle Of 500 Gm",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HONEY BOTTLE 100ML [DABUR INDIA LIMITED]": {
       "status": "unverified",
@@ -75465,8 +75039,8 @@
     "HONEY BOTTLE OF 500ML [DABUR INDIA LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Zandu Pure Honey Health Food Bottle Of 500 Gm",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HONEY GLOW HOT WAX WAX 200GM [FARM HONEY]": {
       "status": "unverified",
@@ -76098,8 +75672,8 @@
     "HUM TUM SPRAY 100ML [RIYAR]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Huminsulin 30/70 100Iu Cartridge Of 3Ml Injection",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "HUM TUM SPRAY 30ML [RIYAR]": {
       "status": "unverified",
@@ -77464,31 +77038,10 @@
       }
     },
     "INHALER 62 BOTTLE 1 [RECKET]": {
-      "status": "success",
-      "matched_name": "Trelegy Ellipta 100Mcg/62.5Mcg/25Mcg Packet Of 30 Dose Inhaler",
-      "slug": "inhaler-62-bottle-1",
-      "images": {
-        "front": {
-          "fileName": "inhaler-62-bottle-1-front.jpg",
-          "url": "/products/inhaler-62-bottle-1-front.jpg",
-          "uploadsUrl": "/uploads/products/inhaler-62-bottle-1-front.jpg",
-          "bytes": 72498
-        },
-        "combo": {
-          "fileName": "inhaler-62-bottle-1-combo.jpg",
-          "url": "/products/inhaler-62-bottle-1-combo.jpg",
-          "uploadsUrl": "/uploads/products/inhaler-62-bottle-1-combo.jpg",
-          "bytes": 79525
-        },
-        "side": {
-          "fileName": "inhaler-62-bottle-1-side.jpg",
-          "url": "/products/inhaler-62-bottle-1-side.jpg",
-          "uploadsUrl": "/uploads/products/inhaler-62-bottle-1-side.jpg",
-          "bytes": 90222
-        }
-      },
-      "updated_at": "2026-09-02T19:08:54.291Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Trelegy Ellipta 100Mcg/62.5Mcg/25Mcg Packet Of 30 Dose Inhaler",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "INHALER 69 1 22 [PANDG]": {
       "status": "unverified",
@@ -77911,8 +77464,8 @@
     "IODEX 170 CREAM 1 [DR RECKEWEG]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Iodex Pain Relief Balm 16 Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "IODEX 180 BAM 1 [DR REDDY'S LABORATORIES LTD]": {
       "status": "success",
@@ -82075,8 +81628,8 @@
     "K.S 210 SPRAY 260 ML [RAYMOND PHARMACEUTICAL PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "K Mac Uti Sugar Free Bottle Of 210Ml Suspension",
-      "updated_at": "2026-09-08T18:03:22.576Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KACID FORT SYP 100ML [SDL INDIA]": {
       "status": "unverified",
@@ -85276,255 +84829,69 @@
       "verified": true
     },
     "KNEE CAP [ROMSONS PHARMACEUTICAL]": {
-      "status": "not_found",
-      "searched_query": "KNEE CAP",
-      "updated_at": "2026-09-02T19:18:27.681Z"
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 120 S [AMIT PHARMACY]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Medium - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-120-s",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-120-s-front.jpg",
-          "url": "/products/knee-cap-120-s-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-120-s-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-120-s-side.jpg",
-          "url": "/products/knee-cap-120-s-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-120-s-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-120-s-back.jpg",
-          "url": "/products/knee-cap-120-s-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-120-s-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:29.269Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Medium - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 160 COTTON 1 [NAREDA]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-160-cotton-1",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-160-cotton-1-front.jpg",
-          "url": "/products/knee-cap-160-cotton-1-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-160-cotton-1-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-160-cotton-1-side.jpg",
-          "url": "/products/knee-cap-160-cotton-1-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-160-cotton-1-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-160-cotton-1-back.jpg",
-          "url": "/products/knee-cap-160-cotton-1-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-160-cotton-1-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:30.876Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 17 COTTON 1PAIR [SATHNAM]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-17-cotton-1pair",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-17-cotton-1pair-front.jpg",
-          "url": "/products/knee-cap-17-cotton-1pair-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-17-cotton-1pair-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-17-cotton-1pair-side.jpg",
-          "url": "/products/knee-cap-17-cotton-1pair-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-17-cotton-1pair-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-17-cotton-1pair-back.jpg",
-          "url": "/products/knee-cap-17-cotton-1pair-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-17-cotton-1pair-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:32.452Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 180 COTTON 2 [RELYON HEALTH CARE]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-180-cotton-2",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-180-cotton-2-front.jpg",
-          "url": "/products/knee-cap-180-cotton-2-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-180-cotton-2-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-180-cotton-2-side.jpg",
-          "url": "/products/knee-cap-180-cotton-2-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-180-cotton-2-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-180-cotton-2-back.jpg",
-          "url": "/products/knee-cap-180-cotton-2-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-180-cotton-2-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:34.036Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 310 COTTON 2 [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-310-cotton-2",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-310-cotton-2-front.jpg",
-          "url": "/products/knee-cap-310-cotton-2-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-310-cotton-2-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-310-cotton-2-side.jpg",
-          "url": "/products/knee-cap-310-cotton-2-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-310-cotton-2-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-310-cotton-2-back.jpg",
-          "url": "/products/knee-cap-310-cotton-2-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-310-cotton-2-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:35.711Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP 350 COTTON 1 [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-350-cotton-1",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-350-cotton-1-front.jpg",
-          "url": "/products/knee-cap-350-cotton-1-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-350-cotton-1-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-350-cotton-1-side.jpg",
-          "url": "/products/knee-cap-350-cotton-1-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-350-cotton-1-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-350-cotton-1-back.jpg",
-          "url": "/products/knee-cap-350-cotton-1-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-350-cotton-1-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:37.502Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP COTTON 1PAIR [RELAXE]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-cotton-1pair",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-cotton-1pair-front.jpg",
-          "url": "/products/knee-cap-cotton-1pair-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-1pair-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-cotton-1pair-side.jpg",
-          "url": "/products/knee-cap-cotton-1pair-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-1pair-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-cotton-1pair-back.jpg",
-          "url": "/products/knee-cap-cotton-1pair-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-1pair-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:39.116Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP COTTON 2 [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "knee-cap-cotton-2",
-      "images": {
-        "front": {
-          "fileName": "knee-cap-cotton-2-front.jpg",
-          "url": "/products/knee-cap-cotton-2-front.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-2-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "knee-cap-cotton-2-side.jpg",
-          "url": "/products/knee-cap-cotton-2-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-2-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "knee-cap-cotton-2-back.jpg",
-          "url": "/products/knee-cap-cotton-2-back.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-cotton-2-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:18:40.960Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Large - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP MEDIUM FLAMINGO 1 [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Bamboo Knee Cap | Medium Size | 1 Pair",
-      "slug": "knee-cap-medium-flamingo-1",
-      "images": {
-        "side": {
-          "fileName": "knee-cap-medium-flamingo-1-side.jpg",
-          "url": "/products/knee-cap-medium-flamingo-1-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-medium-flamingo-1-side.jpg",
-          "bytes": 47672
-        }
-      },
-      "updated_at": "2026-09-02T19:18:42.242Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Bamboo Knee Cap | Medium Size | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE CAP SMALL COTTON 2 [FLAMINGO PHARMACEUTICALS]": {
-      "status": "success",
-      "matched_name": "Liveasy Ortho Care Open Patella Knee Cap Small",
-      "slug": "knee-cap-small-cotton-2",
-      "images": {
-        "side": {
-          "fileName": "knee-cap-small-cotton-2-side.jpg",
-          "url": "/products/knee-cap-small-cotton-2-side.jpg",
-          "uploadsUrl": "/uploads/products/knee-cap-small-cotton-2-side.jpg",
-          "bytes": 59706
-        }
-      },
-      "updated_at": "2026-09-02T19:18:43.781Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Liveasy Ortho Care Open Patella Knee Cap Small",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KNEE SUP 1495 COTTON 1 [TYNOR ORTHOTICS LTD]": {
       "status": "success",
@@ -85855,19 +85222,10 @@
       "updated_at": "2026-09-08T18:03:22.576Z"
     },
     "KOFLET SF SYP [THE HIMALAYA DRUG COMPANY]": {
-      "status": "success",
-      "matched_name": "Himalaya Koflet Sf Orange Flavour Strip Of 6 Lozenges",
-      "slug": "koflet-sf-syp",
-      "images": {
-        "side": {
-          "fileName": "koflet-sf-syp-side.jpg",
-          "url": "/products/koflet-sf-syp-side.jpg",
-          "uploadsUrl": "/uploads/products/koflet-sf-syp-side.jpg",
-          "bytes": 80932
-        }
-      },
-      "updated_at": "2026-09-02T19:19:10.934Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Himalaya Koflet Sf Orange Flavour Strip Of 6 Lozenges",
+      "updated_at": "2026-09-09T04:27:20.113Z"
     },
     "KOFOL CHEW TAB [CHARAK PHARMA PVT LTD]": {
       "status": "success",
@@ -90554,64 +89912,28 @@
       }
     },
     "LIMCEE 500MG ORANGE FLAVOUR CHEWABLE TABLETS 15'S [ABBOTT HEALTHCARE PVT LTD]": {
-      "status": "success",
-      "matched_name": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
-      "slug": "limcee-500mg-orange-flavour-chewable-tablets-15s",
-      "images": {
-        "side": {
-          "fileName": "limcee-500mg-orange-flavour-chewable-tablets-15s-side.jpg",
-          "url": "/products/limcee-500mg-orange-flavour-chewable-tablets-15s-side.jpg",
-          "uploadsUrl": "/uploads/products/limcee-500mg-orange-flavour-chewable-tablets-15s-side.jpg",
-          "bytes": 151334
-        }
-      },
-      "updated_at": "2026-09-02T19:24:56.807Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LIMCEE 500MG STRIP OF 10 TABLETS [ABBOTT HEALTHCARE PVT LTD]": {
-      "status": "success",
-      "matched_name": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
-      "slug": "limcee-500mg",
-      "images": {
-        "side": {
-          "fileName": "limcee-500mg-side.jpg",
-          "url": "/products/limcee-500mg-side.jpg",
-          "uploadsUrl": "/uploads/products/limcee-500mg-side.jpg",
-          "bytes": 151334
-        }
-      },
-      "updated_at": "2026-09-02T19:24:58.057Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LIMCEE 500MG TABLET [ABBOTT HEALTHCARE PVT LTD]": {
-      "status": "success",
-      "matched_name": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
-      "slug": "limcee-500mg-tablet",
-      "images": {
-        "side": {
-          "fileName": "limcee-500mg-tablet-side.jpg",
-          "url": "/products/limcee-500mg-tablet-side.jpg",
-          "uploadsUrl": "/uploads/products/limcee-500mg-tablet-side.jpg",
-          "bytes": 151334
-        }
-      },
-      "updated_at": "2026-09-02T19:24:59.627Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LIMCEE ZINC  TAB  TAB 15TAB [LUPIN]": {
-      "status": "success",
-      "matched_name": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
-      "slug": "limcee-zinc-tab-tab-15tab",
-      "images": {
-        "side": {
-          "fileName": "limcee-zinc-tab-tab-15tab-side.jpg",
-          "url": "/products/limcee-zinc-tab-tab-15tab-side.jpg",
-          "uploadsUrl": "/uploads/products/limcee-zinc-tab-tab-15tab-side.jpg",
-          "bytes": 151334
-        }
-      },
-      "updated_at": "2026-09-02T19:25:01.278Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Limcee Chewable Vitamin C 500Mg | Tangy Orange | Immunity | Antioxidant & Skin Support | 15 Tablets",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LINARES  E  STRIP OF 10 TABS [ERIS LIFE SCIENCES PVT LTD]": {
       "status": "success",
@@ -90771,8 +90093,8 @@
     "LIP 190 BAG 25STB [GREEN CROSS HEALTHCARE]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Lipzlite Cream 15Gm",
-      "updated_at": "2026-09-08T17:59:29.846Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LIP 65 BAGS 1 [LIPTON]": {
       "status": "purged_incorrect",
@@ -91283,21 +90605,10 @@
       }
     },
     "LISTRIN 55 LIQUID 1 [PANDG]": {
-      "status": "unverified",
-      "matched_name": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
-      "slug": "listrin-55-liquid-1",
-      "images": {},
-      "updated_at": "2026-09-03T04:08:09.493Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:51.101Z",
-      "unverified_images": {
-        "side": {
-          "fileName": "listrin-55-liquid-1-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/listrin-55-liquid-1-side.jpg",
-          "originalUrl": "/products/listrin-55-liquid-1-side.jpg",
-          "bytes": 49776
-        }
-      }
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "LISTRIN 60 LIQUID 1 [PANDG]": {
       "status": "unverified",
@@ -95802,8 +95113,8 @@
     "MAG PHOS 6X TAB 25 [SBL HOMEOPATHY]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Sbl Magnesium Phosphoricum 6X Tablets 25Gm",
-      "updated_at": "2026-09-08T17:59:29.847Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MAGNAKOF DX SYRUP 100ML [MANKIND PHARMACEUTICALS LTD]": {
       "status": "not_found",
@@ -97075,7 +96386,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MASK 5 COTTON 1 [CM COSMATIC]": {
       "status": "purged_incorrect",
@@ -97086,14 +96397,14 @@
     "MAX 30 RAZORS 1 [GEN BIOTEC PRIVATE LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Maxum Strip Of 10 Tablets",
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MAX 40 RAZORS 1 [MAXRELIEF HEALTH CARE]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MAX RAZORE PLASTIC 6 [MAXRELIEF HEALTH CARE]": {
       "status": "unverified",
@@ -107350,14 +106661,14 @@
     "MY LOVE ALUM ALUM 1BOX [ABC]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Mylo Adjustable Washable & Reusable Cloth Diaper - Pet Love - Pack Of 1",
-      "updated_at": "2026-09-08T17:57:14.825Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MY PAN 1 CHOC 1 [ESTRAGEN PHARMA]": {
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "MYATRO EYE DROP 5ML [HANUCHEM LAB]": {
       "status": "success",
@@ -108593,7 +107904,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "NATURES GOLD KIT CREAM 43GM [ESTRAGEN PHARMA]": {
       "status": "purged_incorrect",
@@ -109300,31 +108611,10 @@
       "updated_at": "2026-09-08T18:03:22.577Z"
     },
     "NEECAP CAP [GUJARAT TERCE LABORATORIES LTD]": {
-      "status": "success",
-      "matched_name": "Pharmeasy Knee Cap Medium - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
-      "slug": "neecap-cap",
-      "images": {
-        "front": {
-          "fileName": "neecap-cap-front.jpg",
-          "url": "/products/neecap-cap-front.jpg",
-          "uploadsUrl": "/uploads/products/neecap-cap-front.jpg",
-          "bytes": 44966
-        },
-        "side": {
-          "fileName": "neecap-cap-side.jpg",
-          "url": "/products/neecap-cap-side.jpg",
-          "uploadsUrl": "/uploads/products/neecap-cap-side.jpg",
-          "bytes": 49069
-        },
-        "back": {
-          "fileName": "neecap-cap-back.jpg",
-          "url": "/products/neecap-cap-back.jpg",
-          "uploadsUrl": "/uploads/products/neecap-cap-back.jpg",
-          "bytes": 57886
-        }
-      },
-      "updated_at": "2026-09-02T19:48:28.371Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Pharmeasy Knee Cap Medium - Black | Protects Knee Joints | Reduces Risk Of Injuries | 1 Pair",
+      "updated_at": "2026-09-09T04:27:20.114Z"
     },
     "NEEDFOL NVP STRIP OF 10TAB [SAMCO PHARMACEUTICALS]": {
       "status": "unverified",
@@ -115388,8 +114678,8 @@
     "O VIT PLUS INJ 1'S [OSCAR REMEDIES PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Make O Enrich Expert Vitamin C Sheet Mask 1 No's",
-      "updated_at": "2026-09-08T17:59:29.847Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "O2 STRIP OF 10 TABLETS [MEDLEY PHARMACEUTICAL PVT LTD]": {
       "status": "success",
@@ -116253,19 +115543,10 @@
       "updated_at": "2026-09-08T18:03:22.577Z"
     },
     "OIL 100 OIL 1 [PARACHUT]": {
-      "status": "success",
-      "matched_name": "Everherb | Pain Relief Oil | Blend Of 8 Powerful Herbal Ingredients | Bottle 100 Ml (By Pharmeasy)",
-      "slug": "oil-100-oil-1",
-      "images": {
-        "side": {
-          "fileName": "oil-100-oil-1-side.jpg",
-          "url": "/products/oil-100-oil-1-side.jpg",
-          "uploadsUrl": "/uploads/products/oil-100-oil-1-side.jpg",
-          "bytes": 52103
-        }
-      },
-      "updated_at": "2026-09-02T19:57:13.239Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Everherb | Pain Relief Oil | Blend Of 8 Powerful Herbal Ingredients | Bottle 100 Ml (By Pharmeasy)",
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "OIL 104 OIL 1 [PARACHUT]": {
       "status": "purged_incorrect",
@@ -116443,8 +115724,8 @@
     "OIL 65 OIL 1 [SHIMANO HEALTHCARE PEIVATE LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Everherb | Pain Relief Oil | Blend Of 8 Powerful Herbal Ingredients | Bottle 100 Ml (By Pharmeasy)",
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "OIL 67 OIL 175ML [PARACHUT]": {
       "status": "purged_incorrect",
@@ -116561,8 +115842,8 @@
     "OIL ALOVERA OIL 75ML [PARACHUT]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Coco Crush Ayurvedic Coconut/Peppermint & Clove Oil Oil For Oil Pulling - 100Ml",
-      "updated_at": "2026-09-08T18:03:22.577Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "OKACET 10MG TABLET [CIPLA GX]": {
       "status": "success",
@@ -119596,8 +118877,8 @@
     "ORA SORE STRIP 10 TAB [WINGS PHARMACEUTICALS PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Sore Throat & Cough Lozenges - Strip Of 10 - Orange Flavour",
-      "updated_at": "2026-09-08T17:59:29.847Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "ORACLAM 625MG TAB [IVA HEALTHCARE PVT LTD]": {
       "status": "not_found",
@@ -122398,7 +121679,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PALSINURON CAP 30'S [SG PHYTO PHARMA PVT LTD]": {
       "status": "success",
@@ -122564,8 +121845,8 @@
     "PAMPERS NEW BORN BABY PANTS DIAPER - 60'S [PROCTER & GAMBLE]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PAMPERS PANTS LARGE 20`S [PROCTER & GAMBLE]": {
       "status": "success",
@@ -122597,8 +121878,8 @@
     "PAMPERSM 399 PANDS 1 [PANDG]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PAN 20MG STRIP OF 15 TABLETS [ALKEM LABORATORIES LTD]": {
       "status": "success",
@@ -124909,31 +124190,10 @@
       }
     },
     "PATANJALI ASHWAGANDHA CHURNA 100 GM [PATANJALI AYURVED LTD]": {
-      "status": "success",
-      "matched_name": "Patanjali Swet Mushli Churna 100 Gm",
-      "slug": "patanjali-ashwagandha-churna-100-gm",
-      "images": {
-        "front": {
-          "fileName": "patanjali-ashwagandha-churna-100-gm-front.jpg",
-          "url": "/products/patanjali-ashwagandha-churna-100-gm-front.jpg",
-          "uploadsUrl": "/uploads/products/patanjali-ashwagandha-churna-100-gm-front.jpg",
-          "bytes": 125094
-        },
-        "side": {
-          "fileName": "patanjali-ashwagandha-churna-100-gm-side.jpg",
-          "url": "/products/patanjali-ashwagandha-churna-100-gm-side.jpg",
-          "uploadsUrl": "/uploads/products/patanjali-ashwagandha-churna-100-gm-side.jpg",
-          "bytes": 109680
-        },
-        "back": {
-          "fileName": "patanjali-ashwagandha-churna-100-gm-back.jpg",
-          "url": "/products/patanjali-ashwagandha-churna-100-gm-back.jpg",
-          "uploadsUrl": "/uploads/products/patanjali-ashwagandha-churna-100-gm-back.jpg",
-          "bytes": 98005
-        }
-      },
-      "updated_at": "2026-09-02T20:08:40.154Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Patanjali Swet Mushli Churna 100 Gm",
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PATANJALI DANT KANTI MEDICATED ORAL GEL 100 GM [PATANJALI AYURVED LTD]": {
       "status": "success",
@@ -125487,7 +124747,7 @@
       "status": "purged_incorrect",
       "matched_name": null,
       "purged_previous_match": null,
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PD PUPPY FOOD 90GM [PEDIGREE]": {
       "status": "unverified",
@@ -129681,8 +128941,8 @@
     "PRO EASE XL COTTON 6S [PANDG]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
-      "updated_at": "2026-09-08T17:59:29.848Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PRO RAZOR PLASTIC 1 [HI TECH PHARMA]": {
       "status": "success",
@@ -131530,8 +130790,8 @@
     "PXL 120 PANT 1 [PANDG]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Pampers All Round Protection Pants Medium (76 Count) Lotion With Aloe Vera",
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "PXL 36 PADS 1 [PANDG]": {
       "status": "unverified",
@@ -137318,8 +136578,8 @@
     "ROGAN BADAM BOTTLE 25 ML [ZANDU AYURVEDA]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Baidyanath Asli Ayurved Rogan Badam Shirin 50 Ml | Pure Almond Oil | Nourishes Skin And Hair",
-      "updated_at": "2026-09-08T18:03:22.578Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "ROGAN DIMAG ROSHAN THAKUR 200ML [THAKUR]": {
       "status": "purged_incorrect",
@@ -138375,43 +137635,10 @@
       "updated_at": "2026-09-02T20:26:00.020Z"
     },
     "ROTAHALER 1'S [CIPLA LIMITED]": {
-      "status": "success",
-      "matched_name": "Rotahaler Inhaler Device",
-      "slug": "rotahaler-1s",
-      "images": {
-        "box-front": {
-          "fileName": "rotahaler-1s-box-front.jpg",
-          "url": "/products/rotahaler-1s-box-front.jpg",
-          "uploadsUrl": "/uploads/products/rotahaler-1s-box-front.jpg",
-          "bytes": 34818
-        },
-        "front": {
-          "fileName": "rotahaler-1s-front.jpg",
-          "url": "/products/rotahaler-1s-front.jpg",
-          "uploadsUrl": "/uploads/products/rotahaler-1s-front.jpg",
-          "bytes": 22317
-        },
-        "combo": {
-          "fileName": "rotahaler-1s-combo.jpg",
-          "url": "/products/rotahaler-1s-combo.jpg",
-          "uploadsUrl": "/uploads/products/rotahaler-1s-combo.jpg",
-          "bytes": 24528
-        },
-        "box-side": {
-          "fileName": "rotahaler-1s-box-side.jpg",
-          "url": "/products/rotahaler-1s-box-side.jpg",
-          "uploadsUrl": "/uploads/products/rotahaler-1s-box-side.jpg",
-          "bytes": 33496
-        },
-        "side": {
-          "fileName": "rotahaler-1s-side.jpg",
-          "url": "/products/rotahaler-1s-side.jpg",
-          "uploadsUrl": "/uploads/products/rotahaler-1s-side.jpg",
-          "bytes": 33496
-        }
-      },
-      "updated_at": "2026-09-02T20:26:01.858Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Rotahaler Inhaler Device",
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "ROUND BANDAGE BOX 100 [NAREDA]": {
       "status": "success",
@@ -139488,8 +138715,8 @@
     "SANITARY PAD PENQUIN COTTON 1PKT [CARLISLE LABORATORIES LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Stayfree Secure Cottony Xl Size 18 Sanitary Pads",
-      "updated_at": "2026-09-08T17:57:14.826Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "SANITIZER 120ML GEL HIM HERBAL  VITE SANITIZER 120ML [PIONEER PHARMA CO. LTD]": {
       "status": "success",
@@ -140385,31 +139612,10 @@
       "verified": true
     },
     "SBL CALC SULPH 200 DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Hepar Sulphur 200Ch 30Ml",
-      "slug": "sbl-calc-sulph-200-drop-30ml",
-      "images": {
-        "combo": {
-          "fileName": "sbl-calc-sulph-200-drop-30ml-combo.jpg",
-          "url": "/products/sbl-calc-sulph-200-drop-30ml-combo.jpg",
-          "uploadsUrl": "/uploads/products/sbl-calc-sulph-200-drop-30ml-combo.jpg",
-          "bytes": 60058
-        },
-        "box-back": {
-          "fileName": "sbl-calc-sulph-200-drop-30ml-box-back.jpg",
-          "url": "/products/sbl-calc-sulph-200-drop-30ml-box-back.jpg",
-          "uploadsUrl": "/uploads/products/sbl-calc-sulph-200-drop-30ml-box-back.jpg",
-          "bytes": 34538
-        },
-        "side": {
-          "fileName": "sbl-calc-sulph-200-drop-30ml-side.jpg",
-          "url": "/products/sbl-calc-sulph-200-drop-30ml-side.jpg",
-          "uploadsUrl": "/uploads/products/sbl-calc-sulph-200-drop-30ml-side.jpg",
-          "bytes": 28065
-        }
-      },
-      "updated_at": "2026-09-02T20:28:30.936Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Hepar Sulphur 200Ch 30Ml",
+      "updated_at": "2026-09-09T04:27:20.115Z"
     },
     "SBL CALCAREA FLU 200CH DROP 30ML [SBL HOMEOPATHY]": {
       "status": "success",
@@ -140493,19 +139699,10 @@
       "verified": true
     },
     "SBL COLOCYNTHIS Q DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Clearstone Drop 30 Ml Pack Of 2",
-      "slug": "sbl-colocynthis-q-drop-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-colocynthis-q-drop-30ml-front.jpg",
-          "url": "/products/sbl-colocynthis-q-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-colocynthis-q-drop-30ml-front.jpg",
-          "bytes": 78670
-        }
-      },
-      "updated_at": "2026-09-02T20:28:41.053Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Clearstone Drop 30 Ml Pack Of 2",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL CONIUM MACULATUM 30CH 30ML [SBL PVT LTD]": {
       "status": "success",
@@ -140867,64 +140064,28 @@
       "updated_at": "2026-09-02T20:29:13.924Z"
     },
     "SBL R27 DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Clearstone Drop 30 Ml Pack Of 2",
-      "slug": "sbl-r27-drop-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-r27-drop-30ml-front.jpg",
-          "url": "/products/sbl-r27-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-r27-drop-30ml-front.jpg",
-          "bytes": 78670
-        }
-      },
-      "updated_at": "2026-09-02T20:29:15.221Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Clearstone Drop 30 Ml Pack Of 2",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL R46 DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Clearstone Drop 30 Ml Pack Of 2",
-      "slug": "sbl-r46-drop-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-r46-drop-30ml-front.jpg",
-          "url": "/products/sbl-r46-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-r46-drop-30ml-front.jpg",
-          "bytes": 78670
-        }
-      },
-      "updated_at": "2026-09-02T20:29:16.485Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Clearstone Drop 30 Ml Pack Of 2",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL R72 DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Clearstone Drop 30 Ml Pack Of 2",
-      "slug": "sbl-r72-drop-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-r72-drop-30ml-front.jpg",
-          "url": "/products/sbl-r72-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-r72-drop-30ml-front.jpg",
-          "bytes": 78670
-        }
-      },
-      "updated_at": "2026-09-02T20:29:17.806Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Clearstone Drop 30 Ml Pack Of 2",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL RATANHIA 30CH DROP 30ML [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Sbl Arnica Montana Dilution 30 Ch 30 Ml Pack Of 2",
-      "slug": "sbl-ratanhia-30ch-drop-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-ratanhia-30ch-drop-30ml-front.jpg",
-          "url": "/products/sbl-ratanhia-30ch-drop-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-ratanhia-30ch-drop-30ml-front.jpg",
-          "bytes": 79043
-        }
-      },
-      "updated_at": "2026-09-02T20:29:19.123Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Arnica Montana Dilution 30 Ch 30 Ml Pack Of 2",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL RATANHIA 30ML [SBL PVT LTD]": {
       "status": "success",
@@ -140948,19 +140109,10 @@
       "verified": true
     },
     "SBL RAW GRANULS 100GM [SBL HOMEOPATHY]": {
-      "status": "success",
-      "matched_name": "Homoedent Tooth Paste Saunf Flavour 100Gm Sbl",
-      "slug": "sbl-raw-granuls-100gm",
-      "images": {
-        "front": {
-          "fileName": "sbl-raw-granuls-100gm-front.jpg",
-          "url": "/products/sbl-raw-granuls-100gm-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-raw-granuls-100gm-front.jpg",
-          "bytes": 37832
-        }
-      },
-      "updated_at": "2026-09-02T20:29:23.360Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Homoedent Tooth Paste Saunf Flavour 100Gm Sbl",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL RELAXHED DROPS 30ML [SBL PVT LTD]": {
       "status": "success",
@@ -140993,19 +140145,10 @@
       "verified": true
     },
     "SBL SELENIUM 30CH 30ML [SBL PVT LTD]": {
-      "status": "success",
-      "matched_name": "Sbl Arsenicum Album 30Ch 30Ml",
-      "slug": "sbl-selenium-30ch-30ml",
-      "images": {
-        "front": {
-          "fileName": "sbl-selenium-30ch-30ml-front.jpg",
-          "url": "/products/sbl-selenium-30ch-30ml-front.jpg",
-          "uploadsUrl": "/uploads/products/sbl-selenium-30ch-30ml-front.jpg",
-          "bytes": 57082
-        }
-      },
-      "updated_at": "2026-09-02T20:29:27.649Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Sbl Arsenicum Album 30Ch 30Ml",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SBL SILICEA 1M 30ML [SBL PVT LTD]": {
       "status": "success",
@@ -151735,31 +150878,10 @@
       }
     },
     "SUPER MAX DISPOSABLE RAZOR": {
-      "status": "success",
-      "matched_name": "Manforce Epic Desire Super Thin Premium Condoms Silk Chocolate Flavour Disposable Pouch 10'S",
-      "slug": "super-max-disposable-razor",
-      "images": {
-        "front": {
-          "fileName": "super-max-disposable-razor-front.jpg",
-          "url": "/products/super-max-disposable-razor-front.jpg",
-          "uploadsUrl": "/uploads/products/super-max-disposable-razor-front.jpg",
-          "bytes": 124943
-        },
-        "side": {
-          "fileName": "super-max-disposable-razor-side.jpg",
-          "url": "/products/super-max-disposable-razor-side.jpg",
-          "uploadsUrl": "/uploads/products/super-max-disposable-razor-side.jpg",
-          "bytes": 108464
-        },
-        "back": {
-          "fileName": "super-max-disposable-razor-back.jpg",
-          "url": "/products/super-max-disposable-razor-back.jpg",
-          "uploadsUrl": "/uploads/products/super-max-disposable-razor-back.jpg",
-          "bytes": 113786
-        }
-      },
-      "updated_at": "2026-09-02T20:42:35.562Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Manforce Epic Desire Super Thin Premium Condoms Silk Chocolate Flavour Disposable Pouch 10'S",
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SUPER MAX ELEGANCE RAZOR": {
       "status": "unverified",
@@ -152135,8 +151257,8 @@
     "SURGICAL 45 RAZORS 1PCS [RNGALLA FAMILY PVT LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Liveasy Surgical Microporous Surgical Tape 12.5 Mm X 5Mtr Single Pcs",
-      "updated_at": "2026-09-08T17:57:14.827Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "SURGICAL SPIRIT 400ML [SHIVA PHARMA]": {
       "status": "unverified",
@@ -157254,14 +156376,14 @@
     "TIGER BALM 8GM WHITE [ELDER PHARMACEUTICALS LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tiger Balm White Ointment | Ayurvedic Pain Relief Balm | 21 Ml",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "TIGER BALM 9GM RED [RANGOON CHEMICAL WORKS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tiger Balm Red Ointment | Ayurvedic Pain Relief Balm | 9 Ml",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "TIL 80 OIL 1 [LANDL]": {
       "status": "success",
@@ -160270,8 +159392,8 @@
     "TUSQ DX 5/2/15MG SYRUP 100ML [BLUE CROSS LABORATORIES PRIVATE LIMITED]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Tusq Dx Sugar Free Bottle Of 100Ml Syrup",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "TUSQ DX COUGH SYP SUGAR FREE [BLUE CROSS LABORATORIES PRIVATE LIMITED]": {
       "status": "success",
@@ -164792,8 +163914,8 @@
     "VICKS  TAB 1200 [DR RECKEWEG]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Vicks Vaporub Classic | Relief From Cold Cough | Headache & Body Pain 25 Ml",
-      "updated_at": "2026-09-08T17:57:14.827Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "VICKS  VAPORUB  CONTAINER OF 10 ML [PROCTER & GAMBLE]": {
       "status": "purged_incorrect",
@@ -165137,8 +164259,8 @@
     "VICKS VAPORAB 5GM GEL 25GM [VICKS]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Vicks Vaporub Classic | Relief From Cold Cough | Headache & Body Pain 25 Ml",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.116Z"
     },
     "VICKS VAPORUB - 5 ML [PROCTER & GAMBLE]": {
       "status": "purged_incorrect",
@@ -168383,8 +167505,8 @@
     "WHISPER 8PAD COTTON 8PAD\\ COTTON 8 [WISPER]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Whisper Ultra Clean Sanitary Pads For Women Xl+ 50 Napkins",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "WHISPER 8PAD COTTON 8PADAS [PANDG]": {
       "status": "success",
@@ -170902,39 +170024,22 @@
       "verified": true
     },
     "Z POWDER  135 1 [BIG LABORATORIES PVT LTD]": {
-      "status": "unverified",
-      "matched_name": "Zest Plus Chocolate And Butterscotch Flavour Jar Of 200Gm Oral Powder",
-      "slug": "z-powder-135-1",
-      "images": {},
-      "updated_at": "2026-09-02T21:08:10.899Z",
-      "verified": false,
-      "quarantined_at": "2026-09-03T04:11:54.977Z",
-      "unverified_images": {
-        "front": {
-          "fileName": "z-powder-135-1-front.jpg",
-          "quarantineUrl": "/uploads/products_unverified/z-powder-135-1-front.jpg",
-          "originalUrl": "/products/z-powder-135-1-front.jpg",
-          "bytes": 53523
-        },
-        "side": {
-          "fileName": "z-powder-135-1-side.jpg",
-          "quarantineUrl": "/uploads/products_unverified/z-powder-135-1-side.jpg",
-          "originalUrl": "/products/z-powder-135-1-side.jpg",
-          "bytes": 35804
-        }
-      }
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zest Plus Chocolate And Butterscotch Flavour Jar Of 200Gm Oral Powder",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "Z POWDER 100GM": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Canesten | Antifungal Dusting Powder 100 Gm | 5 In 1 Relief Formula",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "Z POWDER 50GM": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Laktrum Powder 50Gm",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "Z TALC  POWDER 100GM [HINDUSTAN AYURVED & MEDICAL RESEARCH]": {
       "status": "success",
@@ -171229,49 +170334,22 @@
       "verified": true
     },
     "ZANDU 120 BALAM 1 [ZANDU AYURVEDA]": {
-      "status": "success",
-      "matched_name": "Zandu Pain Relief Balm Bottle Of 50 Ml",
-      "slug": "zandu-120-balam-1",
-      "images": {
-        "side": {
-          "fileName": "zandu-120-balam-1-side.jpg",
-          "url": "/products/zandu-120-balam-1-side.jpg",
-          "uploadsUrl": "/uploads/products/zandu-120-balam-1-side.jpg",
-          "bytes": 64137
-        }
-      },
-      "updated_at": "2026-09-02T21:08:35.547Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pain Relief Balm Bottle Of 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU 175 BAM 50 ML [ZANDU AYURVEDA]": {
-      "status": "success",
-      "matched_name": "Zandu Pain Relief Balm Bottle Of 50 Ml",
-      "slug": "zandu-175-bam-50-ml",
-      "images": {
-        "side": {
-          "fileName": "zandu-175-bam-50-ml-side.jpg",
-          "url": "/products/zandu-175-bam-50-ml-side.jpg",
-          "uploadsUrl": "/uploads/products/zandu-175-bam-50-ml-side.jpg",
-          "bytes": 64137
-        }
-      },
-      "updated_at": "2026-09-02T21:08:37.011Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pain Relief Balm Bottle Of 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU 40 BALAM 1 [ZANDU AYURVEDA]": {
-      "status": "success",
-      "matched_name": "Zandu Pain Relief Balm Bottle Of 50 Ml",
-      "slug": "zandu-40-balam-1",
-      "images": {
-        "side": {
-          "fileName": "zandu-40-balam-1-side.jpg",
-          "url": "/products/zandu-40-balam-1-side.jpg",
-          "uploadsUrl": "/uploads/products/zandu-40-balam-1-side.jpg",
-          "bytes": 64137
-        }
-      },
-      "updated_at": "2026-09-02T21:08:38.376Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pain Relief Balm Bottle Of 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU 42 BALM 1 [ZANDU AYURVEDA]": {
       "status": "success",
@@ -171308,23 +170386,14 @@
     "ZANDU 44 BALAM 15ML [DR REDDY'S LABORATORIES LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Zandu Pain Relief Balm Bottle Of 50 Ml",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU 45 BALAM 1 [ZANDU AYURVEDA]": {
-      "status": "success",
-      "matched_name": "Zandu Pancharishta Ayurvedic Digestive Tonic 450 Ml",
-      "slug": "zandu-45-balam-1",
-      "images": {
-        "side": {
-          "fileName": "zandu-45-balam-1-side.jpg",
-          "url": "/products/zandu-45-balam-1-side.jpg",
-          "uploadsUrl": "/uploads/products/zandu-45-balam-1-side.jpg",
-          "bytes": 59783
-        }
-      },
-      "updated_at": "2026-09-02T21:08:43.779Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pancharishta Ayurvedic Digestive Tonic 450 Ml",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU 48 BALM 1 [THE HIMALAYA DRUG COMPANY]": {
       "status": "success",
@@ -171342,19 +170411,10 @@
       "verified": true
     },
     "ZANDU 85 BALAM 1 [ZANDU PHARMACEUTICALS WORKS LTD]": {
-      "status": "success",
-      "matched_name": "Zandu Pain Relief Balm Bottle Of 50 Ml",
-      "slug": "zandu-85-balam-1",
-      "images": {
-        "side": {
-          "fileName": "zandu-85-balam-1-side.jpg",
-          "url": "/products/zandu-85-balam-1-side.jpg",
-          "uploadsUrl": "/uploads/products/zandu-85-balam-1-side.jpg",
-          "bytes": 64137
-        }
-      },
-      "updated_at": "2026-09-02T21:08:46.490Z",
-      "verified": true
+      "status": "purged_incorrect",
+      "matched_name": null,
+      "purged_previous_match": "Zandu Pain Relief Balm Bottle Of 50 Ml",
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU BALM 10GM [ZANDU PHARMACEUTICALS WORKS LTD]": {
       "status": "unverified",
@@ -171418,8 +170478,8 @@
     "ZANDU BAM  8GM [DR REDDY'S LABORATORIES LTD]": {
       "status": "purged_incorrect",
       "matched_name": null,
-      "purged_previous_match": "Zandu Satavarex Jar Of 210Gm Granules",
-      "updated_at": "2026-09-08T18:03:22.579Z"
+      "purged_previous_match": null,
+      "updated_at": "2026-09-09T04:27:20.117Z"
     },
     "ZANDU COUGH SYR 100ML [ZANDU AYURVEDA]": {
       "status": "success",
