@@ -56,6 +56,11 @@ class AICameraService {
    */
   public readonly KNOWN_APIS = new Set<string>();
 
+  /** Company names extracted from medicines.manufacturer + catalog_images.company_name */
+  public readonly KNOWN_COMPANIES = new Set<string>();
+  private companyAliasMap = new Map<string, string>(); // core -> full
+  private companyNamesLoaded = false;
+
   /**
    * Load all API composition and drug generic words from the database
    * dynamically to track known active ingredients.
@@ -119,8 +124,36 @@ class AICameraService {
         console.warn('[AiCamera] Could not load permanently_ignored_words:', piwErr);
       }
 
+      // 4. Load company names (manufacturer) — core tokens for brand vs company disambiguation
+      try {
+        // Prefer catalog-verified companies (727) + frequent medicines manufacturers (not all 10k noisy)
+        const catMans = await db.all("SELECT DISTINCT company_name FROM catalog_images WHERE company_name IS NOT NULL AND company_name != ''");
+        const freqMans = await db.all("SELECT manufacturer as name, COUNT(*) as cnt FROM medicines WHERE manufacturer IS NOT NULL AND manufacturer != '' GROUP BY manufacturer HAVING cnt >= 5 ORDER BY cnt DESC LIMIT 500");
+        const allMans = [...catMans.map((r:any)=>r.company_name), ...freqMans.map((r:any)=>r.name)];
+        const GENERIC_COMPANY_WORDS = new Set(['pvt','ltd','private','limited','pharmaceutical','pharmaceuticals','pharma','laboratories','labs','laboratory','healthcare','health','care','india','inc','corp','corporation','enterprises','remedies','formulations','formulation','lifesciences','lifescience','sciences','science','pty','llc','industries','industry','works','product','products','pharmaceutic','pharmaceutics']);
+        const CITY_DENY = new Set(['mumbai','delhi','kolkata','chennai','bangalore','bengaluru','hyderabad','pune','ahmedabad','jaipur','lucknow','kanpur','nagpur','indore','thane','bhopal','visakhapatnam','patna','vadodara','ghaziabad','ludhiana','agra','nashik','faridabad','meerut','rajkot','kalyan','vasai','varanasi','srinagar','aurangabad','dhanbad','amritsar','navi','allahabad','ranchi','howrah','coimbatore','jabalpur','gwalior','vijayawada','jodhpur','madurai','raipur','kota','guwahati','chandigarh','solapur','hubli','dharwad','bareilly','moradabad','mysore','gurgaon','aligarh','jalandhar','bhubaneswar','salem','warangal','guntur','bhiwandi','saharanpur','gorakhpur','bikaner','amravati','noida','jamshedpur','bhilai','cuttack','firozabad','kochi','bhavnagar','dehradun','durgapur','asansol','nanded','kolhapur','ajmer','gulbarga','jamnagar','ujjain','loni','siliguri','jhansi','ulhasnagar','nellore','jammu','sangli','belgaum','mangalore','ambattur','tirunelveli','malegaon','gaya','jalgaon','udaipur','maheshtala']);
+        for(const raw of allMans){
+          if(!raw) continue;
+          const full = String(raw).trim();
+          const tokens = full.toLowerCase().split(/[^a-z0-9]+/).filter(t=>t.length>=3 && !GENERIC_COMPANY_WORDS.has(t) && !CITY_DENY.has(t) && !/^\d+$/.test(t));
+          if(tokens.length===0) continue;
+          const core = tokens.slice(0,2).join(' ');
+          const single = tokens[0];
+          if(single.length>=3){
+            this.KNOWN_COMPANIES.add(single);
+            this.companyAliasMap.set(single, full);
+          }
+          if(core.length>=5 && core!==single){
+            this.KNOWN_COMPANIES.add(core);
+            this.companyAliasMap.set(core, full);
+          }
+        }
+      } catch(compErr){
+        console.warn('[AiCamera] Could not load company names:', compErr);
+      }
+
       this.ignoreListLoaded = true;
-      console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}`);
+      console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}, Companies: ${this.KNOWN_COMPANIES.size}`);
     } catch (err) {
       console.error('[AiCamera] Failed to load database ignore list:', err);
     }
@@ -202,8 +235,11 @@ class AICameraService {
       .filter(w => {
         if (w.length < 3) return false;
         if (this.STOP_WORDS.has(w)) return false;
+        if (this.KNOWN_COMPANIES.has(w)) return false; // company name is not a product name
         if (/^\d+[%a-z]*$/i.test(w)) return false;
         if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
+        // filter pure company alias singletons (e.g. cipla, sun) even if not in KNOWN_COMPANIES due to casing
+        if (this.companyAliasMap.has(w)) return false;
         return true;
       });
   }
@@ -324,6 +360,29 @@ class AICameraService {
     ];
     for (const [regex, form] of patterns) {
       if (regex.test(text)) return form;
+    }
+    return null;
+  }
+
+  /**
+   * Detect company name from OCR text using the 10k+ known manufacturers.
+   * Returns the full company name (e.g. "Cipla Ltd") if its core token
+   * (e.g. "cipla") appears in the text. Uses word boundaries so
+   * "CIPLADINE" does not trigger "cipla".
+   */
+  detectCompanyName(text: string): string | null {
+    if (!text || this.KNOWN_COMPANIES.size === 0) return null;
+    const lower = text.toLowerCase();
+    // Prefer longest match first (e.g. "sun pharma" before "sun")
+    const sorted = Array.from(this.KNOWN_COMPANIES).sort((a, b) => b.length - a.length);
+    for (const c of sorted) {
+      if (c.length < 3) continue;
+      // Escape regex
+      const esc = c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`\\b${esc}\\b`, 'i');
+      if (re.test(lower)) {
+        return this.companyAliasMap.get(c) || c;
+      }
     }
     return null;
   }
@@ -629,18 +688,22 @@ class AICameraService {
       }
     }
 
-    // Manufacturer extraction
+    // Manufacturer extraction — first try explicit "Mfd/Mfg by X", else detect any of 10k+ known companies
     const mfrMatch = localOcrResult.text.match(/(?:mfd|mfg|manufactured|mfr)\.?\s*(?:by|in)?\s*[:\-]?\s*([A-Za-z0-9\s\.,&]{3,40})/i);
     if (mfrMatch) {
       finalInfo.manufacturer = mfrMatch[1].trim();
     } else {
-      const knownMfrs = ['Cipla', 'Sun Pharma', 'Sun Pharmaceutical', 'Torrent', 'Lupin', 'Abbott', 'Mankind', 'Zydus', 'Alkem', 'Macleods', 'Intas', 'Dr. Reddy', 'Dr Reddy', 'Glenmark', 'Ipca', 'Micro Labs', 'Aristo', 'Alembic'];
-      for (const km of knownMfrs) {
-        if (new RegExp(`\\b${km}\\b`, 'i').test(localOcrResult.text)) {
-          finalInfo.manufacturer = km;
-          break;
-        }
+      // Dynamic company list (10,618 manufacturers) — Cipla in image => "Cipla Ltd" detected, not confused with product name
+      const detectedCompany = this.detectCompanyName(localOcrResult.text);
+      if (detectedCompany) {
+        finalInfo.manufacturer = detectedCompany;
+        finalInfo.companyDetected = detectedCompany;
       }
+    }
+    // Expose company for downstream fusion (whatsapp/visual search can narrow to this company's products)
+    if (!finalInfo.companyDetected) {
+      const comp = this.detectCompanyName(localOcrResult.text);
+      if (comp) finalInfo.companyDetected = comp;
     }
 
     // Packaging extraction (10x1x10, 15 TABS, 30 CAPS, 100ml, 15's)

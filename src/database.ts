@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 55;
+const CURRENT_SCHEMA_VERSION = 56;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -612,6 +612,8 @@ export async function ensureSchema(dbPath: string) {
           image_type TEXT DEFAULT 'combined',
           is_primary INTEGER DEFAULT 0,
           slot_number INTEGER DEFAULT 1,
+          phash TEXT,
+          visual_embedding TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
@@ -631,6 +633,8 @@ export async function ensureSchema(dbPath: string) {
         if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
         if (!hasCol('match_source')) await db.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
         if (!hasCol('match_confidence')) await db.run('ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0');
+        if (!hasCol('phash')) await db.run('ALTER TABLE catalog_images ADD COLUMN phash TEXT');
+        if (!hasCol('visual_embedding')) await db.run('ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT');
       } catch (_e) {}
 
       await db.run(`
@@ -669,6 +673,7 @@ export async function ensureSchema(dbPath: string) {
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
       await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
@@ -2061,6 +2066,8 @@ export async function ensureSchema(dbPath: string) {
     // Filename auto-match columns
     ['catalog_images', 'match_source', "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
     ['catalog_images', 'match_confidence', 'ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0'],
+    ['catalog_images', 'phash', 'ALTER TABLE catalog_images ADD COLUMN phash TEXT'],
+    ['catalog_images', 'visual_embedding', 'ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
@@ -3523,6 +3530,8 @@ export async function ensureSchema(dbPath: string) {
       image_type TEXT DEFAULT 'combined',
       is_primary INTEGER DEFAULT 0,
       slot_number INTEGER DEFAULT 1,
+      phash TEXT,
+      visual_embedding TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
@@ -3563,11 +3572,12 @@ export async function ensureSchema(dbPath: string) {
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
   await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
 
   // Catalog correction audit log (Schema v50)
   await db.run(`

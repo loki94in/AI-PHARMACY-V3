@@ -10,6 +10,7 @@ import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
 import { waAdminEscalationService } from './waAdminEscalationService.js';
 import { startupSyncCoordinator } from './startupSyncCoordinator.js';
+import { visualIndexService } from './visualIndexService.js';
 import { GATE_VARIANTS, type GateDecision } from '../../scanGateAlgorithms.js';
 
 // Confidence gate: below these similarity scores a message is discarded as
@@ -1059,6 +1060,40 @@ export async function handleOcrComplete(data: any): Promise<void> {
     if (passingNames.length === 0) {
       console.log(`[Intent Service] Scan gate (V2): skipped non-medicine image (name="${finalName}", chat=${chatId}).`);
       return;
+    }
+
+    // ─── Visual Index Fusion (confirmed brand images) ──────────────────────
+    // If user shared a photo, the 10,781 confirmed catalog images (front/back/combined
+    // per product) are now indexed by perceptual hash (phash). A shared photo's
+    // phash finds the same product's front/back visually (Hamming <=12), then
+    // fused with brand/strength/form signals. This lets a strip photo match even
+    // when OCR misreads the name, using multiple confirmed info.
+    let visualBoostName: string | null = null;
+    try {
+      if (imagePath && fs.existsSync(imagePath)) {
+        const buf = fs.readFileSync(imagePath);
+        const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(' ');
+        const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
+        if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
+          const top = visualHits[0];
+          // Use visual hit as primary if its fused score beats textual
+          // and it is not already in passingNames (brand already confirmed)
+          const already = passingNames.some(n => n.toLowerCase() === top.product_name.toLowerCase());
+          if (!already) {
+            visualBoostName = top.product_name;
+            console.log(`[Intent Service] Visual hit: "${top.product_name}" distance=${top.visualDistance} fused=${top.fusedScore} (brand ${top.signals.brandMatch?'match':'mismatch'})`);
+          } else {
+            console.log(`[Intent Service] Visual confirms textual: "${top.product_name}" fused=${top.fusedScore}`);
+          }
+        }
+      }
+    } catch (visErr) {
+      console.warn('[Intent Service] Visual fusion failed:', visErr);
+    }
+    if (visualBoostName) {
+      // Visual overrides primary when OCR is weak but image matches confirmed gallery
+      finalName = visualBoostName;
+      if (!passingNames.includes(visualBoostName)) passingNames.unshift(visualBoostName);
     }
 
     // ONE-PHOTO-ONE-RESULT (owner rule): only the PRIMARY candidate runs the
