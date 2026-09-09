@@ -824,6 +824,127 @@ export class CatalogImageService {
   }
 
   /**
+   * Bulk Approve per Medicine (Single Confirm per Name - infinite-scroll workflow)
+   * One representative confirm image validates all downloaded images for that medicine name.
+   * Approves the primary/active image and any other pending/high_conf images for same medicine,
+   * marks them APPROVED + is_active=1 so resolveProductImage publishes to website instantly.
+   */
+  public async approveAllForMedicine(medicineId: number, verifiedBy = 'admin'): Promise<{ approved: number; medicineId: number }> {
+    const db = await dbManager.getConnection();
+    const rows = await db.all('SELECT * FROM catalog_images WHERE medicine_id = ? ORDER BY is_primary DESC, confidence_score DESC, id ASC', [medicineId]);
+    if (rows.length === 0) return { approved: 0, medicineId };
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      let approved = 0;
+      // Approve every non-rejected/non-removed image for this medicine as a single logical unit
+      for (const row of rows) {
+        if (['REJECTED', 'REMOVED', 'REPLACED', 'BROKEN'].includes(row.verification_status)) continue;
+        const nextVersion = (row.verification_version || 1) + 1;
+        await db.run(
+          `UPDATE catalog_images
+           SET verification_status = 'APPROVED',
+               is_active = 1,
+               verified_by = ?,
+               verified_at = CURRENT_TIMESTAMP,
+               verification_version = ?,
+               locked_by = NULL,
+               locked_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [verifiedBy, nextVersion, row.id]
+        );
+        await db.run(
+          `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Bulk approved via single confirm (stream)', ?)`,
+          [row.id, medicineId, row.verification_status, row.image_path, row.image_path, verifiedBy]
+        ).catch(() => {});
+        approved++;
+      }
+      await db.run('COMMIT');
+      eventService.broadcast('catalog_image_updated', {
+        medicine_id: medicineId,
+        status: 'APPROVED',
+        bulk: true,
+        approved,
+        is_active: 1
+      });
+      return { approved, medicineId };
+    } catch (e) {
+      await db.run('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
+   * Bulk Reject per Medicine (Single Reject per Name - infinite-scroll workflow)
+   * Rejects ALL catalog images for the medicine from the app, blacklists URLs/hashes,
+   * and triggers a controlled re-download from internet for fresh candidates.
+   */
+  public async rejectAllForMedicine(medicineId: number, reason = 'Rejected via stream - incorrect image', verifiedBy = 'admin'): Promise<{ rejected: number; medicineId: number; autoRedownloadTriggered: boolean }> {
+    const db = await dbManager.getConnection();
+    const rows = await db.all('SELECT * FROM catalog_images WHERE medicine_id = ? AND is_active IN (0,1) AND verification_status NOT IN (\'REJECTED\',\'REMOVED\')', [medicineId]);
+    if (rows.length === 0) return { rejected: 0, medicineId, autoRedownloadTriggered: false };
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      let rejected = 0;
+      for (const row of rows) {
+        const nextVersion = (row.verification_version || 1) + 1;
+        await db.run(
+          `UPDATE catalog_images
+           SET verification_status = 'REJECTED',
+               is_active = 0,
+               is_primary = 0,
+               verification_reason = ?,
+               verified_by = ?,
+               verified_at = CURRENT_TIMESTAMP,
+               verification_version = ?,
+               locked_by = NULL,
+               locked_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [reason, verifiedBy, nextVersion, row.id]
+        );
+        if (row.source_url || row.image_hash) {
+          await db.run(
+            `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason)
+             VALUES (?, ?, ?, ?, ?)`,
+            [row.medicine_id, row.source_url || null, row.image_hash || null, row.image_source || 'stream', reason]
+          ).catch(() => {});
+        }
+        await db.run(
+          `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'REJECTED', ?, ?, 'MARK_INCORRECT', ?, ?)`,
+          [row.id, medicineId, row.verification_status, row.image_path, row.image_path, reason, verifiedBy]
+        ).catch(() => {});
+        rejected++;
+      }
+      await db.run('COMMIT');
+      eventService.broadcast('catalog_image_updated', {
+        medicine_id: medicineId,
+        status: 'REJECTED',
+        bulk: true,
+        rejected,
+        is_active: 0
+      });
+      // Trigger controlled re-download from internet (non-blocking, same as single reject)
+      const firstRow = rows[0];
+      this.searchAndDownloadCandidate(medicineId, (firstRow.retry_count || 0) + 1).catch(err => {
+        console.error(`[CatalogImageService] Bulk auto-redownload failed for medicine ${medicineId}:`, err.message);
+      });
+      return { rejected, medicineId, autoRedownloadTriggered: true };
+    } catch (e) {
+      await db.run('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
    * Replace image with a custom uploaded file or URL
    */
   public async replaceImage(
@@ -2486,15 +2607,15 @@ export class CatalogImageService {
     );
     const rejectedUrls = new Set(rejections.map(r => r.rejected_image_url).filter(Boolean));
 
-    let baseQuery = queryOverride && queryOverride.trim();
+    let baseQuery: string = (queryOverride && queryOverride.trim()) || '';
     if (!baseQuery) {
       const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim();
       const strength = this.extractStrength(med.strength || '') || this.extractStrength(med.name);
-      baseQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
+      baseQuery = strength ? `${coreBrand} ${strength}` : (coreBrand || med.name);
     }
 
     // Contextual query enhancement based on desired image angle
-    let cleanQuery = baseQuery;
+    let cleanQuery: string = baseQuery || med.name || '';
     if (imageType === 'back' && !cleanQuery.toLowerCase().includes('back')) {
       cleanQuery += ' back';
     }

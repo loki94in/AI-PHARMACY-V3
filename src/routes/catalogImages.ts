@@ -525,6 +525,41 @@ router.post('/:id/replace-candidate', async (req, res) => {
 });
 
 /**
+ * POST /api/catalog/images/medicine/:medicineId/approve-all — Single confirm per medicine (stream infinite-scroll)
+ * Approves all downloaded images for this medicine as one logical confirm; publishes to website.
+ */
+router.post('/medicine/:medicineId/approve-all', async (req, res) => {
+  try {
+    const medicineId = parseInt(req.params.medicineId, 10);
+    if (!medicineId) return res.status(400).json({ success: false, error: 'Invalid medicineId' });
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const result = await catalogImageService.approveAllForMedicine(medicineId, verifiedBy);
+    res.json({ success: true, message: `Approved ${result.approved} image(s) for medicine ${medicineId}. Published to website.`, ...result });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error bulk approving medicine:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to bulk approve' });
+  }
+});
+
+/**
+ * POST /api/catalog/images/medicine/:medicineId/reject-all — Single reject per medicine (stream infinite-scroll)
+ * Rejects all app images for this medicine and triggers fresh re-download from internet.
+ */
+router.post('/medicine/:medicineId/reject-all', async (req, res) => {
+  try {
+    const medicineId = parseInt(req.params.medicineId, 10);
+    if (!medicineId) return res.status(400).json({ success: false, error: 'Invalid medicineId' });
+    const reason = req.body?.reason || 'Rejected via stream - incorrect image';
+    const verifiedBy = req.body?.verified_by || 'admin';
+    const result = await catalogImageService.rejectAllForMedicine(medicineId, reason, verifiedBy);
+    res.json({ success: true, message: `Rejected ${result.rejected} image(s). Re-fetch from internet initiated.`, ...result });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error bulk rejecting medicine:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to bulk reject' });
+  }
+});
+
+/**
  * GET /api/catalog/images/medicine/:medicineId/gallery — All angles/slots for a medicine
  */
 router.get('/medicine/:medicineId/gallery', async (req, res) => {

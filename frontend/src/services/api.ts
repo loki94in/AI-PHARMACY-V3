@@ -1929,6 +1929,10 @@ export const api = {
         metadata: string | null;
       }>;
     }>(`/catalog/images/${id}/history`).then(res => res.data),
+  approveAllForMedicine: (medicineId: number, verified_by = 'admin') =>
+    apiClient.post<{ success: boolean; message: string; approved: number; medicineId: number }>(`/catalog/images/medicine/${medicineId}/approve-all`, { verified_by }).then(res => res.data),
+  rejectAllForMedicine: (medicineId: number, reason = 'Rejected via stream - incorrect image', verified_by = 'admin') =>
+    apiClient.post<{ success: boolean; message: string; rejected: number; medicineId: number }>(`/catalog/images/medicine/${medicineId}/reject-all`, { reason, verified_by }).then(res => res.data),
 
   // 3-UPI QR Code System & Delivery Configuration (§13, §15)
   getPaymentQrs: () =>

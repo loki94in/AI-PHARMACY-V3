@@ -177,8 +177,19 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
   const [cleaning, setCleaning] = useState(false);
   const [auditFixing, setAuditFixing] = useState(false);
 
-  // View mode: 'grid' = split-pane workspace, 'review' = WhatsApp flashcard one-by-one flow
-  const [viewMode, setViewMode] = useState<'grid' | 'review'>('grid');
+  // View mode: 'stream' = single infinite-scroll side-by-side confirm per medicine (primary workflow),
+  // 'grid' = split-pane workspace, 'review' = WhatsApp flashcard one-by-one flow
+  const [viewMode, setViewMode] = useState<'stream' | 'grid' | 'review'>('stream');
+
+  // Single infinite-scroll stream state (one confirm image per medicine name)
+  const [streamItems, setStreamItems] = useState<CatalogImageItem[]>([]);
+  const [streamPage, setStreamPage] = useState(1);
+  const [streamHasMore, setStreamHasMore] = useState(true);
+  const [streamLoading, setStreamLoading] = useState(false);
+  const [streamLoadingMore, setStreamLoadingMore] = useState(false);
+  const [streamActionId, setStreamActionId] = useState<number | null>(null);
+  const streamSentinelRef = useRef<HTMLDivElement | null>(null);
+  const streamContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Flashcard review queue state
   const [reviewQueue, setReviewQueue] = useState<CatalogImageItem[]>([]);
@@ -254,6 +265,104 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
   useEffect(() => {
     loadMedicines();
   }, [filter, debouncedSearch, page]);
+
+  // ── Single infinite-scroll stream (one confirm image per medicine name) ──
+  const loadStreamPage = useCallback(async (targetPage: number, append: boolean) => {
+    if (append) setStreamLoadingMore(true);
+    else setStreamLoading(true);
+    try {
+      const res = await api.getCatalogImages({
+        status: filter === 'all' ? undefined : filter,
+        search: debouncedSearch || undefined,
+        group_by_medicine: true,
+        page: targetPage,
+        limit: 20
+      });
+      if (res.success) {
+        const list = res.images || [];
+        const totalPagesStream = res.totalPages || 1;
+        if (append) {
+          setStreamItems(prev => {
+            const existingIds = new Set(prev.map(p => p.medicine_id));
+            const newOnes = list.filter(i => !existingIds.has(i.medicine_id));
+            return [...prev, ...newOnes];
+          });
+        } else {
+          setStreamItems(list);
+        }
+        setStreamHasMore(targetPage < totalPagesStream && list.length > 0);
+        // Keep totalCount/pages in sync for header chips
+        setTotalCount(res.totalCount || 0);
+        setTotalPages(totalPagesStream);
+      }
+    } catch (err: any) {
+      toastEvent.trigger('Failed to load stream: ' + (err?.message || 'unknown'), 'error');
+    } finally {
+      setStreamLoading(false);
+      setStreamLoadingMore(false);
+    }
+  }, [filter, debouncedSearch]);
+
+  // Reset + load first page when filter/search changes (stream is primary)
+  useEffect(() => {
+    setStreamPage(1);
+    setStreamHasMore(true);
+    setStreamItems([]);
+    loadStreamPage(1, false);
+  }, [filter, debouncedSearch, loadStreamPage]);
+
+  // Infinite scroll observer for stream sentinel
+  useEffect(() => {
+    if (viewMode !== 'stream') return;
+    const sentinel = streamSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && streamHasMore && !streamLoading && !streamLoadingMore) {
+          const next = streamPage + 1;
+          setStreamPage(next);
+          loadStreamPage(next, true);
+        }
+      },
+      { root: streamContainerRef.current, rootMargin: '600px', threshold: 0.01 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [viewMode, streamHasMore, streamLoading, streamLoadingMore, streamPage, loadStreamPage]);
+
+  // Stream bulk actions: one confirm/reject per medicine name covers all downloaded images for that name
+  const handleStreamConfirm = async (item: CatalogImageItem) => {
+    const mid = item.medicine_id;
+    setStreamActionId(mid);
+    try {
+      await api.approveAllForMedicine(mid, 'admin');
+      toastEvent.trigger(`✓ Confirmed "${item.medicine_name || item.product_name}" — saved & published to website`, 'success');
+      setStreamItems(prev => prev.filter(p => p.medicine_id !== mid));
+      // keep paginated grid in sync (optimistic)
+      setMedicines(prev => prev.filter(p => p.medicine_id !== mid));
+      loadCounts();
+    } catch (err: any) {
+      toastEvent.trigger('Confirm failed: ' + (err?.message || 'unknown'), 'error');
+    } finally {
+      setStreamActionId(null);
+    }
+  };
+
+  const handleStreamReject = async (item: CatalogImageItem) => {
+    const mid = item.medicine_id;
+    setStreamActionId(mid);
+    try {
+      await api.rejectAllForMedicine(mid, 'Rejected via stream - incorrect image', 'admin');
+      toastEvent.trigger(`✗ Rejected "${item.medicine_name || item.product_name}" — all app images cleared, re-fetching from internet…`, 'info');
+      setStreamItems(prev => prev.filter(p => p.medicine_id !== mid));
+      setMedicines(prev => prev.filter(p => p.medicine_id !== mid));
+      loadCounts();
+    } catch (err: any) {
+      toastEvent.trigger('Reject failed: ' + (err?.message || 'unknown'), 'error');
+    } finally {
+      setStreamActionId(null);
+    }
+  };
 
   // Fetch all multi-angle slots for the active medicine
   const fetchMedicineGallery = useCallback(async (medicineId: number) => {
@@ -933,23 +1042,35 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
             <span>{cleaning ? 'Cleaning...' : 'Clean Stale Images'}</span>
           </button>
 
-          {/* Review Mode toggle */}
-          <button
-            id="catalog-review-mode-btn"
-            onClick={viewMode === 'review' ? () => setViewMode('grid') : enterReviewMode}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
-              viewMode === 'review'
-                ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                : 'bg-bg border-border hover:bg-bg3 text-text'
-            }`}
-            title={viewMode === 'review' ? 'Exit flashcard review mode' : 'Enter rapid one-by-one review mode'}
-          >
-            <Eye size={13} />
-            <span>{viewMode === 'review' ? 'Exit Review' : 'Rapid Review'}</span>
-            {counts.pending_review > 0 && viewMode !== 'review' && (
-              <span className="bg-amber-500 text-white rounded-full px-1.5 py-0 text-[10px] font-black">{counts.pending_review}</span>
-            )}
-          </button>
+          {/* View Mode Segmented Control: Stream (default) / Grid / Review */}
+          <div className="flex items-center bg-bg p-0.5 rounded-xl border border-border shadow-xs">
+            <button
+              onClick={() => setViewMode('stream')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${viewMode === 'stream' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-text'}`}
+              title="Single infinite-scroll per medicine — one confirm covers all downloaded images"
+            >
+              <Layers size={13} />
+              <span>Stream</span>
+              {counts.pending_review > 0 && <span className={`rounded-full px-1.5 py-0 text-[10px] font-black border ${viewMode === 'stream' ? 'bg-bg text-primary border-primary/20' : 'bg-amber-500 text-white border-amber-600'}`}>{counts.pending_review}</span>}
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${viewMode === 'grid' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-text'}`}
+              title="Split-pane 4-angle workspace"
+            >
+              <LayoutGrid size={13} />
+              <span>Grid</span>
+            </button>
+            <button
+              id="catalog-review-mode-btn"
+              onClick={viewMode === 'review' ? () => setViewMode('stream') : enterReviewMode}
+              className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${viewMode === 'review' ? 'bg-amber-500 text-white shadow-xs' : 'text-muted hover:text-text'}`}
+              title={viewMode === 'review' ? 'Exit flashcard review mode' : 'Enter rapid one-by-one review mode'}
+            >
+              <Eye size={13} />
+              <span>{viewMode === 'review' ? 'Exit Review' : 'Flashcard'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1224,6 +1345,184 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* SINGLE INFINITE-SCROLL STREAM (Primary Workflow) */}
+      {/* One confirm image per medicine name side-by-side — */}
+      {/* confirm = save & publish to website (all app images for name), */}
+      {/* reject = reject all app images & refetch from internet */}
+      {/* ============================================================ */}
+      {viewMode === 'stream' && (
+        <div className="flex-1 flex flex-col overflow-hidden bg-bg">
+          {/* Stream Header: search + filter chips inline */}
+          <div className="px-4 py-3 border-b border-border bg-bg2 flex flex-col gap-2.5 shrink-0">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search size={14} className="absolute left-3 top-2.5 text-muted" />
+                <input
+                  type="text"
+                  placeholder="Search medicine, salt, company…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 bg-bg border border-border rounded-xl text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary shadow-xs"
+                />
+                {search && (
+                  <button onClick={() => setSearch('')} className="absolute right-2.5 top-2.5 text-muted hover:text-text cursor-pointer">
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <span className="text-[11px] text-muted hidden sm:block">
+                {streamItems.length} of {totalCount} medicines • <span className="text-text font-bold">Infinite scroll — one confirm per name saves all images</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {[
+                { key: 'review', label: 'Needs Review', count: counts.pending_review, activeClass: 'bg-amber-500 text-white' },
+                { key: 'all', label: 'All', count: counts.total, activeClass: 'bg-primary text-white' },
+                { key: 'approved', label: 'Approved', count: counts.approved, activeClass: 'bg-emerald-600 text-white' },
+                { key: 'high_confidence', label: 'High Conf', count: counts.high_confidence, activeClass: 'bg-sky-600 text-white' },
+                { key: 'rejected', label: 'Rejected', count: counts.rejected, activeClass: 'bg-red-600 text-white' },
+              ].map(chip => (
+                <button
+                  key={chip.key}
+                  onClick={() => { setFilter(chip.key); setStreamPage(1); }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 border ${filter === chip.key || (chip.key === 'review' && (filter === 'review' || filter === 'pending')) ? `${chip.activeClass} border-transparent shadow-xs` : 'bg-bg text-muted hover:text-text border-border'}`}
+                >
+                  <span>{chip.label}</span>
+                  <span className="ml-1 opacity-80">({chip.count})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Scrollable Stream List */}
+          <div ref={streamContainerRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-bg">
+            {streamLoading && streamItems.length === 0 ? (
+              <div className="py-16 flex flex-col items-center justify-center gap-3 text-muted">
+                <RefreshCw size={24} className="animate-spin text-primary" />
+                <span className="text-sm font-semibold">Loading catalogue stream…</span>
+              </div>
+            ) : streamItems.length === 0 ? (
+              <div className="py-16 text-center space-y-2">
+                <Pill size={32} className="mx-auto text-muted/30" />
+                <p className="text-sm font-bold text-text">No medicines in this filter</p>
+                <p className="text-xs text-muted">Try “All” or clear search. Approved items disappear from Needs Review automatically.</p>
+              </div>
+            ) : (
+              <>
+                {streamItems.map(item => {
+                  const imgSrc = item.image_path
+                    ? (item.image_path.startsWith('http') ? item.image_path : `/${item.image_path.replace(/\\/g, '/').replace(/^\/+/, '')}`)
+                    : null;
+                  const displayName = item.medicine_name || item.product_name || '—';
+                  const isActing = streamActionId === item.medicine_id;
+                  const isApproved = item.verification_status === 'APPROVED';
+                  const conf = item.confidence_score ?? 0;
+                  return (
+                    <div
+                      key={`${item.medicine_id}-${item.id}`}
+                      className="flex flex-col sm:flex-row gap-3 sm:gap-4 p-3 sm:p-4 bg-bg2 border border-border rounded-2xl shadow-sm hover:border-primary/30 hover:shadow-md transition-all"
+                    >
+                      {/* Left: Confirm Image side-by-side with name overlay */}
+                      <div className="w-full sm:w-52 h-48 sm:h-44 rounded-xl bg-bg border border-border overflow-hidden flex items-center justify-center shrink-0 relative group">
+                        {imgSrc ? (
+                          <>
+                            <img
+                              src={imgSrc}
+                              alt={displayName}
+                              className="w-full h-full object-contain p-2"
+                              style={{ backgroundColor: '#ffffff' }}
+                              loading="lazy"
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                            {/* Medicine name label ON the image (AI camera downloaded image has name on it — overlay reinforces) */}
+                            <div style={{ backgroundColor: 'rgba(0,0,0,0.75)' }} className="absolute bottom-0 inset-x-0 backdrop-blur-sm px-2.5 py-1.5 text-center">
+                              <p style={{ color: '#ffffff' }} className="text-[11px] font-black leading-tight line-clamp-2" title={displayName}>{displayName}</p>
+                              <p style={{ color: 'rgba(255,255,255,0.8)' }} className="text-[10px] font-semibold truncate">{item.manufacturer || item.company_name || ''}</p>
+                            </div>
+                            <span className={`absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-bold border shadow-sm ${isApproved ? 'bg-emerald-600 text-white border-emerald-500' : conf >= 80 ? 'bg-sky-600 text-white border-sky-500' : 'bg-amber-500 text-white border-amber-400'}`}>
+                              {isApproved ? 'Approved' : `${conf}%`}
+                            </span>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-muted">
+                            <Camera size={32} className="opacity-30" />
+                            <span className="text-xs font-semibold">No Image</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Details + Side-by-side Confirm/Reject (single confirm per name) */}
+                      <div className="flex-1 min-w-0 flex flex-col justify-between gap-3">
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-sm font-black text-text leading-tight truncate" title={displayName}>{displayName}</h4>
+                              <p className="text-xs text-muted mt-0.5 truncate">
+                                <span className="font-semibold text-text">{item.manufacturer || item.company_name || 'General'}</span>
+                                {item.generic_name ? <span className="font-mono text-[11px]"> • {item.generic_name}</span> : null}
+                                {item.packaging ? <span> • {item.packaging}</span> : null}
+                              </p>
+                            </div>
+                            {typeof item.angle_count === 'number' && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-bg border border-border text-muted shrink-0 flex items-center gap-1">
+                                <Camera size={10} className="text-sky-400" /> {item.angle_count} views in app
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 text-[11px]">
+                            {item.strength && <span className="px-2 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 font-bold">{item.strength}</span>}
+                            {item.category && <span className="px-2 py-0.5 rounded-full bg-bg border border-border text-muted font-semibold">{item.category}</span>}
+                            <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-semibold">ID:{item.medicine_id}</span>
+                            {item.mrp != null && <span className="font-bold text-text">₹{item.mrp}</span>}
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-muted bg-bg border border-border/60 rounded-xl px-3 py-2">
+                            <span className="font-bold text-text">Review:</span> Does the name on the package in the image <span className="font-black text-text">exactly match “{displayName}”</span>? If yes, <span className="text-emerald-400 font-bold">Confirm</span> saves this representative image and publishes it to the website — all downloaded images for this medicine are treated as validated (project UI uses same asset). If wrong, <span className="text-rose-400 font-bold">Reject</span> clears all app images for this medicine and re-fetches a fresh candidate from the internet.
+                          </p>
+                        </div>
+
+                        {/* Single Confirm / Reject side-by-side */}
+                        <div className="flex items-stretch gap-2 pt-1">
+                          <button
+                            onClick={() => handleStreamConfirm(item)}
+                            disabled={isActing}
+                            className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                            title="If image matches name — confirm once, saves & updates website for all images of this name"
+                          >
+                            {isActing ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                            <span>{isActing ? 'Saving…' : '✓ Confirm & Save to Website'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleStreamReject(item)}
+                            disabled={isActing}
+                            className="flex-1 py-2.5 px-4 bg-bg hover:bg-rose-500/10 disabled:opacity-50 border border-rose-200 hover:border-rose-300 text-rose-600 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                            title="Reject all app images for this medicine and re-fetch from internet"
+                          >
+                            {isActing ? <RefreshCw size={14} className="animate-spin" /> : <XCircle size={16} />}
+                            <span>{isActing ? 'Rejecting…' : '✗ Reject All & Re-fetch'}</span>
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-muted text-center">One tap per medicine — saves catalog recognition & confirmation time. Most images are saved correctly.</p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Infinite scroll sentinel */}
+                <div ref={streamSentinelRef} className="py-4 flex items-center justify-center">
+                  {streamLoadingMore ? (
+                    <span className="text-xs text-muted flex items-center gap-2"><RefreshCw size={14} className="animate-spin text-primary" /> Loading more medicines…</span>
+                  ) : streamHasMore ? (
+                    <span className="text-xs text-muted">Scroll for more — {streamItems.length} of {totalCount} loaded</span>
+                  ) : (
+                    <span className="text-xs text-muted flex items-center gap-1.5"><CheckCircle2 size={13} className="text-emerald-400" /> End of stream — {streamItems.length} medicines</span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
