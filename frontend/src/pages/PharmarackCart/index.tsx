@@ -32,6 +32,11 @@ interface CartLineItem {
   createdDate: string;
 }
 
+// ── Silent Cart Deletion Configuration ──
+export const PHARMARACK_DELETE_BUFFER_MS = 5000;     // Base silent buffer: 5s
+export const PHARMARACK_DELETE_RETRY_STEP_MS = 2000; // +2s per retry: 7s, 9s
+export const PHARMARACK_DELETE_MAX_RETRIES = 3;      // Max 3 tries
+
 interface Distributor {
   storeId: number;
   storeName: string;
@@ -410,6 +415,59 @@ export default function PharmarackCart() {
   const [userCheckOverrides, setUserCheckOverrides] = useState<Record<string, boolean>>(() => loadUserCheckOverrides());
   const userCheckOverridesRef = useRef(userCheckOverrides);
   userCheckOverridesRef.current = userCheckOverrides;
+
+  // ── Silent Sequential Delete Queue & Priority Pre-emption State ──
+  const deleteQueueRef = useRef<Array<{
+    item: CartLineItem;
+    storeName: string;
+    key: string;
+    attempt: number;
+  }>>([]);
+  const isProcessingDeleteQueueRef = useRef<boolean>(false);
+  const pendingDeleteKeysRef = useRef<Set<string>>(new Set());
+  const highPriorityActiveRef = useRef<boolean>(false);
+  const pauseDeleteResolveRef = useRef<(() => void) | null>(null);
+  const cancelSleepRef = useRef<(() => void) | null>(null);
+
+  const beginHighPriorityAction = () => {
+    highPriorityActiveRef.current = true;
+    if (cancelSleepRef.current) {
+      cancelSleepRef.current();
+    }
+  };
+
+  const endHighPriorityAction = () => {
+    highPriorityActiveRef.current = false;
+    if (pauseDeleteResolveRef.current) {
+      const resolve = pauseDeleteResolveRef.current;
+      pauseDeleteResolveRef.current = null;
+      resolve();
+    }
+  };
+
+  const waitIfHighPriority = async () => {
+    while (highPriorityActiveRef.current) {
+      await new Promise<void>(resolve => {
+        pauseDeleteResolveRef.current = resolve;
+      });
+    }
+  };
+
+  const interruptibleSleep = (ms: number): Promise<boolean> => {
+    return new Promise(resolve => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const onCancel = () => {
+        if (timer) clearTimeout(timer);
+        cancelSleepRef.current = null;
+        resolve(false);
+      };
+      cancelSleepRef.current = onCancel;
+      timer = setTimeout(() => {
+        cancelSleepRef.current = null;
+        resolve(true);
+      }, ms);
+    });
+  };
 
   const [loading, setLoading] = useState(() => cachedDistributors.length === 0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -1086,6 +1144,9 @@ export default function PharmarackCart() {
   const [, setShowMissingBoyModal] = useState(false);
   const [, setPendingTargetDistributor] = useState<Distributor | 'ALL' | null>(null);
 
+  // Batch WhatsApp order confirmation popup state
+  const [showConfirmBatchModal, setShowConfirmBatchModal] = useState(false);
+
   const hasDeliveryBoyContacts = () => {
     const hasActiveBoys = deliveryBoysList.some(b => b.name && b.whatsapp_number && b.whatsapp_number.trim().length > 0);
     const hasSettingsBoys = Boolean(
@@ -1100,6 +1161,7 @@ export default function PharmarackCart() {
   useModalEscape(!!switchModalTarget, () => setSwitchModalTarget(null));
   useModalEscape(!!reorderSameModalTarget, () => setReorderSameModalTarget(null));
   useModalEscape(!!purchaseHistoryModalTarget, () => setPurchaseHistoryModalTarget(null));
+  useModalEscape(showConfirmBatchModal, () => setShowConfirmBatchModal(false));
 
   const normalizeDistName = (rawName: string): string => {
     if (!rawName) return '';
@@ -1307,6 +1369,32 @@ export default function PharmarackCart() {
         (a.storeName || '').localeCompare(b.storeName || '', undefined, { sensitivity: 'base' })
       );
   }, [distributorFilterTab, unsentCartDistributors, sentCartDistributors, failedDistributors, unmappedDistributors, activeCartDistributors]);
+
+  // Order summary per distributor for the WhatsApp dispatch confirmation popup
+  const batchSummaryList = React.useMemo(() => {
+    return distributors.map(dist => {
+      const itemsForBatch = (dist.items || []).filter(item => isItemIncludedInDispatch(item, dist));
+      const activeItems = itemsForBatch.length > 0 ? itemsForBatch : (dist.items || []);
+      const qty = activeItems.reduce((sum, i) => sum + (i.qty || 1), 0);
+      const amount = activeItems.reduce((sum, i) => sum + getCartItemAmount(i), 0);
+      const isMapped = isDistributorMapped(dist);
+      return {
+        storeId: dist.storeId,
+        storeName: dist.storeName,
+        totalQty: qty,
+        totalAmount: amount,
+        isMapped,
+      };
+    }).filter(d => d.totalQty > 0);
+  }, [distributors, customDistributorPhones, savedDistributorsList, distributorMappings, userCheckOverrides, latestSentMap]);
+
+  const finalBatchTotalQty = React.useMemo(() => {
+    return batchSummaryList.reduce((sum, d) => sum + d.totalQty, 0);
+  }, [batchSummaryList]);
+
+  const finalBatchTotalAmount = React.useMemo(() => {
+    return batchSummaryList.reduce((sum, d) => sum + d.totalAmount, 0);
+  }, [batchSummaryList]);
 
   // Aggregate all previous-ordered items (yesterday/past) from the current cart for the reorder banner.
   // Uses existing getPastOrderedInfo + isItemIncludedInDispatch — no new data fetching.
@@ -2228,6 +2316,13 @@ export default function PharmarackCart() {
     overrides: Record<string, boolean> = userCheckOverridesRef.current
   ): Distributor[] => {
     const normalizedIncoming = normalizeItemsWithCheckStatus(incoming, overrides);
+
+    // Safeguard: Never restore items that are currently pending deletion in background
+    const filteredIncoming = normalizedIncoming.map(dist => ({
+      ...dist,
+      items: dist.items.filter(it => !pendingDeleteKeysRef.current.has(getItemCheckKey(dist.storeId, it)))
+    })).filter(dist => dist.items.length > 0);
+
     const currentItemMap = new Map<string, CartLineItem>();
     for (const d of current) {
       for (const it of d.items) {
@@ -2235,7 +2330,7 @@ export default function PharmarackCart() {
       }
     }
 
-    const merged = normalizedIncoming.map(dist => {
+    const merged = filteredIncoming.map(dist => {
       const mergedItems = dist.items.map(incItem => {
         const key = getItemCheckKey(dist.storeId, incItem);
         const existing = currentItemMap.get(key);
@@ -2297,6 +2392,21 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
+
+        // Clean up confirmed deleted keys if verified absent from incoming live cart and queue is idle
+        if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
+          const liveKeys = new Set<string>();
+          rawList.forEach((d: any) => {
+            (d.items || []).forEach((it: any) => {
+              liveKeys.add(getItemCheckKey(d.storeId, it));
+            });
+          });
+          for (const k of Array.from(pendingDeleteKeysRef.current)) {
+            if (!liveKeys.has(k)) {
+              pendingDeleteKeysRef.current.delete(k);
+            }
+          }
+        }
         const now = new Date();
         setLastFetched(now);
         cachedLastFetched = now;
@@ -2335,6 +2445,20 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
+
+        if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
+          const liveKeys = new Set<string>();
+          rawList.forEach((d: any) => {
+            (d.items || []).forEach((it: any) => {
+              liveKeys.add(getItemCheckKey(d.storeId, it));
+            });
+          });
+          for (const k of Array.from(pendingDeleteKeysRef.current)) {
+            if (!liveKeys.has(k)) {
+              pendingDeleteKeysRef.current.delete(k);
+            }
+          }
+        }
         const now = new Date();
         setLastFetched(now);
         cachedLastFetched = now;
@@ -2349,6 +2473,13 @@ export default function PharmarackCart() {
     if (newQty < 1) {
       handleDeleteItem(item);
       return;
+    }
+
+    // Cancel pending delete if user is adjusting quantity on this medicine
+    const itemKey = getItemCheckKey(item.storeId, item);
+    if (pendingDeleteKeysRef.current.has(itemKey)) {
+      pendingDeleteKeysRef.current.delete(itemKey);
+      deleteQueueRef.current = deleteQueueRef.current.filter(q => q.key !== itemKey);
     }
 
     // 1. Optimistic UI Update (< 5ms perception, instant response)
@@ -2378,8 +2509,9 @@ export default function PharmarackCart() {
     });
 
     setUpdatingItemId(item.productCode);
+    beginHighPriorityAction(); // Priority lock: pause background delete worker immediately
 
-    // 2. Silent Background API Sync (Debounced, never locks screen with loading spinners)
+    // 2. High Priority Background API Sync
     try {
       const storeName = distributors.find(d => d.storeId === item.storeId)?.storeName || '';
       const payload = [{
@@ -2411,21 +2543,98 @@ export default function PharmarackCart() {
       scheduleCartSync(500);
     } finally {
       setUpdatingItemId(null);
+      endHighPriorityAction(); // Release priority lock: allow background delete worker to resume
+    }
+  };
+
+  const processDeleteQueue = async () => {
+    if (isProcessingDeleteQueueRef.current) return;
+    isProcessingDeleteQueueRef.current = true;
+
+    try {
+      while (deleteQueueRef.current.length > 0) {
+        // 1. Yield immediately if a high-priority operation (Add product / Qty update) is in flight
+        await waitIfHighPriority();
+
+        if (deleteQueueRef.current.length === 0) break;
+        const currentTask = deleteQueueRef.current[0];
+
+        // 2. Perform live deletion attempt
+        let isSuccess = false;
+        let errorMsg = '';
+        try {
+          const res = await api.deletePharmarackCartItem({
+            storeId: currentTask.item.storeId,
+            productId: currentTask.item.productId,
+            productCode: currentTask.item.productCode,
+            productName: currentTask.item.productName,
+            company: currentTask.item.company,
+            packaging: currentTask.item.packaging,
+            ptr: currentTask.item.ptr,
+            mrp: currentTask.item.mrp,
+            storeName: currentTask.storeName
+          });
+          if (res && res.success) {
+            isSuccess = true;
+          } else {
+            errorMsg = res?.error || 'Server reported failure';
+          }
+        } catch (err: unknown) {
+          const apiErr = err as LocalApiError;
+          errorMsg = apiErr?.response?.data?.error || apiErr?.message || 'Network error';
+        }
+
+        // 3. Handle result & 3-try incremental retry loop (+2s per retry)
+        if (isSuccess) {
+          // Success: remove item from queue
+          deleteQueueRef.current.shift();
+          toastEvent.trigger(`Removed "${currentTask.item.productName}" from live cart`, 'success');
+
+          // If more items remain in queue, wait the base 5s buffer before next request
+          if (deleteQueueRef.current.length > 0) {
+            await interruptibleSleep(PHARMARACK_DELETE_BUFFER_MS);
+          }
+        } else {
+          // Failure: check retry count (max 3 tries)
+          if (currentTask.attempt < PHARMARACK_DELETE_MAX_RETRIES) {
+            const nextAttempt = currentTask.attempt + 1;
+            currentTask.attempt = nextAttempt;
+            const retryDelayMs = PHARMARACK_DELETE_BUFFER_MS + ((nextAttempt - 1) * PHARMARACK_DELETE_RETRY_STEP_MS);
+
+            toastEvent.trigger(
+              `Retrying removal of "${currentTask.item.productName}" (Attempt ${nextAttempt} of ${PHARMARACK_DELETE_MAX_RETRIES} in ${Math.round(retryDelayMs / 1000)}s)...`,
+              'info'
+            );
+
+            // Wait backoff time (7s, 9s), yielding immediately if user performs a high-priority action
+            await interruptibleSleep(retryDelayMs);
+          } else {
+            // All 3 tries exhausted
+            deleteQueueRef.current.shift();
+            pendingDeleteKeysRef.current.delete(currentTask.key);
+            toastEvent.trigger(
+              `Could not remove "${currentTask.item.productName}" from live cart after ${PHARMARACK_DELETE_MAX_RETRIES} attempts. (${errorMsg})`,
+              'error'
+            );
+          }
+        }
+      }
+    } finally {
+      isProcessingDeleteQueueRef.current = false;
+      // When the entire queue finishes, trigger a silent verified sync to ensure state accuracy
+      scheduleCartSync(1000);
     }
   };
 
   const handleDeleteItem = async (item: CartLineItem) => {
+    const itemKey = getItemCheckKey(item.storeId, item);
+    pendingDeleteKeysRef.current.add(itemKey);
+
     // 1. Optimistic UI update (immediately remove item from UI state & update totals in < 5ms)
     setDistributors(prev => {
       const updated = prev.map(dist => {
         if (dist.storeId !== item.storeId) return dist;
-        const remainingItems = dist.items.filter(i =>
-          (item.productCode && i.productCode === item.productCode)
-            ? false
-            : (item.productId && i.productId === item.productId)
-              ? false
-              : i.productName !== item.productName
-        );
+        const remainingItems = dist.items.filter(i => getItemCheckKey(dist.storeId, i) !== itemKey);
         const newLineTotal = remainingItems.reduce((sum, it) => sum + it.amount, 0);
         return {
           ...dist,
@@ -2439,27 +2648,19 @@ export default function PharmarackCart() {
       return updated;
     });
 
+    const storeName = distributors.find(d => d.storeId === item.storeId)?.storeName || '';
     toastEvent.trigger(`Removing "${item.productName}" in background...`, 'info');
 
-    // 2. Silent Asynchronous Background Live Cart Deletion (non-blocking)
-    const storeName = distributors.find(d => d.storeId === item.storeId)?.storeName || '';
-    api.deletePharmarackCartItem({
-      storeId: item.storeId,
-      productId: item.productId,
-      productCode: item.productCode,
-      productName: item.productName,
-      company: item.company,
-      packaging: item.packaging,
-      ptr: item.ptr,
-      mrp: item.mrp,
-      storeName: storeName
-    }).then((res) => {
-      if (res && res.success) {
-        toastEvent.trigger(`Removed "${item.productName}" from live cart`, 'success');
-      }
-    }).catch((err: unknown) => {
-      console.warn('Background delete cart item warning:', err);
+    // 2. Enqueue item for silent sequential deletion (Attempt 1)
+    deleteQueueRef.current.push({
+      item,
+      storeName,
+      key: itemKey,
+      attempt: 1
     });
+
+    // 3. Process queue sequentially
+    processDeleteQueue();
   };
 
   const handleReaddSingleSentItem = async (item: LocalSentOrderItem, storeId?: number, storeName?: string) => {
@@ -2471,11 +2672,19 @@ export default function PharmarackCart() {
       return;
     }
 
+    const targetStoreId = storeId || item.storeId || 0;
+    const itemKey = getItemCheckKey(targetStoreId, { productCode: item.productCode, productId: item.productId, productName: medName });
+    if (pendingDeleteKeysRef.current.has(itemKey)) {
+      pendingDeleteKeysRef.current.delete(itemKey);
+      deleteQueueRef.current = deleteQueueRef.current.filter(q => q.key !== itemKey);
+    }
+
     setReaddingSentItems(true);
+    beginHighPriorityAction(); // Priority lock: pause background delete worker
     try {
       const payload = [{
         productId: item.productId || 0,
-        storeId: storeId || item.storeId || 0,
+        storeId: targetStoreId,
         qty: qty,
         productCode: item.productCode || '',
         productName: medName,
@@ -2489,7 +2698,6 @@ export default function PharmarackCart() {
 
       const res = await api.addPharmarackCart(payload);
       if (res && res.success) {
-        const targetStoreId = storeId || item.storeId || 0;
         if (targetStoreId) {
           setSentWaStatusMap(prev => {
             const next = { ...prev };
@@ -2532,6 +2740,7 @@ export default function PharmarackCart() {
       liveCartAddEvent.triggerOpen(medName, qty);
     } finally {
       setReaddingSentItems(false);
+      endHighPriorityAction(); // Release priority lock
     }
   };
 
@@ -2575,6 +2784,7 @@ export default function PharmarackCart() {
     if (!switchModalTarget) return;
     const { item, dist: currentDist } = switchModalTarget;
     setSwitchingDistributor(true);
+    beginHighPriorityAction();
     try {
       const addRes = await api.addPharmarackCart([{
         productId: targetSupplier.productId || 0,
@@ -2634,6 +2844,7 @@ export default function PharmarackCart() {
       toastEvent.trigger(apiErr?.message || 'Error switching supplier', 'error');
     } finally {
       setSwitchingDistributor(false);
+      endHighPriorityAction();
     }
   };
 
@@ -2746,6 +2957,7 @@ export default function PharmarackCart() {
     const targetStoreId = reorderModalSupplierId || distributors[0]?.storeId || 0;
     const targetDist = distributors.find(d => d.storeId === targetStoreId) || distributors[0];
 
+    beginHighPriorityAction();
     try {
       const rate = card.previousPurchase?.price || card.ptr || undefined;
       const addRes = await api.addPharmarackCart([{
@@ -2797,6 +3009,8 @@ export default function PharmarackCart() {
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
       toastEvent.trigger(apiErr?.message || 'Failed to add reorder item', 'error');
+    } finally {
+      endHighPriorityAction();
     }
   };
 
@@ -2820,6 +3034,10 @@ export default function PharmarackCart() {
       // Hidden kept-alive page must not background-fetch (P3 gating) — the
       // activation effect silently syncs the moment the user returns.
       if (!pageActiveRef.current) return;
+      // If a silent delete queue is in progress, skip intermediate fetches to avoid cart churn
+      if (deleteQueueRef.current.length > 0 || isProcessingDeleteQueueRef.current) {
+        return;
+      }
       scheduleCartSync(300);
       fetchLatestSentMap();
     };
@@ -3350,7 +3568,7 @@ export default function PharmarackCart() {
               </button>
 
               <button
-                onClick={() => handleSendAllWhatsAppOrders()}
+                onClick={() => setShowConfirmBatchModal(true)}
                 disabled={isSendingBatchWhatsApp || distributors.length === 0}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-transparent text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/10 font-extrabold transition-all active:scale-95 text-xs disabled:opacity-50 shadow-xs cursor-pointer"
                 title="Send order messages silently to all saved distributor WhatsApp numbers with 30-45s safe delay"
@@ -4408,7 +4626,28 @@ export default function PharmarackCart() {
           {/* ── Footer / Total Summary ── */}
           {distributors.length > 0 && !loading && (
             <div className="border-t border-glass-border bg-bg2/40 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0 shadow-lg">
-              <div className="flex items-center gap-6">
+              <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmBatchModal(true)}
+                  disabled={isSendingBatchWhatsApp || distributors.length === 0}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black transition-all active:scale-95 text-xs disabled:opacity-50 shadow-[0_4px_14px_rgba(16,185,129,0.3)] cursor-pointer"
+                  title="Review and send orders to distributors via WhatsApp"
+                >
+                  {isSendingBatchWhatsApp ? (
+                    <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <MessageSquare size={15} />
+                  )}
+                  <span>
+                    {isSendingBatchWhatsApp
+                      ? 'Sending orders…'
+                      : `Send All via WhatsApp (${readyToSendDistributors.length})`}
+                  </span>
+                </button>
+
+                <div className="h-6 w-[1px] bg-glass-border/30 hidden sm:block" />
+
                 <div>
                   <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Distributors</span>
                   <span className="text-base font-black text-text font-mono">{distributors.length}</span>
@@ -5005,6 +5244,121 @@ export default function PharmarackCart() {
                 className="px-4 py-1.5 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Confirm Batch WhatsApp Dispatch Modal ── */}
+      {showConfirmBatchModal && createPortal(
+        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <MessageSquare size={16} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-text text-sm">Confirm WhatsApp Order Dispatch</h3>
+                  <p className="text-[11px] text-muted">Review today's orders & values before sending</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConfirmBatchModal(false)}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body: Distributor Table (Distributor Name, Total Qty, Cart Value) */}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 custom-scrollbar space-y-3">
+              <div className="border border-glass-border rounded-xl overflow-hidden bg-bg/40">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-glass-border bg-bg3/60 text-muted uppercase text-[10px] font-bold tracking-wider">
+                      <th className="py-2.5 px-3.5">Distributor Name</th>
+                      <th className="py-2.5 px-3 text-center">Total Qty</th>
+                      <th className="py-2.5 px-3.5 text-right">Cart Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-glass-border/30">
+                    {batchSummaryList.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="py-8 text-center text-muted">
+                          No order items currently ready to send.
+                        </td>
+                      </tr>
+                    ) : (
+                      batchSummaryList.map((item) => (
+                        <tr key={item.storeId} className="hover:bg-bg3/20 transition-colors">
+                          <td className="py-3 px-3.5 font-bold text-text">
+                            <div className="flex items-center gap-2">
+                              <span>{item.storeName}</span>
+                              {item.isMapped ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                  Mapped
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                  No phone
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-extrabold text-text">
+                            {item.totalQty}
+                          </td>
+                          <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
+                            ₹{item.totalAmount.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {batchSummaryList.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-glass-border bg-bg3/70 font-black">
+                        <td className="py-3 px-3.5 text-text uppercase text-[11px] tracking-wide">
+                          Final Total ({batchSummaryList.length} Distributors)
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-sm text-text">
+                          {finalBatchTotalQty}
+                        </td>
+                        <td className="py-3 px-3.5 text-right font-mono text-sm text-emerald-400">
+                          ₹{finalBatchTotalAmount.toFixed(2)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+
+            {/* Modal Footer: Cancel vs Confirm & Send */}
+            <div className="bg-bg3/60 px-5 py-3.5 border-t border-glass-border flex items-center justify-end gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowConfirmBatchModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 border border-glass-border transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmBatchModal(false);
+                  handleSendAllWhatsAppOrders();
+                }}
+                disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0}
+                className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-50 cursor-pointer"
+              >
+                <Send size={13} />
+                <span>Confirm & Send</span>
               </button>
             </div>
           </div>

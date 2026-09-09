@@ -71,17 +71,58 @@ class WhatsAppQueueWorker {
   private currentSendingItemId: number | null = null;
   private pacingMinMs = 10000;
   private pacingMaxMs = 15000;
+  private cancelPacingSleep: (() => void) | null = null;
 
   public isWorkerPaused(): boolean {
     return this.isPaused;
   }
 
+  /** Cancel any in-flight pacing delay immediately (<10ms pause/flush response) */
+  private cancelActiveDelay(): void {
+    if (this.cancelPacingSleep) {
+      this.cancelPacingSleep();
+      this.cancelPacingSleep = null;
+    }
+    this.nextDispatchTimestamp = null;
+  }
+
+  /** Interruptible sleep helper for pacing delay */
+  private interruptibleSleep(ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          this.cancelPacingSleep = null;
+          resolve(true); // Completed full delay
+        }
+      }, ms);
+
+      this.cancelPacingSleep = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          this.cancelPacingSleep = null;
+          resolve(false); // Aborted early
+        }
+      };
+    });
+  }
+
   public setPaused(paused: boolean): void {
+    if (this.isPaused === paused) return;
     this.isPaused = paused;
+    if (paused) {
+      this.cancelActiveDelay();
+      this.broadcastQueueState(false);
+    } else {
+      this.triggerProcessing();
+      this.broadcastQueueState(true);
+    }
   }
 
   public togglePaused(): boolean {
-    this.isPaused = !this.isPaused;
+    this.setPaused(!this.isPaused);
     return this.isPaused;
   }
 
@@ -181,6 +222,7 @@ class WhatsAppQueueWorker {
   /** Immediately process the next pending queue item without waiting for the delay countdown */
   public async forceNext(): Promise<boolean> {
     this.ensureLoopStarted();
+    this.cancelActiveDelay();
     const db = await dbManager.getConnection();
     const now = Date.now();
     // Update any future scheduled_at on the oldest pending item to now
@@ -247,6 +289,10 @@ class WhatsAppQueueWorker {
         `UPDATE pharmarack_placed_orders SET batch_sent = 1, batch_sent_at = ? WHERE id = ?`,
         [now, pending.id]
       );
+      await db.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', ?)",
+        [today]
+      ).catch(() => {});
     } catch (err) {
       console.warn('[WhatsAppQueueWorker] Could not update pharmarack_placed_orders batch_sent:', err);
     }
@@ -776,9 +822,14 @@ class WhatsAppQueueWorker {
           const delayRange = this.pacingMaxMs - this.pacingMinMs;
           const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
           this.nextDispatchTimestamp = Date.now() + randomDelay;
+          this.broadcastQueueState(true);
           
           console.log(`[WhatsAppQueueWorker] Pacing delay: ${Math.round(randomDelay/1000)}s before next send...`);
-          await new Promise(resolve => setTimeout(resolve, randomDelay));
+          const completedFullDelay = await this.interruptibleSleep(randomDelay);
+          this.nextDispatchTimestamp = null;
+          if (!completedFullDelay || this.isPaused) {
+            break;
+          }
         }
       }
 
@@ -791,6 +842,7 @@ class WhatsAppQueueWorker {
       }
       return false;
     } finally {
+      this.cancelActiveDelay();
       this.isProcessing = false;
       this.currentSendingItemId = null;
       this.nextDispatchTimestamp = null;
@@ -822,6 +874,122 @@ class WhatsAppQueueWorker {
     return result.changes || 0;
   }
 
+  /**
+   * Rollback source records (Special Orders, Refills, Distributor Placed Orders)
+   * when an unsent/pending message is deleted/dismissed from the queue before delivery.
+   */
+  private async rollbackSourceEntityOnQueueDelete(db: any, item: any): Promise<void> {
+    try {
+      const { type, number, target_name } = item;
+      const cleanDigits = normalizeWhatsAppPhone(number || '').slice(-10);
+
+      // 1. Special Orders: decrement notification_count and reset notified/status if 0
+      if (type === 'special_order' || type === 'special_order_batch') {
+        const notifRows = await db.all(
+          "SELECT reference_id FROM automation_notifications WHERE (reference_id = ? OR reference_id = ?) AND type IN ('special_order_arrived', 'special_order')",
+          [`queue_${item.id}`, String(item.id)]
+        ).catch(() => []);
+
+        const targetOrderIds = new Set<number>();
+        for (const nr of notifRows || []) {
+          const parsed = parseInt(String(nr.reference_id), 10);
+          if (!isNaN(parsed) && parsed > 0) targetOrderIds.add(parsed);
+        }
+
+        if (targetOrderIds.size === 0 && cleanDigits.length >= 7) {
+          const matchedOrders = await db.all(
+            `SELECT id FROM special_orders 
+             WHERE (phone LIKE ? OR phone LIKE ?) AND notified = 1 
+             ORDER BY id DESC LIMIT 5`,
+            [`%${cleanDigits}%`, `%${number}%`]
+          ).catch(() => []);
+          for (const mo of matchedOrders || []) {
+            targetOrderIds.add(mo.id);
+          }
+        }
+
+        let ordersChanged = false;
+        for (const orderId of targetOrderIds) {
+          const ord = await db.get("SELECT id, notification_count, status FROM special_orders WHERE id = ?", [orderId]);
+          if (ord) {
+            const currentCount = Number(ord.notification_count || 1);
+            const newCount = Math.max(0, currentCount - 1);
+            const newNotified = newCount > 0 ? 1 : 0;
+            const newStatus = (newNotified === 0 && ord.status === 'Ready') ? 'Ordered' : ord.status;
+            await db.run(
+              "UPDATE special_orders SET notified = ?, notification_count = ?, status = ? WHERE id = ?",
+              [newNotified, newCount, newStatus, orderId]
+            );
+            ordersChanged = true;
+          }
+        }
+        if (ordersChanged) {
+          try {
+            eventService.broadcast('orders_changed', { at: Date.now(), reason: 'queue_delete_rollback' });
+          } catch (_) {}
+        }
+      }
+
+      // 2. Pharmarack Distributor Orders: unmark batch_sent on placed order
+      if (type === 'pharmarack_distributor_order' && target_name?.trim()) {
+        const today = new Date().toISOString().split('T')[0];
+        const storeName = target_name.trim();
+        const placed = await db.get(
+          `SELECT id FROM pharmarack_placed_orders
+           WHERE order_date = ? AND store_name = ?
+           ORDER BY id DESC LIMIT 1`,
+          [today, storeName]
+        ).catch(() => null);
+
+        if (placed?.id) {
+          await db.run(
+            "UPDATE pharmarack_placed_orders SET batch_sent = 0, batch_sent_at = NULL WHERE id = ?",
+            [placed.id]
+          );
+
+          const otherSent = await db.get(
+            "SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND batch_sent = 1 LIMIT 1",
+            [today]
+          ).catch(() => null);
+          if (!otherSent) {
+            await db.run(
+              "DELETE FROM app_settings WHERE key = 'pharmarack_batch_last_sent_date'"
+            ).catch(() => {});
+          }
+
+          try {
+            eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'queue_delete_rollback', storeName });
+            eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+          } catch (_) {}
+        }
+      }
+
+      // 3. Patient Refills: revert reminder_status and status back to pending
+      if (type === 'refill_reminder') {
+        const refill = await db.get("SELECT id FROM patient_refills WHERE reminder_job_id = ?", [item.id]).catch(() => null);
+        if (refill?.id) {
+          await db.run(
+            "UPDATE patient_refills SET reminder_status = 'CANCELLED', status = 'pending', reminder_job_id = NULL WHERE id = ?",
+            [refill.id]
+          );
+          try {
+            eventService.broadcast('refills_changed', { at: Date.now(), reason: 'queue_delete_rollback' });
+          } catch (_) {}
+        }
+      }
+
+      // 4. POS Sale/Credit Invoices: mark status cancelled in automation_notifications
+      if (type === 'pos_sale_invoice' || type === 'pos_credit_invoice') {
+        await db.run(
+          "UPDATE automation_notifications SET status = 'cancelled' WHERE (reference_id = ? OR reference_id = ?) AND status IN ('sent', 'queued', 'pending')",
+          [`queue_${item.id}`, String(item.id)]
+        ).catch(() => {});
+      }
+    } catch (rbErr) {
+      console.warn('[WhatsAppQueueWorker] Rollback error on queue delete:', rbErr);
+    }
+  }
+
   /** Delete / Dismiss individual queue or notification item permanently */
   public async deleteItem(id: number): Promise<boolean> {
     const db = await dbManager.getConnection();
@@ -829,15 +997,42 @@ class WhatsAppQueueWorker {
       let changed = false;
       if (id >= 900000) {
         const realNotifId = id - 900000;
+        const notif = await db.get("SELECT * FROM automation_notifications WHERE id = ?", [realNotifId]);
+        if (notif && notif.status !== 'sent') {
+          if (notif.type === 'special_order_arrived' || notif.type === 'special_order') {
+            const ordId = parseInt(String(notif.reference_id), 10);
+            if (!isNaN(ordId) && ordId > 0) {
+              const ord = await db.get("SELECT id, notification_count, status FROM special_orders WHERE id = ?", [ordId]);
+              if (ord) {
+                const currentCount = Number(ord.notification_count || 1);
+                const newCount = Math.max(0, currentCount - 1);
+                const newNotified = newCount > 0 ? 1 : 0;
+                const newStatus = (newNotified === 0 && ord.status === 'Ready') ? 'Ordered' : ord.status;
+                await db.run("UPDATE special_orders SET notified = ?, notification_count = ?, status = ? WHERE id = ?", [newNotified, newCount, newStatus, ordId]);
+                try { eventService.broadcast('orders_changed', { at: Date.now(), reason: 'notif_delete_rollback' }); } catch (_) {}
+              }
+            }
+          }
+        }
         const res = await db.run("DELETE FROM automation_notifications WHERE id = ?", [realNotifId]);
         changed = (res.changes || 0) > 0;
       } else if (id >= 800000) {
         // Direct message placeholder — no direct row to delete or ignore
         changed = true;
       } else {
-        const res = await db.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
-        await db.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {});
-        changed = (res.changes || 0) > 0;
+        const item = await db.get("SELECT * FROM whatsapp_send_queue WHERE id = ?", [id]);
+        if (item) {
+          // If the item was not yet delivered (pending, failed_offline, failed_perm, review_required, sending, waiting)
+          if (item.status !== 'sent') {
+            await this.rollbackSourceEntityOnQueueDelete(db, item);
+          }
+          if (this.currentSendingItemId === id) {
+            this.currentSendingItemId = null;
+          }
+          const res = await db.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
+          await db.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {});
+          changed = (res.changes || 0) > 0;
+        }
       }
       if (changed) {
         this.broadcastQueueState(this.isProcessing);

@@ -1146,8 +1146,8 @@ const LiveSendProgressChip = memo(({
   onClick,
   showQueueCounts = true,
 }: LiveSendProgressChipProps) => {
-  const [progress, setProgress] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(durationSec);
+  const [progress, setProgress] = useState(completed ? 100 : 0);
+  const [secondsLeft, setSecondsLeft] = useState(completed ? 0 : durationSec);
   const [isDone, setIsDone] = useState(completed);
 
   useEffect(() => {
@@ -1162,24 +1162,26 @@ const LiveSendProgressChip = memo(({
     setProgress(0);
     setSecondsLeft(durationSec);
 
-    const totalSteps = durationSec * 10;
-    let currentStep = 0;
+    const startTime = Date.now();
+    const durationMs = durationSec * 1000;
 
     const timer = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      currentStep++;
-      const pct = Math.min(100, Math.round((currentStep / totalSteps) * 100));
-      const secs = Math.max(0, Math.ceil(durationSec - (currentStep / 10)));
+      const elapsed = Date.now() - startTime;
+      const fraction = Math.min(1, elapsed / durationMs);
+      const pct = Math.min(100, Math.round(fraction * 100));
+      const secs = Math.max(0, Math.ceil((durationMs - elapsed) / 1000));
+
       setProgress(pct);
       setSecondsLeft(secs);
 
-      if (currentStep >= totalSteps) {
+      if (fraction >= 1) {
         clearInterval(timer);
         setProgress(100);
         setSecondsLeft(0);
         setIsDone(true);
       }
-    }, 100);
+    }, 250);
 
     return () => clearInterval(timer);
   }, [recipient, durationSec, completed]);
@@ -1187,12 +1189,12 @@ const LiveSendProgressChip = memo(({
   return (
     <div
       onClick={onClick}
-      className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in"
+      className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress animate-hub-enter"
       title="Click to open Dispatch & Messaging Hub"
     >
       <div className="flex items-center justify-between gap-2 text-xs font-semibold">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <SendIcon size={12} className={`text-sky-400 shrink-0 ${isDone ? '' : 'animate-bounce'}`} />
+          <SendIcon size={12} className={`text-sky-400 shrink-0 ${isDone ? '' : 'animate-pulse'}`} />
           <span className="truncate text-text font-bold text-xs tracking-tight">
             {isDone ? `✓ Sent to ${recipient}` : `Sending WhatsApp to ${recipient}`}
           </span>
@@ -1205,15 +1207,22 @@ const LiveSendProgressChip = memo(({
           <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
             {waSent > 0 && <span className="text-emerald-400">✓ {waSent}</span>}
             {waPending > 0 && <span className="text-amber-400">⏰ {waPending}</span>}
-            {waFailed > 0 && <span className="text-rose-400 animate-bounce">⚠️ {waFailed}</span>}
+            {waFailed > 0 && <span className="text-rose-400 animate-pulse">⚠️ {waFailed}</span>}
           </div>
         )}
       </div>
 
       <div className="w-full h-1.5 bg-bg border border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
         <div
-          className="h-full rounded-full transition-all duration-150 relative bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400"
-          style={{ width: `${Math.min(100, Math.max(0, isDone ? 100 : progress))}%` }}
+          className="h-full rounded-full relative bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-400 transition-[width] duration-300 ease-out"
+          style={
+            isDone
+              ? { width: '100%' }
+              : {
+                  animation: `liveProgressFill ${durationSec}s linear forwards`,
+                  willChange: 'width'
+                }
+          }
         >
           <div className="absolute right-0 top-0 bottom-0 w-2 bg-sky-100 rounded-full shadow-sm shadow-sky-400/50" />
         </div>
@@ -1319,7 +1328,7 @@ const Topbar = memo(({
       setIsCarouselHovered(false);
       setIsHoverExpanded(false);
       hubHoverTimerRef.current = null;
-    }, 1580);
+    }, 350);
   };
 
   useEffect(() => {
@@ -2023,7 +2032,7 @@ const Topbar = memo(({
                     if (onOpenAutomationHub) onOpenAutomationHub();
                     else if (onOpenWaQueue) onOpenWaQueue();
                   }}
-                  className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in zoom-in-95"
+                  className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress animate-hub-enter"
                   title="Click to open Dispatch & WhatsApp Automation Hub"
                 >
                   {/* Top Stats Breakdown */}
@@ -2039,7 +2048,7 @@ const Topbar = memo(({
                       {waSent > 0 && <span className="text-emerald-400">✓ {waSent}</span>}
                       {waSending > 0 && <span className="text-sky-400 animate-pulse">▶ {waSending}</span>}
                       {waPending > 0 && <span className="text-amber-400">⏰ {waPending}</span>}
-                      {waFailed > 0 && <span className="text-rose-400 animate-bounce">⚠️ {waFailed}</span>}
+                      {waFailed > 0 && <span className="text-rose-400 animate-pulse">⚠️ {waFailed}</span>}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -2058,28 +2067,28 @@ const Topbar = memo(({
                   <div className="w-full h-1.5 bg-bg border border-glass-border/60 rounded-full overflow-hidden flex relative shadow-inner">
                     {sentPct > 0 && (
                       <div
-                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-[width] duration-300 ease-out"
                         style={{ width: `${sentPct}%` }}
                         title={`${waSent} Sent (${Math.round(sentPct)}%)`}
                       />
                     )}
                     {sendingPct > 0 && (
                       <div
-                        className="h-full bg-gradient-to-r from-sky-500 to-blue-400 animate-pulse transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-sky-500 to-blue-400 animate-pulse transition-[width] duration-300 ease-out"
                         style={{ width: `${sendingPct}%` }}
                         title={`${waSending} Sending (${Math.round(sendingPct)}%)`}
                       />
                     )}
                     {pendingPct > 0 && (
                       <div
-                        className="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-[width] duration-300 ease-out"
                         style={{ width: `${pendingPct}%` }}
                         title={`${waPending} Pending / Retrying (${Math.round(pendingPct)}%)`}
                       />
                     )}
                     {failedPct > 0 && (
                       <div
-                        className="h-full bg-gradient-to-r from-rose-500 to-red-500 animate-pulse transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-rose-500 to-red-500 animate-pulse transition-[width] duration-300 ease-out"
                         style={{ width: `${failedPct}%` }}
                         title={`${waFailed} Failed (${Math.round(failedPct)}%)`}
                       />
@@ -2113,7 +2122,7 @@ const Topbar = memo(({
               );
             }
 
-            // (B) Failed Messages Alert Mode (Blinks gently to notify user)
+            // (B) Failed Messages Alert Mode
             if (waFailed > 0) {
               return (
                 <div
@@ -2121,11 +2130,11 @@ const Topbar = memo(({
                     if (onOpenAutomationHub) onOpenAutomationHub();
                     else if (onOpenWaQueue) onOpenWaQueue();
                   }}
-                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in"
+                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress animate-hub-enter"
                 >
                   <div className="flex items-center justify-between gap-2 text-xs font-semibold">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1 text-rose-400">
-                      <AlertTriangle size={12} className="animate-bounce shrink-0" />
+                      <AlertTriangle size={12} className="animate-pulse shrink-0" />
                       <span className="truncate font-bold text-xs tracking-tight">
                         ⚠️ {waFailed} Message{waFailed > 1 ? 's' : ''} Failed / Retrying
                       </span>
@@ -2149,7 +2158,7 @@ const Topbar = memo(({
               return (
                 <div
                   onClick={onOpenWaQueue}
-                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in"
+                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress animate-hub-enter"
                 >
                   <div className="flex items-center justify-between gap-2 text-xs font-semibold">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -2172,7 +2181,10 @@ const Topbar = memo(({
             // (D) Other Global Tasks Carousel (Catalog Sync / Backup / OCR)
             if (activeHeaderItems.length > 0 && currentHeaderItem) {
               return (
-                <div className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress origin-center transition-all duration-300 animate-in fade-in zoom-in-95">
+                <div
+                  key={currentHeaderItem.id}
+                  className="w-full flex flex-col justify-center gap-0.5 h-full relative cursor-pointer group/progress animate-hub-enter"
+                >
                   <div className="flex items-center justify-between gap-2 text-xs font-semibold">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                       {currentHeaderItem.icon}
@@ -2193,7 +2205,7 @@ const Topbar = memo(({
                   {currentHeaderItem.progress !== undefined && (
                     <div className="w-full h-1 bg-bg border-t border-glass-border/40 rounded-full overflow-hidden relative shadow-inner">
                       <div
-                        className={`h-full rounded-full transition-all duration-500 relative bg-gradient-to-r ${currentHeaderItem.color === 'purple'
+                        className={`h-full rounded-full transition-[width] duration-300 ease-out relative bg-gradient-to-r ${currentHeaderItem.color === 'purple'
                             ? 'from-purple-500 via-indigo-500 to-sky-400'
                             : currentHeaderItem.color === 'sky'
                               ? 'from-sky-500 via-blue-500 to-cyan-400'
@@ -2214,10 +2226,10 @@ const Topbar = memo(({
             // (E) Completely Idle / All Done (Auto-Hides cleanly; reveals on hover)
             return (
               <div
-                className="w-full h-full flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity duration-300 cursor-pointer"
+                className="w-full h-full flex items-center justify-center cursor-pointer group/idle"
                 title="Hover to inspect Dispatch & Messaging Hub"
               >
-                <div className="w-16 h-0.5 bg-glass-border rounded-full" />
+                <div className="w-16 h-1 bg-glass-border/60 group-hover/idle:bg-glass-border group-hover/idle:w-24 rounded-full transition-all duration-300" />
               </div>
             );
           })()}

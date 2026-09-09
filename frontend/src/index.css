@@ -618,3 +618,32 @@ button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primar
 .light button[class*="bg-primary/"]:not([class*="bg-primary/9"]):not([class*="bg-primary/8"]):not([class*="bg-primary/7"]):hover {
   background-color: rgba(0, 0, 0, 0.05) !important;
 }
+
+/* ═══════════════════════════════════════════
+   SMOOTH DISPATCH HUB ANIMATIONS
+   GPU-accelerated, high-framerate transitions
+   ═══════════════════════════════════════════ */
+@keyframes hubFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes liveProgressFill {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-hub-enter {
+  animation: hubFadeSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+}
