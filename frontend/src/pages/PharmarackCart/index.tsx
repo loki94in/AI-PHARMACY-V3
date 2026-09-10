@@ -3567,24 +3567,6 @@ export default function PharmarackCart() {
                 />
               </button>
 
-              <button
-                onClick={() => setShowConfirmBatchModal(true)}
-                disabled={isSendingBatchWhatsApp || distributors.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-transparent text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/10 font-extrabold transition-all active:scale-95 text-xs disabled:opacity-50 shadow-xs cursor-pointer"
-                title="Send order messages silently to all saved distributor WhatsApp numbers with 30-45s safe delay"
-              >
-                {isSendingBatchWhatsApp ? (
-                  <span className="w-3.5 h-3.5 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
-                ) : (
-                  <MessageSquare size={13} />
-                )}
-                <span>
-                  {isSendingBatchWhatsApp
-                    ? 'Sending orders…'
-                    : `Send All via WhatsApp (${readyToSendDistributors.length})`}
-                </span>
-              </button>
-
               {lastBatchSentTime && (
                 <span className="text-[10px] text-emerald-400 font-extrabold px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center gap-1 shrink-0">
                   <Clock size={11} className="text-emerald-400" />

@@ -465,13 +465,14 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
             });
           });
 
-          // Helper to get stock tier: 2 = Green (High / >= 15), 1 = Yellow (Low / 1-14), 0 = Red (Out of Stock / 0)
+          // Helper to get stock tier: 2 = Green (High / >= 15), 1 = Yellow (Low / 1-14 / Offline), 0 = Red (Out of Stock / 0)
           const getStockTier = (stockStr: string | undefined | null): number => {
             if (!stockStr) return 2;
             const s = String(stockStr).toLowerCase().trim();
+            if (s === 'offline') return 1;
             if (s === 'high') return 2;
             if (s === 'low') return 1;
-            if (s === '0' || s === 'out of stock' || s === 'nil') return 0;
+            if (s === '0' || s === 'out of stock' || s === 'nil' || s === 'no stock' || s === 'oos') return 0;
             const num = parseInt(s, 10);
             if (!isNaN(num)) {
               if (num >= 15) return 2;
@@ -482,16 +483,29 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
           };
 
           // Sort suggestions:
-          // 1. TOP PRIORITY: In Active Live Cart (Consolidate orders / reach MOVs)
-          // 2. Exact title / core query match (e.g. "NICIP P" before "NICIP PLUS")
-          // 3. Mapped ALWAYS before Unmapped
-          // 4. Stock Tier: Green (2) -> Yellow (1) -> Red (0)
+          // 1. Exact title / core query match (e.g. "NICIP P" before "NICIP PLUS")
+          // 2. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
+          // 3. In Active Live Cart (Consolidate orders / reach MOVs within same stock tier)
+          // 4. Mapped ALWAYS before Unmapped
           const cleanQ = query.toLowerCase().trim();
           if (prSuggestions.length > 1) {
             prSuggestions.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-              // 1. TOP PRIORITY: In Active Live Cart
+              // 1. Exact title match / core query proximity
+              const aName = (a.medicine_name || '').toLowerCase().trim();
+              const bName = (b.medicine_name || '').toLowerCase().trim();
+              const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
+              const bExact = bName === cleanQ || bName.startsWith(cleanQ + ' ');
+              if (aExact && !bExact) return -1;
+              if (!aExact && bExact) return 1;
+
+              // 2. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
+              const aStock = getStockTier(a.stock);
+              const bStock = getStockTier(b.stock);
+              if (aStock !== bStock) return bStock - aStock;
+
+              // 3. In Active Live Cart (within the same stock tier)
               const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
               const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
               if (aInCart && !bInCart) return -1;
@@ -505,24 +519,11 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                 }
               }
 
-              // 2. Exact title match / core query proximity
-              const aName = (a.medicine_name || '').toLowerCase().trim();
-              const bName = (b.medicine_name || '').toLowerCase().trim();
-              const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
-              const bExact = bName === cleanQ || bName.startsWith(cleanQ + ' ');
-              if (aExact && !bExact) return -1;
-              if (!aExact && bExact) return 1;
-
-              // 3. Mapped ALWAYS before Unmapped
+              // 4. Mapped ALWAYS before Unmapped
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped && !bMapped) return -1;
               if (!aMapped && bMapped) return 1;
-
-              // 4. Stock Tier: Green (2) -> Yellow (1) -> Red (0) across any distributor
-              const aStock = getStockTier(a.stock);
-              const bStock = getStockTier(b.stock);
-              if (aStock !== bStock) return bStock - aStock;
 
               return 0;
             });
