@@ -75,7 +75,7 @@ const NOISE_WORDS = new Set([
   // (after stripping 'thank'/'bhai' etc.) must not be searched as a medicine.
   'you', 'your', 'yours', 'so', 'much', 'too', 'also', 'well', 'how', 'are',
   'soon', 'see', 'come', 'coming', 'going', 'love', 'miss', 'fine', 'great',
-  'welcome', 'sorry', 'very',
+  'welcome', 'sorry', 'very', 'doing', 'did',
   // Common Devanagari chatter (greetings/particles/questions)
   'ना', 'नाही', 'आहे', 'आहेत', 'का', 'हो', 'हा', 'नको', 'ठीक', 'बाकी', 'आज', 'उद्या',
   'कधी', 'केव्हा', 'कसे', 'कसा', 'काय', 'क्या', 'कब', 'कहा', 'कैसे', 'हां', 'हाँ', 'जी',
@@ -88,6 +88,65 @@ const NOISE_WORDS = new Set([
   'liye', 'liya', 'karna', 'kar', 'krna', 'krdo', 'sakta', 'sakte',
   'wala', 'wali', 'vale'
 ]);
+
+// Commercial, marketing, and scheme words commonly seen in promotional broadcasts, spam flyers, and B2B updates
+export const MARKETING_NOISE_WORDS = new Set([
+  'saving', 'savings', 'save', 'margin', 'margins', 'points', 'point',
+  'ushop', 'cashback', 'deal', 'deals', 'festive', 'festival', 'offer', 'offers',
+  'discount', 'discounts', 'dhamaka', 'dhamakedaar', 'bumper', 'updates', 'update',
+  'market', 'rate', 'rates', 'scheme', 'schemes', 'profit', 'profits', 'extra',
+  'double', 'triple', 'limited', 'bonus', 'special', 'voucher', 'vouchers',
+  'coupon', 'coupons', 'free', 'gift', 'gifts', 'shikhar', 'udaan', 'b2b',
+  'wholesaler', 'wholesale', 'webinar', 'reward', 'rewards', 'earn', 'earning',
+  'missing', 'maximum', 'minimum', 'start', 'hurry'
+]);
+
+// Unmistakably commercial/promotional tokens that should never form a standalone medicine request
+export const COMMERCIAL_DISQUALIFIERS = new Set([
+  'margins', 'margin', 'cashback', 'ushop', 'dhamakedaar', 'dhamaka',
+  'webinar', 'wholesaler', 'wholesale', 'saving', 'savings', 'deals',
+  'bumper', 'voucher'
+]);
+
+/**
+ * Detects marketing, promotional, B2B updates, distributor schemes, or spam broadcasts.
+ * Such messages must NEVER be treated as customer medicine requests or special orders.
+ */
+export function isPromotionalOrBroadcastMessage(text: string): boolean {
+  if (!text || !text.trim()) return false;
+  const raw = text.trim();
+  const lower = raw.toLowerCase();
+
+  // 1. Marketing headlines & promotional phrases
+  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|rate list|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily))\b/i;
+  if (PROMO_PHRASES_REGEX.test(lower)) return true;
+
+  // 2. Greeting / festive broadcasts
+  if (/\b(?:happy (?:diwali|new year|eid|holi|navratri|makar sankranti|ganesh chaturthi)|dear (?:retailer|chemist|partner|customer)s?|attention (?:chemists|retailers))\b/i.test(lower)) {
+    return true;
+  }
+
+  // 3. Promotional marketing emojis (money, celebration, broadcast sirens, etc.)
+  const promoEmojiMatches = raw.match(/[\u{1F4B0}\u{1F911}\u{1F973}\u{1F631}\u{231B}\u{1F6CD}\u{1F389}\u{1F381}\u{1F680}\u{1F4E2}\u{1F3F7}\u{1F4A5}\u{1FA99}\u{1F4B8}\u{1F4C8}\u{1F4C9}\u{1F3AF}\u{1F514}\u{1F6D2}\u{1F388}]/gu);
+  if (promoEmojiMatches && promoEmojiMatches.length >= 2) {
+    return true;
+  }
+
+  // 4. Keycap number bullets (e.g. 1️⃣, 2️⃣, 3️⃣) combined with commercial words
+  const hasKeycaps = /[0-9]️⃣|[\u0030-\u0039]\uFE0F?\u20E3/.test(raw);
+  if (hasKeycaps && /\b(?:points?|margins?|updates?|offers?|cashback|save|bonus|scheme)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 5. Links combined with marketing words
+  if (/https?:\/\/|wa\.me\/|bit\.ly\/|t\.me\//i.test(lower)) {
+    if (/\b(?:offer|deal|save|discount|points?|app|margin|shop|scheme|updates?|free)\b/i.test(lower)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export interface ParsedMessage {
   isMedicineRequest: boolean;
@@ -117,16 +176,36 @@ const MAX_CANDIDATES = 8;
  * Used by BOTH the text-parse path and the OCR path before any search runs.
  * Rules: length >= 3, not pure numbers/punctuation (blocks "118", "118 2"),
  * at least 3 Latin letters (catalog/medicine names are Latin — blocks
- * Devanagari-only chatter and emoji), and not made up entirely of noise words.
+ * Devanagari-only chatter and emoji), not made up entirely of noise/marketing words,
+ * and contains no commercial disqualifiers.
  */
 export function isPlausibleMedicineName(name: string): boolean {
-  const trimmed = (name || '').trim();
-  if (trimmed.length < 3) return false;
-  if (/^[\d\s.,/\-]+$/.test(trimmed)) return false;
-  const latinLetters = trimmed.match(/[a-zA-Z]/g);
+  if (!name) return false;
+  // Strip all emojis (Extended Pictographic / Presentation / Symbols / Keycaps) and markdown/punctuation
+  const cleaned = name
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\p{Emoji}\u{20E3}\u{FE0F}]/gu, ' ')
+    .replace(/[*_~`#"'()[\]{}<>|/\\:;!?,+=-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (cleaned.length < 3) return false;
+  if (/^[\d\s.,/\-]+$/.test(cleaned)) return false;
+  const latinLetters = cleaned.match(/[a-zA-Z]/g);
   if (!latinLetters || latinLetters.length < 3) return false;
-  const tokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length > 0 && tokens.every(t => NOISE_WORDS.has(t))) return false;
+
+  const tokens = cleaned.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  // Filter down to non-numeric word tokens (e.g. in "000/month", wordTokens is ["month"])
+  const wordTokens = tokens.filter(t => !/^\d+$/.test(t));
+  if (wordTokens.length === 0) return false;
+
+  // Reject if all word tokens are noise or marketing words
+  if (wordTokens.every(t => NOISE_WORDS.has(t) || MARKETING_NOISE_WORDS.has(t))) return false;
+
+  // Reject if any token is an unmistakable commercial/promotional disqualifier
+  if (tokens.some(t => COMMERCIAL_DISQUALIFIERS.has(t))) return false;
+
   return true;
 }
 
@@ -234,6 +313,11 @@ export function parseMessage(text: string): ParsedMessage {
     return { isMedicineRequest: false, medicineName: '', quantity: 0, unit: '', rawIntentWords: [] };
   }
 
+  // Reject promotional broadcasts from single-message parse
+  if (isPromotionalOrBroadcastMessage(text)) {
+    return { isMedicineRequest: false, medicineName: '', quantity: 0, unit: '', rawIntentWords: [] };
+  }
+
   const words = text.trim().split(/\s+/);
   const parsed = parseTokenList(words);
 
@@ -264,10 +348,18 @@ export function parseMessage(text: string): ParsedMessage {
 export function extractMedicineCandidates(text: string): MedicineCandidate[] {
   if (!text || !text.trim()) return [];
 
+  // Drop marketing broadcasts, schemes, and promotional spam before extraction
+  if (isPromotionalOrBroadcastMessage(text)) return [];
+
   const results: MedicineCandidate[] = [];
   const seen = new Set<string>();
 
-  const roughParts = text.replace(/\r?\n/g, ',').split(/[,;•|]+/);
+  // Strip keycap emojis (1️⃣, 2️⃣, etc.) and numbered list bullets (1., 1), 1-) so they are not parsed as order quantities
+  const sanitizedText = text
+    .replace(/[0-9]️⃣|[\u0030-\u0039]\uFE0F?\u20E3/gu, '')
+    .replace(/^[\s*•\->#]*\d+[.)\-]+\s*/gm, '');
+
+  const roughParts = sanitizedText.replace(/\r?\n/g, ',').split(/[,;•|]+/);
   for (const part of roughParts) {
     const words = part.trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) continue;

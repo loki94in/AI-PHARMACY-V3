@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P1-22 — WhatsApp Promotional, Scheme & Broadcast Messages Auto-Created as Quick Special Requests
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When WhatsApp received marketing flyers, promotional broadcasts, or B2B scheme messages (such as Unilever/Shikhar promotions containing `*Start Saving🥰*` and `2️⃣Maximum Festive margins💰`), the system extracted each promo slogan as a medicine candidate, parsed numbered list emojis (`2️⃣`) as order quantities (`2`), and inserted them as pending customer special requests in **Quick Special Requests** under "Walk-in Customer". |
+| **Root cause** | 1. Lack of promotional/broadcast filtering on inbound WhatsApp messages: marketing updates, festive offers, schemes, cashbacks, and broadcast emojis were routed to medicine extraction.<br>2. `isPlausibleMedicineName` checked only whether a string had $\ge 3$ Latin letters and wasn't purely digits, passing strings like `*Start Saving🥰*` and `Festive margins💰`.<br>3. In `extractMedicineCandidates`, keycap emojis (`2️⃣`) and numbered bullet prefixes were parsed by `parseInt` as item quantities.<br>4. In `whatsappIntentService.ts`, `trackMedicineRequest` had an inverted check (`filterResult.matches.length === 0 || confidence < 80`) which auto-created a `special_orders` row whenever a string had low confidence or no local match, saving raw promotional text into the database without requiring order intent or verified catalog presence. |
+| **How it was fixed** | 1. Implemented `isPromotionalOrBroadcastMessage()` in `src/services/intentKeywords.ts` detecting marketing headlines, deals, margins, cashbacks, points, schemes, promotional emojis, and broadcasts, dropping them immediately in `handleInbound` and `handleOcrComplete`.<br>2. Hardened `isPlausibleMedicineName()`: strips all emojis and markdown formatting (`*`, `_`, `~`), filters non-numeric word tokens, and rejects any strings composed of noise/marketing words or commercial disqualifiers (`margins`, `ushop`, `cashback`, `dhamaka`, `webinar`, `deals`, `savings`, etc.).<br>3. Updated `extractMedicineCandidates()`: strips keycap emojis and list bullets before parsing to prevent misinterpreting bullet numbers as quantities, and returns empty for promotional messages.<br>4. Hardened `trackMedicineRequest()` in `src/services/whatsappIntentService.ts`: only creates a shortage special order when there is genuine order intent (`hasIntentWords || source === 'ocr'`), high confidence ($\ge 80\%$), confirmed master/catalog presence, and genuine out-of-stock shelf status. Passes the canonical matched medicine name instead of raw informal input.<br>5. Cancelled bogus pending special order rows (IDs 53 & 54) in the local database, clearing Quick Special Requests immediately. |
+| **Priority** | P1 |
+| **What not to touch** | Legitimate medicine intent keywords (`chahiye`, `bhej do`, `need`, `order`, etc.); OCR prescription scanning pipeline; multi-item candidate splitting (`extractMedicineCandidates`). |
+| **Verified by** | `tests/whatsappPromoFilter.test.ts` (9/9 PASS); `tests/whatsappIntentGate.test.ts` (11/11 PASS); `tests/intentKeywords.test.ts` (20/20 PASS); `npx tsc --noEmit` PASS; `npm run guardrails` PASS; LocalAppData SQLite `special_orders` cleaned. |
+
 ### [Fixed] P1-21 — Live Cart Search Dropdown Priority Hardening: Strict Mapped Wall & Non-Mapped Relegation
 
 | Field | Content |

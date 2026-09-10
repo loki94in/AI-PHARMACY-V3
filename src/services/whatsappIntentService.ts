@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
@@ -256,6 +256,13 @@ export async function handleInbound(msg: any): Promise<void> {
 
     // 1. IGNORE CHECK
     if (await isIgnored(chatId)) return;
+
+    // 1b. PROMOTIONAL & BROADCAST FILTER
+    // Reject marketing schemes, B2B broadcasts, festive deals, and spam before doing any work
+    if (isPromotionalOrBroadcastMessage(body)) {
+      console.log(`[Intent Service] Discarded promotional/marketing broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, ' ')}..."`);
+      return;
+    }
 
     // Await startup cart synchronization window so existing cart items are loaded
     await startupSyncCoordinator.waitForCartSync();
@@ -509,7 +516,7 @@ export async function handleInbound(msg: any): Promise<void> {
           customer,
           isNewCustomer,
           messageBody: body,
-          source: hasMedia ? 'both' : 'text',
+          source: 'text',
           dosageForm: textForm || undefined,
           msgId,
           phone,
@@ -810,12 +817,22 @@ async function searchAndBroadcast(opts: {
 
   // Track pending shortage request for >23 hour admin reminder if local stock
   // is missing — includes master-registered names with zero shelf stock.
-  if (medicineName && (filterResult.matches.length === 0 || confidence < 80 || availability === 'REGISTERED_NO_STOCK')) {
+  // CRITICAL GUARD: Only create a shortage request when there is genuine order intent
+  // (or OCR scan), the item is a confirmed medicine with high confidence (>= 80%),
+  // and the shelf stock is genuinely missing (REGISTERED_NO_STOCK or EXTERNAL_ONLY).
+  // Low confidence, chit-chat, promotional text, or unconfirmed strings must NEVER create special_orders!
+  const hasOrderIntent = hasIntentWords || source === 'ocr';
+  const isConfirmedMedicine = filterResult.matches.length > 0 || (catalogResults?.mapped && catalogResults.mapped.length > 0);
+  const isOutOfStock = availability === 'REGISTERED_NO_STOCK' || availability === 'EXTERNAL_ONLY';
+
+  if (hasOrderIntent && isConfirmedMedicine && confidence >= 80 && isOutOfStock) {
     try {
       const { trackMedicineRequest } = await import('./shortageReminderService.js');
       const distName = catalogResults?.mapped?.[0]?.supplier_name || catalogResults?.nonMapped?.[0]?.distributor_name || 'Standard Distributor';
+      // Use canonical confirmed medicine name, never raw informal/promotional input
+      const canonicalName = filterResult.matches[0] || catalogResults?.mapped?.[0]?.productName || catalogResults?.mapped?.[0]?.name || medicineName;
       trackMedicineRequest({
-        medicine_name: medicineName,
+        medicine_name: canonicalName,
         distributor_name: distName,
         quantity: quantity || 1,
         // Digits-only: chat-id style phones (@c.us/@lid suffixes) must never leak into
@@ -839,6 +856,12 @@ async function searchAndBroadcast(opts: {
 export async function handleOcrComplete(data: any): Promise<void> {
   const { phone, chatId, messageBody, ocrResult, msgId, imagePath } = data;
   if (!ocrResult) return;
+
+  // Drop marketing flyers or promotional broadcasts before running OCR matching
+  if (isPromotionalOrBroadcastMessage(messageBody || '') || isPromotionalOrBroadcastMessage(ocrResult.text || '')) {
+    console.log(`[Intent Service] OCR scan discarded promotional flyer from ${phone || chatId}`);
+    return;
+  }
 
   // ─── 0. Payment Confirmation Screenshot Detection (Human-in-the-Loop) ────────
   // If the sender has an active order waiting for payment verification, attach this
