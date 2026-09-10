@@ -5,7 +5,7 @@ import {
   WifiOff, Edit3, Play, Pause, ShieldAlert, ChevronDown, ChevronUp, Zap, Truck, Building2, MessageSquare, Calendar, Trash2, CheckCheck,
   Moon, Loader2, ShieldCheck
 } from 'lucide-react';
-import { api, apiClient, peekWhatsAppQueueStatusCache, type WhatsAppQueueItem, type WhatsAppQueueStatus } from '../services/api';
+import { api, apiClient, peekWhatsAppQueueStatusCache, type WhatsAppQueueItem, type WhatsAppQueueStatus, type WhatsAppDeliveryRecord } from '../services/api';
 import { toastEvent, whatsappQueueEvent, messageSendEvent, automationHubEvent } from '../services/events';
 import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -17,7 +17,7 @@ interface WhatsAppQueuePopoverProps {
   onClose: () => void;
 }
 
-type TabType = 'all' | 'customer' | 'delivery' | 'purchase' | 'special' | 'pending' | 'sent' | 'failed';
+type TabType = 'all' | 'customer' | 'delivery' | 'purchase' | 'special' | 'pending' | 'sent' | 'failed' | 'register';
 
 type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
 
@@ -66,6 +66,26 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const [editPhone, setEditPhone] = useState('');
   const [editMessage, setEditMessage] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Permanent Sent Delivery Register state (preserved across updates)
+  const [registerItems, setRegisterItems] = useState<WhatsAppDeliveryRecord[]>([]);
+  const [registerTotal, setRegisterTotal] = useState(0);
+  const [registerLoading, setRegisterLoading] = useState(false);
+
+  const fetchSentRegister = async (search = searchQuery) => {
+    try {
+      setRegisterLoading(true);
+      const res = await api.getWhatsAppSentRegister({ limit: 150, search: search.trim() || undefined });
+      if (res?.success) {
+        setRegisterItems(res.items || []);
+        setRegisterTotal(res.total || 0);
+      }
+    } catch (err) {
+      console.error('Failed to fetch WhatsApp sent register:', err);
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
 
   // Live in-flight animation state for currently sending WhatsApp message (matching WhatsApp Automation Hub)
   const [activeSending, setActiveSending] = useState<{
@@ -172,11 +192,18 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sanctioned SSE queue-event refresh flow per AGENTS.md
     fetchStatus(false);
-    const unsub = whatsappQueueEvent.subscribeUpdated(() => fetchStatus(true));
+    fetchSentRegister();
+    const unsub = whatsappQueueEvent.subscribeUpdated(() => {
+      fetchStatus(true);
+      fetchSentRegister();
+    });
     const unsubSend = messageSendEvent.subscribeSendProgress((detail) => {
       startSendAnimation(detail.recipient, detail.messagePreview, detail.durationSec || 10);
     });
-    const handleSse = () => fetchStatus(true);
+    const handleSse = () => {
+      fetchStatus(true);
+      fetchSentRegister();
+    };
     window.addEventListener('sse-wa-queue-updated', handleSse);
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -187,6 +214,13 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only + event subscriptions, fetchStatus is stable-in-practice
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'register') {
+      fetchSentRegister(searchQuery);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, searchQuery]);
 
   const [isFlushing, setIsFlushing] = useState(false);
 
@@ -670,6 +704,73 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     );
   };
 
+  const renderRegisterItem = (record: WhatsAppDeliveryRecord) => {
+    const isExpanded = Boolean(expandedIds[record.id]);
+    const displayName = record.target_name || `Recipient (+${record.phone_last10 || record.phone})`;
+
+    return (
+      <div 
+        key={record.id}
+        onClick={() => toggleExpand(record.id)}
+        className="rounded-xl border border-glass-border/40 bg-bg2/40 hover:bg-bg2/70 transition-all overflow-hidden cursor-pointer"
+      >
+        <div className="p-2.5 flex items-center justify-between gap-3 text-xs">
+          {/* Left: Type Badge & Name / Phone */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            {renderTypeBadge(record.type)}
+
+            <span className="font-bold text-text truncate max-w-[200px]" title={displayName}>
+              {displayName}
+            </span>
+
+            <span className="text-[10px] font-mono text-muted bg-bg3/80 border border-glass-border/40 px-1.5 py-0.5 rounded shrink-0">
+              +{record.phone}
+            </span>
+
+            {record.reference_id && (
+              <span className="text-[9px] font-mono text-muted bg-bg3/60 px-1.5 py-0.5 rounded shrink-0">
+                Ref: {record.reference_id}
+              </span>
+            )}
+          </div>
+
+          {/* Right: Status Pill & Quick Expand Trigger */}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-teal-500/15 text-teal-400 border border-teal-500/30 flex items-center gap-1 font-mono">
+              <ShieldCheck size={10} className="text-teal-400" />
+              <span>Delivered {record.sent_at ? `(${new Date(record.sent_at).toLocaleDateString([], { day: '2-digit', month: 'short' })} ${new Date(record.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}</span>
+            </span>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpand(record.id);
+              }}
+              className="p-1 hover:bg-bg3 text-muted hover:text-text rounded-md transition-colors"
+              title={isExpanded ? 'Hide message text' : 'View message text'}
+            >
+              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Expanded Message Content Drawer */}
+        {isExpanded && (
+          <div className="p-3 bg-bg/80 border-t border-glass-border/40 text-xs space-y-2 animate-fadeIn">
+            <div className="text-[11px] text-text/90 whitespace-pre-wrap font-sans bg-bg2/80 p-2.5 rounded-lg border border-glass-border/30">
+              {record.message}
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-muted font-mono pt-1">
+              <span>Delivery Hash: {record.message_hash}</span>
+              {record.wa_message_id && <span>Msg ID: {record.wa_message_id}</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Truthful connection state (status contract): idle RAM-sleep keeps the saved
   // session intact and auto-wakes on the next send; the boot restore window is
   // a normal connecting phase. Neither may be labeled "Offline".
@@ -1095,12 +1196,53 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               <AlertTriangle size={11} className={todayFailedCount > 0 || failedTotal > 0 ? "text-rose-400" : "text-muted"} />
               <span>Failed ({todayFailedCount > 0 ? todayFailedCount : failedTotal})</span>
             </button>
+            <button
+              onClick={() => setActiveTab('register')}
+              className={`py-1.5 px-3 text-xs font-bold rounded-xl transition-all whitespace-nowrap shrink-0 flex items-center gap-1 cursor-pointer ${
+                activeTab === 'register' 
+                  ? 'bg-teal-500/20 text-teal-300 border border-teal-500/35' 
+                  : 'bg-bg text-muted hover:text-text border border-glass-border'
+              }`}
+              title="Permanent delivery ledger across app updates and past sessions"
+            >
+              <ShieldCheck size={11} className="text-teal-400" />
+              <span>Sent Register ({registerTotal > 0 ? registerTotal : 'Audit'})</span>
+            </button>
           </div>
         </div>
 
         {/* Date-Grouped Queue Items List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-          {loading ? (
+          {activeTab === 'register' ? (
+            registerLoading ? (
+              <div className="h-full min-h-[240px] py-12 text-center text-xs text-muted flex items-center justify-center gap-2">
+                <RefreshCw className="animate-spin text-teal-400" size={16} /> Fetching permanent sent register...
+              </div>
+            ) : registerItems.length === 0 ? (
+              <div className="h-full min-h-[240px] py-16 text-center text-xs text-muted flex flex-col items-center justify-center gap-2">
+                <ShieldCheck size={30} className="text-teal-400/40" />
+                <span className="font-semibold text-text text-sm">No Sent Register Records Found</span>
+                <span className="text-[11px] text-muted max-w-xs">Delivered messages recorded across app restarts and updates will permanently appear here.</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between pb-1 px-1">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={14} className="text-teal-400" />
+                    <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                      Permanent Sent Register ({registerItems.length})
+                    </h4>
+                  </div>
+                  <span className="text-[10px] text-muted font-mono">
+                    Audit Log · Preserved Across Updates
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {registerItems.map(record => renderRegisterItem(record))}
+                </div>
+              </div>
+            )
+          ) : loading ? (
             <div className="h-full min-h-[240px] py-12 text-center text-xs text-muted flex items-center justify-center gap-2">
               <RefreshCw className="animate-spin text-sky" size={16} /> Fetching queue details...
             </div>

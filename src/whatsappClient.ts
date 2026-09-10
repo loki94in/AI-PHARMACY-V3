@@ -1465,6 +1465,10 @@ export async function sendMessage(
               hasMedia: !!provHasMedia
             }
           });
+
+          import('./services/whatsappDeliveryRegister.js')
+            .then(m => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, provisionalBody, file || mediaPath ? 'media' : 'text', undefined, undefined, messageId))
+            .catch(() => {});
         } catch (provErr: any) {
           console.warn('[WhatsApp] Provisional DB write failed (non-fatal):', provErr?.message);
         }
@@ -1549,6 +1553,10 @@ export async function sendMessage(
           hasMedia: !!hasMedia
         }
       });
+
+      import('./services/whatsappDeliveryRegister.js')
+        .then(m => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, bodyText, file || mediaPath ? 'media' : 'text', undefined, undefined, messageId))
+        .catch(() => {});
     } catch (dbErr) {
       console.error('[WhatsApp Client Wrapper] SQLite write error:', dbErr);
     }

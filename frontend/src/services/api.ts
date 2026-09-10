@@ -487,6 +487,21 @@ export interface CompactInventoryItem {
   allow_loose_sale?: number | boolean;
 }
 
+export interface WhatsAppDeliveryRecord {
+  id: number;
+  phone: string;
+  phone_last10: string;
+  message: string;
+  message_hash: string;
+  type: string;
+  target_name?: string | null;
+  reference_id?: string | null;
+  wa_message_id?: string | null;
+  sent_at: number;
+  delivery_status: string;
+  metadata?: string | null;
+}
+
 export interface WhatsAppQueueItem {
   id: number;
   number: string;
@@ -1597,6 +1612,8 @@ export const api = {
   deleteWhatsAppQueueItem: (id: number) => apiClient.delete<{ success: boolean; deleted: boolean; message: string }>(`/whatsapp/queue/item/${id}`).then(res => res.data),
   clearFailedWhatsAppQueue: () => apiClient.post<{ success: boolean; clearedCount: number; message: string }>('/whatsapp/queue/clear-failed').then(res => res.data),
   prewarmWhatsAppQueue: () => apiClient.post<{ success: boolean; prewarmed: boolean }>('/whatsapp/queue/prewarm').then(res => res.data).catch(() => ({ success: false, prewarmed: false })),
+  getWhatsAppSentRegister: (params?: { limit?: number; offset?: number; search?: string; type?: string }) =>
+    apiClient.get<{ success: boolean; items: WhatsAppDeliveryRecord[]; total: number }>('/whatsapp/queue/sent-register', { params }).then(res => res.data),
 
   // Upcoming Automations & Triggers API
   getUpcomingTriggers: (lookahead = 5) => apiClient.get<{ success: boolean; upcoming: Array<{ id: string; name: string; category: string; secondsUntilRun: number; nextRunIso: string; isSnoozed: boolean; description: string }> }>('/triggers/upcoming', { params: { lookahead } }).then(res => res.data),

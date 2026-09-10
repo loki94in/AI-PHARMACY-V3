@@ -1,6 +1,9 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } from '../whatsappClient.js';
+import { whatsappDeliveryRegister } from './whatsappDeliveryRegister.js';
+
+const SERVER_BOOT_TIME = Date.now();
 
 export interface QueueItem {
   id: number;
@@ -240,13 +243,18 @@ class WhatsAppQueueWorker {
     return Boolean(oldestPending);
   }
 
-  /** Check outbox for a verified outbound message (real WhatsApp message ID, excluding provisional msg_out_ entries, within 120s) */
+  /** Check outbox and permanent delivery register for a verified outbound message */
   private async hasRecentOutboxMatch(db: any, phone: string, message: string): Promise<boolean> {
     const cleanDigits = normalizeWhatsAppPhone(phone);
     const last10 = cleanDigits.slice(-10);
     if (!last10 || last10.length < 7) return false;
 
-    const minTs = Math.floor((Date.now() - 120000) / 1000);
+    // 1. Check permanent Sent Register (retained across restarts & updates)
+    const regCheck = await whatsappDeliveryRegister.isAlreadyDelivered(phone, message, 48);
+    if (regCheck.delivered) return true;
+
+    // 2. Check local WhatsApp chat outbox cache
+    const minTs = Math.floor((Date.now() - (48 * 60 * 60 * 1000)) / 1000);
     const msgHash = hashMessageBody(message);
     const msgLen = (message || '').trim().length;
 
@@ -478,6 +486,36 @@ class WhatsAppQueueWorker {
         );
       } catch (_) {}
 
+      // PRE-RESTART & UPDATE RECOVERY (Permanent Register cross-reference):
+      // Verify any leftover pending / failed_offline items created before current server boot against the permanent Sent Register.
+      // 1. If already delivered on WhatsApp -> mark 'sent' with verified delivery timestamp.
+      // 2. If unconfirmed -> mark 'review_required' so the app never auto-blasts past backlog upon update/restart.
+      try {
+        const preBootPending = await db.all(
+          "SELECT id, number, message FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
+          [SERVER_BOOT_TIME]
+        );
+        for (const item of preBootPending || []) {
+          const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(item.number, item.message, 72);
+          if (deliveryCheck.delivered) {
+            await db.run(
+              "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
+              [deliveryCheck.sentAt || Date.now(), item.id]
+            );
+          } else {
+            await db.run(
+              "UPDATE whatsapp_send_queue SET status = 'review_required', error_message = 'App restarted/updated — held for review to prevent unintended dispatch' WHERE id = ?",
+              [item.id]
+            );
+          }
+        }
+      } catch (_) {}
+
+      // Tidy up permanent delivery register (90-day rolling window)
+      try {
+        await whatsappDeliveryRegister.purgeExpiredRegisterEntries(90);
+      } catch (_) {}
+
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
       const res = await db.run(
         "DELETE FROM whatsapp_send_queue WHERE status = 'sent' AND (sent_at IS NULL OR sent_at < ?)",
@@ -618,6 +656,25 @@ class WhatsAppQueueWorker {
           break;
         }
 
+        // Pre-send Deduplication Check against permanent Sent Register:
+        // If this message was already successfully delivered to this recipient, mark sent and suppress duplicate dispatch.
+        const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(item.number, item.message, 48);
+        if (deliveryCheck.delivered) {
+          console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
+          const resolvedSentAt = deliveryCheck.sentAt || Date.now();
+          await db.run(
+            "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
+            [resolvedSentAt, item.id]
+          );
+          await db.run(
+            `UPDATE automation_notifications 
+             SET status = 'sent', error_message = NULL 
+             WHERE reference_id = ? OR reference_id = ?`,
+            [`queue_${item.id}`, String(item.id)]
+          ).catch(() => {});
+          continue;
+        }
+
         this.lastWasOffline = false;
         this.currentSendingItemId = item.id;
         this.nextDispatchTimestamp = null; // Currently sending, not waiting
@@ -707,7 +764,18 @@ class WhatsAppQueueWorker {
             ).catch(() => {});
           }
 
-            this.broadcastQueueState(true);
+          // Permanently log verified delivery into whatsapp_sent_register
+          const recordedWaMsgId = outboxRecord?.id || (sendResult as any)?.messageId || undefined;
+          void whatsappDeliveryRegister.recordDelivery(
+            item.number,
+            item.message,
+            item.type,
+            item.target_name,
+            String(item.id),
+            recordedWaMsgId
+          );
+
+          this.broadcastQueueState(true);
             try {
               eventService.broadcast('automation_hub_updated', { type: 'sent', id: item.id });
             } catch (_) {}
@@ -747,6 +815,16 @@ class WhatsAppQueueWorker {
                   [item.id, String(item.id)]
                 ).catch(() => {});
               }
+
+              // Permanently log verified delivery into whatsapp_sent_register
+              void whatsappDeliveryRegister.recordDelivery(
+                item.number,
+                item.message,
+                item.type,
+                item.target_name,
+                String(item.id)
+              );
+
               this.broadcastQueueState(true);
               try {
                 eventService.broadcast('automation_hub_updated', { type: 'sent', id: item.id });

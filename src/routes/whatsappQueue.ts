@@ -3,6 +3,7 @@ import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { dbManager } from '../database/connection.js';
 import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { eventService } from '../services/eventService.js';
+import { whatsappDeliveryRegister } from '../services/whatsappDeliveryRegister.js';
 
 const router = express.Router();
 
@@ -576,6 +577,21 @@ router.post('/prewarm', async (_req, res) => {
     res.json({ success: true, prewarmed: started });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to pre-warm WhatsApp' });
+  }
+});
+
+// GET permanent sent message register audit ledger (retained across updates)
+router.get('/sent-register', async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 100;
+    const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
+    const search = req.query.search ? String(req.query.search) : undefined;
+    const type = req.query.type ? String(req.query.type) : undefined;
+
+    const result = await whatsappDeliveryRegister.getDeliveryHistory({ limit, offset, search, type });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to fetch sent register' });
   }
 });
 

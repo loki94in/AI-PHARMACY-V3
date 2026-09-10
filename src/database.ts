@@ -1739,6 +1739,24 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_wa_send_queue_status ON whatsapp_send_queue (status);
 
+    CREATE TABLE IF NOT EXISTS whatsapp_sent_register (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL,
+      phone_last10 TEXT NOT NULL,
+      message TEXT NOT NULL,
+      message_hash TEXT NOT NULL,
+      type TEXT NOT NULL,
+      target_name TEXT,
+      reference_id TEXT,
+      wa_message_id TEXT,
+      sent_at INTEGER NOT NULL,
+      delivery_status TEXT DEFAULT 'delivered',
+      metadata TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_lookup ON whatsapp_sent_register (phone_last10, message_hash, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_type ON whatsapp_sent_register (type, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_sent_at ON whatsapp_sent_register (sent_at);
+
     CREATE TABLE IF NOT EXISTS automation_notifications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL,
@@ -3429,6 +3447,27 @@ export async function ensureSchema(dbPath: string) {
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
   await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
+
+  // WhatsApp permanent delivery register & audit ledger
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS whatsapp_sent_register (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL,
+      phone_last10 TEXT NOT NULL,
+      message TEXT NOT NULL,
+      message_hash TEXT NOT NULL,
+      type TEXT NOT NULL,
+      target_name TEXT,
+      reference_id TEXT,
+      wa_message_id TEXT,
+      sent_at INTEGER NOT NULL,
+      delivery_status TEXT DEFAULT 'delivered',
+      metadata TEXT
+    )
+  `);
+  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_lookup ON whatsapp_sent_register (phone_last10, message_hash, sent_at)");
+  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_type ON whatsapp_sent_register (type, sent_at)");
+  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_sent_at ON whatsapp_sent_register (sent_at)");
 
   // WhatsApp message templates for quick CRM sending
   await db.run(`
