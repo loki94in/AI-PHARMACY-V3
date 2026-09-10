@@ -1542,6 +1542,135 @@ function stringSimilarity(a, b) {
   const distance = editDistance(a, b);
   return 1 - distance / maxLen;
 }
+function extractUmbrellaFormulation(name) {
+  if (!name) return { brand: null, formulation: null };
+  const clean = name.toUpperCase().replace(/[-_.,/()\[\]]/g, " ");
+  const words = clean.split(/\s+/).filter((w) => w.length >= 2);
+  if (words.length === 0) return { brand: null, formulation: null };
+  const brandIdx = words.findIndex((w) => UMBRELLA_PHARMA_BRANDS.has(w));
+  if (brandIdx === -1) return { brand: null, formulation: null };
+  const brand = words[brandIdx];
+  const stopTokens = /* @__PURE__ */ new Set([
+    "MG",
+    "ML",
+    "GM",
+    "G",
+    "MCG",
+    "IU",
+    "%",
+    "TAB",
+    "TABLET",
+    "TABLETS",
+    "CAP",
+    "CAPSULE",
+    "CAPSULES",
+    "SYP",
+    "SYRUP",
+    "SUSP",
+    "SUSPENSION",
+    "INJ",
+    "INJECTION",
+    "OINT",
+    "OINTMENT",
+    "GEL",
+    "CREAM",
+    "LOTION",
+    "PACK",
+    "BOX",
+    "STRIP",
+    "BOTTLE",
+    "JAR",
+    "TUBE",
+    "NEW",
+    "SUPER",
+    "EXTRA",
+    "PLUS",
+    "PURE",
+    "ORIGINAL",
+    "REGULAR",
+    "FORTE",
+    "ADVANCED"
+  ]);
+  const formulationWords = words.filter(
+    (w, idx) => idx !== brandIdx && !/^\d+$/.test(w) && !stopTokens.has(w)
+  );
+  return {
+    brand,
+    formulation: formulationWords.length > 0 ? formulationWords.join(" ") : null
+  };
+}
+function extractDrugStrength(text) {
+  if (!text) return { strength: null, numericVal: null, unit: null };
+  const m = text.match(/\b(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*(MG|MCG|IU|%)\b/i);
+  if (!m) return { strength: null, numericVal: null, unit: null };
+  const numericVal = parseFloat(m[1]);
+  return {
+    strength: `${m[1]}${m[2].toUpperCase()}`,
+    numericVal: isNaN(numericVal) ? null : numericVal,
+    unit: m[2].toUpperCase()
+  };
+}
+function extractVolumeOrWeight(text) {
+  if (!text) return { amount: null, numericVal: null, unit: null };
+  const m = text.match(/\b(\d+(?:\.\d+)?)\s*(ML|GM|G|KG|LTR|L)\b/i);
+  if (!m) return { amount: null, numericVal: null, unit: null };
+  let unit = m[2].toUpperCase();
+  if (unit === "G") unit = "GM";
+  const numericVal = parseFloat(m[1]);
+  return {
+    amount: `${m[1]}${unit}`,
+    numericVal: isNaN(numericVal) ? null : numericVal,
+    unit
+  };
+}
+function stripPharmacopoeiaMarkers(text) {
+  if (!text) return "";
+  return text.replace(/\b(ip|bp|usp|1p|ep|nf|rx|i\.p\.?|b\.p\.?|u\.s\.p\.?|1\.p\.?)\b/gi, " ").replace(/\s+/g, " ").trim();
+}
+function extractFormulationModifiers(name) {
+  if (!name) return /* @__PURE__ */ new Set();
+  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+]/g, " ");
+  const words = clean.split(/\s+/).filter(Boolean);
+  const found = /* @__PURE__ */ new Set();
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w === "D" && i > 0 && (words[i - 1] === "VITAMIN" || words[i - 1] === "VIT")) {
+      continue;
+    }
+    if (FORMULATION_MODIFIERS.has(w)) {
+      found.add(w);
+    }
+  }
+  return found;
+}
+function hasFormulationModifierConflict(name1, name2) {
+  if (!name1 || !name2) return false;
+  const mods1 = extractFormulationModifiers(name1);
+  const mods2 = extractFormulationModifiers(name2);
+  if (mods1.size === 0 && mods2.size === 0) return false;
+  if (mods1.size === 0 && mods2.size > 0) return true;
+  if (mods2.size === 0 && mods1.size > 0) return true;
+  for (const m of mods1) {
+    if (!mods2.has(m)) return true;
+  }
+  for (const m of mods2) {
+    if (!mods1.has(m)) return true;
+  }
+  return false;
+}
+function isModalityConflict(s1, s2) {
+  const upper1 = s1.toUpperCase();
+  const upper2 = s2.toUpperCase();
+  const isBalm1 = /\b(VAPORUB|BALM|AMRUTANJAN|IODEX|MOOV|FAST RELIEF)\b/.test(upper1);
+  const isBalm2 = /\b(VAPORUB|BALM|AMRUTANJAN|IODEX|MOOV|FAST RELIEF)\b/.test(upper2);
+  const isInhaler1 = /\b(INHALER|RESPULE|RESPULES|ROTACAP|ROTACAPS|NASAL SPRAY)\b/.test(upper1);
+  const isInhaler2 = /\b(INHALER|RESPULE|RESPULES|ROTACAP|ROTACAPS|NASAL SPRAY)\b/.test(upper2);
+  const isLozenge1 = /\b(COUGH\s*DROPS?|LOZENGES?|STREPSILS|THROAT\s*DROPS?)\b/.test(upper1);
+  const isLozenge2 = /\b(COUGH\s*DROPS?|LOZENGES?|STREPSILS|THROAT\s*DROPS?)\b/.test(upper2);
+  if (isBalm1 && (isInhaler2 || isLozenge2) || isBalm2 && (isInhaler1 || isLozenge1)) return true;
+  if (isInhaler1 && isLozenge2 || isInhaler2 && isLozenge1) return true;
+  return false;
+}
 function getCompatibleItemTypes(dosageForm) {
   if (!dosageForm) return [];
   const df = dosageForm.toUpperCase().trim();
@@ -1552,13 +1681,31 @@ function getCompatibleItemTypes(dosageForm) {
     return ["STRIP", "TAB", "CAP", "BOX", "PACK", "STRIP OF", "TABLET", "CAPSULE"];
   }
   if (df === "DROPS") {
-    return ["BOTTLE", "DROP", "DROPS", "EYE DROP", "EAR DROP"];
+    return ["BOTTLE", "DROP", "DROPS", "EYE DROP", "EAR DROP", "NASAL DROP"];
   }
   if (df === "INJECTION" || df === "INFUSION") {
     return ["INJECTION", "VIAL", "AMPOULE", "INFUSION", "PRE-FILLED SYRINGE", "I V VIAL", "I V AMPOULE", "DRY VIAL"];
   }
   if (df === "CREAM" || df === "OINTMENT" || df === "GEL" || df === "LOTION") {
     return ["TUBE", "CREAM", "OINT", "GEL", "LOTION"];
+  }
+  if (df === "BALM") {
+    return ["BALM", "JAR", "TUBE", "RUB", "OINT"];
+  }
+  if (df === "INHALER") {
+    return ["INHALER", "RESPULE", "ROTACAP", "DEVICE", "CAN"];
+  }
+  if (df === "POWDER") {
+    return ["POWDER", "JAR", "BOTTLE", "CAN", "GRANULES"];
+  }
+  if (df === "SOAP") {
+    return ["SOAP", "BAR", "WASH"];
+  }
+  if (df === "OIL") {
+    return ["OIL", "TAIL", "TAILA", "BOTTLE"];
+  }
+  if (df === "SACHET") {
+    return ["SACHET", "POUCH", "PACKET", "GRANULES"];
   }
   return [df];
 }
@@ -1567,6 +1714,30 @@ function isItemTypeCompatible(dosageForm, itemType) {
   const compatible = getCompatibleItemTypes(dosageForm);
   const it = itemType.toUpperCase().trim();
   return compatible.some((c) => it.includes(c) || c.includes(it));
+}
+function isItemTypeConflicting(dosageForm, itemTypeOrName) {
+  if (!dosageForm || !itemTypeOrName) return false;
+  const df = dosageForm.toUpperCase().trim();
+  const it = itemTypeOrName.toUpperCase().trim();
+  const isSolidOral = df === "TABLET" || df === "CAPSULE";
+  const isLiquidOral = df === "SYRUP" || df === "LIQUID" || df === "SUSPENSION";
+  const isInjectable = df === "INJECTION" || df === "INFUSION";
+  const isTopical = df === "CREAM" || df === "OINTMENT" || df === "GEL" || df === "LOTION" || df === "BALM";
+  const isInhaler = df === "INHALER";
+  const isDrops = df === "DROPS";
+  const itIsSolidOral = /\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES|CAPLET)\b/.test(it);
+  const itIsLiquidOral = /\b(SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|ORAL SOLUTION)\b/.test(it);
+  const itIsInjectable = /\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(it);
+  const itIsTopical = /\b(CREAM|OINT|OINTMENT|GEL|LOTION|BALM)\b/.test(it);
+  const itIsInhaler = /\b(INHALER|RESPULE|ROTACAP)\b/.test(it);
+  const itIsDrops = /\b(DROPS?|EYE DROP|EAR DROP)\b/.test(it);
+  if (isSolidOral && (itIsLiquidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
+  if (isLiquidOral && (itIsSolidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
+  if (isInjectable && (itIsSolidOral || itIsLiquidOral || itIsTopical || itIsInhaler)) return true;
+  if (isTopical && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsInhaler)) return true;
+  if (isInhaler && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsTopical || itIsDrops)) return true;
+  if (isDrops && (itIsSolidOral || itIsLiquidOral || itIsInjectable || isInhaler)) return true;
+  return false;
 }
 function levenshteinSimilarity(s1, s2) {
   const maxLen = Math.max(s1.length, s2.length);
@@ -1667,16 +1838,43 @@ function ngramSimilarity(s1, s2, n = 2) {
 function enhancedSimilarity(s1, s2) {
   const norm1 = s1.toLowerCase().trim();
   const norm2 = s2.toLowerCase().trim();
-  const clean1 = norm1.replace(/[^a-z0-9]/g, "");
-  const clean2 = norm2.replace(/[^a-z0-9]/g, "");
+  const pStripped1 = stripPharmacopoeiaMarkers(norm1);
+  const pStripped2 = stripPharmacopoeiaMarkers(norm2);
+  const clean1 = pStripped1.replace(/[^a-z0-9]/g, "");
+  const clean2 = pStripped2.replace(/[^a-z0-9]/g, "");
   if (clean1 === clean2) return 1;
+  if (isModalityConflict(s1, s2)) {
+    return 0.2;
+  }
+  const umb1 = extractUmbrellaFormulation(s1);
+  const umb2 = extractUmbrellaFormulation(s2);
+  if (umb1.brand && umb2.brand && umb1.brand === umb2.brand) {
+    if (umb1.formulation && umb2.formulation) {
+      const f1 = umb1.formulation.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const f2 = umb2.formulation.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (f1 !== f2 && !f1.includes(f2) && !f2.includes(f1)) {
+        return 0.2;
+      }
+    }
+  }
+  if (hasFormulationModifierConflict(s1, s2)) {
+    return 0.2;
+  }
   let levSim = levenshteinSimilarity(clean1, clean2);
-  if (clean2.startsWith(clean1) || clean1.startsWith(clean2)) {
-    const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
-  } else if (clean2.includes(clean1) || clean1.includes(clean2)) {
-    const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
-    levSim = Math.max(levSim, 0.75 + 0.2 * ratio);
+  const isGenericStem = /^(derma?|cipl?|para?|cefi?|azith?|amox?|clot?|panto?|omep?|ator?|mont?)$/i.test(clean1) || /^(derma?|cipl?|para?|cefi?|azith?|amox?|clot?|panto?|omep?|ator?|mont?)$/i.test(clean2);
+  const ratio = Math.min(clean1.length, clean2.length) / Math.max(clean1.length, clean2.length);
+  if ((clean2.startsWith(clean1) || clean1.startsWith(clean2)) && !isGenericStem) {
+    const shorter = clean1.length < clean2.length ? clean1 : clean2;
+    const isWholeWord = new RegExp(`\\b${shorter}\\b`, "i").test(s1) || new RegExp(`\\b${shorter}\\b`, "i").test(s2);
+    if (isWholeWord || ratio >= 0.75) {
+      levSim = Math.max(levSim, 0.85 + 0.15 * ratio);
+    }
+  } else if ((clean2.includes(clean1) || clean1.includes(clean2)) && !isGenericStem) {
+    const shorter = clean1.length < clean2.length ? clean1 : clean2;
+    const isWholeWord = new RegExp(`\\b${shorter}\\b`, "i").test(s1) || new RegExp(`\\b${shorter}\\b`, "i").test(s2);
+    if (isWholeWord || ratio >= 0.8) {
+      levSim = Math.max(levSim, 0.75 + 0.2 * ratio);
+    }
   }
   const words1 = norm1.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
   const words2 = norm2.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
@@ -1689,25 +1887,96 @@ function enhancedSimilarity(s1, s2) {
   const phoneSim = phoneticSimilarity(clean1, clean2);
   const ngramSim = ngramSimilarity(clean1, clean2, 2);
   let score = levSim * 0.6 + phoneSim * 0.2 + ngramSim * 0.2;
-  const nums1 = norm1.match(/\d+/g) || [];
-  const nums2 = norm2.match(/\d+/g) || [];
-  if (nums1.length > 0) {
-    const matchingNums = nums1.filter((n) => nums2.includes(n));
-    if (matchingNums.length > 0) {
+  const str1 = extractDrugStrength(s1);
+  const str2 = extractDrugStrength(s2);
+  if (str1.strength && str2.strength) {
+    if (str1.strength === str2.strength) {
       score = Math.min(1, score + 0.15);
     } else {
-      score = Math.max(0, score - 0.25);
+      score = Math.max(0, score - 0.35);
+    }
+  } else {
+    const vol1 = extractVolumeOrWeight(s1);
+    const vol2 = extractVolumeOrWeight(s2);
+    if (vol1.amount && vol2.amount && vol1.unit === vol2.unit) {
+      const isEquivVolume = vol1.numericVal === 450 && vol2.numericVal === 455 || vol1.numericVal === 455 && vol2.numericVal === 450;
+      if (vol1.amount === vol2.amount || isEquivVolume) {
+        score = Math.min(1, score + 0.1);
+      } else {
+        const vRatio = vol1.numericVal && vol2.numericVal ? Math.max(vol1.numericVal, vol2.numericVal) / Math.min(vol1.numericVal, vol2.numericVal) : 1;
+        if (vRatio >= 4) {
+          score = Math.max(0, score - 0.3);
+        }
+      }
     }
   }
   return score;
 }
-var import_fs5, import_path5, ProductNameFilterService, productNameFilterService;
+var import_fs5, import_path5, UMBRELLA_PHARMA_BRANDS, FORMULATION_MODIFIERS, ProductNameFilterService, productNameFilterService;
 var init_productNameFilterService = __esm({
   "src/services/productNameFilterService.ts"() {
     "use strict";
     init_connection();
     import_fs5 = __toESM(require("fs"), 1);
     import_path5 = __toESM(require("path"), 1);
+    UMBRELLA_PHARMA_BRANDS = /* @__PURE__ */ new Set([
+      "BAIDYANATH",
+      "BAID",
+      "DABUR",
+      "DAB",
+      "HIMALAYA",
+      "HIM",
+      "PATANJALI",
+      "PAT",
+      "ZANDU",
+      "ZAN",
+      "HAMDARD",
+      "SBL",
+      "SCHWABE",
+      "BEARDO",
+      "AYUR"
+    ]);
+    FORMULATION_MODIFIERS = /* @__PURE__ */ new Set([
+      // Combinations & Active Additions
+      "PLUS",
+      "FORTE",
+      "DS",
+      "DUO",
+      "COMBIKIT",
+      "COMBI",
+      "KIT",
+      "MAX",
+      "EXTRA",
+      "DSR",
+      "D",
+      "DP",
+      "AP",
+      "SP",
+      "AM",
+      "AT",
+      "AZ",
+      "H",
+      "LS",
+      "DX",
+      "AX",
+      "CZ",
+      "CT",
+      // Release Modifiers
+      "SR",
+      "ER",
+      "CR",
+      "PR",
+      "MR",
+      "TR",
+      "XR",
+      "XL",
+      "LA",
+      // Form / Dispersibility
+      "DT",
+      "MD",
+      "SL",
+      "OD"
+    ]);
     ProductNameFilterService = class {
       medicineNames = [];
       getMedicineNames() {
@@ -1858,7 +2127,10 @@ var init_productNameFilterService = __esm({
           };
         }
         const normalizedOcr = ocrText.toLowerCase().trim();
-        const cacheKey = !enableInternetFallback ? `${normalizedOcr}|${dosageForm || ""}|${mrp || ""}|${minConfidenceThreshold}` : null;
+        const rawStrength = rawOcrText ? extractDrugStrength(rawOcrText).strength || "" : "";
+        const rawVolume = rawOcrText ? extractVolumeOrWeight(rawOcrText).amount || "" : "";
+        const rawMods = rawOcrText ? Array.from(extractFormulationModifiers(rawOcrText)).sort().join(",") : "";
+        const cacheKey = !enableInternetFallback ? `${normalizedOcr}|${dosageForm || ""}|${mrp || ""}|${rawStrength}|${rawVolume}|${rawMods}|${minConfidenceThreshold}` : null;
         if (cacheKey && this.filterCache.has(cacheKey)) {
           const cached = this.filterCache.get(cacheKey);
           return { ...cached, processingTimeMs: Date.now() - startTime };
@@ -1892,13 +2164,41 @@ var init_productNameFilterService = __esm({
             fts5Used = true;
             for (const row of ftsRows) {
               const nameSim = enhancedSimilarity(normalizedOcr, row.name.toLowerCase());
-              const dosageMatch = dosageForm && row.item_type ? isItemTypeCompatible(dosageForm, row.item_type) ? 1 : 0.2 : null;
+              const dosageConflict = isItemTypeConflicting(dosageForm, row.item_type || row.name);
+              const dosageMatch = dosageForm && row.item_type ? isItemTypeCompatible(dosageForm, row.item_type) ? 1 : dosageConflict ? -0.5 : 0.2 : null;
               const mrpMatch = mrp && row.mrp ? 1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp) : null;
               let apiMatch = null;
               if (rawOcrText && row.api_reference) {
                 const apiTokens = row.api_reference.toLowerCase().split(/[^a-z0-9]+/);
                 const hasTokenMatch = apiTokens.some((token) => token.length > 3 && rawOcrText.toLowerCase().includes(token));
                 apiMatch = hasTokenMatch ? 1 : 0.4;
+              }
+              let strengthConflict = false;
+              let strengthMatch = false;
+              if (rawOcrText) {
+                const ocrStr = extractDrugStrength(rawOcrText);
+                const medStr = extractDrugStrength(row.name);
+                if (ocrStr.strength && medStr.strength) {
+                  if (ocrStr.strength === medStr.strength) {
+                    strengthMatch = true;
+                  } else {
+                    strengthConflict = true;
+                  }
+                }
+              }
+              let volumeConflict = false;
+              let volumeMatch = false;
+              if (rawOcrText && !strengthConflict && !strengthMatch) {
+                const ocrVol = extractVolumeOrWeight(rawOcrText);
+                const medVol = extractVolumeOrWeight(row.name);
+                if (ocrVol.amount && medVol.amount && ocrVol.unit === medVol.unit) {
+                  const vRatio = ocrVol.numericVal && medVol.numericVal ? Math.max(ocrVol.numericVal, medVol.numericVal) / Math.min(ocrVol.numericVal, medVol.numericVal) : 1;
+                  if (vRatio >= 1.5) {
+                    volumeConflict = true;
+                  } else if (ocrVol.amount === medVol.amount) {
+                    volumeMatch = true;
+                  }
+                }
               }
               let combinedScore;
               if (dosageMatch !== null && mrpMatch !== null) {
@@ -1910,6 +2210,22 @@ var init_productNameFilterService = __esm({
               } else {
                 combinedScore = apiMatch !== null && apiMatch > 0.5 ? 0.85 * nameSim + 0.15 * apiMatch : nameSim;
               }
+              if (dosageConflict) {
+                combinedScore = Math.max(0, combinedScore - 0.4);
+              }
+              if (strengthMatch) {
+                combinedScore = Math.min(1, combinedScore + 0.2);
+              } else if (strengthConflict) {
+                combinedScore = Math.max(0, combinedScore - 0.5);
+              } else if (volumeMatch) {
+                combinedScore = Math.min(1, combinedScore + 0.1);
+              } else if (volumeConflict) {
+                combinedScore = Math.max(0, combinedScore - 0.35);
+              }
+              const modifierConflict = hasFormulationModifierConflict(ocrText, row.name) || (rawOcrText ? hasFormulationModifierConflict(rawOcrText, row.name) : false);
+              if (modifierConflict) {
+                combinedScore = Math.max(0, combinedScore - 0.45);
+              }
               if (combinedScore >= minConfidenceThreshold) {
                 scoredMatches.push({ name: row.name, score: combinedScore });
               }
@@ -1920,7 +2236,26 @@ var init_productNameFilterService = __esm({
         }
         if (!fts5Used || scoredMatches.length < 1) {
           for (const medicineName of this.medicineNames) {
-            const similarityScore = enhancedSimilarity(normalizedOcr, medicineName.toLowerCase());
+            if (dosageForm && isItemTypeConflicting(dosageForm, medicineName)) {
+              continue;
+            }
+            let similarityScore = enhancedSimilarity(normalizedOcr, medicineName.toLowerCase());
+            if (rawOcrText) {
+              const ocrStr = extractDrugStrength(rawOcrText);
+              const medStr = extractDrugStrength(medicineName);
+              if (ocrStr.strength && medStr.strength) {
+                if (ocrStr.strength === medStr.strength) {
+                  similarityScore = Math.min(1, similarityScore + 0.2);
+                } else {
+                  similarityScore = Math.max(0, similarityScore - 0.5);
+                }
+              }
+              if (hasFormulationModifierConflict(rawOcrText, medicineName)) {
+                similarityScore = Math.max(0, similarityScore - 0.45);
+              }
+            } else if (hasFormulationModifierConflict(normalizedOcr, medicineName)) {
+              similarityScore = Math.max(0, similarityScore - 0.45);
+            }
             if (similarityScore >= minConfidenceThreshold) {
               if (!scoredMatches.some((m) => m.name === medicineName)) {
                 scoredMatches.push({ name: medicineName, score: similarityScore });
@@ -5529,6 +5864,11 @@ var init_aiCameraService = __esm({
        * dynamically to ignore them during OCR fuzzy matching.
        */
       KNOWN_APIS = /* @__PURE__ */ new Set();
+      /** Company names extracted from medicines.manufacturer + catalog_images.company_name */
+      KNOWN_COMPANIES = /* @__PURE__ */ new Set();
+      companyAliasMap = /* @__PURE__ */ new Map();
+      // core -> full
+      companyNamesLoaded = false;
       /**
        * Load all API composition and drug generic words from the database
        * dynamically to track known active ingredients.
@@ -5585,8 +5925,33 @@ var init_aiCameraService = __esm({
           } catch (piwErr) {
             console.warn("[AiCamera] Could not load permanently_ignored_words:", piwErr);
           }
+          try {
+            const catMans = await db2.all("SELECT DISTINCT company_name FROM catalog_images WHERE company_name IS NOT NULL AND company_name != ''");
+            const freqMans = await db2.all("SELECT manufacturer as name, COUNT(*) as cnt FROM medicines WHERE manufacturer IS NOT NULL AND manufacturer != '' GROUP BY manufacturer HAVING cnt >= 5 ORDER BY cnt DESC LIMIT 500");
+            const allMans = [...catMans.map((r) => r.company_name), ...freqMans.map((r) => r.name)];
+            const GENERIC_COMPANY_WORDS = /* @__PURE__ */ new Set(["pvt", "ltd", "private", "limited", "pharmaceutical", "pharmaceuticals", "pharma", "laboratories", "labs", "laboratory", "healthcare", "health", "care", "india", "inc", "corp", "corporation", "enterprises", "remedies", "formulations", "formulation", "lifesciences", "lifescience", "sciences", "science", "pty", "llc", "industries", "industry", "works", "product", "products", "pharmaceutic", "pharmaceutics"]);
+            const CITY_DENY = /* @__PURE__ */ new Set(["mumbai", "delhi", "kolkata", "chennai", "bangalore", "bengaluru", "hyderabad", "pune", "ahmedabad", "jaipur", "lucknow", "kanpur", "nagpur", "indore", "thane", "bhopal", "visakhapatnam", "patna", "vadodara", "ghaziabad", "ludhiana", "agra", "nashik", "faridabad", "meerut", "rajkot", "kalyan", "vasai", "varanasi", "srinagar", "aurangabad", "dhanbad", "amritsar", "navi", "allahabad", "ranchi", "howrah", "coimbatore", "jabalpur", "gwalior", "vijayawada", "jodhpur", "madurai", "raipur", "kota", "guwahati", "chandigarh", "solapur", "hubli", "dharwad", "bareilly", "moradabad", "mysore", "gurgaon", "aligarh", "jalandhar", "bhubaneswar", "salem", "warangal", "guntur", "bhiwandi", "saharanpur", "gorakhpur", "bikaner", "amravati", "noida", "jamshedpur", "bhilai", "cuttack", "firozabad", "kochi", "bhavnagar", "dehradun", "durgapur", "asansol", "nanded", "kolhapur", "ajmer", "gulbarga", "jamnagar", "ujjain", "loni", "siliguri", "jhansi", "ulhasnagar", "nellore", "jammu", "sangli", "belgaum", "mangalore", "ambattur", "tirunelveli", "malegaon", "gaya", "jalgaon", "udaipur", "maheshtala"]);
+            for (const raw of allMans) {
+              if (!raw) continue;
+              const full = String(raw).trim();
+              const tokens = full.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !GENERIC_COMPANY_WORDS.has(t) && !CITY_DENY.has(t) && !/^\d+$/.test(t));
+              if (tokens.length === 0) continue;
+              const core = tokens.slice(0, 2).join(" ");
+              const single = tokens[0];
+              if (single.length >= 3) {
+                this.KNOWN_COMPANIES.add(single);
+                this.companyAliasMap.set(single, full);
+              }
+              if (core.length >= 5 && core !== single) {
+                this.KNOWN_COMPANIES.add(core);
+                this.companyAliasMap.set(core, full);
+              }
+            }
+          } catch (compErr) {
+            console.warn("[AiCamera] Could not load company names:", compErr);
+          }
           this.ignoreListLoaded = true;
-          console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}`);
+          console.log(`[AiCamera] Loaded DB ignore list. Total stop words: ${this.STOP_WORDS.size}, Known APIs: ${this.KNOWN_APIS.size}, Companies: ${this.KNOWN_COMPANIES.size}`);
         } catch (err) {
           console.error("[AiCamera] Failed to load database ignore list:", err);
         }
@@ -5713,7 +6078,7 @@ var init_aiCameraService = __esm({
         "ep",
         "nf",
         "rx",
-        // Package and storage filler words
+        // Package, commercial promo, and storage filler words
         "flavour",
         "flavor",
         "flav",
@@ -5755,6 +6120,14 @@ var init_aiCameraService = __esm({
         "box",
         "pack",
         "packings",
+        "offer",
+        "bogo",
+        "combo",
+        "promo",
+        "extra",
+        "worth",
+        "save",
+        "special",
         // Route / administration descriptors (NOT brand names)
         "ophthalmic",
         "oral",
@@ -5793,8 +6166,10 @@ var init_aiCameraService = __esm({
         return line.split(/[\s,;:|()\[\]{}\/\\]+/).map((w) => w.trim().toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "")).filter((w) => {
           if (w.length < 3) return false;
           if (this.STOP_WORDS.has(w)) return false;
+          if (this.KNOWN_COMPANIES.has(w)) return false;
           if (/^\d+[%a-z]*$/i.test(w)) return false;
           if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
+          if (this.companyAliasMap.has(w)) return false;
           return true;
         });
       }
@@ -5887,13 +6262,38 @@ var init_aiCameraService = __esm({
           [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, "Drops"],
           [/\b(?:oint(?:ment)?)\b/i, "Ointment"],
           [/\b(?:lotion)\b/i, "Lotion"],
-          [/\b(?:powder)\b/i, "Powder"],
+          [/\b(?:powder|dusting\s*powder)\b/i, "Powder"],
           [/\b(?:spray)\b/i, "Spray"],
-          [/\b(?:inh(?:aler)?|respules?)\b/i, "Inhaler"],
-          [/\b(?:sachet)\b/i, "Sachet"]
+          [/\b(?:inh(?:aler)?|respules?|rotacaps?)\b/i, "Inhaler"],
+          [/\b(?:sachet|granules)\b/i, "Sachet"],
+          [/\b(?:balm|vaporub|rub)\b/i, "Balm"],
+          [/\b(?:soap|bar|facewash|bodywash)\b/i, "Soap"],
+          [/\b(?:oil|tail|taila)\b/i, "Oil"],
+          [/\b(?:shampoo)\b/i, "Shampoo"],
+          [/\b(?:serum)\b/i, "Serum"]
         ];
         for (const [regex, form] of patterns) {
           if (regex.test(text)) return form;
+        }
+        return null;
+      }
+      /**
+       * Detect company name from OCR text using the 10k+ known manufacturers.
+       * Returns the full company name (e.g. "Cipla Ltd") if its core token
+       * (e.g. "cipla") appears in the text. Uses word boundaries so
+       * "CIPLADINE" does not trigger "cipla".
+       */
+      detectCompanyName(text) {
+        if (!text || this.KNOWN_COMPANIES.size === 0) return null;
+        const lower = text.toLowerCase();
+        const sorted = Array.from(this.KNOWN_COMPANIES).sort((a, b) => b.length - a.length);
+        for (const c of sorted) {
+          if (c.length < 3) continue;
+          const esc = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(`\\b${esc}\\b`, "i");
+          if (re.test(lower)) {
+            return this.companyAliasMap.get(c) || c;
+          }
         }
         return null;
       }
@@ -5968,7 +6368,7 @@ var init_aiCameraService = __esm({
           try {
             await this.loadDatabaseIgnoreList();
             await productNameFilterService.initialize();
-            const candidateLines = localOcrResult.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 2 && l.length < 100).map((line) => ({ original: line, tokens: this.extractCandidateTokens(line) })).filter((item) => item.tokens.length > 0);
+            const candidateLines = localOcrResult.text.split("\n").map((l) => l.trim()).filter((l) => l.length > 2 && l.length < 100).filter((l) => !/\b(free\b|buy\s+\d+\s+get|special\s+offer|promo\s+pack|extra\s+\d+|save\s+rs)/i.test(l)).map((line) => ({ original: line, tokens: this.extractCandidateTokens(line) })).filter((item) => item.tokens.length > 0);
             const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
             let bestLineMatches = [];
             let bestLineScore = 0;
@@ -6028,7 +6428,7 @@ var init_aiCameraService = __esm({
           const cands = lines.map((line) => {
             const toks = this.extractCandidateTokens(line);
             return { line, joined: toks.join(" ") };
-          }).filter((c) => c.joined.length > 0 && isPlausibleMedicineName(c.joined));
+          }).filter((c) => c.joined.length > 0 && isPlausibleMedicineName(c.joined)).filter((c) => !/\b(free\b|offer\b|bogo|combo|promo|extra\s+\d+|save\s+rs|special\s+offer)/i.test(c.line));
           if (cands.length > 0) {
             const isGeneric = (t) => /(fenac|cin|mycin|olol|statin|prazole|sartan|dine|pine|pram|xacin|azole|gest|dron|vir|phen|mab|tide|oxacin)$/i.test(t) || t.length > 11;
             const scoreOf = (c) => {
@@ -6043,14 +6443,67 @@ var init_aiCameraService = __esm({
             brandName = cands[0].joined;
           }
         }
+        const detectedDrugStrength = extractDrugStrength(localOcrResult.text);
+        const detectedVolume = extractVolumeOrWeight(localOcrResult.text);
+        if (matches.length > 0) {
+          matches.sort((a, b) => {
+            const aStr = extractDrugStrength(a);
+            const bStr = extractDrugStrength(b);
+            const aStrengthMatch = detectedDrugStrength.strength && aStr.strength === detectedDrugStrength.strength ? 1 : 0;
+            const bStrengthMatch = detectedDrugStrength.strength && bStr.strength === detectedDrugStrength.strength ? 1 : 0;
+            if (aStrengthMatch !== bStrengthMatch) {
+              return bStrengthMatch - aStrengthMatch;
+            }
+            const aModConflict = hasFormulationModifierConflict(localOcrResult.text, a) ? 1 : 0;
+            const bModConflict = hasFormulationModifierConflict(localOcrResult.text, b) ? 1 : 0;
+            if (aModConflict !== bModConflict) {
+              return aModConflict - bModConflict;
+            }
+            const aVol = extractVolumeOrWeight(a);
+            const bVol = extractVolumeOrWeight(b);
+            const aVolMatch = detectedVolume.amount && aVol.amount === detectedVolume.amount ? 1 : 0;
+            const bVolMatch = detectedVolume.amount && bVol.amount === detectedVolume.amount ? 1 : 0;
+            return bVolMatch - aVolMatch;
+          });
+          const topMed = matches[0];
+          const topMedStrength = extractDrugStrength(topMed);
+          const topMedModConflict = hasFormulationModifierConflict(localOcrResult.text, topMed);
+          if (detectedDrugStrength.strength) {
+            if (topMedStrength.strength === detectedDrugStrength.strength && !topMedModConflict) {
+              finalInfo.strengthConfirmed = true;
+              finalInfo.confirmationNote = `Verified: packaging strength (${detectedDrugStrength.strength}) confirmed.`;
+            } else if (topMedStrength.strength !== detectedDrugStrength.strength) {
+              finalInfo.strengthConfirmed = false;
+              finalInfo.strengthConflict = true;
+              finalInfo.confirmationNote = `Packaging shows ${detectedDrugStrength.strength}, candidate is ${topMedStrength.strength || "unspecified"}.`;
+            } else if (topMedModConflict) {
+              finalInfo.strengthConfirmed = false;
+              finalInfo.modifierConflict = true;
+              finalInfo.confirmationNote = `Formulation conflict: Packaging modifier does not match candidate.`;
+            }
+          } else if (detectedVolume.amount) {
+            const topVol = extractVolumeOrWeight(topMed);
+            if (topVol.amount === detectedVolume.amount) {
+              finalInfo.volumeConfirmed = true;
+              finalInfo.confirmationNote = `Verified: packaging volume (${detectedVolume.amount}) confirmed.`;
+            }
+          }
+          if (topMedModConflict) {
+            finalInfo.modifierConflict = true;
+          }
+        }
         const rawName = matches.length > 0 ? matches[0] : brandName;
         await this.ensureApiMap();
         const resolvedGeneric = rawName ? this.resolveGenericName(rawName) : null;
         finalInfo.apiName = rawName || void 0;
         finalInfo.genericName = resolvedGeneric || void 0;
         finalInfo.potentialName = resolvedGeneric || rawName;
-        const strengthMatch = localOcrResult.text.match(/\d+\s*(?:mg|g|ml|μg|iu)/i);
-        if (strengthMatch) finalInfo.strength = strengthMatch[0];
+        if (detectedDrugStrength.strength) {
+          finalInfo.strength = detectedDrugStrength.strength;
+        } else {
+          const strengthMatch = localOcrResult.text.match(/\d+\s*(?:mg|g|ml|μg|iu)/i);
+          if (strengthMatch) finalInfo.strength = strengthMatch[0];
+        }
         const batchMatch = localOcrResult.text.match(/(?:batch|b\.?no\.?|lot|#)\s*[:\-]?\s*([A-Z0-9\-]+)/i);
         if (batchMatch) finalInfo.batchNumber = batchMatch[1];
         const expiryMatch = localOcrResult.text.match(/(?:exp|expiry|exp\.?date)\s*[:\-]?\s*(\d{2}[\/\-]\d{2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{2})/i);
@@ -6077,13 +6530,15 @@ var init_aiCameraService = __esm({
         if (mfrMatch) {
           finalInfo.manufacturer = mfrMatch[1].trim();
         } else {
-          const knownMfrs = ["Cipla", "Sun Pharma", "Sun Pharmaceutical", "Torrent", "Lupin", "Abbott", "Mankind", "Zydus", "Alkem", "Macleods", "Intas", "Dr. Reddy", "Dr Reddy", "Glenmark", "Ipca", "Micro Labs", "Aristo", "Alembic"];
-          for (const km of knownMfrs) {
-            if (new RegExp(`\\b${km}\\b`, "i").test(localOcrResult.text)) {
-              finalInfo.manufacturer = km;
-              break;
-            }
+          const detectedCompany = this.detectCompanyName(localOcrResult.text);
+          if (detectedCompany) {
+            finalInfo.manufacturer = detectedCompany;
+            finalInfo.companyDetected = detectedCompany;
           }
+        }
+        if (!finalInfo.companyDetected) {
+          const comp = this.detectCompanyName(localOcrResult.text);
+          if (comp) finalInfo.companyDetected = comp;
         }
         const packMatch = localOcrResult.text.match(/(?:\d+\s*[xX]\s*\d+(?:\s*[xX]\s*\d+)?|\d+\s*(?:tabs?|tablets?|caps?|capsules?|strips?|ml|g|gm|s|'s|blisters?))\b/i);
         if (packMatch) {
@@ -6773,6 +7228,2964 @@ var init_startupSyncCoordinator = __esm({
   }
 });
 
+// src/services/catalogImageService.ts
+var import_fs11, import_path12, import_crypto, DOSAGE_FORMS, PACKAGING_CONTAINERS, GENERIC_CATEGORY_WORDS, UMBRELLA_PHARMA_BRANDS2, CatalogImageService, catalogImageService;
+var init_catalogImageService = __esm({
+  "src/services/catalogImageService.ts"() {
+    "use strict";
+    import_fs11 = __toESM(require("fs"), 1);
+    import_path12 = __toESM(require("path"), 1);
+    import_crypto = __toESM(require("crypto"), 1);
+    init_connection();
+    init_eventService();
+    DOSAGE_FORMS = [
+      "TABLET",
+      "TABLETS",
+      "TAB",
+      "TABS",
+      "DT",
+      "CAPSULE",
+      "CAPSULES",
+      "CAP",
+      "CAPS",
+      "SYRUP",
+      "SYP",
+      "SUSPENSION",
+      "SUSP",
+      "INJECTION",
+      "INJ",
+      "IV",
+      "IM",
+      "CREAM",
+      "GEL",
+      "OINTMENT",
+      "OINT",
+      "DROPS",
+      "DROP",
+      "EYE DROPS",
+      "EAR DROPS",
+      "INHALER",
+      "RESPULES",
+      "ROTACAPS",
+      "ROTACAP",
+      "POWDER",
+      "LOTION",
+      "SHAMPOO",
+      "SPRAY",
+      "SOLUTION",
+      "SOAP",
+      "BAR",
+      "BALM",
+      "OIL",
+      "WASH",
+      "SERUM",
+      "GRANULES",
+      "SACHET"
+    ];
+    PACKAGING_CONTAINERS = /* @__PURE__ */ new Set([
+      "BOTTLE",
+      "JAR",
+      "TUBE",
+      "PACK",
+      "BOX",
+      "STRIP",
+      "VIAL",
+      "AMPOULE",
+      "CAN",
+      "POUCH"
+    ]);
+    GENERIC_CATEGORY_WORDS = /* @__PURE__ */ new Set([
+      "ADULT",
+      "COTTON",
+      "BABY",
+      "SURGICAL",
+      "DISPO",
+      "DISPOSABLE",
+      "BANDAGE",
+      "GAUZE",
+      "GLOVES",
+      "MASK",
+      "POWDER",
+      "SOAP",
+      "CREAM",
+      "OIL",
+      "GEL",
+      "SHAMPOO",
+      "LOTION",
+      "DROPS",
+      "SYRUP",
+      "TABLET",
+      "CAPSULE",
+      "INJECTION",
+      "HOT",
+      "COLD",
+      "DIGITAL",
+      "TEST",
+      "KIT",
+      "STRIP",
+      "BLOOD",
+      "BP",
+      "PULSE",
+      "BALM",
+      "DIAPER",
+      "SANITARY",
+      "PAD",
+      "PADS",
+      "ROLL",
+      "WOOL",
+      "NEEDLE",
+      "SYRINGE",
+      "WIPES",
+      "TAPE",
+      "PASTE",
+      "SERUM",
+      "WASH",
+      "BAR",
+      "SACHET",
+      "CASTOR",
+      "HONEY",
+      "GLYCERIN",
+      "GLYCERINE",
+      "PETROLEUM",
+      "JELLY",
+      "VASELINE",
+      "NEW",
+      "SUPER",
+      "EXTRA",
+      "PLUS",
+      "PREMIUM",
+      "PURE",
+      "NATURAL",
+      "HERBAL",
+      "GENUINE",
+      "ORIGINAL"
+    ]);
+    UMBRELLA_PHARMA_BRANDS2 = /* @__PURE__ */ new Set([
+      "BAIDYANATH",
+      "BAID",
+      "DABUR",
+      "DAB",
+      "HIMALAYA",
+      "HIM",
+      "PATANJALI",
+      "PAT",
+      "ZANDU",
+      "ZAN",
+      "HAMDARD",
+      "SBL",
+      "SCHWABE",
+      "BEARDO",
+      "AYUR"
+    ]);
+    CatalogImageService = class _CatalogImageService {
+      static instance;
+      static getInstance() {
+        if (!_CatalogImageService.instance) {
+          _CatalogImageService.instance = new _CatalogImageService();
+        }
+        return _CatalogImageService.instance;
+      }
+      /**
+       * Compute SHA-256 hash of an image file for deduplication
+       */
+      computeFileHash(filePath) {
+        try {
+          if (!import_fs11.default.existsSync(filePath)) return null;
+          const buffer = import_fs11.default.readFileSync(filePath);
+          return import_crypto.default.createHash("sha256").update(buffer).digest("hex");
+        } catch (e) {
+          return null;
+        }
+      }
+      /**
+       * Extract primary dosage form from text
+       */
+      extractDosageForm(text) {
+        if (!text) return null;
+        const upper = text.replace(/[-_.]/g, " ").toUpperCase();
+        for (const form of DOSAGE_FORMS) {
+          const regex = new RegExp(`\\b${form}\\b`, "i");
+          if (regex.test(upper)) {
+            if (form.startsWith("TAB") || form === "DT") return "TABLET";
+            if (form.startsWith("CAP")) return "CAPSULE";
+            if (form.startsWith("SYP") || form.startsWith("SYRUP") || form.startsWith("SUSP")) return "SYRUP";
+            if (form.startsWith("INJ") || form === "IV" || form === "IM") return "INJECTION";
+            if (form === "GEL" || form === "CREAM" || form.startsWith("OINT")) return "TOPICAL";
+            if (form.startsWith("DROP")) return "DROPS";
+            if (form.startsWith("INH") || form.startsWith("ROTA") || form.startsWith("RESP")) return "INHALER";
+            if (form === "SOAP" || form === "BAR") return "SOAP";
+            if (form === "BALM") return "BALM";
+            if (form === "OIL") return "OIL";
+            if (form === "SERUM") return "SERUM";
+            if (form === "POWDER") return "POWDER";
+            if (form === "SACHET" || form === "GRANULES") return "SACHET";
+            return form;
+          }
+        }
+        return null;
+      }
+      /**
+       * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML", "100 G")
+       */
+      extractStrength(text) {
+        if (!text) return null;
+        const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|G|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
+        if (!match) return null;
+        let s = match[0].toUpperCase().replace(/\s+/g, "");
+        if (s.endsWith("G") && !s.endsWith("MG") && !s.endsWith("MCG")) {
+          s = s.replace(/G$/, "GM");
+        }
+        return s;
+      }
+      /**
+       * Extract core brand name (strips dosage, packaging, company brackets)
+       */
+      extractCoreBrand(raw, manufacturer) {
+        if (!raw) return "";
+        let c = raw.replace(/\[.*?\]/g, " ");
+        c = c.replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ");
+        c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|G|MCG|IU|%)\b/gi, " ");
+        const words = c.split(/[^A-Za-z0-9\+\-]+/).filter((w) => w.length >= 2 && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+        if (!words[0]) {
+          if (manufacturer) {
+            const mfgClean = manufacturer.toUpperCase();
+            if (mfgClean.includes("PARACHUT")) return "PARACHUTE";
+            if (mfgClean.includes("BAJAJ")) return "BAJAJ";
+            if (mfgClean.includes("DABUR")) return "DABUR";
+            if (mfgClean.includes("HIMALAYA")) return "HIMALAYA";
+            if (mfgClean.includes("ZANDU")) return "ZANDU";
+            if (mfgClean.includes("PATANJALI")) return "PATANJALI";
+          }
+          return "";
+        }
+        if (UMBRELLA_PHARMA_BRANDS2.has(words[0].toUpperCase()) && words.length > 1) {
+          const formulationWord = words.slice(1).find((w) => !GENERIC_CATEGORY_WORDS.has(w.toUpperCase()) && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+          if (formulationWord) return formulationWord.toUpperCase();
+        }
+        if (GENERIC_CATEGORY_WORDS.has(words[0].toUpperCase()) && words.length > 1) {
+          const nonGeneric = words.find((w) => !GENERIC_CATEGORY_WORDS.has(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
+          if (nonGeneric) return nonGeneric.toUpperCase();
+        }
+        return words[0].toUpperCase();
+      }
+      /**
+       * Multi-Signal AI Confidence Scoring
+       * Evaluates Company (15%), Brand (35%), Strength (20%), Dosage Form (15%), Pack (5%), OCR (10%).
+       */
+      computeConfidence(medicine, candidate) {
+        const medBrand = this.extractCoreBrand(medicine.name, medicine.manufacturer);
+        const candUpper = (candidate.name || "").toUpperCase().trim();
+        const pathUpper = (candidate.imagePath || "").replace(/[-_.]/g, " ").toUpperCase();
+        const ocrUpper = (candidate.ocrText || "").toUpperCase();
+        const cleanCandStr = candUpper ? (candUpper + (ocrUpper ? " " + ocrUpper : "")).replace(/[-_]/g, " ") : (pathUpper + (ocrUpper ? " " + ocrUpper : "")).replace(/[-_]/g, " ");
+        let brandMatch = false;
+        let brandScore = 0;
+        if (medBrand) {
+          const normMedBrand = medBrand.replace(/[-_]/g, " ").trim();
+          const compactMedBrand = normMedBrand.replace(/[^A-Z0-9]/g, "");
+          const compactCand = cleanCandStr.replace(/[^A-Z0-9]/g, "");
+          const candWords = cleanCandStr.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 2);
+          const exactWordMatch = candWords.some((w) => w === medBrand || w === normMedBrand);
+          const wordBoundaryMatch = new RegExp(`\\b${normMedBrand}\\b`, "i").test(cleanCandStr);
+          const subWords = normMedBrand.split(" ").filter((w) => w.length >= 2 && !/^\d+$/.test(w));
+          const subWordMatch = subWords.length > 0 && subWords.every((sw) => new RegExp(`\\b${sw}\\b`, "i").test(cleanCandStr));
+          const compactMatch = compactMedBrand.length >= 4 && !GENERIC_CATEGORY_WORDS.has(compactMedBrand) && compactCand.includes(compactMedBrand);
+          if (exactWordMatch || wordBoundaryMatch || subWordMatch || compactMatch) {
+            brandMatch = true;
+            brandScore = 35;
+          }
+          if (cleanCandStr.includes("VICKS VAPORUB")) {
+            const medUpper = medicine.name.toUpperCase();
+            const hasVicks = medUpper.includes("VICKS");
+            const isDifferentForm = medUpper.includes("INHALER") || medUpper.includes("DROP") || medUpper.includes("TAB") || medUpper.includes("LOZENGE");
+            if (!hasVicks || isDifferentForm) {
+              brandMatch = false;
+              brandScore = 0;
+            }
+          }
+          if (cleanCandStr.includes("COUGH DROP") || cleanCandStr.includes("LOZENGE") || cleanCandStr.includes("INHALER")) {
+            const medUpper = medicine.name.toUpperCase();
+            const medIsDropsOrInhaler = medUpper.includes("DROP") || medUpper.includes("LOZENGE") || medUpper.includes("INHALER") || medUpper.includes("COUGH") || medUpper.includes("TAB");
+            if (!medIsDropsOrInhaler) {
+              brandMatch = false;
+              brandScore = 0;
+            }
+          }
+        }
+        let companyMatch = false;
+        let companyScore = 5;
+        const medMfg = (medicine.manufacturer || "").toUpperCase().trim();
+        const candMfg = (candidate.manufacturer || "").toUpperCase().trim();
+        const GENERIC_MFG_WORDS = /* @__PURE__ */ new Set([
+          "NATURAL",
+          "NATURE",
+          "HERBAL",
+          "HEALTH",
+          "HEALTHCARE",
+          "CARE",
+          "PHARMA",
+          "PHARMACEUTICALS",
+          "LABS",
+          "LABORATORIES",
+          "REMEDIES",
+          "PVT",
+          "LTD",
+          "LIMITED",
+          "INDIA",
+          "GLOBAL",
+          "LIFE",
+          "SCIENCES",
+          "THE",
+          "AND",
+          "OF",
+          "CORPORATION",
+          "CORP",
+          "PRODUCTS",
+          "AYURVEDA",
+          "AYURVEDIC",
+          "CONSUMER",
+          "ORGANICS",
+          "HOME",
+          "ASIA",
+          "WELLNESS"
+        ]);
+        if (medMfg && candMfg) {
+          const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
+          const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
+          const isKnownAlias = (cleanMedMfg.includes("PANDG") || cleanMedMfg.includes("P&G") || cleanMedMfg.includes("PROCTER")) && (cleanCandMfg.includes("PANDG") || cleanCandMfg.includes("P&G") || cleanCandMfg.includes("PROCTER") || cleanCandMfg.includes("VICKS") || cleanCandMfg.includes("GILLETTE") || cleanCandMfg.includes("PAMPERS") || cleanCandMfg.includes("HEAD")) || (cleanMedMfg.includes("HMD") || cleanMedMfg.includes("HINDUSTAN SYRINGES")) && (cleanCandMfg.includes("HMD") || cleanCandMfg.includes("HINDUSTAN") || cleanCandMfg.includes("DISPOVAN")) || (cleanMedMfg.includes("ZANDU") || cleanMedMfg.includes("EMAMI")) && (cleanCandMfg.includes("ZANDU") || cleanCandMfg.includes("EMAMI") || cleanCandMfg.includes("DERMI")) || cleanMedMfg.includes("MANKIND") && (cleanCandMfg.includes("MANFORCE") || cleanCandMfg.includes("MANKIND") || cleanCandMfg.includes("HEALTH OK")) || cleanMedMfg.includes("SUN PHARMA") && (cleanCandMfg.includes("ABZORB") || cleanCandMfg.includes("SUN")) || (cleanMedMfg.includes("RECKITT") || cleanMedMfg.includes("RECKNOR")) && (cleanCandMfg.includes("DETTOL") || cleanCandMfg.includes("RECKITT")) || cleanMedMfg.includes("JOHNSON") && (cleanCandMfg.includes("BAND AID") || cleanCandMfg.includes("JOHNSON")) || cleanMedMfg.includes("CIPLA") && (cleanCandMfg.includes("CIPLADINE") || cleanCandMfg.includes("CIPLA") || cleanCandMfg.includes("IBUGESIC")) || cleanMedMfg.includes("ZYDUS") && (cleanCandMfg.includes("GLUCON") || cleanCandMfg.includes("DEXONA") || cleanCandMfg.includes("ZYDUS")) || (cleanMedMfg.includes("MARICO") || cleanMedMfg.includes("PARACHUT")) && (cleanCandMfg.includes("PARACHUTE") || cleanCandMfg.includes("MARICO"));
+          const medMfgTokens = cleanMedMfg.split(/[^A-Z0-9]+/).filter((w) => w.length >= 4 && !GENERIC_MFG_WORDS.has(w));
+          const candMfgTokens = cleanCandMfg.split(/[^A-Z0-9]+/).filter((w) => w.length >= 4 && !GENERIC_MFG_WORDS.has(w));
+          const hasSharedToken = medMfgTokens.length > 0 && candMfgTokens.length > 0 && medMfgTokens.some((mt) => candMfgTokens.some((ct) => mt === ct || mt.length >= 5 && ct.includes(mt) || ct.length >= 5 && mt.includes(ct)));
+          if (hasSharedToken || isKnownAlias) {
+            companyMatch = true;
+            companyScore = 15;
+          } else {
+            companyScore = 0;
+          }
+        } else if (medMfg && ocrUpper.includes(medMfg.slice(0, 6))) {
+          companyMatch = true;
+          companyScore = 15;
+        }
+        if (GENERIC_CATEGORY_WORDS.has(medBrand) && !companyMatch) {
+          brandMatch = false;
+          brandScore = 0;
+        }
+        const medStr = this.extractStrength(medicine.strength || "") || this.extractStrength(medicine.name);
+        const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.ocrText || "") || (candUpper ? null : this.extractStrength(candidate.imagePath || ""));
+        let strengthMatch = false;
+        let strengthConflict = false;
+        let strengthScore = 10;
+        if (medStr && candStr) {
+          const isEquivVolume = medStr === "455ML" && candStr === "450ML" || medStr === "450ML" && candStr === "455ML" || medStr === "227ML" && candStr === "220ML" || medStr === "220ML" && candStr === "227ML";
+          if (medStr === candStr || isEquivVolume) {
+            strengthMatch = true;
+            strengthScore = 20;
+          } else {
+            const isMgStrength = (medStr.endsWith("MG") || medStr.endsWith("MCG")) && (candStr.endsWith("MG") || candStr.endsWith("MCG"));
+            const medNum = parseFloat(medStr);
+            const candNum = parseFloat(candStr);
+            const ratio = medNum > 0 && candNum > 0 ? Math.max(medNum, candNum) / Math.min(medNum, candNum) : 1;
+            if (isMgStrength && ratio > 1.2) {
+              strengthConflict = true;
+              strengthScore = -40;
+            } else if (ratio >= 4) {
+              strengthConflict = true;
+              strengthScore = -40;
+            } else {
+              strengthScore = 8;
+            }
+          }
+        } else if (medStr && !candStr) {
+          strengthScore = 10;
+        }
+        const medForm = this.extractDosageForm(medicine.name) || this.extractDosageForm(medicine.packaging || "");
+        const candNameForm = this.extractDosageForm(candidate.name);
+        const candPathForm = candNameForm ? null : this.extractDosageForm(candidate.imagePath || "");
+        const candForm = candNameForm || candPathForm || this.extractDosageForm(candidate.ocrText || "");
+        let dosageFormMatch = false;
+        let dosageFormConflict = false;
+        let dosageFormScore = 8;
+        const ACCESSORY_REGEX = /\b(slippers?|shoes?|belt|collar|support|knee\s*cap|anklet|mattress|pillow|chair|cushion|eyeliner|lipstick|kajal|mascara|nail\s*polish)\b/i;
+        if (medForm) {
+          if (ACCESSORY_REGEX.test(candidate.name)) {
+            dosageFormConflict = true;
+            dosageFormScore = -40;
+          } else if (candNameForm && candNameForm !== medForm) {
+            dosageFormConflict = true;
+            dosageFormScore = -40;
+          } else if (candPathForm && candPathForm !== medForm) {
+            dosageFormConflict = true;
+            dosageFormScore = -40;
+          } else if (candForm === medForm) {
+            dosageFormMatch = true;
+            dosageFormScore = 15;
+          }
+        }
+        let packMatch = false;
+        let packScore = 0;
+        const cleanMedPack = (medicine.packaging || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
+        const cleanCandPack = (candidate.name || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
+        const medPack = cleanMedPack.match(/\b\d+\b/)?.[0];
+        const candPack = cleanCandPack.match(/\b\d+\b/)?.[0];
+        if (medPack && candPack && medPack === candPack) {
+          packMatch = true;
+          packScore = 5;
+        } else if (!medPack || !candPack) {
+          packScore = 4;
+        }
+        let ocrMatch = false;
+        let ocrScore = 0;
+        if (candidate.ocrText && candidate.ocrText.length > 5) {
+          if (medBrand && ocrUpper.includes(medBrand)) {
+            ocrMatch = true;
+            ocrScore = 10;
+          } else if (ocrUpper.length > 40 && !ocrUpper.includes(medBrand) && !brandMatch) {
+            ocrScore = -15;
+          }
+        } else {
+          if (brandMatch) ocrScore = 9;
+        }
+        let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore;
+        let verificationStatus = "PENDING_REVIEW";
+        if (!brandMatch || strengthConflict || dosageFormConflict) {
+          totalScore = Math.min(totalScore, 30);
+          verificationStatus = "REJECTED";
+        } else if (totalScore >= 80) {
+          verificationStatus = "HIGH_CONFIDENCE";
+        } else if (totalScore < 45) {
+          verificationStatus = "REJECTED";
+        } else {
+          verificationStatus = "PENDING_REVIEW";
+        }
+        totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
+        const reasons = [];
+        if (brandMatch) reasons.push(`Brand matched ("${medBrand}")`);
+        else reasons.push(`Brand mismatch ("${medBrand}" not found)`);
+        if (strengthConflict) reasons.push(`Strength conflict (${medStr} vs ${candStr})`);
+        else if (strengthMatch) reasons.push(`Strength verified (${medStr})`);
+        if (dosageFormConflict) reasons.push(`Dosage form conflict (${medForm} vs ${candForm})`);
+        else if (dosageFormMatch) reasons.push(`Form matched (${medForm})`);
+        if (companyMatch) reasons.push("Manufacturer verified");
+        if (ocrMatch) reasons.push("OCR packaging text verified");
+        return {
+          confidenceScore: totalScore,
+          verificationStatus,
+          reason: reasons.join(" \u2022 "),
+          signals: {
+            brandMatch,
+            brandScore,
+            companyMatch,
+            companyScore,
+            strengthMatch,
+            strengthConflict,
+            strengthScore,
+            dosageFormMatch,
+            dosageFormConflict,
+            dosageFormScore,
+            packMatch,
+            packScore,
+            ocrMatch,
+            ocrScore
+          }
+        };
+      }
+      /**
+       * Fetch paginated catalog images with filtering
+       */
+      async getImages(options) {
+        const db2 = await dbManager.getConnection();
+        const page = Math.max(1, options.page || 1);
+        const limit = Math.min(100, Math.max(1, options.limit || 20));
+        const offset = (page - 1) * limit;
+        let whereSql = "1=1";
+        const params = [];
+        if (options.status && options.status !== "all") {
+          if (options.status === "review" || options.status === "pending") {
+            whereSql += " AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING')";
+          } else if (options.status === "missing_angles") {
+            whereSql += ` AND ci.medicine_id IN (
+          SELECT ci_sub.medicine_id FROM catalog_images ci_sub 
+          WHERE ci_sub.is_active = 1 
+          GROUP BY ci_sub.medicine_id 
+          HAVING COUNT(*) < 2
+        )`;
+          } else if (options.status === "high_confidence") {
+            whereSql += " AND ci.verification_status = 'HIGH_CONFIDENCE'";
+          } else if (options.status === "approved") {
+            whereSql += " AND ci.verification_status = 'APPROVED'";
+          } else if (options.status === "rejected") {
+            whereSql += " AND ci.verification_status = 'REJECTED'";
+          } else if (options.status === "removed") {
+            whereSql += " AND ci.verification_status = 'REMOVED'";
+          } else {
+            whereSql += " AND ci.verification_status = ?";
+            params.push(options.status.toUpperCase());
+          }
+        }
+        if (options.groupByMedicine) {
+          whereSql += " AND (ci.is_primary = 1 OR ci.id = (SELECT MIN(ci3.id) FROM catalog_images ci3 WHERE ci3.medicine_id = ci.medicine_id))";
+        }
+        if (options.medicine_id) {
+          whereSql += " AND ci.medicine_id = ?";
+          params.push(options.medicine_id);
+        }
+        if (options.search) {
+          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
+          const term = `%${options.search}%`;
+          params.push(term, term, term, term);
+        }
+        const countRow = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}`,
+          params
+        );
+        const totalCount = countRow ? countRow.count : 0;
+        const rows = await db2.all(
+          `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer,
+              (SELECT COUNT(*) FROM catalog_images ci2 WHERE ci2.medicine_id = ci.medicine_id AND ci2.is_active = 1) as angle_count
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}
+       ORDER BY 
+         CASE WHEN ci.verification_status = 'PENDING_REVIEW' THEN 1 
+              WHEN ci.verification_status = 'HIGH_CONFIDENCE' THEN 2 
+              ELSE 3 END,
+         ci.confidence_score DESC,
+         ci.id DESC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        );
+        return {
+          images: rows,
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+          page
+        };
+      }
+      /**
+       * Get counts across all verification buckets for Quick Assist & UI chips
+       */
+      async getCounts() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT verification_status, COUNT(*) as count 
+       FROM catalog_images 
+       GROUP BY verification_status`
+        );
+        const counts = {
+          total: 0,
+          pending_review: 0,
+          high_confidence: 0,
+          approved: 0,
+          rejected: 0,
+          removed: 0,
+          missing_angles: 0
+        };
+        for (const r of rows) {
+          counts.total += r.count;
+          if (r.verification_status === "PENDING_REVIEW" || r.verification_status === "PENDING") counts.pending_review += r.count;
+          else if (r.verification_status === "HIGH_CONFIDENCE") counts.high_confidence = r.count;
+          else if (r.verification_status === "APPROVED") counts.approved = r.count;
+          else if (r.verification_status === "REJECTED") counts.rejected = r.count;
+          else if (r.verification_status === "REMOVED") counts.removed = r.count;
+        }
+        const missingRow = await db2.get(
+          `SELECT COUNT(*) as count FROM (
+         SELECT medicine_id FROM catalog_images WHERE is_active = 1 GROUP BY medicine_id HAVING COUNT(*) < 2
+       )`
+        ).catch(() => ({ count: 0 }));
+        counts.missing_angles = missingRow?.count || 0;
+        return counts;
+      }
+      /**
+       * Approve an image -> marks as APPROVED and active catalogue image for its image_type slot
+       */
+      async approveImage(imageId, verifiedBy = "pharmacist", imageType = "combined", isPrimary) {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return false;
+        const targetType = imageType || image.image_type || "combined";
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [image.medicine_id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [image.medicine_id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [image.medicine_id, imageId]
+            );
+          }
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'APPROVED', 
+             is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [targetType, primaryVal, verifiedBy, imageId]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: image.medicine_id,
+            status: "APPROVED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return true;
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Reject an image -> logs rejection to prevent reuse and initiates auto-redownload
+       */
+      async rejectImage(imageId, reason = "Incorrect product image", verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return { success: false, rejectionLogged: false, autoRedownloadTriggered: false };
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'REJECTED', 
+             is_active = 0, 
+             verification_reason = ?, 
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, verifiedBy, imageId]
+          );
+          if (image.source_url || image.image_hash) {
+            await db2.run(
+              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
+           VALUES (?, ?, ?, ?, ?)`,
+              [image.medicine_id, image.source_url || null, image.image_hash || null, image.image_source || "pharmeasy", reason]
+            );
+          }
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: image.medicine_id,
+            status: "REJECTED",
+            is_active: 0
+          });
+          this.searchAndDownloadCandidate(image.medicine_id, (image.retry_count || 0) + 1).catch((err) => {
+            console.error(`[CatalogImageService] Auto-redownload failed for medicine ${image.medicine_id}:`, err.message);
+          });
+          return {
+            success: true,
+            rejectionLogged: true,
+            autoRedownloadTriggered: true
+          };
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Remove image from catalogue without deleting the medicine
+       */
+      async removeImage(imageId, verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) return false;
+        await db2.run(
+          `UPDATE catalog_images 
+       SET verification_status = 'REMOVED', 
+           is_active = 0, 
+           verified_by = ?, 
+           verified_at = CURRENT_TIMESTAMP, 
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+          [verifiedBy, imageId]
+        );
+        eventService.broadcast("catalog_image_updated", {
+          id: imageId,
+          medicine_id: image.medicine_id,
+          status: "REMOVED",
+          is_active: 0
+        });
+        return true;
+      }
+      /**
+       * Bulk Approve per Medicine (Single Confirm per Name - infinite-scroll workflow)
+       * One representative confirm image validates all downloaded images for that medicine name.
+       * Approves the primary/active image and any other pending/high_conf images for same medicine,
+       * marks them APPROVED + is_active=1 so resolveProductImage publishes to website instantly.
+       */
+      async approveAllForMedicine(medicineId, verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all("SELECT * FROM catalog_images WHERE medicine_id = ? ORDER BY is_primary DESC, confidence_score DESC, id ASC", [medicineId]);
+        if (rows.length === 0) return { approved: 0, medicineId };
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          let approved = 0;
+          for (const row of rows) {
+            if (["REJECTED", "REMOVED", "REPLACED", "BROKEN"].includes(row.verification_status)) continue;
+            const nextVersion = (row.verification_version || 1) + 1;
+            await db2.run(
+              `UPDATE catalog_images
+           SET verification_status = 'APPROVED',
+               is_active = 1,
+               verified_by = ?,
+               verified_at = CURRENT_TIMESTAMP,
+               verification_version = ?,
+               locked_by = NULL,
+               locked_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [verifiedBy, nextVersion, row.id]
+            );
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Bulk approved via single confirm (stream)', ?)`,
+              [row.id, medicineId, row.verification_status, row.image_path, row.image_path, verifiedBy]
+            ).catch(() => {
+            });
+            approved++;
+          }
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            medicine_id: medicineId,
+            status: "APPROVED",
+            bulk: true,
+            approved,
+            is_active: 1
+          });
+          return { approved, medicineId };
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Bulk Reject per Medicine (Single Reject per Name - infinite-scroll workflow)
+       * Rejects ALL catalog images for the medicine from the app, blacklists URLs/hashes,
+       * and triggers a controlled re-download from internet for fresh candidates.
+       */
+      async rejectAllForMedicine(medicineId, reason = "Rejected via stream - incorrect image", verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all("SELECT * FROM catalog_images WHERE medicine_id = ? AND is_active IN (0,1) AND verification_status NOT IN ('REJECTED','REMOVED')", [medicineId]);
+        if (rows.length === 0) return { rejected: 0, medicineId, autoRedownloadTriggered: false };
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          let rejected = 0;
+          for (const row of rows) {
+            const nextVersion = (row.verification_version || 1) + 1;
+            await db2.run(
+              `UPDATE catalog_images
+           SET verification_status = 'REJECTED',
+               is_active = 0,
+               is_primary = 0,
+               verification_reason = ?,
+               verified_by = ?,
+               verified_at = CURRENT_TIMESTAMP,
+               verification_version = ?,
+               locked_by = NULL,
+               locked_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [reason, verifiedBy, nextVersion, row.id]
+            );
+            if (row.source_url || row.image_hash) {
+              await db2.run(
+                `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason)
+             VALUES (?, ?, ?, ?, ?)`,
+                [row.medicine_id, row.source_url || null, row.image_hash || null, row.image_source || "stream", reason]
+              ).catch(() => {
+              });
+            }
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'REJECTED', ?, ?, 'MARK_INCORRECT', ?, ?)`,
+              [row.id, medicineId, row.verification_status, row.image_path, row.image_path, reason, verifiedBy]
+            ).catch(() => {
+            });
+            rejected++;
+          }
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            medicine_id: medicineId,
+            status: "REJECTED",
+            bulk: true,
+            rejected,
+            is_active: 0
+          });
+          const firstRow = rows[0];
+          this.searchAndDownloadCandidate(medicineId, (firstRow.retry_count || 0) + 1).catch((err) => {
+            console.error(`[CatalogImageService] Bulk auto-redownload failed for medicine ${medicineId}:`, err.message);
+          });
+          return { rejected, medicineId, autoRedownloadTriggered: true };
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Replace image with a custom uploaded file or URL
+       */
+      async replaceImage(imageId, newImagePath, sourceUrl = null, verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return null;
+        const hash = this.computeFileHash(newImagePath);
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET is_active = 0, 
+             verification_status = 'REPLACED', 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [imageId]
+          );
+          const res = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, is_active, replaced_from_image_id, verified_by, verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_replacement', 'APPROVED', 1, ?, ?, CURRENT_TIMESTAMP)`,
+            [
+              current.medicine_id,
+              current.company_name,
+              current.product_name,
+              newImagePath,
+              newImagePath,
+              "manual_upload",
+              sourceUrl,
+              hash,
+              imageId,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: res.lastID,
+            medicine_id: current.medicine_id,
+            status: "APPROVED",
+            is_active: 1
+          });
+          return newRecord;
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+      }
+      /**
+       * Search and download candidate image online, strictly excluding rejected URLs/hashes
+       */
+      async searchAndDownloadCandidate(medicineId, retryCount = 1) {
+        if (retryCount > 3) {
+          console.warn(`[CatalogImageService] Max retry count (3) reached for medicine ID ${medicineId}. Stopping.`);
+          return null;
+        }
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
+        if (!med) return null;
+        const rejections = await db2.all(
+          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+          [medicineId]
+        );
+        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+        const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
+        const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
+        const strength = this.extractStrength(med.strength || "") || this.extractStrength(med.name);
+        const cleanQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
+        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
+        let products = [];
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            signal: AbortSignal.timeout(8e3)
+          });
+          if (resp.ok) {
+            const json = await resp.json();
+            products = json?.data?.products || [];
+          }
+        } catch (err) {
+          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
+          return null;
+        }
+        if (products.length === 0) return null;
+        let selectedCandidate = null;
+        let selectedImageUrl = null;
+        for (const prod of products) {
+          const damImages = prod.damImages || [];
+          const frontImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+          if (!frontImg || !frontImg.url) continue;
+          const candidateUrl = frontImg.url.split("?")[0];
+          if (rejectedUrls.has(candidateUrl)) {
+            continue;
+          }
+          const matchCheck = this.computeConfidence(med, {
+            name: prod.name,
+            manufacturer: prod.manufacturer
+          });
+          if (matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch) {
+            continue;
+          }
+          selectedCandidate = prod;
+          selectedImageUrl = candidateUrl;
+          break;
+        }
+        if (!selectedCandidate || !selectedImageUrl) {
+          console.log(`[CatalogImageService] No un-rejected candidate found for medicine ${med.name}`);
+          return null;
+        }
+        const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
+        const filename = `${slug}-candidate-${Date.now()}.jpg`;
+        const frontendDir = import_path12.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path12.default.resolve(process.cwd(), "uploads/products");
+        import_fs11.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs11.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path12.default.join(frontendDir, filename);
+        const uploadsPath = import_path12.default.join(uploadsDir, filename);
+        try {
+          const imgRes = await fetch(selectedImageUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+            signal: AbortSignal.timeout(1e4)
+          });
+          if (!imgRes.ok) return null;
+          const buffer = Buffer.from(await imgRes.arrayBuffer());
+          const hash = import_crypto.default.createHash("sha256").update(buffer).digest("hex");
+          if (rejectedHashes.has(hash)) {
+            console.warn(`[CatalogImageService] Downloaded image content hash matches previously rejected image for medicine ${med.name}.`);
+            return null;
+          }
+          import_fs11.default.writeFileSync(frontendPath, buffer);
+          import_fs11.default.writeFileSync(uploadsPath, buffer);
+          const matchResult = this.computeConfidence(med, {
+            name: selectedCandidate.name,
+            manufacturer: selectedCandidate.manufacturer
+          });
+          const relPath = `/products/${filename}`;
+          const isActive = matchResult.verificationStatus === "HIGH_CONFIDENCE" ? 1 : 0;
+          if (isActive === 1) {
+            await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
+          }
+          const insertRes = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, verification_reason, is_active, retry_count
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?)`,
+            [
+              med.id,
+              med.manufacturer || null,
+              selectedCandidate.name,
+              relPath,
+              relPath,
+              "pharmeasy",
+              selectedImageUrl,
+              hash,
+              matchResult.confidenceScore,
+              matchResult.verificationStatus,
+              matchResult.reason,
+              isActive,
+              retryCount
+            ]
+          );
+          const record = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [insertRes.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: insertRes.lastID,
+            medicine_id: med.id,
+            status: matchResult.verificationStatus,
+            confidence: matchResult.confidenceScore
+          });
+          return record;
+        } catch (downloadErr) {
+          console.error(`[CatalogImageService] Download error:`, downloadErr.message);
+          return null;
+        }
+      }
+      /**
+       * One-time sync/backfill of existing downloaded images from data/image_download_state.json into catalog_images
+       */
+      async syncExistingDownloadedImages() {
+        const db2 = await dbManager.getConnection();
+        const stateFile = import_path12.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs11.default.existsSync(stateFile)) {
+          return { synced: 0, skipped: 0, totalInState: 0 };
+        }
+        const stateData = JSON.parse(import_fs11.default.readFileSync(stateFile, "utf-8"));
+        const products = stateData.products || {};
+        const entries = Object.entries(products);
+        const medRows = await db2.all("SELECT id, name, manufacturer, strength, packaging, mrp FROM medicines");
+        const medMap = /* @__PURE__ */ new Map();
+        for (const m of medRows) {
+          if (m.name) {
+            medMap.set(m.name.trim().toLowerCase(), m);
+          }
+        }
+        const existingImages = await db2.all("SELECT medicine_id, image_path FROM catalog_images");
+        const existingSet = new Set(existingImages.map((r) => `${r.medicine_id}::${r.image_path}`));
+        let synced = 0;
+        let skipped = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const [rawName, p] of entries) {
+            const item = p;
+            if (item.status !== "success" || !item.images) {
+              skipped++;
+              continue;
+            }
+            const front = item.images.front || item.images["box-front"] || item.images.default || Object.values(item.images)[0];
+            if (!front || !front.url) {
+              skipped++;
+              continue;
+            }
+            let matchedMed = medMap.get(rawName.trim().toLowerCase());
+            if (!matchedMed) {
+              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              matchedMed = medMap.get(clean);
+            }
+            if (!matchedMed) {
+              skipped++;
+              continue;
+            }
+            const imageKey = `${matchedMed.id}::${front.url}`;
+            if (existingSet.has(imageKey)) {
+              skipped++;
+              continue;
+            }
+            const matchRes = this.computeConfidence(matchedMed, {
+              name: item.matched_name || matchedMed.name,
+              manufacturer: matchedMed.manufacturer
+            });
+            const status = matchRes.verificationStatus === "HIGH_CONFIDENCE" ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
+            const isActive = status === "HIGH_CONFIDENCE" ? 1 : 0;
+            await db2.run(
+              `INSERT INTO catalog_images (
+             medicine_id, company_name, product_name, image_path, thumbnail_path,
+             image_source, source_url, image_hash, confidence_score, matching_method,
+             verification_status, verification_reason, is_active
+           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, ?, 'ai_multi_signal', ?, ?, ?)`,
+              [
+                matchedMed.id,
+                matchedMed.manufacturer || null,
+                item.matched_name || matchedMed.name,
+                front.url,
+                front.url,
+                front.url,
+                matchRes.confidenceScore,
+                status,
+                matchRes.reason,
+                isActive
+              ]
+            );
+            existingSet.add(imageKey);
+            synced++;
+          }
+          await db2.run("COMMIT");
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+        return { synced, skipped, totalInState: entries.length };
+      }
+      /**
+       * Check if image file physically exists on disk (Section 7 & 15)
+       */
+      verifyImageFileExists(imagePath) {
+        if (!imagePath) return false;
+        const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
+        const p1 = import_path12.default.resolve(process.cwd(), "frontend/public", cleanPath);
+        const p2 = import_path12.default.resolve(process.cwd(), cleanPath);
+        const p3 = import_path12.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
+        return import_fs11.default.existsSync(p1) || import_fs11.default.existsSync(p2) || import_fs11.default.existsSync(p3);
+      }
+      /**
+       * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
+       * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
+       */
+      async resolveProductImage(medicineId, options = { version: true }) {
+        const db2 = await dbManager.getConnection();
+        const row = await db2.get(
+          `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+          [medicineId]
+        ).catch(() => null);
+        if (!row || !row.image_path) {
+          return null;
+        }
+        if (!this.verifyImageFileExists(row.image_path)) {
+          await db2.run(
+            `UPDATE catalog_images SET is_active = 0, verification_status = 'BROKEN', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [row.id]
+          ).catch(() => null);
+          return null;
+        }
+        let url = row.image_path;
+        if (options.version && row.updated_at) {
+          const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
+          url = `${url}?v=${v}`;
+        }
+        return {
+          url,
+          status: row.verification_status,
+          id: row.id
+        };
+      }
+      /**
+       * Multi-Angle Gallery Resolver for Customer Portal & Website Shop
+       * Resolves up to 4-5 verified angle images per medicine (Combined, Front, Back, Box, Tablet)
+       */
+      async resolveProductImages(medicineId, options = { version: true }) {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       ORDER BY 
+         is_primary DESC,
+         CASE COALESCE(image_type, 'combined')
+           WHEN 'combined' THEN 1
+           WHEN 'front' THEN 2
+           WHEN 'back' THEN 3
+           WHEN 'box' THEN 4
+           WHEN 'tablet' THEN 5
+           ELSE 6
+         END ASC,
+         id DESC`,
+          [medicineId]
+        ).catch(() => []);
+        const gallery = [];
+        const imagesDict = {};
+        const seenTypes = /* @__PURE__ */ new Set();
+        const LABEL_MAP = {
+          combined: "Front & Back (Combined)",
+          front: "Front View",
+          back: "Back / Blister View",
+          box: "Packaging Box",
+          tablet: "Tablet / Pill"
+        };
+        for (const row of rows) {
+          if (!row.image_path) continue;
+          if (!this.verifyImageFileExists(row.image_path)) continue;
+          const type = (row.image_type || "combined").toLowerCase();
+          if (seenTypes.has(type) && gallery.length >= 4) continue;
+          seenTypes.add(type);
+          let url = row.image_path;
+          if (options.version && row.updated_at) {
+            const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
+            url = `${url}?v=${v}`;
+          }
+          const item = {
+            url,
+            type,
+            label: LABEL_MAP[type] || "Product View",
+            is_primary: row.is_primary === 1 || gallery.length === 0
+          };
+          gallery.push(item);
+          imagesDict[type] = item;
+          if (gallery.length >= 4) break;
+        }
+        const primary = gallery.find((g) => g.is_primary) || gallery[0] || null;
+        return {
+          primaryUrl: primary ? primary.url : null,
+          images: imagesDict,
+          gallery
+        };
+      }
+      /**
+       * Normalize image state cache angles into structured 3-4 image gallery
+       */
+      extractGalleryFromState(imgData) {
+        if (!imgData || !imgData.images) return [];
+        const gallery = [];
+        const seenTypes = /* @__PURE__ */ new Set();
+        const LABEL_MAP = {
+          combined: "Front & Back (Combined)",
+          front: "Front View",
+          back: "Back / Blister View",
+          box: "Packaging Box",
+          tablet: "Tablet / Pill"
+        };
+        const typeMapping = [
+          { raw: "combo", normalized: "combined" },
+          { raw: "combo-front", normalized: "combined" },
+          { raw: "front", normalized: "front" },
+          { raw: "back", normalized: "back" },
+          { raw: "box-front", normalized: "box" },
+          { raw: "box-back", normalized: "box" },
+          { raw: "box-side", normalized: "box" },
+          { raw: "side", normalized: "tablet" }
+        ];
+        for (const map of typeMapping) {
+          if (seenTypes.has(map.normalized)) continue;
+          const imgObj = imgData.images[map.raw];
+          if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+            seenTypes.add(map.normalized);
+            gallery.push({
+              url: imgObj.url,
+              type: map.normalized,
+              label: LABEL_MAP[map.normalized] || "Product View",
+              is_primary: map.normalized === "combined" || gallery.length === 0 && !seenTypes.has("combined")
+            });
+          }
+          if (gallery.length >= 4) break;
+        }
+        if (gallery.length === 0) {
+          const keys = Object.keys(imgData.images);
+          for (const k of keys) {
+            const imgObj = imgData.images[k];
+            if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
+              gallery.push({
+                url: imgObj.url,
+                type: "front",
+                label: "Front View",
+                is_primary: true
+              });
+              break;
+            }
+          }
+        }
+        return gallery;
+      }
+      /**
+       * Backfill all available secondary angles (back, box, tablet, combined) from data/image_download_state.json
+       */
+      async syncMultiAngleImages() {
+        const db2 = await dbManager.getConnection();
+        const stateFile = import_path12.default.resolve(process.cwd(), "data/image_download_state.json");
+        if (!import_fs11.default.existsSync(stateFile)) {
+          return { added: 0, total: 0 };
+        }
+        const stateData = JSON.parse(import_fs11.default.readFileSync(stateFile, "utf-8"));
+        const products = stateData.products || {};
+        const entries = Object.entries(products);
+        const meds = await db2.all("SELECT id, name, manufacturer FROM medicines");
+        const medMap = /* @__PURE__ */ new Map();
+        for (const m of meds) {
+          if (m.name) medMap.set(m.name.trim().toLowerCase(), m);
+        }
+        const existing = await db2.all("SELECT medicine_id, image_path, image_type FROM catalog_images");
+        const existingSet = new Set(existing.map((e) => `${e.medicine_id}::${e.image_path}`));
+        const existingTypes = /* @__PURE__ */ new Map();
+        for (const e of existing) {
+          if (!existingTypes.has(e.medicine_id)) existingTypes.set(e.medicine_id, /* @__PURE__ */ new Set());
+          existingTypes.get(e.medicine_id).add(e.image_type || "combined");
+        }
+        const typeMapping = [
+          { raw: "combo", normalized: "combined", slot: 1 },
+          { raw: "combo-front", normalized: "combined", slot: 1 },
+          { raw: "front", normalized: "front", slot: 2 },
+          { raw: "back", normalized: "back", slot: 3 },
+          { raw: "box-front", normalized: "box", slot: 4 },
+          { raw: "box-back", normalized: "box", slot: 4 },
+          { raw: "side", normalized: "tablet", slot: 5 }
+        ];
+        let added = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const [rawName, p] of entries) {
+            const item = p;
+            if (item.status !== "success" || !item.images) continue;
+            let med = medMap.get(rawName.trim().toLowerCase());
+            if (!med) {
+              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              med = medMap.get(clean);
+            }
+            if (!med) continue;
+            const currentTypes = existingTypes.get(med.id) || /* @__PURE__ */ new Set();
+            for (const tm of typeMapping) {
+              const imgObj = item.images[tm.raw];
+              if (!imgObj || !imgObj.url) continue;
+              if (!this.verifyImageFileExists(imgObj.url)) continue;
+              const key = `${med.id}::${imgObj.url}`;
+              if (existingSet.has(key)) continue;
+              if (currentTypes.has(tm.normalized)) continue;
+              const isPrimary = tm.normalized === "combined" ? 1 : 0;
+              await db2.run(
+                `INSERT INTO catalog_images (
+               medicine_id, company_name, product_name, image_path, thumbnail_path,
+               image_source, source_url, image_hash, confidence_score, matching_method,
+               verification_status, verification_reason, is_active, image_type, is_primary, slot_number
+             ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, 90, 'state_sync', 'HIGH_CONFIDENCE', 'Downloaded angle', 1, ?, ?, ?)`,
+                [
+                  med.id,
+                  med.manufacturer || null,
+                  item.matched_name || med.name,
+                  imgObj.url,
+                  imgObj.url,
+                  imgObj.url,
+                  tm.normalized,
+                  isPrimary,
+                  tm.slot
+                ]
+              );
+              currentTypes.add(tm.normalized);
+              existingSet.add(key);
+              added++;
+            }
+          }
+          await db2.run("COMMIT");
+        } catch (e) {
+          await db2.run("ROLLBACK");
+          throw e;
+        }
+        return { added, total: entries.length };
+      }
+      /**
+       * Multi-tier query generation for pharmaceutical search (Section 10 & 34)
+       */
+      generateAccurateQueries(rawName, mfg) {
+        const queries = [];
+        const clean = rawName.replace(/\[.*?\]/g, " ").replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ").replace(/\s+/g, " ").trim();
+        if (/^BUDETROL\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "400";
+          queries.push(`Budetrol ${str}`, `Budetrol Inhalation`);
+        } else if (/^THYROX\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Thyrox ${str} Macleods`, `Thyrox ${str}`, `Thyrox`);
+        } else if (/^DAPARYL\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Daparyl ${str}`, `Daparyl`);
+        } else if (/^VOGS M\b/i.test(rawName)) {
+          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
+          queries.push(`Vogs M ${str}`, `Vogs M`);
+        } else if (/^O2 TAB/i.test(rawName)) {
+          queries.push("O2 Tablet", "O2 Medley Tablet");
+        }
+        const brand = this.extractCoreBrand(rawName);
+        const strength = this.extractStrength(rawName);
+        if (brand && strength) {
+          queries.push(`${brand} ${strength}`);
+        }
+        queries.push(clean);
+        if (brand && mfg) {
+          const cleanMfg = mfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim().split(/\s+/)[0];
+          if (cleanMfg && cleanMfg.length >= 3) {
+            queries.push(`${brand} ${cleanMfg}`);
+          }
+        }
+        if (brand) {
+          queries.push(brand);
+        }
+        return Array.from(new Set(queries.filter((q) => q && q.trim().length >= 2)));
+      }
+      /**
+       * Batch auto-approve high-confidence pending images (Section 10 & 34)
+       * Promotes PENDING_REVIEW images with score >= 80% and verified physical file to HIGH_CONFIDENCE and active.
+       */
+      async autoApproveHighConfidence() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.confidence_score, ci.image_path,
+              m.name as med_name, m.manufacturer, m.strength, m.packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 0 AND ci.verification_status IN ('PENDING_REVIEW', 'HIGH_CONFIDENCE')`
+        );
+        let approved = 0;
+        let skipped = 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const row of rows) {
+            if (!this.verifyImageFileExists(row.image_path)) {
+              skipped++;
+              continue;
+            }
+            const matchRes = this.computeConfidence(
+              {
+                name: row.med_name,
+                manufacturer: row.manufacturer,
+                strength: row.strength,
+                packaging: row.packaging
+              },
+              {
+                name: row.product_name,
+                manufacturer: row.manufacturer
+              }
+            );
+            if (matchRes.verificationStatus === "HIGH_CONFIDENCE" || matchRes.confidenceScore >= 80) {
+              await db2.run(
+                "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND id != ?",
+                [row.medicine_id, row.id]
+              );
+              await db2.run(
+                `UPDATE catalog_images 
+             SET verification_status = 'HIGH_CONFIDENCE',
+                 confidence_score = ?,
+                 verification_reason = ?,
+                 is_active = 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+                [matchRes.confidenceScore, matchRes.reason, row.id]
+              );
+              approved++;
+            } else {
+              skipped++;
+            }
+          }
+          await db2.run("COMMIT");
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+        eventService.broadcast("catalog_image_updated", {
+          action: "auto_approve_completed",
+          approved,
+          evaluated: rows.length
+        });
+        return { evaluated: rows.length, approved, skipped };
+      }
+      /**
+       * Image Health Auditor (Section 6, 7, 19, 34 of PRODUCT IMAGE MISSING.MD)
+       * Audits all database medicines and monthly refill catalog items.
+       */
+      async auditImageHealth() {
+        const db2 = await dbManager.getConnection();
+        const totalMedsRow = await db2.get("SELECT COUNT(*) as count FROM medicines");
+        const totalMedicines = totalMedsRow ? totalMedsRow.count : 0;
+        const statusRows = await db2.all(
+          `SELECT verification_status, is_active, COUNT(*) as count 
+       FROM catalog_images 
+       GROUP BY verification_status, is_active`
+        );
+        let approved = 0;
+        let highConfidence = 0;
+        let pendingReview = 0;
+        let rejected = 0;
+        for (const r of statusRows) {
+          if (r.verification_status === "APPROVED") approved += r.count;
+          else if (r.verification_status === "HIGH_CONFIDENCE") highConfidence += r.count;
+          else if (r.verification_status === "PENDING_REVIEW") pendingReview += r.count;
+          else if (r.verification_status === "REJECTED") rejected += r.count;
+        }
+        const activeRows = await db2.all(
+          `SELECT id, medicine_id, image_path FROM catalog_images WHERE is_active = 1`
+        );
+        let healthyActive = 0;
+        let broken = 0;
+        for (const img of activeRows) {
+          if (this.verifyImageFileExists(img.image_path)) {
+            healthyActive++;
+          } else {
+            broken++;
+          }
+        }
+        const refillMissingItems = [];
+        let refillCatalogMedicines = 0;
+        try {
+          const csvPath = import_path12.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs11.default.existsSync(csvPath)) {
+            const content = import_fs11.default.readFileSync(csvPath, "utf-8");
+            const lines = content.split(/\r?\n/).slice(1);
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              refillCatalogMedicines++;
+              const parts = line.split(",");
+              const category = parts[0]?.replace(/^"|"$/g, "").trim() || "";
+              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
+              if (!name) continue;
+              const med = await db2.get(
+                `SELECT id FROM medicines WHERE name = ? OR name LIKE ? LIMIT 1`,
+                [name, `${name.split(" ")[0]}%`]
+              );
+              if (!med) {
+                refillMissingItems.push({ name, category, reason: "Medicine not linked in DB" });
+                continue;
+              }
+              const activeImg = await db2.get(
+                `SELECT image_path FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1`,
+                [med.id]
+              );
+              if (!activeImg) {
+                refillMissingItems.push({ name, category, reason: "No active image record" });
+              } else if (!this.verifyImageFileExists(activeImg.image_path)) {
+                refillMissingItems.push({ name, category, reason: "Physical image file missing on disk" });
+              }
+            }
+          }
+        } catch (_) {
+        }
+        const missing = Math.max(0, totalMedicines - healthyActive);
+        return {
+          summary: {
+            totalMedicines,
+            refillCatalogMedicines,
+            healthyActive,
+            missing,
+            broken,
+            pendingReview,
+            approved,
+            highConfidence,
+            rejected
+          },
+          refillMissingItems
+        };
+      }
+      /**
+       * Bulk Missing Image Re-check & Auto-Repair Pipeline (Section 18 & 34 of PRODUCT IMAGE MISSING.MD)
+       * Scans medicines that lack an active verified image, generates tiered queries, downloads candidates,
+       * validates against product brand and strength, and activates high-confidence images.
+       */
+      async repairMissingImages(limit = 50) {
+        const db2 = await dbManager.getConnection();
+        const results = [];
+        const targetMeds = [];
+        const seenIds = /* @__PURE__ */ new Set();
+        try {
+          const csvPath = import_path12.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+          if (import_fs11.default.existsSync(csvPath)) {
+            const content = import_fs11.default.readFileSync(csvPath, "utf-8");
+            const lines = content.split(/\r?\n/).slice(1);
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const parts = line.split(",");
+              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
+              if (!name) continue;
+              const med = await db2.get(
+                `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging,
+                    (SELECT COUNT(*) FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) as active_count
+             FROM medicines m WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
+                [name, `${name.split(" ")[0]}%`]
+              );
+              if (med && med.active_count === 0 && !seenIds.has(med.id)) {
+                seenIds.add(med.id);
+                targetMeds.push(med);
+                if (targetMeds.length >= limit) break;
+              }
+            }
+          }
+        } catch (_) {
+        }
+        if (targetMeds.length < limit) {
+          const remainingLimit = limit - targetMeds.length;
+          const additional = await db2.all(
+            `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging
+         FROM medicines m
+         WHERE m.id NOT IN (SELECT medicine_id FROM catalog_images WHERE is_active = 1)
+         ORDER BY m.id ASC
+         LIMIT ?`,
+            [remainingLimit]
+          );
+          for (const m of additional) {
+            if (!seenIds.has(m.id)) {
+              seenIds.add(m.id);
+              targetMeds.push(m);
+            }
+          }
+        }
+        let repaired = 0;
+        let failed = 0;
+        for (const med of targetMeds) {
+          try {
+            const queries = this.generateAccurateQueries(med.name, med.manufacturer);
+            let matchedCandidate = null;
+            let matchedImageUrl = null;
+            let bestScoreResult = null;
+            const rejections = await db2.all(
+              "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+              [med.id]
+            );
+            const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+            const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
+            for (const query of queries) {
+              const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
+              try {
+                const resp = await fetch(url, {
+                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+                  signal: AbortSignal.timeout(6e3)
+                });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const products = json?.data?.products || [];
+                for (const prod of products) {
+                  const damImages = prod.damImages || [];
+                  const frontImg = damImages.find((img) => img.face === "front" || img.face === "box-front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+                  if (!frontImg || !frontImg.url) continue;
+                  const candidateUrl = frontImg.url.split("?")[0];
+                  if (rejectedUrls.has(candidateUrl)) continue;
+                  const matchRes = this.computeConfidence(med, {
+                    name: prod.name,
+                    manufacturer: prod.manufacturer
+                  });
+                  if (matchRes.verificationStatus === "REJECTED" || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict) {
+                    continue;
+                  }
+                  if (matchRes.confidenceScore >= 75) {
+                    matchedCandidate = prod;
+                    matchedImageUrl = candidateUrl;
+                    bestScoreResult = matchRes;
+                    break;
+                  }
+                }
+              } catch (_) {
+              }
+              if (matchedCandidate) break;
+              await new Promise((r) => setTimeout(r, 100));
+            }
+            if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
+              failed++;
+              results.push({
+                medicine_id: med.id,
+                name: med.name,
+                status: "NOT_FOUND",
+                reason: "No high-confidence non-conflicting online image candidate found"
+              });
+              continue;
+            }
+            const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 50);
+            const filename = `${slug}-${Date.now()}.jpg`;
+            const frontendDir = import_path12.default.resolve(process.cwd(), "frontend/public/products");
+            const uploadsDir = import_path12.default.resolve(process.cwd(), "uploads/products");
+            import_fs11.default.mkdirSync(frontendDir, { recursive: true });
+            import_fs11.default.mkdirSync(uploadsDir, { recursive: true });
+            const frontendPath = import_path12.default.join(frontendDir, filename);
+            const uploadsPath = import_path12.default.join(uploadsDir, filename);
+            const imgRes = await fetch(matchedImageUrl, {
+              headers: { "User-Agent": "Mozilla/5.0" },
+              signal: AbortSignal.timeout(8e3)
+            });
+            if (!imgRes.ok) {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
+              continue;
+            }
+            const buffer = Buffer.from(await imgRes.arrayBuffer());
+            const hash = import_crypto.default.createHash("sha256").update(buffer).digest("hex");
+            if (rejectedHashes.has(hash)) {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: "HASH_BLACKLISTED" });
+              continue;
+            }
+            import_fs11.default.writeFileSync(frontendPath, buffer);
+            import_fs11.default.writeFileSync(uploadsPath, buffer);
+            const relPath = `/products/${filename}`;
+            const isHighConfidence = bestScoreResult.verificationStatus === "HIGH_CONFIDENCE" || bestScoreResult.confidenceScore >= 80;
+            const status = isHighConfidence ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
+            const isActive = isHighConfidence ? 1 : 0;
+            await db2.run("BEGIN TRANSACTION");
+            if (isActive === 1) {
+              await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
+            }
+            await db2.run(
+              `INSERT INTO catalog_images (
+             medicine_id, company_name, product_name, image_path, thumbnail_path,
+             image_source, source_url, image_hash, confidence_score, matching_method,
+             verification_status, verification_reason, is_active
+           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
+              [
+                med.id,
+                med.manufacturer || null,
+                matchedCandidate.name,
+                relPath,
+                relPath,
+                matchedImageUrl,
+                hash,
+                bestScoreResult.confidenceScore,
+                status,
+                bestScoreResult.reason,
+                isActive
+              ]
+            );
+            await db2.run("COMMIT");
+            try {
+              const stateFile = import_path12.default.resolve(process.cwd(), "data/image_download_state.json");
+              if (import_fs11.default.existsSync(stateFile)) {
+                const state = JSON.parse(import_fs11.default.readFileSync(stateFile, "utf-8"));
+                if (!state.products) state.products = {};
+                state.products[med.name] = {
+                  status: "success",
+                  matched_name: matchedCandidate.name,
+                  slug,
+                  images: {
+                    front: {
+                      fileName: filename,
+                      url: relPath,
+                      uploadsUrl: `/uploads/products/${filename}`,
+                      bytes: buffer.length
+                    }
+                  },
+                  verified: isHighConfidence,
+                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                };
+                state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
+                import_fs11.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
+              }
+            } catch (_) {
+            }
+            repaired++;
+            results.push({
+              medicine_id: med.id,
+              name: med.name,
+              status,
+              matched_name: matchedCandidate.name,
+              reason: bestScoreResult.reason
+            });
+          } catch (err) {
+            failed++;
+            results.push({
+              medicine_id: med.id,
+              name: med.name,
+              status: "ERROR",
+              reason: err.message
+            });
+          }
+        }
+        eventService.broadcast("catalog_image_updated", {
+          action: "repair_batch_completed",
+          repaired,
+          failed,
+          scanned: targetMeds.length
+        });
+        return {
+          scanned: targetMeds.length,
+          repaired,
+          failed,
+          results
+        };
+      }
+      /**
+       * Dedicated Correction Queue:
+       * Returns unresolved images (PENDING_REVIEW, PENDING, INCORRECT)
+       * where next_review_at is NULL or <= CURRENT_TIMESTAMP.
+       * Excludes CORRECT, APPROVED, CORRECTED, and active SKIPPED.
+       */
+      async getCorrectionQueue(options) {
+        const db2 = await dbManager.getConnection();
+        const page = Math.max(1, options.page || 1);
+        const limit = Math.min(100, Math.max(1, options.limit || 20));
+        const offset = (page - 1) * limit;
+        let whereSql = "1=1";
+        const params = [];
+        const statusMode = options.status || "unresolved";
+        if (statusMode === "unresolved") {
+          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+        } else if (statusMode === "pending") {
+          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING') 
+                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
+        } else if (statusMode === "incorrect") {
+          whereSql += ` AND ci.verification_status = 'INCORRECT'`;
+        } else if (statusMode === "skipped") {
+          whereSql += ` AND ci.verification_status = 'SKIPPED' AND ci.next_review_at > CURRENT_TIMESTAMP`;
+        }
+        if (options.category && options.category !== "all" && options.category !== "All Categories") {
+          whereSql += ` AND (m.category = ? OR m.packaging LIKE ? OR m.name LIKE ?)`;
+          params.push(options.category, `%${options.category}%`, `%${options.category}%`);
+        }
+        if (options.search) {
+          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
+          const term = `%${options.search}%`;
+          params.push(term, term, term, term);
+        }
+        const countRow = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}`,
+          params
+        );
+        const totalCount = countRow ? countRow.count : 0;
+        const rows = await db2.all(
+          `SELECT ci.*, 
+              m.name as medicine_name, 
+              m.generic_name, 
+              m.strength, 
+              m.packaging, 
+              m.mrp, 
+              m.manufacturer,
+              m.category
+       FROM catalog_images ci 
+       LEFT JOIN medicines m ON m.id = ci.medicine_id 
+       WHERE ${whereSql}
+       ORDER BY 
+         CASE WHEN ci.verification_status = 'INCORRECT' THEN 1
+              WHEN ci.verification_status IN ('PENDING_REVIEW', 'PENDING') THEN 2
+              ELSE 3 END,
+         ci.id ASC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        );
+        const categoryTokens = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "CREAM", "DROPS", "POWDER"];
+        const categories = [];
+        const unresolvedTotal = await db2.get(
+          `SELECT COUNT(*) as count 
+       FROM catalog_images ci 
+       WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+         AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`
+        );
+        categories.push({ category: "All Categories", count: unresolvedTotal?.count || 0 });
+        for (const token of categoryTokens) {
+          const catCount = await db2.get(
+            `SELECT COUNT(*) as count 
+         FROM catalog_images ci 
+         LEFT JOIN medicines m ON m.id = ci.medicine_id 
+         WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
+           AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)
+           AND (m.packaging LIKE ? OR m.name LIKE ?)`,
+            [`%${token}%`, `%${token}%`]
+          );
+          if (catCount && catCount.count > 0) {
+            categories.push({ category: token, count: catCount.count });
+          }
+        }
+        return {
+          images: rows,
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+          page,
+          categories
+        };
+      }
+      /**
+       * Quality Dashboard & Verification Stats
+       */
+      async getCorrectionStats() {
+        const db2 = await dbManager.getConnection();
+        const pendingRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images 
+       WHERE verification_status IN ('PENDING_REVIEW', 'PENDING')
+         AND (next_review_at IS NULL OR next_review_at <= CURRENT_TIMESTAMP)`
+        );
+        const incorrectRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'INCORRECT'`
+        );
+        const correctedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'CORRECTED'`
+        );
+        const verifiedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status IN ('APPROVED', 'CORRECT')`
+        );
+        const skippedRow = await db2.get(
+          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'SKIPPED' AND next_review_at > CURRENT_TIMESTAMP`
+        );
+        const totalRow = await db2.get(`SELECT COUNT(*) as c FROM catalog_images`);
+        const verifiedTodayRow = await db2.get(
+          `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'MARK_CORRECT' AND DATE(performed_at) = DATE('now')`
+        );
+        const correctedTodayRow = await db2.get(
+          `SELECT COUNT(*) as c FROM image_review_history 
+       WHERE action = 'IMAGE_REPLACED' AND DATE(performed_at) = DATE('now')`
+        );
+        const pending2 = pendingRow?.c || 0;
+        const incorrect = incorrectRow?.c || 0;
+        const corrected = correctedRow?.c || 0;
+        const verified = verifiedRow?.c || 0;
+        const skipped = skippedRow?.c || 0;
+        const total = totalRow?.c || 0;
+        const accurateCount = verified + corrected;
+        const evaluatedTotal = accurateCount + incorrect + pending2;
+        const accuracyPercent = evaluatedTotal > 0 ? Math.round(accurateCount / evaluatedTotal * 100) : 100;
+        return {
+          pending: pending2,
+          incorrect,
+          corrected,
+          verified,
+          skipped,
+          total,
+          accuracyPercent,
+          verifiedToday: verifiedTodayRow?.c || 0,
+          correctedToday: correctedTodayRow?.c || 0
+        };
+      }
+      /**
+       * Action: Mark image as CORRECT
+       */
+      async markImageCorrect(imageId, verifiedBy = "admin", imageType, isPrimary) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const targetType = imageType || current.image_type || "combined";
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [current.medicine_id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [current.medicine_id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [current.medicine_id, imageId]
+            );
+          }
+          const nextVersion = (current.verification_version || 1) + 1;
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'APPROVED', 
+             is_active = 1, 
+             image_type = ?,
+             is_primary = ?,
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [targetType, primaryVal, verifiedBy, nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Confirmed correct by human agent', ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "APPROVED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Action: Mark image as INCORRECT or trigger smart angle workflow
+       */
+      async markImageIncorrect(imageId, reason = "Incorrect image", verifiedBy = "admin", reasonCode) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return { success: false, message: "Image not found" };
+        if (reasonCode === "NEED_BACKSIDE") {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET image_type = 'front', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [verifiedBy, imageId]
+            );
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_BACKSIDE', ?, ?)`,
+              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+            );
+            await db2.run("COMMIT");
+            eventService.broadcast("catalog_image_updated", {
+              id: imageId,
+              medicine_id: current.medicine_id,
+              status: "APPROVED",
+              image_type: "front",
+              is_active: 1
+            });
+            return {
+              success: true,
+              action: "search_candidate",
+              targetType: "back",
+              medicineId: current.medicine_id,
+              message: "Front image verified! Opening search for Backside image."
+            };
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+        }
+        if (reasonCode === "NEED_FRONT") {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET image_type = 'back', 
+               verification_status = 'APPROVED', 
+               is_active = 1,
+               verified_by = ?, 
+               verified_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+              [verifiedBy, imageId]
+            );
+            await db2.run(
+              `INSERT INTO image_review_history (
+             product_image_id, medicine_id, previous_status, new_status,
+             previous_image_url, new_image_url, action, reason, performed_by
+           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_FRONT', ?, ?)`,
+              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
+            );
+            await db2.run("COMMIT");
+            eventService.broadcast("catalog_image_updated", {
+              id: imageId,
+              medicine_id: current.medicine_id,
+              status: "APPROVED",
+              image_type: "back",
+              is_active: 1
+            });
+            return {
+              success: true,
+              action: "search_candidate",
+              targetType: "front",
+              medicineId: current.medicine_id,
+              message: "Current image saved as Back! Opening search for Front image."
+            };
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          const nextVersion = (current.verification_version || 1) + 1;
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'INCORRECT', 
+             is_active = 0, 
+             verification_reason = ?, 
+             verified_by = ?, 
+             verified_at = CURRENT_TIMESTAMP, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, verifiedBy, nextVersion, imageId]
+          );
+          if (current.source_url || current.image_hash) {
+            await db2.run(
+              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
+           VALUES (?, ?, ?, ?, ?)`,
+              [current.medicine_id, current.source_url || null, current.image_hash || null, current.image_source || "pharmeasy", reason]
+            );
+          }
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'INCORRECT', ?, ?, 'MARK_INCORRECT', ?, ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              reason,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "INCORRECT",
+            is_active: 0
+          });
+          return {
+            success: true,
+            action: "flagged_incorrect",
+            medicineId: current.medicine_id,
+            message: "Image flagged as incorrect."
+          };
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Action: Skip image review temporarily with cooldown
+       */
+      async skipImage(imageId, hours = 24, reason = "Temporarily skipped", verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const nextReview = new Date(Date.now() + hours * 3600 * 1e3).toISOString();
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'SKIPPED', 
+             skip_reason = ?, 
+             next_review_at = ?, 
+             verification_version = ?,
+             locked_by = NULL,
+             locked_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [reason, nextReview, nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by, metadata
+         ) VALUES (?, ?, ?, 'SKIPPED', ?, ?, 'IMAGE_SKIPPED', ?, ?, ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              reason,
+              verifiedBy,
+              JSON.stringify({ next_review_at: nextReview, skip_hours: hours })
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "SKIPPED",
+            next_review_at: nextReview
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Search internet candidate images for review & correction
+       */
+      async searchCandidates(medicineId, queryOverride, imageType = "combined") {
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
+        if (!med) return [];
+        const rejections = await db2.all(
+          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
+          [medicineId]
+        );
+        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
+        let baseQuery = queryOverride && queryOverride.trim() || "";
+        if (!baseQuery) {
+          const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
+          const strength = this.extractStrength(med.strength || "") || this.extractStrength(med.name);
+          baseQuery = strength ? `${coreBrand} ${strength}` : coreBrand || med.name;
+        }
+        let cleanQuery = baseQuery || med.name || "";
+        if (imageType === "back" && !cleanQuery.toLowerCase().includes("back")) {
+          cleanQuery += " back";
+        }
+        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
+        let products = [];
+        try {
+          const resp = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            signal: AbortSignal.timeout(8e3)
+          });
+          if (resp.ok) {
+            const json = await resp.json();
+            products = json?.data?.products || [];
+          }
+        } catch (err) {
+          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
+        }
+        const candidates = [];
+        for (const prod of products) {
+          const damImages = prod.damImages || [];
+          let targetImg = null;
+          if (imageType === "back") {
+            targetImg = damImages.find((img) => img.face === "back" || img.url && img.url.toLowerCase().includes("back"));
+            if (!targetImg && damImages.length > 1) targetImg = damImages[1];
+          } else if (imageType === "front") {
+            targetImg = damImages.find((img) => img.face === "front" || img.face === "default");
+          }
+          if (!targetImg) {
+            targetImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
+          }
+          if (!targetImg || !targetImg.url) continue;
+          const candidateUrl = targetImg.url.split("?")[0];
+          if (rejectedUrls.has(candidateUrl)) continue;
+          const scoreResult = this.computeConfidence(med, {
+            name: prod.name,
+            manufacturer: prod.manufacturer
+          });
+          candidates.push({
+            id: String(prod.productId || candidateUrl),
+            name: prod.name,
+            manufacturer: prod.manufacturer || "Unknown",
+            imageUrl: candidateUrl,
+            source: "pharmeasy",
+            confidenceScore: scoreResult.confidenceScore,
+            verificationStatus: scoreResult.verificationStatus,
+            reason: scoreResult.reason,
+            signals: scoreResult.signals
+          });
+        }
+        candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
+        return candidates;
+      }
+      /**
+       * Action: Replace or add image with chosen candidate & mark as CORRECTED
+       */
+      async replaceWithCandidate(imageId, candidateUrl, candidateTitle, verifiedBy = "admin", imageType, isPrimary, keepExisting = false) {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return null;
+        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [current.medicine_id]);
+        if (!med) return null;
+        const targetType = imageType || (keepExisting ? "back" : current.image_type || "combined");
+        let primaryVal = isPrimary ? 1 : 0;
+        if (isPrimary === void 0) {
+          if (targetType === "combined") {
+            primaryVal = 1;
+          } else {
+            const existingPrimary = await db2.get(
+              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
+              [med.id]
+            );
+            primaryVal = existingPrimary ? 0 : 1;
+          }
+        }
+        const slug = (med.name || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
+        const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
+        const frontendDir = import_path12.default.resolve(process.cwd(), "frontend/public/products");
+        const uploadsDir = import_path12.default.resolve(process.cwd(), "uploads/products");
+        import_fs11.default.mkdirSync(frontendDir, { recursive: true });
+        import_fs11.default.mkdirSync(uploadsDir, { recursive: true });
+        const frontendPath = import_path12.default.join(frontendDir, filename);
+        const uploadsPath = import_path12.default.join(uploadsDir, filename);
+        const imgRes = await fetch(candidateUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+          signal: AbortSignal.timeout(1e4)
+        });
+        if (!imgRes.ok) {
+          throw new Error(`Failed to download candidate image: HTTP ${imgRes.status}`);
+        }
+        const buffer = Buffer.from(await imgRes.arrayBuffer());
+        const hash = import_crypto.default.createHash("sha256").update(buffer).digest("hex");
+        const rejection = await db2.get(
+          "SELECT id FROM catalog_image_rejections WHERE medicine_id = ? AND rejected_image_hash = ?",
+          [med.id, hash]
+        );
+        if (rejection) {
+          throw new Error("This image was previously rejected for this medicine.");
+        }
+        import_fs11.default.writeFileSync(frontendPath, buffer);
+        import_fs11.default.writeFileSync(uploadsPath, buffer);
+        const relPath = `/products/${filename}`;
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          if (!keepExisting) {
+            await db2.run(
+              `UPDATE catalog_images 
+           SET is_active = 0, 
+               verification_status = 'REPLACED', 
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+              [imageId]
+            );
+          }
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [med.id, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [med.id, imageId]
+            );
+          }
+          const res = await db2.run(
+            `INSERT INTO catalog_images (
+           medicine_id, company_name, product_name, image_path, thumbnail_path,
+           image_source, source_url, image_hash, confidence_score, matching_method,
+           verification_status, is_active, image_type, is_primary, replaced_from_image_id, previous_image_url,
+           verification_version, verified_by, verified_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_correction', 'CORRECTED', 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+            [
+              med.id,
+              med.manufacturer || current.company_name,
+              candidateTitle || med.name,
+              relPath,
+              relPath,
+              "online_correction",
+              candidateUrl,
+              hash,
+              targetType,
+              primaryVal,
+              keepExisting ? null : imageId,
+              current.image_path,
+              nextVersion,
+              verifiedBy
+            ]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'CORRECTED', ?, ?, 'IMAGE_REPLACED', ?, ?)`,
+            [
+              res.lastID,
+              med.id,
+              current.verification_status,
+              current.image_path,
+              relPath,
+              keepExisting ? `Added ${targetType} image` : "Replaced with online candidate",
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
+          eventService.broadcast("catalog_image_updated", {
+            id: res.lastID,
+            medicine_id: med.id,
+            status: "CORRECTED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return newRecord;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Retrieve all image slots / angles for a specific medicine
+       */
+      async getMedicineGallery(medicineId) {
+        const db2 = await dbManager.getConnection();
+        return db2.all(
+          `SELECT ci.*, m.category, m.packaging, m.strength, m.generic_name
+       FROM catalog_images ci
+       LEFT JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.medicine_id = ? 
+       ORDER BY 
+         ci.is_active DESC,
+         ci.is_primary DESC,
+         CASE COALESCE(ci.image_type, 'combined')
+           WHEN 'combined' THEN 1 
+           WHEN 'front' THEN 2 
+           WHEN 'back' THEN 3 
+           WHEN 'box' THEN 4 
+           WHEN 'tablet' THEN 5 
+           ELSE 6 END,
+         ci.id DESC`,
+          [medicineId]
+        ).catch(() => []);
+      }
+      /**
+       * Action: Reopen an approved/corrected image for QC review
+       */
+      async reopenImage(imageId, verifiedBy = "admin") {
+        const db2 = await dbManager.getConnection();
+        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!current) return false;
+        const nextVersion = (current.verification_version || 1) + 1;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            `UPDATE catalog_images 
+         SET verification_status = 'PENDING_REVIEW', 
+             next_review_at = NULL, 
+             verification_version = ?,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [nextVersion, imageId]
+          );
+          await db2.run(
+            `INSERT INTO image_review_history (
+           product_image_id, medicine_id, previous_status, new_status,
+           previous_image_url, new_image_url, action, reason, performed_by
+         ) VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, 'REOPENED', 'Reopened for quality control review', ?)`,
+            [
+              imageId,
+              current.medicine_id,
+              current.verification_status,
+              current.image_path,
+              current.image_path,
+              verifiedBy
+            ]
+          );
+          await db2.run("COMMIT");
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: current.medicine_id,
+            status: "PENDING_REVIEW"
+          });
+          return true;
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
+        }
+      }
+      /**
+       * Fetch complete audit log from image_review_history
+       */
+      async getImageHistory(medicineId) {
+        const db2 = await dbManager.getConnection();
+        return db2.all(
+          `SELECT * FROM image_review_history WHERE medicine_id = ? ORDER BY performed_at DESC`,
+          [medicineId]
+        );
+      }
+      /**
+       * Filename-based auto-match engine.
+       * Scans both frontend/public/products and uploads/products directories,
+       * matches filenames to medicines using brand index & strict multi-signal scoring,
+       * and inserts into catalog_images.
+       * Idempotent — skips files already linked by image_path.
+       */
+      async scanAndAutoMatchLocalImages() {
+        const db2 = await dbManager.getConnection();
+        const publicDir = import_path12.default.join(process.cwd(), "frontend", "public", "products");
+        const uploadsDir = import_path12.default.join(process.cwd(), "uploads", "products");
+        const fileEntries = [];
+        if (import_fs11.default.existsSync(publicDir)) {
+          const publicFiles = import_fs11.default.readdirSync(publicDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+          for (const f of publicFiles) {
+            fileEntries.push({ filename: f, relPath: `/products/${f}` });
+          }
+        }
+        if (import_fs11.default.existsSync(uploadsDir)) {
+          const uploadFiles = import_fs11.default.readdirSync(uploadsDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
+          for (const f of uploadFiles) {
+            fileEntries.push({ filename: f, relPath: `uploads/products/${f}` });
+          }
+        }
+        if (fileEntries.length === 0) {
+          return { matched: 0, pending_review: 0, unmatched: 0, skipped: 0 };
+        }
+        const existing = await db2.all("SELECT image_path FROM catalog_images");
+        const existingSet = new Set(existing.map((r) => r.image_path));
+        const allMeds = await db2.all("SELECT id, name, manufacturer, strength, packaging FROM medicines");
+        const brandMap = /* @__PURE__ */ new Map();
+        for (const med of allMeds) {
+          const brand = this.extractCoreBrand(med.name);
+          if (brand) {
+            const key = brand.toUpperCase();
+            if (!brandMap.has(key)) brandMap.set(key, []);
+            brandMap.get(key).push(med);
+          }
+        }
+        const activeMedsRows = await db2.all(
+          "SELECT DISTINCT medicine_id FROM catalog_images WHERE is_active = 1"
+        );
+        const activeMedsSet = new Set(activeMedsRows.map((r) => r.medicine_id));
+        let matched = 0, pending_review = 0, unmatched = 0, skipped = 0;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (const entry of fileEntries) {
+          if (existingSet.has(entry.relPath)) {
+            skipped++;
+            continue;
+          }
+          const filename = entry.filename;
+          const relPath = entry.relPath;
+          let cleanName = filename.replace(/\.(jpg|jpeg|png|webp)$/i, "").replace(/-candidate-\d+$/i, "").replace(/-(front|back|side|box|tablet|combo|combined)$/i, "").replace(/-/g, " ").trim();
+          const angleMatch = filename.match(/-(front|back|side|box|tablet|combo|combined)\.(jpg|jpeg|png|webp)$/i);
+          const imageType = angleMatch ? angleMatch[1].toLowerCase() === "combo" ? "combined" : angleMatch[1].toLowerCase() : "combined";
+          const fileBrand = this.extractCoreBrand(cleanName);
+          const candidates = fileBrand ? brandMap.get(fileBrand.toUpperCase()) || [] : [];
+          let bestId = null;
+          let bestScore = 0;
+          let bestMed = null;
+          let bestResult = null;
+          for (const med of candidates) {
+            const result = this.computeConfidence(med, {
+              name: cleanName,
+              manufacturer: med.manufacturer,
+              imagePath: relPath
+            });
+            if (result.confidenceScore > bestScore) {
+              bestScore = result.confidenceScore;
+              bestId = med.id;
+              bestMed = med;
+              bestResult = result;
+            }
+          }
+          const hasActivePrimary = bestId ? activeMedsSet.has(bestId) : false;
+          const isPrimary = !hasActivePrimary && (imageType === "combined" || imageType === "front") ? 1 : 0;
+          if (bestScore >= 80 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict && bestResult.signals.brandMatch) {
+            await db2.run(
+              `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              verified_by, verified_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', ?, 1,
+                   ?, ?, 'filename_auto', ?, 'system_scanner', ?, ?, ?)`,
+              [
+                bestId,
+                bestMed?.name || cleanName,
+                bestMed?.manufacturer || null,
+                relPath,
+                relPath,
+                bestScore,
+                bestResult.reason,
+                imageType,
+                isPrimary,
+                bestScore,
+                now,
+                now,
+                now
+              ]
+            );
+            existingSet.add(relPath);
+            activeMedsSet.add(bestId);
+            matched++;
+          } else if (bestScore >= 50 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict) {
+            await db2.run(
+              `INSERT INTO catalog_images
+             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+              confidence_score, matching_method, verification_status, verification_reason, is_active,
+              image_type, is_primary, match_source, match_confidence,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', ?, 0,
+                   ?, 0, 'filename_auto', ?, ?, ?)`,
+              [
+                bestId,
+                bestMed?.name || cleanName,
+                bestMed?.manufacturer || null,
+                relPath,
+                relPath,
+                bestScore,
+                bestResult.reason,
+                imageType,
+                bestScore,
+                now,
+                now
+              ]
+            );
+            existingSet.add(relPath);
+            pending_review++;
+          } else {
+            if (bestId) {
+              await db2.run(
+                `INSERT INTO catalog_images
+               (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
+                confidence_score, matching_method, verification_status, verification_reason, is_active,
+                image_type, is_primary, match_source, match_confidence,
+                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'REJECTED', ?, 0,
+                     ?, 0, 'filename_unmatched', ?, ?, ?)`,
+                [
+                  bestId,
+                  cleanName,
+                  bestMed?.manufacturer || null,
+                  relPath,
+                  relPath,
+                  bestScore,
+                  bestResult?.reason || "Unmatched or conflict detected",
+                  imageType,
+                  bestScore,
+                  now,
+                  now
+                ]
+              );
+            }
+            existingSet.add(relPath);
+            unmatched++;
+          }
+        }
+        return { matched, pending_review, unmatched, skipped };
+      }
+      /**
+       * Clean stale and rejected catalog images.
+       * Purges rejected/incorrect records, orphaned database entries, and broken image paths
+       * while keeping verified active images safe.
+       */
+      async cleanStaleAndRejectedImages(options) {
+        const purgeRejected = options?.purgeRejected ?? true;
+        const purgeMissingFiles = options?.purgeMissingFiles ?? true;
+        const purgeOrphans = options?.purgeOrphans ?? true;
+        const db2 = await dbManager.getConnection();
+        let purged_rejected = 0;
+        let purged_missing_files = 0;
+        let purged_orphans = 0;
+        if (purgeRejected) {
+          const res = await db2.run(
+            `DELETE FROM catalog_images WHERE verification_status IN ('REJECTED', 'INCORRECT')`
+          );
+          purged_rejected = res.changes || 0;
+        }
+        if (purgeOrphans) {
+          const res = await db2.run(
+            `DELETE FROM catalog_images WHERE medicine_id IS NULL OR medicine_id NOT IN (SELECT id FROM medicines)`
+          );
+          purged_orphans = res.changes || 0;
+        }
+        if (purgeMissingFiles) {
+          const images = await db2.all(
+            `SELECT id, image_path FROM catalog_images WHERE image_path IS NOT NULL AND image_path NOT LIKE 'http%'`
+          );
+          const toDeleteIds = [];
+          const cwd = process.cwd();
+          const publicDir = import_path12.default.resolve(cwd, "frontend/public");
+          const uploadsDir = import_path12.default.resolve(cwd, "uploads");
+          for (const img of images) {
+            const cleanPath = img.image_path.replace(/^[\/\\]/, "");
+            const p1 = import_path12.default.join(publicDir, cleanPath);
+            const p2 = import_path12.default.join(cwd, cleanPath);
+            const p3 = import_path12.default.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ""));
+            if (!import_fs11.default.existsSync(p1) && !import_fs11.default.existsSync(p2) && !import_fs11.default.existsSync(p3)) {
+              toDeleteIds.push(img.id);
+            }
+          }
+          if (toDeleteIds.length > 0) {
+            for (let i = 0; i < toDeleteIds.length; i += 500) {
+              const chunk = toDeleteIds.slice(i, i + 500);
+              const placeholders = chunk.map(() => "?").join(",");
+              await db2.run(`DELETE FROM catalog_images WHERE id IN (${placeholders})`, chunk);
+            }
+            purged_missing_files = toDeleteIds.length;
+          }
+        }
+        const counts = await db2.get(
+          `SELECT COUNT(*) as total, SUM(CASE WHEN is_active = 1 AND verification_status IN ('HIGH_CONFIDENCE', 'APPROVED', 'CORRECT') THEN 1 ELSE 0 END) as active FROM catalog_images`
+        );
+        return {
+          purged_rejected,
+          purged_missing_files,
+          purged_orphans,
+          total_remaining: counts?.total || 0,
+          active_verified: counts?.active || 0
+        };
+      }
+      /**
+       * Audit all catalog images against medicines using the strict validation engine.
+       * Deactivates and marks as REJECTED any records with dosage form conflicts,
+       * strength conflicts, or brand mismatches so they immediately stop displaying on wrong products.
+       */
+      async auditAndDeactivateMismatchedImages() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, ci.verification_status, ci.is_active,
+              m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
+       FROM catalog_images ci
+       JOIN medicines m ON m.id = ci.medicine_id
+       WHERE ci.is_active = 1`
+        );
+        let dosage_form_conflicts = 0;
+        let strength_conflicts = 0;
+        let brand_mismatches = 0;
+        const toDeactivate = [];
+        for (const r of rows) {
+          const match = this.computeConfidence(
+            {
+              name: r.med_name,
+              manufacturer: r.med_mfg || r.company_name,
+              strength: r.med_strength,
+              packaging: r.med_packaging
+            },
+            {
+              name: r.product_name,
+              manufacturer: r.company_name || r.med_mfg,
+              imagePath: r.image_path
+            }
+          );
+          if (match.signals.dosageFormConflict) {
+            dosage_form_conflicts++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          } else if (match.signals.strengthConflict) {
+            strength_conflicts++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          } else if (!match.signals.brandMatch) {
+            brand_mismatches++;
+            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
+          }
+        }
+        if (toDeactivate.length > 0) {
+          await db2.run("BEGIN TRANSACTION");
+          try {
+            for (const item of toDeactivate) {
+              await db2.run(
+                `UPDATE catalog_images
+             SET is_active = 0,
+                 is_primary = 0,
+                 verification_status = 'REJECTED',
+                 confidence_score = 30,
+                 verification_reason = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+                [item.reason, item.id]
+              );
+              try {
+                await db2.run(
+                  `INSERT INTO image_review_history (
+                product_image_id, medicine_id, previous_status, new_status, action, reason, performed_by
+              ) VALUES (?, (SELECT medicine_id FROM catalog_images WHERE id = ?), 'APPROVED', 'REJECTED', 'AUTO_AUDIT_PURGE', ?, 'audit_engine')`,
+                  [item.id, item.id, item.reason]
+                );
+              } catch (_) {
+              }
+            }
+            await db2.run("COMMIT");
+          } catch (err) {
+            await db2.run("ROLLBACK");
+            throw err;
+          }
+          try {
+            const stateFile = import_path12.default.resolve(process.cwd(), "data/image_download_state.json");
+            if (import_fs11.default.existsSync(stateFile)) {
+              const state = JSON.parse(import_fs11.default.readFileSync(stateFile, "utf8"));
+              const medIds = new Set(toDeactivate.map((i) => i.id));
+              let purged = 0;
+              for (const [key, p] of Object.entries(state.products || {})) {
+                if (p.images) {
+                  const urls = Object.values(p.images).map((img) => img?.url);
+                  const matchedRow = rows.find((r) => medIds.has(r.id) && urls.includes(r.image_path));
+                  if (matchedRow) {
+                    state.products[key] = {
+                      status: "purged_incorrect",
+                      matched_name: null,
+                      purged_previous_match: p.matched_name,
+                      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                    };
+                    purged++;
+                  }
+                }
+              }
+              if (purged > 0) {
+                state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
+                import_fs11.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+              }
+            }
+          } catch (_) {
+          }
+          eventService.broadcast("catalog_image_updated", {
+            action: "audit_deactivation_completed",
+            deactivated: toDeactivate.length
+          });
+        }
+        const remainingRow = await db2.get(
+          `SELECT COUNT(*) as count FROM catalog_images WHERE is_active = 1`
+        );
+        return {
+          total_audited: rows.length,
+          dosage_form_conflicts,
+          strength_conflicts,
+          brand_mismatches,
+          total_deactivated: toDeactivate.length,
+          remaining_active: remainingRow?.count || 0
+        };
+      }
+    };
+    catalogImageService = CatalogImageService.getInstance();
+  }
+});
+
+// src/services/visualIndexService.ts
+var import_fs12, import_path13, import_jimp3, VisualIndexService, visualIndexService;
+var init_visualIndexService = __esm({
+  "src/services/visualIndexService.ts"() {
+    "use strict";
+    import_fs12 = __toESM(require("fs"), 1);
+    import_path13 = __toESM(require("path"), 1);
+    import_jimp3 = require("jimp");
+    init_connection();
+    init_catalogImageService();
+    VisualIndexService = class _VisualIndexService {
+      static instance;
+      static getInstance() {
+        if (!_VisualIndexService.instance) _VisualIndexService.instance = new _VisualIndexService();
+        return _VisualIndexService.instance;
+      }
+      /**
+       * Compute 64-bit average hash (aHash) from image buffer.
+       * Steps: resize 8x8, greyscale, avg, bits.
+       */
+      async computePhashFromBuffer(buffer) {
+        try {
+          const image = await import_jimp3.Jimp.read(buffer);
+          image.resize({ w: 8, h: 8 });
+          image.greyscale();
+          const { data } = image.bitmap;
+          const pixels = [];
+          for (let i = 0; i < data.length; i += 4) {
+            pixels.push(data[i]);
+          }
+          const avg = pixels.reduce((a, b) => a + b, 0) / pixels.length;
+          let hash = "";
+          let currentByte = 0;
+          let bits = 0;
+          for (const px of pixels) {
+            currentByte = currentByte << 1 | (px >= avg ? 1 : 0);
+            bits++;
+            if (bits === 8) {
+              hash += currentByte.toString(16).padStart(2, "0");
+              currentByte = 0;
+              bits = 0;
+            }
+          }
+          return hash;
+        } catch (e) {
+          return null;
+        }
+      }
+      async computePhashFromPath(filePath) {
+        try {
+          const clean = filePath.replace(/^\/+/, "");
+          const p1 = import_path13.default.resolve(process.cwd(), "frontend/public", clean);
+          const p2 = import_path13.default.resolve(process.cwd(), clean);
+          const p3 = import_path13.default.resolve(process.cwd(), "uploads", clean.replace(/^uploads\//, ""));
+          let buf = null;
+          if (import_fs12.default.existsSync(p1)) buf = import_fs12.default.readFileSync(p1);
+          else if (import_fs12.default.existsSync(p2)) buf = import_fs12.default.readFileSync(p2);
+          else if (import_fs12.default.existsSync(p3)) buf = import_fs12.default.readFileSync(p3);
+          else return null;
+          return this.computePhashFromBuffer(buf);
+        } catch {
+          return null;
+        }
+      }
+      hammingDistance(hashA, hashB) {
+        if (!hashA || !hashB || hashA.length !== hashB.length) return 64;
+        let dist = 0;
+        for (let i = 0; i < hashA.length; i++) {
+          const a = parseInt(hashA[i], 16);
+          const b = parseInt(hashB[i], 16);
+          let xor = a ^ b;
+          while (xor) {
+            dist += xor & 1;
+            xor >>= 1;
+          }
+        }
+        return dist;
+      }
+      /**
+       * Build / backfill phash for all active images missing it.
+       */
+      async backfillPhash(batchSize = 200) {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all("SELECT id, image_path FROM catalog_images WHERE phash IS NULL AND is_active=1");
+        let updated = 0;
+        let failed = 0;
+        for (const r of rows) {
+          const phash = await this.computePhashFromPath(r.image_path);
+          if (phash) {
+            await db2.run("UPDATE catalog_images SET phash=? WHERE id=?", [phash, r.id]);
+            updated++;
+          } else {
+            failed++;
+          }
+          if ((updated + failed) % 500 === 0) {
+            console.log(`[VisualIndex] backfill ${updated + failed}/${rows.length}`);
+          }
+        }
+        return { total: rows.length, updated, failed };
+      }
+      /**
+       * Visual search: find catalog images by phash Hamming distance.
+       * Returns up to limit results with distance and medicine info.
+       */
+      async searchByPhash(queryPhash, limit = 10, maxDistance = 12) {
+        const db2 = await dbManager.getConnection();
+        const actives = await db2.all("SELECT id, medicine_id, product_name, image_path, phash, image_type FROM catalog_images WHERE phash IS NOT NULL AND is_active=1 AND verification_status IN ('APPROVED','HIGH_CONFIDENCE')");
+        const scored = actives.map((r) => ({ ...r, distance: this.hammingDistance(queryPhash, r.phash) })).filter((r) => r.distance <= maxDistance).sort((a, b) => a.distance - b.distance).slice(0, limit);
+        return scored;
+      }
+      /**
+       * Fused search: visual phash + OCR text (brand/strength/form).
+       * Used when user shares an image: we have both the image bitmap and its OCR text.
+       * Returns merged, re-ranked candidates using catalogImageService.computeConfidence for textual signals.
+       */
+      async fusedSearch(imageBuffer, ocrText, options = {}) {
+        const limit = options.limit || 10;
+        const maxVisualDistance = options.maxVisualDistance || 12;
+        const queryPhash = await this.computePhashFromBuffer(imageBuffer);
+        let visualHits = [];
+        if (queryPhash) {
+          visualHits = await this.searchByPhash(queryPhash, 50, maxVisualDistance);
+        }
+        const db2 = await dbManager.getConnection();
+        const visualIds = new Set(visualHits.map((h) => h.medicine_id));
+        let fused = [];
+        for (const hit of visualHits) {
+          const med = await db2.get("SELECT name, manufacturer, strength, packaging FROM medicines WHERE id=?", [hit.medicine_id]);
+          if (!med) continue;
+          const ocrCandidate = (ocrText || "").split(/[\r\n,]+/).map((s) => s.trim()).find((s) => s.length >= 3) || hit.product_name;
+          const textMatch = catalogImageService.computeConfidence(
+            { name: med.name, manufacturer: med.manufacturer, strength: med.strength, packaging: med.packaging },
+            { name: ocrCandidate, manufacturer: ocrCandidate, ocrText, imagePath: hit.image_path }
+          );
+          const visualScore = 1 - hit.distance / 64;
+          const textualScore = textMatch.confidenceScore / 100;
+          const fusedScore = visualScore * 0.4 + textualScore * 0.6;
+          const finalScore = textMatch.signals.strengthConflict || textMatch.signals.dosageFormConflict || !textMatch.signals.brandMatch ? fusedScore * 0.3 : fusedScore;
+          fused.push({
+            medicine_id: hit.medicine_id,
+            product_name: hit.product_name,
+            image_path: hit.image_path,
+            visualDistance: hit.distance,
+            textualScore: textMatch.confidenceScore,
+            fusedScore: Math.round(finalScore * 100),
+            signals: textMatch.signals,
+            reason: textMatch.reason
+          });
+        }
+        fused.sort((a, b) => b.fusedScore - a.fusedScore);
+        return fused.slice(0, limit);
+      }
+      /**
+       * Quick check: does a medicine have 2-4 images (front/back/combined) ready for app/website?
+       */
+      async getGalleryStatus(medicineId) {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all("SELECT image_type FROM catalog_images WHERE medicine_id=? AND is_active=1 AND verification_status IN ('APPROVED','HIGH_CONFIDENCE')", [medicineId]);
+        const types = rows.map((r) => r.image_type);
+        return { count: rows.length, types, needsMore: rows.length < 2 };
+      }
+    };
+    visualIndexService = VisualIndexService.getInstance();
+  }
+});
+
 // scanGateAlgorithms.ts
 function countDocSigns(t) {
   let n = 0;
@@ -7262,17 +10675,17 @@ async function initCartStore() {
     console.error("[TelegramCart] Failed to initialize cart store:", err);
   }
 }
-var import_path12, import_url10, __filename9, __dirname9, DB_PATH3, carts, TelegramPrescriptionService, telegramPrescriptionService;
+var import_path14, import_url10, __filename9, __dirname9, DB_PATH3, carts, TelegramPrescriptionService, telegramPrescriptionService;
 var init_telegramPrescriptionService = __esm({
   "src/services/telegramPrescriptionService.ts"() {
     "use strict";
     init_connection();
-    import_path12 = __toESM(require("path"), 1);
+    import_path14 = __toESM(require("path"), 1);
     import_url10 = require("url");
     init_productNameFilterService();
     __filename9 = (0, import_url10.fileURLToPath)(import_meta_url);
-    __dirname9 = import_path12.default.dirname(__filename9);
-    DB_PATH3 = process.env.DB_PATH || import_path12.default.resolve(__dirname9, "..", "..", "data", "app.db");
+    __dirname9 = import_path14.default.dirname(__filename9);
+    DB_PATH3 = process.env.DB_PATH || import_path14.default.resolve(__dirname9, "..", "..", "data", "app.db");
     carts = /* @__PURE__ */ new Map();
     initCartStore();
     TelegramPrescriptionService = class {
@@ -7590,26 +11003,26 @@ var init_telegramPrescriptionService = __esm({
 });
 
 // src/services/imageArchiveService.ts
-var import_fs11, import_path13, import_url11, import_tesseract2, import_adm_zip, import_node_cron, import_jimp3, __filename10, __dirname10, BASE_UPLOAD_DIR, TEMP_DIR, IMPORTANT_DIR, ImageArchiveService, imageArchiveService;
+var import_fs13, import_path15, import_url11, import_tesseract2, import_adm_zip, import_node_cron, import_jimp4, __filename10, __dirname10, BASE_UPLOAD_DIR, TEMP_DIR, IMPORTANT_DIR, ImageArchiveService, imageArchiveService;
 var init_imageArchiveService = __esm({
   "src/services/imageArchiveService.ts"() {
     "use strict";
-    import_fs11 = __toESM(require("fs"), 1);
-    import_path13 = __toESM(require("path"), 1);
+    import_fs13 = __toESM(require("fs"), 1);
+    import_path15 = __toESM(require("path"), 1);
     import_url11 = require("url");
     import_tesseract2 = __toESM(require("tesseract.js"), 1);
     import_adm_zip = __toESM(require("adm-zip"), 1);
     import_node_cron = __toESM(require("node-cron"), 1);
-    import_jimp3 = require("jimp");
+    import_jimp4 = require("jimp");
     init_config();
     init_backgroundJobLane();
     __filename10 = (0, import_url11.fileURLToPath)(import_meta_url);
-    __dirname10 = import_path13.default.dirname(__filename10);
-    BASE_UPLOAD_DIR = import_path13.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR = import_path13.default.join(BASE_UPLOAD_DIR, "temp");
-    IMPORTANT_DIR = import_path13.default.join(BASE_UPLOAD_DIR, "important");
-    if (!import_fs11.default.existsSync(TEMP_DIR)) import_fs11.default.mkdirSync(TEMP_DIR, { recursive: true });
-    if (!import_fs11.default.existsSync(IMPORTANT_DIR)) import_fs11.default.mkdirSync(IMPORTANT_DIR, { recursive: true });
+    __dirname10 = import_path15.default.dirname(__filename10);
+    BASE_UPLOAD_DIR = import_path15.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR = import_path15.default.join(BASE_UPLOAD_DIR, "temp");
+    IMPORTANT_DIR = import_path15.default.join(BASE_UPLOAD_DIR, "important");
+    if (!import_fs13.default.existsSync(TEMP_DIR)) import_fs13.default.mkdirSync(TEMP_DIR, { recursive: true });
+    if (!import_fs13.default.existsSync(IMPORTANT_DIR)) import_fs13.default.mkdirSync(IMPORTANT_DIR, { recursive: true });
     ImageArchiveService = class {
       // Common Schedule H1, Narcotic, and Sleeping Pill keywords in India
       restrictedKeywords = [
@@ -7652,38 +11065,38 @@ var init_imageArchiveService = __esm({
        */
       async processAndRouteImage(filePath) {
         try {
-          if (!import_fs11.default.existsSync(filePath)) return null;
+          if (!import_fs13.default.existsSync(filePath)) return null;
           console.log(`Analyzing image with AI (OCR): ${filePath}`);
           const { data: { text } } = await import_tesseract2.default.recognize(filePath, "eng");
           const lowerText = text.toLowerCase();
           const isRestricted = this.restrictedKeywords.some((kw) => lowerText.includes(kw));
-          const fileName = import_path13.default.basename(filePath);
+          const fileName = import_path15.default.basename(filePath);
           let targetPath;
           if (isRestricted) {
             const date = /* @__PURE__ */ new Date();
             const monthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-            const targetDir = import_path13.default.join(IMPORTANT_DIR, monthFolder);
-            if (!import_fs11.default.existsSync(targetDir)) {
-              import_fs11.default.mkdirSync(targetDir, { recursive: true });
+            const targetDir = import_path15.default.join(IMPORTANT_DIR, monthFolder);
+            if (!import_fs13.default.existsSync(targetDir)) {
+              import_fs13.default.mkdirSync(targetDir, { recursive: true });
             }
-            targetPath = import_path13.default.join(targetDir, fileName);
+            targetPath = import_path15.default.join(targetDir, fileName);
           } else {
-            targetPath = import_path13.default.join(TEMP_DIR, fileName);
+            targetPath = import_path15.default.join(TEMP_DIR, fileName);
           }
           try {
-            const image = await import_jimp3.Jimp.read(filePath);
+            const image = await import_jimp4.Jimp.read(filePath);
             if (image.width > 800) {
               image.resize({ w: 800 });
             }
             const compressedBuffer = await image.getBuffer("image/jpeg");
-            await import_fs11.default.promises.writeFile(targetPath, compressedBuffer);
+            await import_fs13.default.promises.writeFile(targetPath, compressedBuffer);
             if (filePath !== targetPath) {
-              import_fs11.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
             }
           } catch (compressErr) {
             console.error("Failed to compress routed image with Jimp, renaming instead:", compressErr);
             if (filePath !== targetPath) {
-              import_fs11.default.renameSync(filePath, targetPath);
+              import_fs13.default.renameSync(filePath, targetPath);
             }
           }
           if (isRestricted) {
@@ -7694,20 +11107,20 @@ var init_imageArchiveService = __esm({
           return targetPath;
         } catch (err) {
           console.error("Error in processAndRouteImage:", err);
-          const targetPath = import_path13.default.join(TEMP_DIR, import_path13.default.basename(filePath));
+          const targetPath = import_path15.default.join(TEMP_DIR, import_path15.default.basename(filePath));
           try {
-            const image = await import_jimp3.Jimp.read(filePath);
+            const image = await import_jimp4.Jimp.read(filePath);
             if (image.width > 800) {
               image.resize({ w: 800 });
             }
             const compressedBuffer = await image.getBuffer("image/jpeg");
-            await import_fs11.default.promises.writeFile(targetPath, compressedBuffer);
+            await import_fs13.default.promises.writeFile(targetPath, compressedBuffer);
             if (filePath !== targetPath) {
-              import_fs11.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
             }
           } catch (compressErr) {
             if (filePath !== targetPath) {
-              import_fs11.default.renameSync(filePath, targetPath);
+              import_fs13.default.renameSync(filePath, targetPath);
             }
           }
           return targetPath;
@@ -7717,13 +11130,13 @@ var init_imageArchiveService = __esm({
        * Manually flag a file as important and move it to the correct folder
        */
       markAsImportant(fileName) {
-        const tempPath = import_path13.default.join(TEMP_DIR, fileName);
-        if (!import_fs11.default.existsSync(tempPath)) return false;
+        const tempPath = import_path15.default.join(TEMP_DIR, fileName);
+        if (!import_fs13.default.existsSync(tempPath)) return false;
         const date = /* @__PURE__ */ new Date();
         const monthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        const targetDir = import_path13.default.join(IMPORTANT_DIR, monthFolder);
-        if (!import_fs11.default.existsSync(targetDir)) import_fs11.default.mkdirSync(targetDir, { recursive: true });
-        import_fs11.default.renameSync(tempPath, import_path13.default.join(targetDir, fileName));
+        const targetDir = import_path15.default.join(IMPORTANT_DIR, monthFolder);
+        if (!import_fs13.default.existsSync(targetDir)) import_fs13.default.mkdirSync(targetDir, { recursive: true });
+        import_fs13.default.renameSync(tempPath, import_path15.default.join(targetDir, fileName));
         return true;
       }
       /**
@@ -7733,13 +11146,13 @@ var init_imageArchiveService = __esm({
         try {
           const now = Date.now();
           const cutoff = now - daysOld * 24 * 60 * 60 * 1e3;
-          const files = import_fs11.default.readdirSync(TEMP_DIR);
+          const files = import_fs13.default.readdirSync(TEMP_DIR);
           let deletedCount = 0;
           for (const file of files) {
-            const filePath = import_path13.default.join(TEMP_DIR, file);
-            const stats = import_fs11.default.statSync(filePath);
+            const filePath = import_path15.default.join(TEMP_DIR, file);
+            const stats = import_fs13.default.statSync(filePath);
             if (stats.isFile() && stats.mtimeMs < cutoff) {
-              import_fs11.default.unlinkSync(filePath);
+              import_fs13.default.unlinkSync(filePath);
               deletedCount++;
             }
           }
@@ -7756,18 +11169,18 @@ var init_imageArchiveService = __esm({
           const date = /* @__PURE__ */ new Date();
           date.setMonth(date.getMonth() - 1);
           const prevMonthFolder = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-          const targetDir = import_path13.default.join(IMPORTANT_DIR, prevMonthFolder);
-          if (!import_fs11.default.existsSync(targetDir)) {
+          const targetDir = import_path15.default.join(IMPORTANT_DIR, prevMonthFolder);
+          if (!import_fs13.default.existsSync(targetDir)) {
             console.log(`No important folder found for ${prevMonthFolder} to zip.`);
             return;
           }
           const zipName = `H1_Rx_Archive_${prevMonthFolder}.zip`;
-          const zipPath = import_path13.default.join(IMPORTANT_DIR, zipName);
+          const zipPath = import_path15.default.join(IMPORTANT_DIR, zipName);
           const zip = new import_adm_zip.default();
           zip.addLocalFolder(targetDir);
           zip.writeZip(zipPath);
           console.log(`Successfully created archive: ${zipPath}`);
-          import_fs11.default.rmSync(targetDir, { recursive: true, force: true });
+          import_fs13.default.rmSync(targetDir, { recursive: true, force: true });
           console.log(`Deleted raw folder to save space: ${targetDir}`);
         } catch (err) {
           console.error("Error during monthly zipping:", err);
@@ -8195,13 +11608,13 @@ __export(telegramBot_exports, {
   default: () => telegramBot_default,
   telegramBotService: () => telegramBotService
 });
-var import_node_telegram_bot_api, import_path14, import_fs12, import_url12, __filename11, __dirname11, DB_PATH4, TelegramBotService, telegramBotService, telegramBot_default;
+var import_node_telegram_bot_api, import_path16, import_fs14, import_url12, __filename11, __dirname11, DB_PATH4, TelegramBotService, telegramBotService, telegramBot_default;
 var init_telegramBot = __esm({
   "src/telegramBot.ts"() {
     "use strict";
     import_node_telegram_bot_api = __toESM(require("node-telegram-bot-api"), 1);
-    import_path14 = __toESM(require("path"), 1);
-    import_fs12 = __toESM(require("fs"), 1);
+    import_path16 = __toESM(require("path"), 1);
+    import_fs14 = __toESM(require("fs"), 1);
     init_migrationValidation();
     init_nameNormalizer();
     import_url12 = require("url");
@@ -8213,8 +11626,8 @@ var init_telegramBot = __esm({
     init_dateExtractor();
     init_config();
     __filename11 = (0, import_url12.fileURLToPath)(import_meta_url);
-    __dirname11 = import_path14.default.dirname(__filename11);
-    DB_PATH4 = process.env.DB_PATH || import_path14.default.resolve(__dirname11, "..", "data", "app.db");
+    __dirname11 = import_path16.default.dirname(__filename11);
+    DB_PATH4 = process.env.DB_PATH || import_path16.default.resolve(__dirname11, "..", "data", "app.db");
     TelegramBotService = class {
       bot = null;
       token;
@@ -8506,8 +11919,8 @@ Welcome back!`,
                 const imageBuffer = await response.arrayBuffer();
                 const buffer = Buffer.from(imageBuffer);
                 const tempFileName = `telegram_${Date.now()}_${msg.from?.id}.jpg`;
-                const tempFilePath = import_path14.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
-                import_fs12.default.writeFileSync(tempFilePath, buffer);
+                const tempFilePath = import_path16.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
+                import_fs14.default.writeFileSync(tempFilePath, buffer);
                 await imageArchiveService.processAndRouteImage(tempFilePath);
                 const result = await aiCameraService.processImage(buffer);
                 const captionText = (msg.caption || "").toLowerCase();
@@ -9102,8 +12515,8 @@ async function ensureMultiPharmacyAndSnapshotSchema(db2) {
   try {
     const userCount = await db2.get("SELECT COUNT(*) as cnt FROM pharmacy_users");
     if (!userCount || userCount.cnt === 0) {
-      const salt = import_crypto.default.randomBytes(16).toString("hex");
-      const hash = import_crypto.default.pbkdf2Sync("admin123", salt, 1e3, 32, "sha256").toString("hex");
+      const salt = import_crypto2.default.randomBytes(16).toString("hex");
+      const hash = import_crypto2.default.pbkdf2Sync("admin123", salt, 1e3, 32, "sha256").toString("hex");
       await db2.run(
         `INSERT INTO pharmacy_users (id, username, password_hash, salt, full_name, role, is_active)
          VALUES (1, 'admin', ?, ?, 'System Administrator', 'owner', 1)`,
@@ -9331,6 +12744,8 @@ async function ensureSchema(dbPath) {
           image_type TEXT DEFAULT 'combined',
           is_primary INTEGER DEFAULT 0,
           slot_number INTEGER DEFAULT 1,
+          phash TEXT,
+          visual_embedding TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
@@ -9350,6 +12765,8 @@ async function ensureSchema(dbPath) {
           if (!hasCol("slot_number")) await db2.run("ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1");
           if (!hasCol("match_source")) await db2.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
           if (!hasCol("match_confidence")) await db2.run("ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0");
+          if (!hasCol("phash")) await db2.run("ALTER TABLE catalog_images ADD COLUMN phash TEXT");
+          if (!hasCol("visual_embedding")) await db2.run("ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT");
         } catch (_e) {
         }
         await db2.run(`
@@ -9388,6 +12805,7 @@ async function ensureSchema(dbPath) {
         await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)");
         await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)");
         await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)");
+        await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)");
         await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)");
         await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)");
         await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)");
@@ -10759,7 +14177,9 @@ async function ensureSchema(dbPath) {
       ["catalog_images", "verification_version", "ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1"],
       // Filename auto-match columns
       ["catalog_images", "match_source", "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
-      ["catalog_images", "match_confidence", "ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0"]
+      ["catalog_images", "match_confidence", "ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0"],
+      ["catalog_images", "phash", "ALTER TABLE catalog_images ADD COLUMN phash TEXT"],
+      ["catalog_images", "visual_embedding", "ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT"]
     ];
     for (const [table, col, stmt] of alterStatements) {
       try {
@@ -11880,13 +15300,13 @@ async function ensureSchema(dbPath) {
             if (unpopulated.length > 0) {
               console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
               const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-              const fs57 = await import("fs");
+              const fs58 = await import("fs");
               for (const email of unpopulated) {
                 try {
                   const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
                   const parsedItems = [];
                   for (const att of attachments) {
-                    if (att.local_path && fs57.existsSync(att.local_path)) {
+                    if (att.local_path && fs58.existsSync(att.local_path)) {
                       try {
                         const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
                         if (resParse && resParse.success && resParse.items) {
@@ -12138,6 +15558,8 @@ async function ensureSchema(dbPath) {
       image_type TEXT DEFAULT 'combined',
       is_primary INTEGER DEFAULT 0,
       slot_number INTEGER DEFAULT 1,
+      phash TEXT,
+      visual_embedding TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
@@ -12179,6 +15601,7 @@ async function ensureSchema(dbPath) {
     await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)");
     await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)");
     await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)");
+    await db2.run("CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)");
     await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)");
     await db2.run("CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)");
     await db2.run("CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)");
@@ -12291,13 +15714,13 @@ async function ensureSchema(dbPath) {
     dbManager.isBooting = false;
   }
 }
-var import_crypto, CURRENT_SCHEMA_VERSION, FTS_SHADOW_TABLES, FTS_CREATE_SQL, FTS_TRIGGER_SQL;
+var import_crypto2, CURRENT_SCHEMA_VERSION, FTS_SHADOW_TABLES, FTS_CREATE_SQL, FTS_TRIGGER_SQL;
 var init_database = __esm({
   "src/database.ts"() {
     "use strict";
-    import_crypto = __toESM(require("crypto"), 1);
+    import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 55;
+    CURRENT_SCHEMA_VERSION = 56;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -12362,7 +15785,7 @@ async function loadReferenceData({ force } = {}) {
   } else {
     await db2.run("DELETE FROM medicine_reference");
   }
-  if (!import_fs13.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -12370,7 +15793,7 @@ async function loadReferenceData({ force } = {}) {
   console.log("Loading medicine reference data from CSV...");
   const rows = [];
   await new Promise((resolve, reject) => {
-    import_fs13.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const name = (row["name"] || "").trim();
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
@@ -12420,7 +15843,7 @@ async function loadApiSubstances({ force } = {}) {
   } else {
     await db2.run("DELETE FROM api_substances");
   }
-  if (!import_fs13.default.existsSync(REFERENCE_CSV)) {
+  if (!import_fs15.default.existsSync(REFERENCE_CSV)) {
     await dbManager.close();
     console.warn("Reference CSV not found at:", REFERENCE_CSV);
     return { loaded: 0, skipped: 0 };
@@ -12428,7 +15851,7 @@ async function loadApiSubstances({ force } = {}) {
   console.log("Loading API substances from CSV...");
   const substanceSet = /* @__PURE__ */ new Set();
   await new Promise((resolve, reject) => {
-    import_fs13.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
+    import_fs15.default.createReadStream(REFERENCE_CSV).pipe((0, import_csv_parser.default)()).on("data", (row) => {
       const comp1 = (row["short_composition1"] || row["composition1"] || "").trim();
       const comp2 = (row["short_composition2"] || row["composition2"] || "").trim();
       if (comp1) {
@@ -12479,9 +15902,9 @@ async function seedBundledReference(force = false) {
       if (count && count.c > 0) return { loaded: 0 };
     }
     let rows = [];
-    if (import_fs13.default.existsSync(BUNDLED_SEED)) {
+    if (import_fs15.default.existsSync(BUNDLED_SEED)) {
       try {
-        rows = JSON.parse(import_fs13.default.readFileSync(BUNDLED_SEED, "utf8"));
+        rows = JSON.parse(import_fs15.default.readFileSync(BUNDLED_SEED, "utf8"));
       } catch (err) {
         console.warn("[Seed] Failed to parse seed JSON file, using fallback array:", err);
         rows = DEFAULT_SEED_ROWS;
@@ -12830,22 +16253,22 @@ async function recordApiSubstance(apiReference) {
     await dbManager.close();
   }
 }
-var import_path15, import_fs13, import_url13, import_csv_parser, __filename12, __dirname12, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
+var import_path17, import_fs15, import_url13, import_csv_parser, __filename12, __dirname12, DATA_DIR, REFERENCE_CSV, DOSAGE_FORMS2, DOSAGE_FORM_SET, NON_PHARMA_KEYWORDS, BUNDLED_SEED, DEFAULT_SEED_ROWS, isEnrichmentRunning, enrichmentStopRequested, autoEnrichedDate, autoEnrichedTodayCount;
 var init_compositionEnricher = __esm({
   "src/worker/compositionEnricher.ts"() {
     "use strict";
-    import_path15 = __toESM(require("path"), 1);
-    import_fs13 = __toESM(require("fs"), 1);
+    import_path17 = __toESM(require("path"), 1);
+    import_fs15 = __toESM(require("fs"), 1);
     import_url13 = require("url");
     init_connection();
     import_csv_parser = __toESM(require("csv-parser"), 1);
     init_activityTracker();
     init_config();
     __filename12 = (0, import_url13.fileURLToPath)(import_meta_url);
-    __dirname12 = import_path15.default.dirname(__filename12);
-    DATA_DIR = import_path15.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV = import_path15.default.join(DATA_DIR, "reference_medicines.csv");
-    DOSAGE_FORMS = [
+    __dirname12 = import_path17.default.dirname(__filename12);
+    DATA_DIR = import_path17.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV = import_path17.default.join(DATA_DIR, "reference_medicines.csv");
+    DOSAGE_FORMS2 = [
       "TABLET",
       "TAB",
       "CAPSULE",
@@ -12902,7 +16325,7 @@ var init_compositionEnricher = __esm({
       "DRY",
       "BAK"
     ];
-    DOSAGE_FORM_SET = new Set(DOSAGE_FORMS);
+    DOSAGE_FORM_SET = new Set(DOSAGE_FORMS2);
     NON_PHARMA_KEYWORDS = [
       "AYURVED",
       "HOMEOPATH",
@@ -12928,7 +16351,7 @@ var init_compositionEnricher = __esm({
       "VETERIN",
       "DENTAL PREPARATION"
     ];
-    BUNDLED_SEED = import_path15.default.join(DATA_DIR, "medicine_reference_seed.json");
+    BUNDLED_SEED = import_path17.default.join(DATA_DIR, "medicine_reference_seed.json");
     DEFAULT_SEED_ROWS = [
       { name: "PARACETAMOL 650 MG TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
       { name: "DOLO 650 TABLET", composition1: "PARACETAMOL", manufacturer: "MICRO LABS" },
@@ -13949,7 +17372,7 @@ function parseRecordTypeInvoice(csvRecords, filename) {
     }
   }
   if (!distributor_name && filename) {
-    const base = import_path16.default.basename(filename).toLowerCase();
+    const base = import_path18.default.basename(filename).toLowerCase();
     if (base.includes("prakash_pharmaceuticals") || base.includes("prakashpharmaceuticals")) {
       distributor_name = "PRAKASH PHARMACEUTICALS";
     }
@@ -14558,7 +17981,7 @@ function isNonMedicineNoise(name) {
   }
   return false;
 }
-var import_imap_simple, import_mailparser, import_nodemailer, import_path16, import_fs14, import_url14, import_sync, XLSX, __filename13, __dirname13, getDbPath, getUploadsDir, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
+var import_imap_simple, import_mailparser, import_nodemailer, import_path18, import_fs16, import_url14, import_sync, XLSX, __filename13, __dirname13, getDbPath, getUploadsDir, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN, EmailService, emailService, emailService_default;
 var init_emailService = __esm({
   "src/services/emailService.ts"() {
     "use strict";
@@ -14566,8 +17989,8 @@ var init_emailService = __esm({
     import_mailparser = require("mailparser");
     init_connection();
     import_nodemailer = require("nodemailer");
-    import_path16 = __toESM(require("path"), 1);
-    import_fs14 = __toESM(require("fs"), 1);
+    import_path18 = __toESM(require("path"), 1);
+    import_fs16 = __toESM(require("fs"), 1);
     import_url14 = require("url");
     init_database();
     init_whatsappQueueWorker();
@@ -14584,9 +18007,9 @@ var init_emailService = __esm({
     init_medicineService();
     init_nameNormalizer();
     __filename13 = (0, import_url14.fileURLToPath)(import_meta_url);
-    __dirname13 = import_path16.default.dirname(__filename13);
+    __dirname13 = import_path18.default.dirname(__filename13);
     getDbPath = () => config.dbPath;
-    getUploadsDir = () => process.env.UPLOADS_DIR || import_path16.default.resolve(getAppDataDir(), "uploads");
+    getUploadsDir = () => process.env.UPLOADS_DIR || import_path18.default.resolve(getAppDataDir(), "uploads");
     NET_BILL_AMOUNT_PATTERN = /(?:(?:net\s*(?:amt|amount|payable|value)|grand\s*total|final\s*(?:bill|amount)|bill\s*amount|inv(?:oice)?\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?))/i;
     BILL_AMOUNT_PATTERN = /(?:(?:grand\s*total|net\s*(?:amt|amount|payable|value)|bill\s*amount|inv(?:oice)?\s*amount|total\s*amount)\s*[:\-\s]*\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|(?:total|amount|amt)\s*[:\-\s]*\s*(?!items|qty|quantity|units|pcs|medicines|rows)([\d,]+(?:\.\d{1,2})?)|(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?))/i;
     EmailService = class {
@@ -15249,14 +18672,14 @@ Arrival Time: ${arrivalTime}`;
               await this.processMedicineListAttachment(attachment);
               console.log("Medicine list attachment processed:", attachment.filename);
             }
-            const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
-            if (!import_fs14.default.existsSync(uploadsDir)) {
-              import_fs14.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+            if (!import_fs16.default.existsSync(uploadsDir)) {
+              import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            const sanitizedFilename = import_path16.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path18.default.basename(attachment.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
             const prefix = uid ? `att-${uid}-` : `${Date.now()}-`;
-            const filePath = import_path16.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
-            import_fs14.default.writeFileSync(filePath, attachment.content);
+            const filePath = import_path18.default.join(uploadsDir, `${prefix}${sanitizedFilename}`);
+            import_fs16.default.writeFileSync(filePath, attachment.content);
           }
         } catch (error) {
           console.error("Error processing email attachments:", error);
@@ -15417,19 +18840,19 @@ AI Pharmacy Team`
             });
             if (validEntry) {
               const uploadsDir = getUploadsDir();
-              const tempExt = import_path16.default.extname(validEntry.entryName);
-              const tempChildPath = import_path16.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
-              import_fs14.default.writeFileSync(tempChildPath, validEntry.getData());
+              const tempExt = import_path18.default.extname(validEntry.entryName);
+              const tempChildPath = import_path18.default.join(uploadsDir, `zip-extracted-${Date.now()}${tempExt}`);
+              import_fs16.default.writeFileSync(tempChildPath, validEntry.getData());
               try {
                 const result = await this.parseAndImportAttachment(tempChildPath, importData);
                 try {
-                  import_fs14.default.unlinkSync(tempChildPath);
+                  import_fs16.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 return result;
               } catch (err) {
                 try {
-                  import_fs14.default.unlinkSync(tempChildPath);
+                  import_fs16.default.unlinkSync(tempChildPath);
                 } catch {
                 }
                 throw err;
@@ -15454,7 +18877,7 @@ AI Pharmacy Team`
           let mappingConfig = {};
           let rawHeaders = [];
           let needsReview = false;
-          const safeBasename = import_path16.default.basename(filePath);
+          const safeBasename = import_path18.default.basename(filePath);
           const db2 = await dbManager.getConnection();
           let distributor = null;
           let emailAttachment = await db2.get(
@@ -15484,7 +18907,7 @@ AI Pharmacy Team`
             let isRecordType = false;
             let recordData = null;
             if (nameLower.endsWith(".csv")) {
-              const fileBuffer = import_fs14.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const textContent = fileBuffer.toString("utf8");
               const firstLine = textContent.split("\n")[0]?.trim() || "";
               const firstField = firstLine.split(",")[0]?.trim();
@@ -15502,7 +18925,7 @@ AI Pharmacy Team`
                 records = (0, import_sync.parse)(fileBuffer, { columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
               }
             } else {
-              const fileBuffer = import_fs14.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const workbook = XLSX.read(fileBuffer, { type: "buffer" });
               const sheetName = workbook.SheetNames[0];
               if (sheetName) {
@@ -15628,7 +19051,7 @@ AI Pharmacy Team`
               }).filter((item) => item.name !== "Unknown CSV Item" && item.name !== distributor_name);
             }
           } else if (nameLower.endsWith(".dav") || nameLower.endsWith(".dac")) {
-            const text = import_fs14.default.readFileSync(filePath, "utf8");
+            const text = import_fs16.default.readFileSync(filePath, "utf8");
             const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
             const headerLine = lines.find((l) => l.startsWith("H,"));
             if (headerLine) {
@@ -15707,19 +19130,19 @@ AI Pharmacy Team`
             const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(nameLower);
             if (isPdf) {
               const { default: pdfParse3 } = await import("pdf-parse");
-              const fileBuffer = import_fs14.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const pdfData = await pdfParse3(fileBuffer);
               content = pdfData.text || "";
             } else if (isImage) {
-              const fileBuffer = import_fs14.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               const ocrResult = await aiCameraService.processImage(fileBuffer, true);
               content = ocrResult?.text || "";
             } else {
-              content = import_fs14.default.readFileSync(filePath, "utf-8");
+              content = import_fs16.default.readFileSync(filePath, "utf-8");
             }
             const runPdfOcrFallback = async () => {
               console.log("[emailService] PDF jumbled or scanned. Falling back to page-by-page OCR rendering.");
-              const fileBuffer = import_fs14.default.readFileSync(filePath);
+              const fileBuffer = import_fs16.default.readFileSync(filePath);
               try {
                 const canvasPkg = await import("@napi-rs/canvas");
                 const { createCanvas: createCanvas2, Canvas, Image } = canvasPkg;
@@ -15752,7 +19175,7 @@ AI Pharmacy Team`
                 }).promise;
                 const numPages = pdfDoc.numPages;
                 let ocrText = "";
-                const { Jimp: Jimp5 } = await import("jimp");
+                const { Jimp: Jimp6 } = await import("jimp");
                 for (let pageNum = 1; pageNum <= numPages; pageNum++) {
                   const page = await pdfDoc.getPage(pageNum);
                   const viewport = page.getViewport({ scale: 2 });
@@ -15766,7 +19189,7 @@ AI Pharmacy Team`
                     pageBuffer = canvas.toBuffer("image/png");
                   } catch (err) {
                     console.error("[emailService PDF page render error]:", err);
-                    const image = new Jimp5({ width, height, color: 4294967295 });
+                    const image = new Jimp6({ width, height, color: 4294967295 });
                     pageBuffer = await image.getBuffer("image/png");
                   }
                   const pageOcr = await aiCameraService.extractTextFromImage(pageBuffer);
@@ -15865,7 +19288,7 @@ AI Pharmacy Team`
                 }
               }
               if (!invoice_no) {
-                const filename = import_path16.default.basename(filePath);
+                const filename = import_path18.default.basename(filePath);
                 const fileDigits = filename.replace(/\.[^/.]+$/, "").match(/\d+/);
                 if (fileDigits) {
                   invoice_no = fileDigits[0];
@@ -16074,7 +19497,7 @@ AI Pharmacy Team`
             };
           }
           if (importData) {
-            const filename = import_path16.default.basename(filePath);
+            const filename = import_path18.default.basename(filePath);
             const validDistName = distributor_name && isValidDistributorName(distributor_name) ? distributor_name.trim() : null;
             await db2.run(
               `INSERT INTO staged_purchases (distributor_name, invoice_no, date, total_amount, items_json, source_type) VALUES (?, ?, ?, ?, ?, 'email')`,
@@ -16119,17 +19542,17 @@ AI Pharmacy Team`
         try {
           await db2.run("BEGIN TRANSACTION");
           const uploadsDir = getUploadsDir();
-          const historicalDir = import_path16.default.join(uploadsDir, "historical");
-          if (!import_fs14.default.existsSync(historicalDir)) {
-            import_fs14.default.mkdirSync(historicalDir, { recursive: true });
+          const historicalDir = import_path18.default.join(uploadsDir, "historical");
+          if (!import_fs16.default.existsSync(historicalDir)) {
+            import_fs16.default.mkdirSync(historicalDir, { recursive: true });
           }
-          const srcPath = import_path16.default.isAbsolute(filename) ? filename : import_path16.default.join(uploadsDir, filename);
-          const safeBasename = import_path16.default.basename(filename);
-          const destPath = import_path16.default.join(historicalDir, safeBasename);
-          if (import_fs14.default.existsSync(srcPath) && srcPath !== destPath) {
-            import_fs14.default.copyFileSync(srcPath, destPath);
+          const srcPath = import_path18.default.isAbsolute(filename) ? filename : import_path18.default.join(uploadsDir, filename);
+          const safeBasename = import_path18.default.basename(filename);
+          const destPath = import_path18.default.join(historicalDir, safeBasename);
+          if (import_fs16.default.existsSync(srcPath) && srcPath !== destPath) {
+            import_fs16.default.copyFileSync(srcPath, destPath);
           }
-          const fileType = import_path16.default.extname(safeBasename).slice(1).toLowerCase();
+          const fileType = import_path18.default.extname(safeBasename).slice(1).toLowerCase();
           const headersJson = JSON.stringify(rawHeaders);
           const mappingJson = JSON.stringify(mappingConfig);
           const dataJson = JSON.stringify(extractedItems);
@@ -16144,9 +19567,9 @@ AI Pharmacy Team`
           if (historicalFiles.length > 5) {
             const toDelete = historicalFiles.slice(5);
             for (const fileToDelete of toDelete) {
-              if (fileToDelete.file_path && import_fs14.default.existsSync(fileToDelete.file_path)) {
+              if (fileToDelete.file_path && import_fs16.default.existsSync(fileToDelete.file_path)) {
                 try {
-                  import_fs14.default.unlinkSync(fileToDelete.file_path);
+                  import_fs16.default.unlinkSync(fileToDelete.file_path);
                 } catch (err) {
                   console.warn("Failed to delete old historical file:", fileToDelete.file_path, err);
                 }
@@ -16214,17 +19637,17 @@ AI Pharmacy Team`
           const emailsToDelete = nonSavedEmails.slice(limit);
           const uidsToDelete = emailsToDelete.map((e) => e.uid);
           let deletedCount = 0;
-          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
           for (const uid of uidsToDelete) {
             const attachments = await db2.all(
               "SELECT local_path, filename FROM email_attachments WHERE uid = ?",
               [uid]
             );
             for (const att of attachments) {
-              const filePath = att.local_path || (att.filename ? import_path16.default.join(uploadsDir, att.filename) : null);
-              if (filePath && import_fs14.default.existsSync(filePath)) {
+              const filePath = att.local_path || (att.filename ? import_path18.default.join(uploadsDir, att.filename) : null);
+              if (filePath && import_fs16.default.existsSync(filePath)) {
                 try {
-                  import_fs14.default.unlinkSync(filePath);
+                  import_fs16.default.unlinkSync(filePath);
                   console.log(`[EmailPruner] Cleaned up attachment file: ${filePath}`);
                 } catch (fileErr) {
                   console.warn(`[EmailPruner] Failed to delete file ${filePath}:`, fileErr);
@@ -16366,9 +19789,9 @@ AI Pharmacy Team`
           }
           const attachments = await db2.all("SELECT local_path FROM email_attachments WHERE uid = ?", [uid]);
           for (const att of attachments || []) {
-            if (att.local_path && import_fs14.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs16.default.existsSync(att.local_path)) {
               try {
-                import_fs14.default.unlinkSync(att.local_path);
+                import_fs16.default.unlinkSync(att.local_path);
               } catch (_) {
               }
             }
@@ -16528,8 +19951,8 @@ AI Pharmacy Team`
           const limitedResults = newResults.slice(0, 50);
           limitedResults.sort((a, b) => a - b);
           console.log(`[Sync] Found ${newResults.length} new email(s) to download.`);
-          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
-          if (!import_fs14.default.existsSync(uploadsDir)) import_fs14.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
           for (const uid of limitedResults) {
             try {
               const fetchResult = await connection.search([["UID", uid]], { bodies: [""], struct: true });
@@ -16584,13 +20007,13 @@ AI Pharmacy Team`
                   ".ods": "application/vnd.oasis.opendocument.spreadsheet"
                 };
                 for (const att of processedEmail.attachments) {
-                  const sanitized = import_path16.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+                  const sanitized = import_path18.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
                   const finalFilename = `att-${uid}-${sanitized}`;
-                  const filePath = import_path16.default.join(uploadsDir, finalFilename);
-                  if (!import_fs14.default.existsSync(filePath)) {
-                    import_fs14.default.writeFileSync(filePath, att.content);
+                  const filePath = import_path18.default.join(uploadsDir, finalFilename);
+                  if (!import_fs16.default.existsSync(filePath)) {
+                    import_fs16.default.writeFileSync(filePath, att.content);
                   }
-                  const ext = import_path16.default.extname(sanitized).toLowerCase();
+                  const ext = import_path18.default.extname(sanitized).toLowerCase();
                   const contentType = contentTypes[ext] || att.contentType || "application/octet-stream";
                   const size = att.content ? att.content.length : 0;
                   await db2.run(
@@ -16755,17 +20178,17 @@ AI Pharmacy Team`
           if (!bodyPart) return this.getLocalAttachmentsForUid(uid);
           const parsed = await (0, import_mailparser.simpleParser)(bodyPart.body);
           const attachments = parsed.attachments || [];
-          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
-          if (!import_fs14.default.existsSync(uploadsDir)) {
-            import_fs14.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) {
+            import_fs16.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const savedList = [];
           for (const att of attachments) {
-            const sanitizedFilename = import_path16.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+            const sanitizedFilename = import_path18.default.basename(att.filename || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
             const finalFilename = `att-${uid}-${sanitizedFilename}`;
-            const filePath = import_path16.default.join(uploadsDir, finalFilename);
-            import_fs14.default.writeFileSync(filePath, att.content);
-            const ext = import_path16.default.extname(sanitizedFilename).toLowerCase();
+            const filePath = import_path18.default.join(uploadsDir, finalFilename);
+            import_fs16.default.writeFileSync(filePath, att.content);
+            const ext = import_path18.default.extname(sanitizedFilename).toLowerCase();
             const contentTypes = {
               ".pdf": "application/pdf",
               ".csv": "text/csv",
@@ -16799,9 +20222,9 @@ AI Pharmacy Team`
        */
       getLocalAttachmentsForUid(uid) {
         try {
-          const uploadsDir = process.env.UPLOADS_DIR || import_path16.default.join(getAppDataDir(), "uploads");
-          if (!import_fs14.default.existsSync(uploadsDir)) return [];
-          const files = import_fs14.default.readdirSync(uploadsDir);
+          const uploadsDir = process.env.UPLOADS_DIR || import_path18.default.join(getAppDataDir(), "uploads");
+          if (!import_fs16.default.existsSync(uploadsDir)) return [];
+          const files = import_fs16.default.readdirSync(uploadsDir);
           const prefix = `att-${uid}-`;
           const contentTypes = {
             ".pdf": "application/pdf",
@@ -16812,9 +20235,9 @@ AI Pharmacy Team`
             ".ods": "application/vnd.oasis.opendocument.spreadsheet"
           };
           return files.filter((file) => file.startsWith(prefix) && file.match(/\.(csv|txt|xlsx?|ods|pdf)$/i)).map((filename) => {
-            const filePath = import_path16.default.join(uploadsDir, filename);
-            const stats = import_fs14.default.statSync(filePath);
-            const ext = import_path16.default.extname(filename).toLowerCase();
+            const filePath = import_path18.default.join(uploadsDir, filename);
+            const stats = import_fs16.default.statSync(filePath);
+            const ext = import_path18.default.extname(filename).toLowerCase();
             return {
               filename,
               size: stats.size,
@@ -18986,10 +22409,10 @@ async function downloadMediaWithRetry(downloadFn, options = {}) {
   throw lastErr;
 }
 async function saveInboundMedia(msgId, buffer) {
-  await import_fs15.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
+  await import_fs17.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = import_path17.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
-  await import_fs15.default.promises.writeFile(filePath, buffer);
+  const filePath = import_path19.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
+  await import_fs17.default.promises.writeFile(filePath, buffer);
   return filePath;
 }
 function resolveOcrGateDecision(ocrRaw, finalName, knownApis) {
@@ -19581,7 +23004,7 @@ async function handleOcrComplete(data) {
             }
           }
         }
-        const safeWebPath = imagePath ? `/data/inbound_media/${import_path17.default.basename(imagePath)}` : null;
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path19.default.basename(imagePath)}` : null;
         await db2.run(
           `UPDATE special_orders
            SET payment_screenshot_path = ?,
@@ -19719,6 +23142,30 @@ async function handleOcrComplete(data) {
       console.log(`[Intent Service] Scan gate (V2): skipped non-medicine image (name="${finalName}", chat=${chatId}).`);
       return;
     }
+    let visualBoostName = null;
+    try {
+      if (imagePath && import_fs17.default.existsSync(imagePath)) {
+        const buf = import_fs17.default.readFileSync(imagePath);
+        const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(" ");
+        const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
+        if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
+          const top = visualHits[0];
+          const already = passingNames.some((n) => n.toLowerCase() === top.product_name.toLowerCase());
+          if (!already) {
+            visualBoostName = top.product_name;
+            console.log(`[Intent Service] Visual hit: "${top.product_name}" distance=${top.visualDistance} fused=${top.fusedScore} (brand ${top.signals.brandMatch ? "match" : "mismatch"})`);
+          } else {
+            console.log(`[Intent Service] Visual confirms textual: "${top.product_name}" fused=${top.fusedScore}`);
+          }
+        }
+      }
+    } catch (visErr) {
+      console.warn("[Intent Service] Visual fusion failed:", visErr);
+    }
+    if (visualBoostName) {
+      finalName = visualBoostName;
+      if (!passingNames.includes(visualBoostName)) passingNames.unshift(visualBoostName);
+    }
     const relatedMedicines = await resolveRelatedMedicinesLocal(passingNames.slice(1));
     const captionHit = captionCandidates.find((c) => c.medicineName.toLowerCase() === finalName.toLowerCase());
     searchAndBroadcast({
@@ -19775,12 +23222,12 @@ async function resolveRelatedMedicinesLocal(names) {
   }
   return results;
 }
-var import_fs15, import_path17, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, whatsappIntentService, whatsappIntentService_default;
+var import_fs17, import_path19, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
-    import_fs15 = __toESM(require("fs"), 1);
-    import_path17 = __toESM(require("path"), 1);
+    import_fs17 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_intentKeywords();
@@ -19789,10 +23236,11 @@ var init_whatsappIntentService = __esm({
     init_pharmarackCatalogCache();
     init_waAdminEscalationService();
     init_startupSyncCoordinator();
+    init_visualIndexService();
     init_scanGateAlgorithms();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
-    INBOUND_MEDIA_DIR = import_path17.default.resolve(process.cwd(), "data", "inbound_media");
+    INBOUND_MEDIA_DIR = import_path19.default.resolve(process.cwd(), "data", "inbound_media");
     whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast };
     whatsappIntentService_default = whatsappIntentService;
   }
@@ -19833,12 +23281,12 @@ __export(whatsappClient_exports, {
   waitForWhatsAppReady: () => waitForWhatsAppReady
 });
 function hasSavedSession() {
-  const sessionPath = import_path18.default.join(WWEBJS_AUTH_DIR, "session");
-  if (!import_fs16.default.existsSync(sessionPath)) return false;
+  const sessionPath = import_path20.default.join(WWEBJS_AUTH_DIR, "session");
+  if (!import_fs18.default.existsSync(sessionPath)) return false;
   try {
-    const defaultDir = import_path18.default.join(sessionPath, "Default");
-    const targetDir = import_fs16.default.existsSync(defaultDir) ? defaultDir : sessionPath;
-    const files = import_fs16.default.readdirSync(targetDir);
+    const defaultDir = import_path20.default.join(sessionPath, "Default");
+    const targetDir = import_fs18.default.existsSync(defaultDir) ? defaultDir : sessionPath;
+    const files = import_fs18.default.readdirSync(targetDir);
     const meaningfulFiles = files.filter(
       (f) => !/^(devtoolsactiveport|singleton|lock|\.lock|lockfile)$/i.test(f)
     );
@@ -19860,29 +23308,29 @@ async function isWhatsAppAutoConnectAllowed() {
   return false;
 }
 function safeRemoveDirectorySync(dirPath) {
-  if (!import_fs16.default.existsSync(dirPath)) return;
+  if (!import_fs18.default.existsSync(dirPath)) return;
   try {
-    import_fs16.default.rmSync(dirPath, { recursive: true, force: true });
+    import_fs18.default.rmSync(dirPath, { recursive: true, force: true });
   } catch (err) {
     try {
-      const entries = import_fs16.default.readdirSync(dirPath, { withFileTypes: true });
+      const entries = import_fs18.default.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        const fullPath = import_path18.default.join(dirPath, entry.name);
+        const fullPath = import_path20.default.join(dirPath, entry.name);
         try {
-          import_fs16.default.chmodSync(fullPath, 438);
+          import_fs18.default.chmodSync(fullPath, 438);
         } catch {
         }
         if (entry.isDirectory()) {
           safeRemoveDirectorySync(fullPath);
         } else {
           try {
-            import_fs16.default.unlinkSync(fullPath);
+            import_fs18.default.unlinkSync(fullPath);
           } catch {
           }
         }
       }
       try {
-        import_fs16.default.rmdirSync(dirPath);
+        import_fs18.default.rmdirSync(dirPath);
       } catch {
       }
     } catch {
@@ -20083,7 +23531,7 @@ async function shouldRouteToBusiness() {
   return false;
 }
 async function cleanupProfileLocks() {
-  const sessionPath = import_path18.default.join(WWEBJS_AUTH_DIR, "session");
+  const sessionPath = import_path20.default.join(WWEBJS_AUTH_DIR, "session");
   if (process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
@@ -20245,14 +23693,14 @@ function launchClientInstance(forceQr) {
     const paths = [
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-      process.env.LOCALAPPDATA ? import_path18.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-      process.env.PROGRAMFILES ? import_path18.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.LOCALAPPDATA ? import_path20.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.PROGRAMFILES ? import_path20.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
       "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      process.env.LOCALAPPDATA ? import_path18.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+      process.env.LOCALAPPDATA ? import_path20.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
     ].filter(Boolean);
     for (const p of paths) {
-      if (import_fs16.default.existsSync(p)) {
+      if (import_fs18.default.existsSync(p)) {
         execPath = p;
         break;
       }
@@ -20714,9 +24162,9 @@ async function forceReconnect() {
   const authPath = WWEBJS_AUTH_DIR;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (import_fs16.default.existsSync(authPath)) {
+      if (import_fs18.default.existsSync(authPath)) {
         safeRemoveDirectorySync(authPath);
-        if (!import_fs16.default.existsSync(authPath) || !hasSavedSession()) {
+        if (!import_fs18.default.existsSync(authPath) || !hasSavedSession()) {
           console.log("[WhatsApp] Old session data cleared from", authPath);
           break;
         }
@@ -20890,7 +24338,7 @@ async function sendMessage(to, mediaPath, caption, file) {
         }
         recentSendsCache.set(sendKey, Date.now());
         try {
-          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path18.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
+          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path20.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
           const provTimestamp = Math.floor(Date.now() / 1e3);
           const provHasMedia = file || mediaPath ? 1 : 0;
           await db2.run(
@@ -20929,18 +24377,18 @@ async function sendMessage(to, mediaPath, caption, file) {
         continue;
       } else {
         if (file && file.mimetype && file.data) {
-          if (!import_fs16.default.existsSync(config.tempDir)) {
-            import_fs16.default.mkdirSync(config.tempDir, { recursive: true });
+          if (!import_fs18.default.existsSync(config.tempDir)) {
+            import_fs18.default.mkdirSync(config.tempDir, { recursive: true });
           }
-          const tempFilePath = import_path18.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
-          import_fs16.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
+          const tempFilePath = import_path20.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
+          import_fs18.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
           try {
             const result = await whatsappBusinessService.sendDocument(cleanPhone, tempFilePath, caption, file.filename);
             success = result.success;
             if (result.messageId) messageId = result.messageId;
           } finally {
-            if (import_fs16.default.existsSync(tempFilePath)) {
-              import_fs16.default.unlinkSync(tempFilePath);
+            if (import_fs18.default.existsSync(tempFilePath)) {
+              import_fs18.default.unlinkSync(tempFilePath);
             }
           }
         } else if (mediaPath) {
@@ -20962,7 +24410,7 @@ async function sendMessage(to, mediaPath, caption, file) {
       console.error("[WhatsApp Client Wrapper] Send failed:", err?.message || err);
       throw err;
     }
-    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path18.default.basename(mediaPath)} ${caption || ""}` : caption || "";
+    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path20.default.basename(mediaPath)} ${caption || ""}` : caption || "";
     const timestamp = Math.floor(Date.now() / 1e3);
     const hasMedia = file || mediaPath ? 1 : 0;
     try {
@@ -21130,22 +24578,22 @@ async function getChatMessages(chatId, limit = 500) {
   }
 }
 async function getMessageMedia(chatId, messageId) {
-  if (!import_fs16.default.existsSync(UPLOADS_DIR)) {
-    import_fs16.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  if (!import_fs18.default.existsSync(UPLOADS_DIR)) {
+    import_fs18.default.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
-  const files = import_fs16.default.readdirSync(UPLOADS_DIR);
+  const files = import_fs18.default.readdirSync(UPLOADS_DIR);
   const matchedFile = files.find((f) => f.startsWith(messageId));
   if (!matchedFile) {
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
-  const filePath = import_path18.default.join(UPLOADS_DIR, matchedFile);
-  const ext = import_path18.default.extname(matchedFile).toLowerCase();
+  const filePath = import_path20.default.join(UPLOADS_DIR, matchedFile);
+  const ext = import_path20.default.extname(matchedFile).toLowerCase();
   let mimetype = "image/jpeg";
   if (ext === ".png") mimetype = "image/png";
   else if (ext === ".pdf") mimetype = "application/pdf";
   else if (ext === ".mp3") mimetype = "audio/mp3";
   else if (ext === ".mp4") mimetype = "video/mp4";
-  const data = import_fs16.default.readFileSync(filePath).toString("base64");
+  const data = import_fs18.default.readFileSync(filePath).toString("base64");
   return {
     mimetype,
     data,
@@ -21180,13 +24628,13 @@ async function checkPhoneWhatsAppRegistered(cleanDigits10) {
     return "UNABLE_TO_VERIFY";
   }
 }
-var import_whatsapp_web, import_fs16, import_path18, import_url15, import_child_process4, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
+var import_whatsapp_web, import_fs18, import_path20, import_url15, import_child_process4, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
     import_whatsapp_web = __toESM(require("whatsapp-web.js"), 1);
-    import_fs16 = __toESM(require("fs"), 1);
-    import_path18 = __toESM(require("path"), 1);
+    import_fs18 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
     import_url15 = require("url");
     import_child_process4 = require("child_process");
     import_util2 = require("util");
@@ -21198,9 +24646,9 @@ var init_whatsappClient = __esm({
     ({ Client, LocalAuth, MessageMedia } = import_whatsapp_web.default);
     execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
     __filename14 = (0, import_url15.fileURLToPath)(import_meta_url);
-    __dirname14 = import_path18.default.dirname(__filename14);
-    UPLOADS_DIR = import_path18.default.resolve(getAppDataDir(), "uploads");
-    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path18.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path18.default.resolve(getAppDataDir(), ".wwebjs_auth");
+    __dirname14 = import_path20.default.dirname(__filename14);
+    UPLOADS_DIR = import_path20.default.resolve(getAppDataDir(), "uploads");
+    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path20.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path20.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
       const msg = reason?.message || String(reason);
       if (isPuppeteerDetachedError(msg)) {
@@ -21264,14 +24712,52 @@ var init_whatsappQueueWorker = __esm({
       currentSendingItemId = null;
       pacingMinMs = 1e4;
       pacingMaxMs = 15e3;
+      cancelPacingSleep = null;
       isWorkerPaused() {
         return this.isPaused;
       }
+      /** Cancel any in-flight pacing delay immediately (<10ms pause/flush response) */
+      cancelActiveDelay() {
+        if (this.cancelPacingSleep) {
+          this.cancelPacingSleep();
+          this.cancelPacingSleep = null;
+        }
+        this.nextDispatchTimestamp = null;
+      }
+      /** Interruptible sleep helper for pacing delay */
+      interruptibleSleep(ms) {
+        return new Promise((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              this.cancelPacingSleep = null;
+              resolve(true);
+            }
+          }, ms);
+          this.cancelPacingSleep = () => {
+            if (!settled) {
+              settled = true;
+              clearTimeout(timer);
+              this.cancelPacingSleep = null;
+              resolve(false);
+            }
+          };
+        });
+      }
       setPaused(paused) {
+        if (this.isPaused === paused) return;
         this.isPaused = paused;
+        if (paused) {
+          this.cancelActiveDelay();
+          this.broadcastQueueState(false);
+        } else {
+          this.triggerProcessing();
+          this.broadcastQueueState(true);
+        }
       }
       togglePaused() {
-        this.isPaused = !this.isPaused;
+        this.setPaused(!this.isPaused);
         return this.isPaused;
       }
       constructor() {
@@ -21351,6 +24837,7 @@ var init_whatsappQueueWorker = __esm({
       /** Immediately process the next pending queue item without waiting for the delay countdown */
       async forceNext() {
         this.ensureLoopStarted();
+        this.cancelActiveDelay();
         const db2 = await dbManager.getConnection();
         const now = Date.now();
         const oldestPending = await db2.get(
@@ -21411,6 +24898,11 @@ var init_whatsappQueueWorker = __esm({
             `UPDATE pharmarack_placed_orders SET batch_sent = 1, batch_sent_at = ? WHERE id = ?`,
             [now, pending2.id]
           );
+          await db2.run(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', ?)",
+            [today]
+          ).catch(() => {
+          });
         } catch (err) {
           console.warn("[WhatsAppQueueWorker] Could not update pharmarack_placed_orders batch_sent:", err);
         }
@@ -21865,8 +25357,13 @@ var init_whatsappQueueWorker = __esm({
               const delayRange = this.pacingMaxMs - this.pacingMinMs;
               const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
               this.nextDispatchTimestamp = Date.now() + randomDelay;
+              this.broadcastQueueState(true);
               console.log(`[WhatsAppQueueWorker] Pacing delay: ${Math.round(randomDelay / 1e3)}s before next send...`);
-              await new Promise((resolve) => setTimeout(resolve, randomDelay));
+              const completedFullDelay = await this.interruptibleSleep(randomDelay);
+              this.nextDispatchTimestamp = null;
+              if (!completedFullDelay || this.isPaused) {
+                break;
+              }
             }
           }
           return true;
@@ -21877,6 +25374,7 @@ var init_whatsappQueueWorker = __esm({
           }
           return false;
         } finally {
+          this.cancelActiveDelay();
           this.isProcessing = false;
           this.currentSendingItemId = null;
           this.nextDispatchTimestamp = null;
@@ -21905,6 +25403,112 @@ var init_whatsappQueueWorker = __esm({
         }
         return result.changes || 0;
       }
+      /**
+       * Rollback source records (Special Orders, Refills, Distributor Placed Orders)
+       * when an unsent/pending message is deleted/dismissed from the queue before delivery.
+       */
+      async rollbackSourceEntityOnQueueDelete(db2, item) {
+        try {
+          const { type, number, target_name } = item;
+          const cleanDigits = normalizeWhatsAppPhone(number || "").slice(-10);
+          if (type === "special_order" || type === "special_order_batch") {
+            const notifRows = await db2.all(
+              "SELECT reference_id FROM automation_notifications WHERE (reference_id = ? OR reference_id = ?) AND type IN ('special_order_arrived', 'special_order')",
+              [`queue_${item.id}`, String(item.id)]
+            ).catch(() => []);
+            const targetOrderIds = /* @__PURE__ */ new Set();
+            for (const nr of notifRows || []) {
+              const parsed = parseInt(String(nr.reference_id), 10);
+              if (!isNaN(parsed) && parsed > 0) targetOrderIds.add(parsed);
+            }
+            if (targetOrderIds.size === 0 && cleanDigits.length >= 7) {
+              const matchedOrders = await db2.all(
+                `SELECT id FROM special_orders 
+             WHERE (phone LIKE ? OR phone LIKE ?) AND notified = 1 
+             ORDER BY id DESC LIMIT 5`,
+                [`%${cleanDigits}%`, `%${number}%`]
+              ).catch(() => []);
+              for (const mo of matchedOrders || []) {
+                targetOrderIds.add(mo.id);
+              }
+            }
+            let ordersChanged = false;
+            for (const orderId of targetOrderIds) {
+              const ord = await db2.get("SELECT id, notification_count, status FROM special_orders WHERE id = ?", [orderId]);
+              if (ord) {
+                const currentCount = Number(ord.notification_count || 1);
+                const newCount = Math.max(0, currentCount - 1);
+                const newNotified = newCount > 0 ? 1 : 0;
+                const newStatus = newNotified === 0 && ord.status === "Ready" ? "Ordered" : ord.status;
+                await db2.run(
+                  "UPDATE special_orders SET notified = ?, notification_count = ?, status = ? WHERE id = ?",
+                  [newNotified, newCount, newStatus, orderId]
+                );
+                ordersChanged = true;
+              }
+            }
+            if (ordersChanged) {
+              try {
+                eventService.broadcast("orders_changed", { at: Date.now(), reason: "queue_delete_rollback" });
+              } catch (_) {
+              }
+            }
+          }
+          if (type === "pharmarack_distributor_order" && target_name?.trim()) {
+            const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+            const storeName = target_name.trim();
+            const placed = await db2.get(
+              `SELECT id FROM pharmarack_placed_orders
+           WHERE order_date = ? AND store_name = ?
+           ORDER BY id DESC LIMIT 1`,
+              [today, storeName]
+            ).catch(() => null);
+            if (placed?.id) {
+              await db2.run(
+                "UPDATE pharmarack_placed_orders SET batch_sent = 0, batch_sent_at = NULL WHERE id = ?",
+                [placed.id]
+              );
+              const otherSent = await db2.get(
+                "SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND batch_sent = 1 LIMIT 1",
+                [today]
+              ).catch(() => null);
+              if (!otherSent) {
+                await db2.run(
+                  "DELETE FROM app_settings WHERE key = 'pharmarack_batch_last_sent_date'"
+                ).catch(() => {
+                });
+              }
+              try {
+                eventService.broadcast("dispatch_updated", { at: Date.now(), source: "queue_delete_rollback", storeName });
+                eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+              } catch (_) {
+              }
+            }
+          }
+          if (type === "refill_reminder") {
+            const refill = await db2.get("SELECT id FROM patient_refills WHERE reminder_job_id = ?", [item.id]).catch(() => null);
+            if (refill?.id) {
+              await db2.run(
+                "UPDATE patient_refills SET reminder_status = 'CANCELLED', status = 'pending', reminder_job_id = NULL WHERE id = ?",
+                [refill.id]
+              );
+              try {
+                eventService.broadcast("refills_changed", { at: Date.now(), reason: "queue_delete_rollback" });
+              } catch (_) {
+              }
+            }
+          }
+          if (type === "pos_sale_invoice" || type === "pos_credit_invoice") {
+            await db2.run(
+              "UPDATE automation_notifications SET status = 'cancelled' WHERE (reference_id = ? OR reference_id = ?) AND status IN ('sent', 'queued', 'pending')",
+              [`queue_${item.id}`, String(item.id)]
+            ).catch(() => {
+            });
+          }
+        } catch (rbErr) {
+          console.warn("[WhatsAppQueueWorker] Rollback error on queue delete:", rbErr);
+        }
+      }
       /** Delete / Dismiss individual queue or notification item permanently */
       async deleteItem(id) {
         const db2 = await dbManager.getConnection();
@@ -21912,15 +25516,44 @@ var init_whatsappQueueWorker = __esm({
           let changed = false;
           if (id >= 9e5) {
             const realNotifId = id - 9e5;
+            const notif = await db2.get("SELECT * FROM automation_notifications WHERE id = ?", [realNotifId]);
+            if (notif && notif.status !== "sent") {
+              if (notif.type === "special_order_arrived" || notif.type === "special_order") {
+                const ordId = parseInt(String(notif.reference_id), 10);
+                if (!isNaN(ordId) && ordId > 0) {
+                  const ord = await db2.get("SELECT id, notification_count, status FROM special_orders WHERE id = ?", [ordId]);
+                  if (ord) {
+                    const currentCount = Number(ord.notification_count || 1);
+                    const newCount = Math.max(0, currentCount - 1);
+                    const newNotified = newCount > 0 ? 1 : 0;
+                    const newStatus = newNotified === 0 && ord.status === "Ready" ? "Ordered" : ord.status;
+                    await db2.run("UPDATE special_orders SET notified = ?, notification_count = ?, status = ? WHERE id = ?", [newNotified, newCount, newStatus, ordId]);
+                    try {
+                      eventService.broadcast("orders_changed", { at: Date.now(), reason: "notif_delete_rollback" });
+                    } catch (_) {
+                    }
+                  }
+                }
+              }
+            }
             const res = await db2.run("DELETE FROM automation_notifications WHERE id = ?", [realNotifId]);
             changed = (res.changes || 0) > 0;
           } else if (id >= 8e5) {
             changed = true;
           } else {
-            const res = await db2.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
-            await db2.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {
-            });
-            changed = (res.changes || 0) > 0;
+            const item = await db2.get("SELECT * FROM whatsapp_send_queue WHERE id = ?", [id]);
+            if (item) {
+              if (item.status !== "sent") {
+                await this.rollbackSourceEntityOnQueueDelete(db2, item);
+              }
+              if (this.currentSendingItemId === id) {
+                this.currentSendingItemId = null;
+              }
+              const res = await db2.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
+              await db2.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {
+              });
+              changed = (res.changes || 0) > 0;
+            }
           }
           if (changed) {
             this.broadcastQueueState(this.isProcessing);
@@ -22324,11 +25957,11 @@ async function rebuildAllExpiryCaches(force = false) {
   }
   activeRebuildPromise = (async () => {
     try {
-      const cacheDir = import_path19.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-      const manifestPath = import_path19.default.join(cacheDir, "manifest.json");
-      if (!force && import_fs17.default.existsSync(manifestPath)) {
+      const cacheDir = import_path21.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path21.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs19.default.existsSync(manifestPath)) {
         try {
-          const rawManifest = await import_fs17.default.promises.readFile(manifestPath, "utf-8");
+          const rawManifest = await import_fs19.default.promises.readFile(manifestPath, "utf-8");
           const manifest = JSON.parse(rawManifest);
           if (manifest && typeof manifest.totalMonthFiles === "number") {
             console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
@@ -22358,8 +25991,8 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      if (!import_fs17.default.existsSync(cacheDir)) {
-        await import_fs17.default.promises.mkdir(cacheDir, { recursive: true });
+      if (!import_fs19.default.existsSync(cacheDir)) {
+        await import_fs19.default.promises.mkdir(cacheDir, { recursive: true });
       }
       const groups = {};
       for (const r of rows) {
@@ -22374,20 +26007,20 @@ async function rebuildAllExpiryCaches(force = false) {
         items.sort((a, b) => (a.medicine_name || "").localeCompare(b.medicine_name || "", void 0, { sensitivity: "base", numeric: true }));
         const fileName = `expiry_${ym}.json`;
         validMonthFiles.add(fileName);
-        const filePath = import_path19.default.join(cacheDir, fileName);
-        await import_fs17.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
+        const filePath = import_path21.default.join(cacheDir, fileName);
+        await import_fs19.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
         written++;
       }
-      const existingFiles = await import_fs17.default.promises.readdir(cacheDir);
+      const existingFiles = await import_fs19.default.promises.readdir(cacheDir);
       for (const file of existingFiles) {
         if (file.startsWith("expiry_") && file.endsWith(".json") && !validMonthFiles.has(file)) {
           try {
-            await import_fs17.default.promises.unlink(import_path19.default.join(cacheDir, file));
+            await import_fs19.default.promises.unlink(import_path21.default.join(cacheDir, file));
           } catch (_) {
           }
         }
       }
-      await import_fs17.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
+      await import_fs19.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
     } catch (err) {
@@ -22400,8 +26033,8 @@ async function rebuildAllExpiryCaches(force = false) {
 }
 async function patchExpiryCacheForInventoryItem(inventoryId) {
   try {
-    const cacheDir = import_path19.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-    if (!import_fs17.default.existsSync(cacheDir)) return;
+    const cacheDir = import_path21.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+    if (!import_fs19.default.existsSync(cacheDir)) return;
     const db2 = await dbManager.getConnection();
     const item = await db2.get(`
       SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
@@ -22424,11 +26057,11 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     if (!item) return;
     const ym = getExpiryYearMonth(item.expiry_date);
     if (ym === "unknown") return;
-    const filePath = import_path19.default.join(cacheDir, `expiry_${ym}.json`);
+    const filePath = import_path21.default.join(cacheDir, `expiry_${ym}.json`);
     let monthItems = [];
-    if (import_fs17.default.existsSync(filePath)) {
+    if (import_fs19.default.existsSync(filePath)) {
       try {
-        monthItems = JSON.parse(await import_fs17.default.promises.readFile(filePath, "utf-8"));
+        monthItems = JSON.parse(await import_fs19.default.promises.readFile(filePath, "utf-8"));
       } catch {
         monthItems = [];
       }
@@ -22441,12 +26074,12 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
       );
     }
     if (monthItems.length === 0) {
-      if (import_fs17.default.existsSync(filePath)) {
-        await import_fs17.default.promises.unlink(filePath);
+      if (import_fs19.default.existsSync(filePath)) {
+        await import_fs19.default.promises.unlink(filePath);
         console.log(`[ExpiryCache] Patch: ${ym} file deleted (all items sold/returned).`);
       }
     } else {
-      await import_fs17.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
+      await import_fs19.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
       console.log(`[ExpiryCache] Patch: ${ym} updated for inventory #${inventoryId} (qty=${item.quantity}).`);
     }
   } catch (err) {
@@ -22479,19 +26112,19 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds) {
     }
   }, 800);
 }
-var import_path19, import_url16, import_fs17, __filename15, __dirname15, DB_PATH5, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
+var import_path21, import_url16, import_fs19, __filename15, __dirname15, DB_PATH5, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
 var init_expiryAlertService = __esm({
   "src/services/expiryAlertService.ts"() {
     "use strict";
     init_connection();
     init_inventoryActive();
-    import_path19 = __toESM(require("path"), 1);
+    import_path21 = __toESM(require("path"), 1);
     import_url16 = require("url");
-    import_fs17 = __toESM(require("fs"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
     init_config();
     __filename15 = (0, import_url16.fileURLToPath)(import_meta_url);
-    __dirname15 = import_path19.default.dirname(__filename15);
-    DB_PATH5 = process.env.DB_PATH || import_path19.default.resolve(__dirname15, "..", "..", "data", "app.db");
+    __dirname15 = import_path21.default.dirname(__filename15);
+    DB_PATH5 = process.env.DB_PATH || import_path21.default.resolve(__dirname15, "..", "..", "data", "app.db");
     activeRebuildPromise = null;
     lastRebuildTime = 0;
     rebuildTimeout = null;
@@ -24364,7 +27997,7 @@ __export(inventory_exports, {
 function invalidateInventoryCountCache() {
   inventoryCountCache.clear();
 }
-var import_express, import_path20, import_url17, import_qrcode, router, __filename16, __dirname16, DB_PATH6, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
+var import_express, import_path22, import_url17, import_qrcode, router, __filename16, __dirname16, DB_PATH6, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
 var init_inventory = __esm({
   "src/routes/inventory.ts"() {
     "use strict";
@@ -24377,13 +28010,13 @@ var init_inventory = __esm({
     init_eventService();
     init_storeContextService();
     init_auditLoggerService();
-    import_path20 = __toESM(require("path"), 1);
+    import_path22 = __toESM(require("path"), 1);
     import_url17 = require("url");
     import_qrcode = __toESM(require("qrcode"), 1);
     router = import_express.default.Router();
     __filename16 = (0, import_url17.fileURLToPath)(import_meta_url);
-    __dirname16 = import_path20.default.dirname(__filename16);
-    DB_PATH6 = process.env.DB_PATH || import_path20.default.resolve(__dirname16, "..", "..", "data", "app.db");
+    __dirname16 = import_path22.default.dirname(__filename16);
+    DB_PATH6 = process.env.DB_PATH || import_path22.default.resolve(__dirname16, "..", "..", "data", "app.db");
     router.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
@@ -26881,18 +30514,18 @@ __export(nonMovingReportService_exports, {
 function invalidateNonMovingReportCache() {
   nonMovingCache.clear();
 }
-var import_path21, import_fs18, import_url18, __filename17, __dirname17, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
+var import_path23, import_fs20, import_url18, __filename17, __dirname17, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
 var init_nonMovingReportService = __esm({
   "src/services/nonMovingReportService.ts"() {
     "use strict";
     init_inventoryActive();
     init_connection();
     init_telegramBot();
-    import_path21 = __toESM(require("path"), 1);
-    import_fs18 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_fs20 = __toESM(require("fs"), 1);
     import_url18 = require("url");
     __filename17 = (0, import_url18.fileURLToPath)(import_meta_url);
-    __dirname17 = import_path21.default.dirname(__filename17);
+    __dirname17 = import_path23.default.dirname(__filename17);
     NON_MOVING_CACHE_TTL_MS = 5 * 6e4;
     nonMovingCache = /* @__PURE__ */ new Map();
     NonMovingReportService = class {
@@ -27028,13 +30661,13 @@ var init_nonMovingReportService = __esm({
        */
       async saveReportToFile(report, filename) {
         try {
-          const reportDir = import_path21.default.join(process.cwd(), "data", "reports");
-          if (!import_fs18.default.existsSync(reportDir)) {
-            import_fs18.default.mkdirSync(reportDir, { recursive: true });
+          const reportDir = import_path23.default.join(process.cwd(), "data", "reports");
+          if (!import_fs20.default.existsSync(reportDir)) {
+            import_fs20.default.mkdirSync(reportDir, { recursive: true });
           }
           const fileName = filename || `non_moving_report_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-          const filePath = import_path21.default.join(reportDir, fileName);
-          await import_fs18.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
+          const filePath = import_path23.default.join(reportDir, fileName);
+          await import_fs20.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
           console.log(`Non-moving inventory report saved to: ${filePath}`);
           return filePath;
         } catch (error) {
@@ -27257,7 +30890,7 @@ __export(monthlyReportService_exports, {
   MonthlyReportService: () => MonthlyReportService,
   monthlyReportService: () => monthlyReportService
 });
-var import_pdfkit2, import_xlsx2, import_fs19, import_path22, import_url19, __filename18, __dirname18, TEMP_DIR2, MonthlyReportService, monthlyReportService;
+var import_pdfkit2, import_xlsx2, import_fs21, import_path24, import_url19, __filename18, __dirname18, TEMP_DIR2, MonthlyReportService, monthlyReportService;
 var init_monthlyReportService = __esm({
   "src/services/monthlyReportService.ts"() {
     "use strict";
@@ -27267,12 +30900,12 @@ var init_monthlyReportService = __esm({
     init_config();
     import_pdfkit2 = __toESM(require("pdfkit"), 1);
     import_xlsx2 = __toESM(require("xlsx"), 1);
-    import_fs19 = __toESM(require("fs"), 1);
-    import_path22 = __toESM(require("path"), 1);
+    import_fs21 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
     import_url19 = require("url");
     __filename18 = (0, import_url19.fileURLToPath)(import_meta_url);
-    __dirname18 = import_path22.default.dirname(__filename18);
-    TEMP_DIR2 = import_path22.default.resolve(getAppDataDir(), "uploads", "temp");
+    __dirname18 = import_path24.default.dirname(__filename18);
+    TEMP_DIR2 = import_path24.default.resolve(getAppDataDir(), "uploads", "temp");
     MonthlyReportService = class {
       /**
        * Helper to compute date range for monthly, midmonth, quarterly, yearly, or custom date ranges.
@@ -27517,13 +31150,13 @@ var init_monthlyReportService = __esm({
        * Generate a PDF report document using pdfkit with customizable template themes.
        */
       async generateReportPdf(data, chartStyle = "standard", templateTheme = "executive", outputPath) {
-        if (!import_fs19.default.existsSync(TEMP_DIR2)) {
-          import_fs19.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs21.default.existsSync(TEMP_DIR2)) {
+          import_fs21.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path22.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
         return new Promise((resolve, reject) => {
           const doc = new import_pdfkit2.default({ margin: 40, size: "A4" });
-          const stream = import_fs19.default.createWriteStream(finalPath);
+          const stream = import_fs21.default.createWriteStream(finalPath);
           doc.pipe(stream);
           const fmt = (n) => `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           let headerBg = "#0f172a";
@@ -27702,10 +31335,10 @@ Review this sample PDF report layout on your phone to choose your preferred desi
        * Generate an Excel spreadsheet report document.
        */
       async generateReportExcel(data, outputPath) {
-        if (!import_fs19.default.existsSync(TEMP_DIR2)) {
-          import_fs19.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs21.default.existsSync(TEMP_DIR2)) {
+          import_fs21.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path22.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
+        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
         const wsData = [
           [`${data.pharmacyName} - ${data.periodLabel}`],
           [`Period: ${data.startDate} to ${data.endDate}`],
@@ -28631,7 +32264,7 @@ var connection_exports = {};
 __export(connection_exports, {
   dbManager: () => dbManager
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path23, import_fs20, import_zlib, import_promises, DB_PATH7, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path25, import_fs22, import_zlib, import_promises, DB_PATH7, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -28639,8 +32272,8 @@ var init_connection = __esm({
     import_sqlite = require("sqlite");
     import_sqlite32 = __toESM(require("sqlite3"), 1);
     import_sqlite2 = require("sqlite");
-    import_path23 = __toESM(require("path"), 1);
-    import_fs20 = __toESM(require("fs"), 1);
+    import_path25 = __toESM(require("path"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
     init_config();
@@ -28884,37 +32517,37 @@ var init_connection = __esm({
           }
         }
         console.error("[DB] Database load failed. Starting silent self-healing database restoration...");
-        const logPath = import_path23.default.join(import_path23.default.dirname(dbPath), "self_healing.log");
+        const logPath = import_path25.default.join(import_path25.default.dirname(dbPath), "self_healing.log");
         const appendLog = (msg) => {
           const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-          import_fs20.default.appendFileSync(logPath, `[${timestamp}] ${msg}
+          import_fs22.default.appendFileSync(logPath, `[${timestamp}] ${msg}
 `);
         };
         appendLog(`[ERROR] DB_CORRUPT: ${initialErrorMsg}`);
         const backups = [];
-        const dataDir = import_path23.default.dirname(dbPath);
-        if (import_fs20.default.existsSync(dataDir)) {
-          import_fs20.default.readdirSync(dataDir).forEach((file) => {
+        const dataDir = import_path25.default.dirname(dbPath);
+        if (import_fs22.default.existsSync(dataDir)) {
+          import_fs22.default.readdirSync(dataDir).forEach((file) => {
             if (file.startsWith("app.db.bak_")) {
-              const fp = import_path23.default.join(dataDir, file);
+              const fp = import_path25.default.join(dataDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs20.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs22.default.statSync(fp).mtime.getTime(),
                 type: "bak"
               });
             }
           });
         }
-        const snapshotsDir = import_path23.default.join(getAppDataDir(), "backup", "snapshots");
-        if (import_fs20.default.existsSync(snapshotsDir)) {
-          import_fs20.default.readdirSync(snapshotsDir).forEach((file) => {
+        const snapshotsDir = import_path25.default.join(getAppDataDir(), "backup", "snapshots");
+        if (import_fs22.default.existsSync(snapshotsDir)) {
+          import_fs22.default.readdirSync(snapshotsDir).forEach((file) => {
             if (file.startsWith("snapshot_") && file.endsWith(".db.gz")) {
-              const fp = import_path23.default.join(snapshotsDir, file);
+              const fp = import_path25.default.join(snapshotsDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs20.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs22.default.statSync(fp).mtime.getTime(),
                 type: "gz"
               });
             }
@@ -28928,14 +32561,14 @@ var init_connection = __esm({
         const targetBackup = backups[0];
         appendLog(`[ACTION] RENAME: ${dbPath} -> ${dbPath}.corrupt`);
         try {
-          if (import_fs20.default.existsSync(dbPath)) {
-            if (import_fs20.default.existsSync(dbPath + ".corrupt")) {
-              import_fs20.default.unlinkSync(dbPath + ".corrupt");
+          if (import_fs22.default.existsSync(dbPath)) {
+            if (import_fs22.default.existsSync(dbPath + ".corrupt")) {
+              import_fs22.default.unlinkSync(dbPath + ".corrupt");
             }
-            import_fs20.default.renameSync(dbPath, dbPath + ".corrupt");
+            import_fs22.default.renameSync(dbPath, dbPath + ".corrupt");
           }
-          if (import_fs20.default.existsSync(dbPath + "-wal")) import_fs20.default.unlinkSync(dbPath + "-wal");
-          if (import_fs20.default.existsSync(dbPath + "-shm")) import_fs20.default.unlinkSync(dbPath + "-shm");
+          if (import_fs22.default.existsSync(dbPath + "-wal")) import_fs22.default.unlinkSync(dbPath + "-wal");
+          if (import_fs22.default.existsSync(dbPath + "-shm")) import_fs22.default.unlinkSync(dbPath + "-shm");
         } catch (err) {
           appendLog(`[ERROR] Failed to rename corrupt database or clean logs: ${err.message}`);
           throw new Error("DB_INTEGRITY_FAILURE");
@@ -28944,11 +32577,11 @@ var init_connection = __esm({
         try {
           if (targetBackup.type === "gz") {
             const gunzip = import_zlib.default.createGunzip();
-            const source = import_fs20.default.createReadStream(targetBackup.path);
-            const destination = import_fs20.default.createWriteStream(dbPath);
+            const source = import_fs22.default.createReadStream(targetBackup.path);
+            const destination = import_fs22.default.createWriteStream(dbPath);
             await (0, import_promises.pipeline)(source, gunzip, destination);
           } else {
-            import_fs20.default.copyFileSync(targetBackup.path, dbPath);
+            import_fs22.default.copyFileSync(targetBackup.path, dbPath);
           }
         } catch (err) {
           appendLog(`[ERROR] Failed to restore backup file: ${err.message}`);
@@ -29086,7 +32719,7 @@ function parseExtractedText(text, onProgress, progressStart = 10, progressEnd = 
   return extracted;
 }
 async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
-  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path24.default.basename(filePath)}. Falling back to OCR.`);
+  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path26.default.basename(filePath)}. Falling back to OCR.`);
   if (onProgress) onProgress(5);
   let getDocument;
   try {
@@ -29099,7 +32732,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   const pdfDoc = await getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
   const numPages = pdfDoc.numPages;
   let allText = "";
-  const { Jimp: Jimp5 } = await import("jimp");
+  const { Jimp: Jimp6 } = await import("jimp");
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     try {
       const page = await pdfDoc.getPage(pageNum);
@@ -29115,7 +32748,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
         imageBuffer = canvas.toBuffer("image/png");
       } catch {
         console.warn(`[Extractor] canvas package not available. Page ${pageNum} OCR may be limited.`);
-        const image = new Jimp5({ width, height, color: 4294967295 });
+        const image = new Jimp6({ width, height, color: 4294967295 });
         imageBuffer = await image.getBuffer("image/png");
       }
       const ocrResult = await aiCameraService.extractTextFromImage(imageBuffer);
@@ -29138,7 +32771,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   return parseExtractedText(allText, onProgress, 80, 100);
 }
 async function extractFromPdf(filePath, onProgress) {
-  const data = await import_fs21.default.promises.readFile(filePath);
+  const data = await import_fs23.default.promises.readFile(filePath);
   const pdfData = await (0, import_pdf_parse.default)(data);
   const text = pdfData.text;
   const cleanedText = text.replace(/\s+/g, "").trim();
@@ -29147,18 +32780,18 @@ async function extractFromPdf(filePath, onProgress) {
   }
   return parseExtractedText(text, onProgress);
 }
-var import_fs21, import_path24, import_pdf_parse, import_sync2, import_url20, __filename19, __dirname19, MIN_TEXT_CHARS_THRESHOLD;
+var import_fs23, import_path26, import_pdf_parse, import_sync2, import_url20, __filename19, __dirname19, MIN_TEXT_CHARS_THRESHOLD;
 var init_extractor = __esm({
   "src/extractor.ts"() {
     "use strict";
-    import_fs21 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
+    import_fs23 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
     import_pdf_parse = __toESM(require("pdf-parse"), 1);
     import_sync2 = require("csv-parse/sync");
     init_aiCameraService();
     import_url20 = require("url");
     __filename19 = (0, import_url20.fileURLToPath)(import_meta_url);
-    __dirname19 = import_path24.default.dirname(__filename19);
+    __dirname19 = import_path26.default.dirname(__filename19);
     MIN_TEXT_CHARS_THRESHOLD = 50;
   }
 });
@@ -29234,7 +32867,7 @@ async function preScanCsv(filePath, onProgress) {
   return new Promise((resolve, reject) => {
     let nameCol = "";
     let processedRows = 0;
-    const readStream = import_fs22.default.createReadStream(filePath);
+    const readStream = import_fs24.default.createReadStream(filePath);
     const parserStream = readStream.pipe((0, import_csv_parser2.default)());
     parserStream.on("headers", (headers) => {
       nameCol = headers.find((c) => /name|brand/i.test(c)) || headers.find((c) => /product|item|inn|title/i.test(c)) || headers[0] || "";
@@ -29301,9 +32934,9 @@ function parseCsvLine(line) {
 async function readCsvRawRows(filePath, maxRows = 20) {
   return new Promise((resolve) => {
     const rawRows = [];
-    if (!import_fs22.default.existsSync(filePath)) return resolve(rawRows);
+    if (!import_fs24.default.existsSync(filePath)) return resolve(rawRows);
     const rl = import_readline.default.createInterface({
-      input: import_fs22.default.createReadStream(filePath),
+      input: import_fs24.default.createReadStream(filePath),
       crlfDelay: Infinity
     });
     rl.on("line", (line) => {
@@ -29324,8 +32957,8 @@ async function readCsvPreview(filePath, maxRows = 10, skipRows = 0) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let headers = [];
-    if (!import_fs22.default.existsSync(filePath)) return resolve({ headers, rows });
-    const stream = import_fs22.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
+    if (!import_fs24.default.existsSync(filePath)) return resolve({ headers, rows });
+    const stream = import_fs24.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
     stream.on("headers", (h) => {
       headers = h;
     });
@@ -29426,7 +33059,7 @@ async function runCatalogAnalysis(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path25.default.extname(job.file_path).toLowerCase();
+    const ext = import_path27.default.extname(job.file_path).toLowerCase();
     let headers = [];
     let previewData = [];
     let rawRows = [];
@@ -29717,7 +33350,7 @@ async function runCatalogImport(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path25.default.extname(job.file_path).toLowerCase();
+    const ext = import_path27.default.extname(job.file_path).toLowerCase();
     const mapping = JSON.parse(job.mapping_config || "{}");
     const filters = JSON.parse(job.data_filters || "{}");
     const skipRows = Math.max(0, parseInt(filters.skipRows || "0", 10));
@@ -29801,7 +33434,7 @@ async function runCatalogImport(jobId) {
     if (ext === ".csv") {
       totalToProcess = await new Promise((resolve) => {
         let count = 0;
-        const countStream = import_fs22.default.createReadStream(job.file_path);
+        const countStream = import_fs24.default.createReadStream(job.file_path);
         countStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows })).on("data", () => {
           count++;
         }).on("end", () => {
@@ -30016,7 +33649,7 @@ async function runCatalogImport(jobId) {
     };
     let lastProgressTime = Date.now();
     if (ext === ".csv") {
-      const readStream = import_fs22.default.createReadStream(job.file_path);
+      const readStream = import_fs24.default.createReadStream(job.file_path);
       const csvStream = readStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
       readStream.on("error", (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
@@ -30193,12 +33826,12 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs22, import_path25, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url21, __filename20, __dirname20, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
+var import_fs24, import_path27, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url21, __filename20, __dirname20, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
-    import_fs22 = __toESM(require("fs"), 1);
-    import_path25 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
     import_readline = __toESM(require("readline"), 1);
     init_config();
     init_connection();
@@ -30211,7 +33844,7 @@ var init_catalogWorker = __esm({
     import_worker_threads = require("worker_threads");
     import_url21 = require("url");
     __filename20 = (0, import_url21.fileURLToPath)(import_meta_url);
-    __dirname20 = import_path25.default.dirname(__filename20);
+    __dirname20 = import_path27.default.dirname(__filename20);
     getDbPath2 = () => config.dbPath;
     catalogEmptyHistoryScans = 0;
     catalogNudgeRequested = false;
@@ -30379,7 +34012,7 @@ var whatsappBusiness_exports = {};
 __export(whatsappBusiness_exports, {
   default: () => whatsappBusiness_default
 });
-var import_express4, import_path26, import_url22, __filename21, __dirname21, DB_PATH9, router4, whatsappBusiness_default;
+var import_express4, import_path28, import_url22, __filename21, __dirname21, DB_PATH9, router4, whatsappBusiness_default;
 var init_whatsappBusiness = __esm({
   "src/routes/whatsappBusiness.ts"() {
     "use strict";
@@ -30387,12 +34020,12 @@ var init_whatsappBusiness = __esm({
     init_whatsappBusinessService();
     init_eventService();
     init_connection();
-    import_path26 = __toESM(require("path"), 1);
+    import_path28 = __toESM(require("path"), 1);
     import_url22 = require("url");
     init_whatsappIntentService();
     __filename21 = (0, import_url22.fileURLToPath)(import_meta_url);
-    __dirname21 = import_path26.default.dirname(__filename21);
-    DB_PATH9 = process.env.DB_PATH || import_path26.default.resolve(__dirname21, "..", "..", "data", "app.db");
+    __dirname21 = import_path28.default.dirname(__filename21);
+    DB_PATH9 = process.env.DB_PATH || import_path28.default.resolve(__dirname21, "..", "..", "data", "app.db");
     router4 = import_express4.default.Router();
     router4.get("/webhook", async (req, res) => {
       const mode = req.query["hub.mode"];
@@ -30785,20 +34418,20 @@ __export(pdfInvoiceService_exports, {
   PdfInvoiceService: () => PdfInvoiceService,
   pdfInvoiceService: () => pdfInvoiceService
 });
-var import_pdfkit3, import_path27, import_fs23, import_url23, __filename22, __dirname22, DB_PATH10, PdfInvoiceService, pdfInvoiceService;
+var import_pdfkit3, import_path29, import_fs25, import_url23, __filename22, __dirname22, DB_PATH10, PdfInvoiceService, pdfInvoiceService;
 var init_pdfInvoiceService = __esm({
   "src/services/pdfInvoiceService.ts"() {
     "use strict";
     import_pdfkit3 = __toESM(require("pdfkit"), 1);
     init_connection();
-    import_path27 = __toESM(require("path"), 1);
-    import_fs23 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
+    import_fs25 = __toESM(require("fs"), 1);
     import_url23 = require("url");
     init_config();
     init_barcodeService();
     __filename22 = (0, import_url23.fileURLToPath)(import_meta_url);
-    __dirname22 = import_path27.default.dirname(__filename22);
-    DB_PATH10 = process.env.DB_PATH || import_path27.default.resolve(__dirname22, "..", "..", "data", "app.db");
+    __dirname22 = import_path29.default.dirname(__filename22);
+    DB_PATH10 = process.env.DB_PATH || import_path29.default.resolve(__dirname22, "..", "..", "data", "app.db");
     PdfInvoiceService = class {
       async generateInvoicePdf(invoiceId, outPath, includeStampAndSig = true) {
         const db2 = await dbManager.getConnection();
@@ -30839,7 +34472,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs23.default.createWriteStream(outPath);
+            const stream = import_fs25.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -30946,9 +34579,9 @@ var init_pdfInvoiceService = __esm({
             } catch (bcErr) {
               console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
             }
-            const uploadsDir = import_path27.default.resolve(getAppDataDir(), "uploads");
-            const customStampPath = import_path27.default.join(uploadsDir, "custom_stamp.png");
-            const customSigPath = import_path27.default.join(uploadsDir, "custom_signature.png");
+            const uploadsDir = import_path29.default.resolve(getAppDataDir(), "uploads");
+            const customStampPath = import_path29.default.join(uploadsDir, "custom_stamp.png");
+            const customSigPath = import_path29.default.join(uploadsDir, "custom_signature.png");
             if (includeStampAndSig) {
               const defaultStampX = 410;
               const defaultStampY = Math.min(Math.max(grandTotalY + 5, 540), 650);
@@ -30957,7 +34590,7 @@ var init_pdfInvoiceService = __esm({
               const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
               const stampWidth = Math.round(80 * (stampScale / 100));
               const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
-              if (import_fs23.default.existsSync(customStampPath)) {
+              if (import_fs25.default.existsSync(customStampPath)) {
                 doc.save();
                 if (stampRot !== 0) {
                   doc.rotate(stampRot, { origin: [stampX + stampWidth / 2, stampY + stampWidth / 2] });
@@ -30992,7 +34625,7 @@ var init_pdfInvoiceService = __esm({
               const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
               const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
               const sigWidth = Math.round(75 * (sigScale / 100));
-              if (import_fs23.default.existsSync(customSigPath)) {
+              if (import_fs25.default.existsSync(customSigPath)) {
                 doc.image(customSigPath, sigX, sigY, { width: sigWidth });
               }
               doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
@@ -31044,7 +34677,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs23.default.createWriteStream(outPath);
+            const stream = import_fs25.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -31159,7 +34792,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs23.default.createWriteStream(outPath);
+            const stream = import_fs25.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -31241,7 +34874,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs23.default.createWriteStream(outPath);
+            const stream = import_fs25.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -31334,31 +34967,31 @@ var init_messageDAO = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang, path62, values = {}) {
-  const dbValue = getTemplate(lang, path62);
+function getMessage(lang, path63, values = {}) {
+  const dbValue = getTemplate(lang, path63);
   let template = "";
   if (dbValue !== null) {
     template = dbValue;
   } else {
-    const keys = path62.split(".");
+    const keys = path63.split(".");
     let segment = ALL_MESSAGES[lang];
     for (const k of keys) {
-      if (segment == null) return `[Missing: ${path62}]`;
+      if (segment == null) return `[Missing: ${path63}]`;
       segment = segment[k];
     }
-    if (typeof segment !== "string") return `[Not a string: ${path62}]`;
+    if (typeof segment !== "string") return `[Not a string: ${path63}]`;
     template = segment;
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
     return values[placeholder] ?? `{{${placeholder}}}`;
   });
 }
-var import_fs24, import_path28, import_url24, import_module3, require2, ALL_MESSAGES;
+var import_fs26, import_path30, import_url24, import_module3, require2, ALL_MESSAGES;
 var init_getMessage = __esm({
   "src/i18n/getMessage.ts"() {
     "use strict";
-    import_fs24 = require("fs");
-    import_path28 = require("path");
+    import_fs26 = require("fs");
+    import_path30 = require("path");
     import_url24 = require("url");
     import_module3 = require("module");
     init_messageDAO();
@@ -31369,10 +35002,10 @@ var init_getMessage = __esm({
     } catch (_) {
       try {
         const __filename48 = (0, import_url24.fileURLToPath)(import_meta_url);
-        const __dirname48 = (0, import_path28.dirname)(__filename48);
-        const messagesPath = (0, import_path28.join)(__dirname48, "messages.json");
-        if ((0, import_fs24.existsSync)(messagesPath)) {
-          ALL_MESSAGES = JSON.parse((0, import_fs24.readFileSync)(messagesPath, "utf8"));
+        const __dirname48 = (0, import_path30.dirname)(__filename48);
+        const messagesPath = (0, import_path30.join)(__dirname48, "messages.json");
+        if ((0, import_fs26.existsSync)(messagesPath)) {
+          ALL_MESSAGES = JSON.parse((0, import_fs26.readFileSync)(messagesPath, "utf8"));
         }
       } catch (err) {
         console.error("[i18n] Failed to load messages.json:", err);
@@ -31433,14 +35066,14 @@ var crm_exports = {};
 __export(crm_exports, {
   default: () => crm_default
 });
-var import_express5, import_path29, import_fs25, import_url25, __filename23, __dirname23, DB_PATH11, router5, crm_default;
+var import_express5, import_path31, import_fs27, import_url25, __filename23, __dirname23, DB_PATH11, router5, crm_default;
 var init_crm = __esm({
   "src/routes/crm.ts"() {
     "use strict";
     import_express5 = __toESM(require("express"), 1);
     init_connection();
-    import_path29 = __toESM(require("path"), 1);
-    import_fs25 = __toESM(require("fs"), 1);
+    import_path31 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
     import_url25 = require("url");
     init_doctorReportingService();
     init_whatsappQueueWorker();
@@ -31452,8 +35085,8 @@ var init_crm = __esm({
     init_storeContextService();
     init_eventService();
     __filename23 = (0, import_url25.fileURLToPath)(import_meta_url);
-    __dirname23 = import_path29.default.dirname(__filename23);
-    DB_PATH11 = process.env.DB_PATH || import_path29.default.resolve(__dirname23, "..", "..", "data", "app.db");
+    __dirname23 = import_path31.default.dirname(__filename23);
+    DB_PATH11 = process.env.DB_PATH || import_path31.default.resolve(__dirname23, "..", "..", "data", "app.db");
     router5 = import_express5.default.Router();
     router5.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
@@ -32064,12 +35697,12 @@ var init_crm = __esm({
         }
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path29.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs25.default.existsSync(uploadsDir)) {
-            import_fs25.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path31.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs27.default.existsSync(uploadsDir)) {
+            import_fs27.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `credit_statement_cust_${id}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path29.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path31.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateCreditStatementPdf(Number(id), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -32368,24 +36001,24 @@ async function createBackup(reason = "Manual") {
     console.log(`[Backup] Skipping ${reason} \u2014 server uptime ${Math.round(process.uptime())}s < 60s`);
     throw new Error("Backup deferred: server still starting up (retry after 60s)");
   }
-  if (!import_fs26.default.existsSync(BACKUP_DIR)) {
-    import_fs26.default.mkdirSync(BACKUP_DIR, { recursive: true });
+  if (!import_fs28.default.existsSync(BACKUP_DIR)) {
+    import_fs28.default.mkdirSync(BACKUP_DIR, { recursive: true });
   }
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const filename = `app_backup_${timestamp}.db.gz`;
-  const backupPath = import_path30.default.join(BACKUP_DIR, filename);
+  const backupPath = import_path32.default.join(BACKUP_DIR, filename);
   const tempDbPath = backupPath.replace(".gz", "");
   const tempDb = new import_better_sqlite32.default(DB_PATH12);
   await tempDb.backup(tempDbPath);
   tempDb.close();
   const gzip = import_zlib2.default.createGzip();
-  const source = import_fs26.default.createReadStream(tempDbPath);
-  const destination = import_fs26.default.createWriteStream(backupPath);
+  const source = import_fs28.default.createReadStream(tempDbPath);
+  const destination = import_fs28.default.createWriteStream(backupPath);
   try {
     await (0, import_promises2.pipeline)(source, gzip, destination);
   } finally {
-    if (import_fs26.default.existsSync(tempDbPath)) {
-      import_fs26.default.unlinkSync(tempDbPath);
+    if (import_fs28.default.existsSync(tempDbPath)) {
+      import_fs28.default.unlinkSync(tempDbPath);
     }
   }
   try {
@@ -32405,18 +36038,18 @@ async function backupSessions(reason = "Manual") {
     const { default: AdmZip5 } = await import("adm-zip");
     const appData = getAppDataDir();
     const targets = [
-      { name: "wwebjs_auth", dir: import_path30.default.join(appData, ".wwebjs_auth") },
-      { name: "pharmarack_profile", dir: import_path30.default.join(appData, "data", "pharmarack_profile") }
-    ].filter((t) => import_fs26.default.existsSync(t.dir) && import_fs26.default.readdirSync(t.dir).length > 0);
+      { name: "wwebjs_auth", dir: import_path32.default.join(appData, ".wwebjs_auth") },
+      { name: "pharmarack_profile", dir: import_path32.default.join(appData, "data", "pharmarack_profile") }
+    ].filter((t) => import_fs28.default.existsSync(t.dir) && import_fs28.default.readdirSync(t.dir).length > 0);
     if (targets.length === 0) return null;
-    if (!import_fs26.default.existsSync(BACKUP_DIR)) {
-      import_fs26.default.mkdirSync(BACKUP_DIR, { recursive: true });
+    if (!import_fs28.default.existsSync(BACKUP_DIR)) {
+      import_fs28.default.mkdirSync(BACKUP_DIR, { recursive: true });
     }
     const zip = new AdmZip5();
     const addDirRecursive = (dir, zipPath) => {
-      for (const entry of import_fs26.default.readdirSync(dir, { withFileTypes: true })) {
-        const full = import_path30.default.join(dir, entry.name);
-        const rel = import_path30.default.join(zipPath, entry.name);
+      for (const entry of import_fs28.default.readdirSync(dir, { withFileTypes: true })) {
+        const full = import_path32.default.join(dir, entry.name);
+        const rel = import_path32.default.join(zipPath, entry.name);
         if (entry.isDirectory()) {
           if (SESSION_EXCLUDED_DIRS.has(entry.name)) continue;
           addDirRecursive(full, rel);
@@ -32431,13 +36064,13 @@ async function backupSessions(reason = "Manual") {
     for (const t of targets) addDirRecursive(t.dir, t.name);
     const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     const filename = `sessions_backup_${timestamp}.zip`;
-    zip.writeZip(import_path30.default.join(BACKUP_DIR, filename));
+    zip.writeZip(import_path32.default.join(BACKUP_DIR, filename));
     const sessionZips = listBackups().filter((b) => b.filename.startsWith("sessions_backup_"));
     for (const old of sessionZips.slice(MAX_SESSION_BACKUPS)) {
-      const p = import_path30.default.join(BACKUP_DIR, old.filename);
-      if (import_fs26.default.existsSync(p)) {
+      const p = import_path32.default.join(BACKUP_DIR, old.filename);
+      if (import_fs28.default.existsSync(p)) {
         try {
-          import_fs26.default.unlinkSync(p);
+          import_fs28.default.unlinkSync(p);
         } catch (_) {
         }
       }
@@ -32450,17 +36083,17 @@ async function backupSessions(reason = "Manual") {
   }
 }
 function listBackups() {
-  if (!import_fs26.default.existsSync(BACKUP_DIR)) {
+  if (!import_fs28.default.existsSync(BACKUP_DIR)) {
     return [];
   }
   const results = [];
   const scanDir = (dir) => {
-    if (!import_fs26.default.existsSync(dir)) return;
-    const files = import_fs26.default.readdirSync(dir);
+    if (!import_fs28.default.existsSync(dir)) return;
+    const files = import_fs28.default.readdirSync(dir);
     for (const filename of files) {
-      const filePath = import_path30.default.join(dir, filename);
+      const filePath = import_path32.default.join(dir, filename);
       try {
-        const stats = import_fs26.default.statSync(filePath);
+        const stats = import_fs28.default.statSync(filePath);
         if (stats.isFile() && (filename.endsWith(".db") || filename.endsWith(".db.gz") || filename.endsWith(".zip"))) {
           if (!results.some((r) => r.filename === filename)) {
             results.push({
@@ -32475,51 +36108,51 @@ function listBackups() {
     }
   };
   scanDir(BACKUP_DIR);
-  scanDir(import_path30.default.join(BACKUP_DIR, "archives"));
-  scanDir(import_path30.default.join(BACKUP_DIR, "snapshots"));
+  scanDir(import_path32.default.join(BACKUP_DIR, "archives"));
+  scanDir(import_path32.default.join(BACKUP_DIR, "snapshots"));
   return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function deleteBackup(filename) {
-  const sanitized = import_path30.default.basename(filename);
+  const sanitized = import_path32.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename");
   }
-  let filePath = import_path30.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs26.default.existsSync(filePath)) {
-    const archivesPath = import_path30.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path30.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs26.default.existsSync(archivesPath)) filePath = archivesPath;
-    else if (import_fs26.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
+  let filePath = import_path32.default.join(BACKUP_DIR, sanitized);
+  if (!import_fs28.default.existsSync(filePath)) {
+    const archivesPath = import_path32.default.join(BACKUP_DIR, "archives", sanitized);
+    const snapshotsPath = import_path32.default.join(BACKUP_DIR, "snapshots", sanitized);
+    if (import_fs28.default.existsSync(archivesPath)) filePath = archivesPath;
+    else if (import_fs28.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
   }
-  const resolved = import_path30.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path30.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path32.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR + import_path32.default.sep) && resolved !== BACKUP_DIR) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs26.default.existsSync(filePath)) {
+  if (!import_fs28.default.existsSync(filePath)) {
     throw new Error("Backup file not found");
   }
-  import_fs26.default.unlinkSync(filePath);
+  import_fs28.default.unlinkSync(filePath);
 }
 async function restoreBackup(filename) {
-  const sanitized = import_path30.default.basename(filename);
+  const sanitized = import_path32.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename. Must be .db, .db.gz, or .zip");
   }
-  let filePath = import_path30.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs26.default.existsSync(filePath)) {
-    const archivesPath = import_path30.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path30.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs26.default.existsSync(archivesPath)) {
+  let filePath = import_path32.default.join(BACKUP_DIR, sanitized);
+  if (!import_fs28.default.existsSync(filePath)) {
+    const archivesPath = import_path32.default.join(BACKUP_DIR, "archives", sanitized);
+    const snapshotsPath = import_path32.default.join(BACKUP_DIR, "snapshots", sanitized);
+    if (import_fs28.default.existsSync(archivesPath)) {
       filePath = archivesPath;
-    } else if (import_fs26.default.existsSync(snapshotsPath)) {
+    } else if (import_fs28.default.existsSync(snapshotsPath)) {
       filePath = snapshotsPath;
     }
   }
-  const resolved = import_path30.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path30.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path32.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR + import_path32.default.sep) && resolved !== BACKUP_DIR) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs26.default.existsSync(filePath)) {
+  if (!import_fs28.default.existsSync(filePath)) {
     throw new Error(`Backup file not found: ${sanitized}`);
   }
   const stagedPath = `${DB_PATH12}.restoring_${Date.now()}`;
@@ -32538,20 +36171,20 @@ async function restoreBackup(filename) {
     let dbSourcePath = filePath;
     if (sanitized.endsWith(".zip")) {
       const { default: AdmZip5 } = await import("adm-zip");
-      tempExtractDir = import_path30.default.join(BACKUP_DIR, `temp_restore_${Date.now()}`);
-      import_fs26.default.mkdirSync(tempExtractDir, { recursive: true });
+      tempExtractDir = import_path32.default.join(BACKUP_DIR, `temp_restore_${Date.now()}`);
+      import_fs28.default.mkdirSync(tempExtractDir, { recursive: true });
       const zip = new AdmZip5(filePath);
       zip.extractAllTo(tempExtractDir, true);
-      const dbFiles = import_fs26.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
+      const dbFiles = import_fs28.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
       if (dbFiles.length === 0) {
         throw new Error("No valid database file (.db or .db.gz) found inside the zip archive.");
       }
-      dbSourcePath = import_path30.default.join(tempExtractDir, dbFiles[0]);
+      dbSourcePath = import_path32.default.join(tempExtractDir, dbFiles[0]);
     }
     if (dbSourcePath.endsWith(".gz")) {
-      await (0, import_promises2.pipeline)(import_fs26.default.createReadStream(dbSourcePath), import_zlib2.default.createGunzip(), import_fs26.default.createWriteStream(stagedPath));
+      await (0, import_promises2.pipeline)(import_fs28.default.createReadStream(dbSourcePath), import_zlib2.default.createGunzip(), import_fs28.default.createWriteStream(stagedPath));
     } else {
-      import_fs26.default.copyFileSync(dbSourcePath, stagedPath);
+      import_fs28.default.copyFileSync(dbSourcePath, stagedPath);
     }
     const probe = new import_better_sqlite32.default(stagedPath, { readonly: true });
     try {
@@ -32570,42 +36203,42 @@ async function restoreBackup(filename) {
     await dbManager.close(true);
     for (const suffix of ["-wal", "-shm"]) {
       const sidecar = DB_PATH12 + suffix;
-      if (!import_fs26.default.existsSync(sidecar)) continue;
+      if (!import_fs28.default.existsSync(sidecar)) continue;
       try {
-        import_fs26.default.unlinkSync(sidecar);
+        import_fs28.default.unlinkSync(sidecar);
       } catch (err) {
-        throw new Error(`Could not clear ${import_path30.default.basename(sidecar)} before restore: ${err.message}`);
+        throw new Error(`Could not clear ${import_path32.default.basename(sidecar)} before restore: ${err.message}`);
       }
     }
     try {
-      import_fs26.default.renameSync(stagedPath, DB_PATH12);
+      import_fs28.default.renameSync(stagedPath, DB_PATH12);
     } catch (renameErr) {
       if (renameErr.code === "EPERM" || renameErr.code === "EBUSY" || renameErr.code === "EEXIST") {
-        import_fs26.default.copyFileSync(stagedPath, DB_PATH12);
+        import_fs28.default.copyFileSync(stagedPath, DB_PATH12);
         try {
-          import_fs26.default.unlinkSync(stagedPath);
+          import_fs28.default.unlinkSync(stagedPath);
         } catch (_) {
         }
       } else {
         throw renameErr;
       }
     } finally {
-      if (tempExtractDir && import_fs26.default.existsSync(tempExtractDir)) {
+      if (tempExtractDir && import_fs28.default.existsSync(tempExtractDir)) {
         try {
-          import_fs26.default.rmSync(tempExtractDir, { recursive: true, force: true });
+          import_fs28.default.rmSync(tempExtractDir, { recursive: true, force: true });
         } catch (_) {
         }
       }
     }
   } catch (err) {
-    if (tempExtractDir && import_fs26.default.existsSync(tempExtractDir)) {
+    if (tempExtractDir && import_fs28.default.existsSync(tempExtractDir)) {
       try {
-        import_fs26.default.rmSync(tempExtractDir, { recursive: true, force: true });
+        import_fs28.default.rmSync(tempExtractDir, { recursive: true, force: true });
       } catch (_) {
       }
     }
     try {
-      if (import_fs26.default.existsSync(stagedPath)) import_fs26.default.unlinkSync(stagedPath);
+      if (import_fs28.default.existsSync(stagedPath)) import_fs28.default.unlinkSync(stagedPath);
     } catch (_) {
     }
     try {
@@ -32715,9 +36348,9 @@ function enforceRetention() {
     if (backups.length > MAX_BACKUPS) {
       const toDelete = backups.slice(MAX_BACKUPS);
       for (const b of toDelete) {
-        const filePath = import_path30.default.join(BACKUP_DIR, b.filename);
-        if (import_fs26.default.existsSync(filePath)) {
-          import_fs26.default.unlinkSync(filePath);
+        const filePath = import_path32.default.join(BACKUP_DIR, b.filename);
+        if (import_fs28.default.existsSync(filePath)) {
+          import_fs28.default.unlinkSync(filePath);
           console.log(`[Backup] Retention cleanup: deleted ${b.filename}`);
         }
       }
@@ -32730,12 +36363,12 @@ async function initBackupScheduler() {
   const freq = await getScheduleConfig();
   startScheduler(freq);
 }
-var import_fs26, import_path30, import_url26, import_node_cron2, import_better_sqlite32, import_zlib2, import_promises2, __filename24, __dirname24, DB_PATH12, BACKUP_DIR, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
+var import_fs28, import_path32, import_url26, import_node_cron2, import_better_sqlite32, import_zlib2, import_promises2, __filename24, __dirname24, DB_PATH12, BACKUP_DIR, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
-    import_fs26 = __toESM(require("fs"), 1);
-    import_path30 = __toESM(require("path"), 1);
+    import_fs28 = __toESM(require("fs"), 1);
+    import_path32 = __toESM(require("path"), 1);
     import_url26 = require("url");
     import_node_cron2 = __toESM(require("node-cron"), 1);
     init_connection();
@@ -32745,7 +36378,7 @@ var init_backupService = __esm({
     init_config();
     init_config();
     __filename24 = (0, import_url26.fileURLToPath)(import_meta_url);
-    __dirname24 = import_path30.default.dirname(__filename24);
+    __dirname24 = import_path32.default.dirname(__filename24);
     DB_PATH12 = config.dbPath;
     BACKUP_DIR = config.backupDir;
     MAX_BACKUPS = 20;
@@ -32767,12 +36400,12 @@ var init_backupService = __esm({
 });
 
 // src/services/backupRecoveryService.ts
-var import_fs27, import_path31, import_better_sqlite33, import_adm_zip2, import_axios, import_zlib3, import_promises3, getDbPath3, BACKUP_DIR2, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
+var import_fs29, import_path33, import_better_sqlite33, import_adm_zip2, import_axios, import_zlib3, import_promises3, getDbPath3, BACKUP_DIR2, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
 var init_backupRecoveryService = __esm({
   "src/services/backupRecoveryService.ts"() {
     "use strict";
-    import_fs27 = __toESM(require("fs"), 1);
-    import_path31 = __toESM(require("path"), 1);
+    import_fs29 = __toESM(require("fs"), 1);
+    import_path33 = __toESM(require("path"), 1);
     import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip2 = __toESM(require("adm-zip"), 1);
     import_axios = __toESM(require("axios"), 1);
@@ -32782,14 +36415,14 @@ var init_backupRecoveryService = __esm({
     import_promises3 = require("stream/promises");
     init_config();
     getDbPath3 = () => config.dbPath;
-    BACKUP_DIR2 = import_path31.default.join(getAppDataDir(), "backup");
-    SNAPSHOTS_DIR = import_path31.default.join(BACKUP_DIR2, "snapshots");
-    ARCHIVES_DIR = import_path31.default.join(BACKUP_DIR2, "archives");
-    if (!import_fs27.default.existsSync(SNAPSHOTS_DIR)) {
-      import_fs27.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    BACKUP_DIR2 = import_path33.default.join(getAppDataDir(), "backup");
+    SNAPSHOTS_DIR = import_path33.default.join(BACKUP_DIR2, "snapshots");
+    ARCHIVES_DIR = import_path33.default.join(BACKUP_DIR2, "archives");
+    if (!import_fs29.default.existsSync(SNAPSHOTS_DIR)) {
+      import_fs29.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
     }
-    if (!import_fs27.default.existsSync(ARCHIVES_DIR)) {
-      import_fs27.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
+    if (!import_fs29.default.existsSync(ARCHIVES_DIR)) {
+      import_fs29.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
     }
     BackupRecoveryService = class _BackupRecoveryService {
       static instance;
@@ -32843,23 +36476,23 @@ var init_backupRecoveryService = __esm({
         const dateStr = now.toISOString().split("T")[0];
         const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
         const filename = `snapshot_${dateStr}_${timeStr}.db.gz`;
-        const destPath = import_path31.default.join(SNAPSHOTS_DIR, filename);
+        const destPath = import_path33.default.join(SNAPSHOTS_DIR, filename);
         console.log(`[Backup] Generating database snapshot: ${filename}...`);
-        if (!import_fs27.default.existsSync(SNAPSHOTS_DIR)) {
-          import_fs27.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+        if (!import_fs29.default.existsSync(SNAPSHOTS_DIR)) {
+          import_fs29.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
         }
         const tempDbPath = destPath.replace(".gz", "");
         const tempDb = new import_better_sqlite33.default(getDbPath3());
         await tempDb.backup(tempDbPath);
         tempDb.close();
         const gzip = import_zlib3.default.createGzip();
-        const source = import_fs27.default.createReadStream(tempDbPath);
-        const destination = import_fs27.default.createWriteStream(destPath);
+        const source = import_fs29.default.createReadStream(tempDbPath);
+        const destination = import_fs29.default.createWriteStream(destPath);
         try {
           await (0, import_promises3.pipeline)(source, gzip, destination);
         } finally {
-          if (import_fs27.default.existsSync(tempDbPath)) {
-            import_fs27.default.unlinkSync(tempDbPath);
+          if (import_fs29.default.existsSync(tempDbPath)) {
+            import_fs29.default.unlinkSync(tempDbPath);
           }
         }
         try {
@@ -32872,16 +36505,16 @@ var init_backupRecoveryService = __esm({
         }
         try {
           const todayPrefix = `snapshot_${dateStr}_`;
-          const files = import_fs27.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
-            const fp = import_path31.default.join(SNAPSHOTS_DIR, f);
-            return { name: f, path: fp, time: import_fs27.default.statSync(fp).mtime.getTime() };
+          const files = import_fs29.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
+            const fp = import_path33.default.join(SNAPSHOTS_DIR, f);
+            return { name: f, path: fp, time: import_fs29.default.statSync(fp).mtime.getTime() };
           }).sort((a, b) => b.time - a.time);
           const MAX_TODAY_SNAPSHOTS = 5;
           if (files.length > MAX_TODAY_SNAPSHOTS) {
             const toDelete = files.slice(MAX_TODAY_SNAPSHOTS);
             for (const snap of toDelete) {
-              if (import_fs27.default.existsSync(snap.path)) {
-                import_fs27.default.unlinkSync(snap.path);
+              if (import_fs29.default.existsSync(snap.path)) {
+                import_fs29.default.unlinkSync(snap.path);
                 console.log(`[Backup] Same-day snapshot retention: deleted old snapshot ${snap.name}`);
               }
             }
@@ -32899,7 +36532,7 @@ var init_backupRecoveryService = __esm({
         const dailyCompressEnabled = await this.getSetting("backup_daily_compression", "true") === "true";
         if (!dailyCompressEnabled) return;
         try {
-          const files = import_fs27.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+          const files = import_fs29.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
           if (files.length === 0) return;
           const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
           const dateGroups = {};
@@ -32917,19 +36550,19 @@ var init_backupRecoveryService = __esm({
           }
           for (const [datePart, snapshotFiles] of Object.entries(dateGroups)) {
             const archiveName = `archive_${datePart}.zip`;
-            const archivePath = import_path31.default.join(ARCHIVES_DIR, archiveName);
+            const archivePath = import_path33.default.join(ARCHIVES_DIR, archiveName);
             console.log(`[Backup] Compressing previous day snapshots for ${datePart} into ${archiveName}...`);
             const zip = new import_adm_zip2.default();
             for (const file of snapshotFiles) {
-              const filePath = import_path31.default.join(SNAPSHOTS_DIR, file);
-              if (import_fs27.default.existsSync(filePath)) {
+              const filePath = import_path33.default.join(SNAPSHOTS_DIR, file);
+              if (import_fs29.default.existsSync(filePath)) {
                 zip.addLocalFile(filePath);
               }
             }
             zip.writeZip(archivePath);
-            if (import_fs27.default.existsSync(archivePath)) {
+            if (import_fs29.default.existsSync(archivePath)) {
               for (const file of snapshotFiles) {
-                import_fs27.default.unlinkSync(import_path31.default.join(SNAPSHOTS_DIR, file));
+                import_fs29.default.unlinkSync(import_path33.default.join(SNAPSHOTS_DIR, file));
               }
               console.log(`[Backup] Compressed ${snapshotFiles.length} snapshots into ${archiveName}. Original snapshots cleaned.`);
               await this.uploadArchive(archiveName);
@@ -32944,8 +36577,8 @@ var init_backupRecoveryService = __esm({
        * Uploads the daily archive to Google Drive and Telegram if configured.
        */
       async uploadArchive(filename) {
-        const archivePath = import_path31.default.join(ARCHIVES_DIR, filename);
-        if (!import_fs27.default.existsSync(archivePath)) return;
+        const archivePath = import_path33.default.join(ARCHIVES_DIR, filename);
+        if (!import_fs29.default.existsSync(archivePath)) return;
         const gdriveEnabled = await this.getSetting("backup_gdrive_enabled", "false") === "true";
         const telegramEnabled = await this.getSetting("backup_telegram_enabled", "false") === "true";
         const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
@@ -33005,7 +36638,7 @@ var init_backupRecoveryService = __esm({
        */
       async retryPendingUploads() {
         try {
-          const archives = import_fs27.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
+          const archives = import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
           if (archives.length === 0) return;
           console.log("[Backup] Scanning archives for pending cloud uploads...");
           for (const archive of archives) {
@@ -33040,7 +36673,7 @@ var init_backupRecoveryService = __esm({
             console.error("[Backup] Failed to refresh Google access token.");
             return false;
           }
-          const fileBuffer = import_fs27.default.readFileSync(filePath);
+          const fileBuffer = import_fs29.default.readFileSync(filePath);
           const metadata = {
             name: filename,
             mimeType: "application/zip"
@@ -33085,7 +36718,7 @@ Content-Type: application/zip\r
             console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
             return false;
           }
-          const fileBuffer = import_fs27.default.readFileSync(filePath);
+          const fileBuffer = import_fs29.default.readFileSync(filePath);
           const formData = new FormData();
           formData.append("chat_id", chatId);
           formData.append("document", new Blob([fileBuffer]), filename);
@@ -33113,16 +36746,16 @@ Content-Type: application/zip\r
         const autoDelete = await this.getSetting("backup_auto_delete_old_archives", "true") === "true";
         if (!autoDelete) return;
         try {
-          const archives = import_fs27.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
-            const filePath = import_path31.default.join(ARCHIVES_DIR, f);
-            const stats = import_fs27.default.statSync(filePath);
+          const archives = import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
+            const filePath = import_path33.default.join(ARCHIVES_DIR, f);
+            const stats = import_fs29.default.statSync(filePath);
             return { filename: f, path: filePath, mtime: stats.mtime };
           }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
           if (archives.length > 4) {
             const toDelete = archives.slice(4);
             for (const arch of toDelete) {
-              if (import_fs27.default.existsSync(arch.path)) {
-                import_fs27.default.unlinkSync(arch.path);
+              if (import_fs29.default.existsSync(arch.path)) {
+                import_fs29.default.unlinkSync(arch.path);
                 console.log(`[Backup] Retention cleanup: deleted old archive ${arch.filename}`);
               }
             }
@@ -33161,7 +36794,7 @@ Content-Type: application/zip\r
        * Lists all local backup archives.
        */
       listArchives(uploadLogMap) {
-        if (!import_fs27.default.existsSync(ARCHIVES_DIR)) return [];
+        if (!import_fs29.default.existsSync(ARCHIVES_DIR)) return [];
         let uploadLog = uploadLogMap || {};
         if (!uploadLogMap) {
           try {
@@ -33172,9 +36805,9 @@ Content-Type: application/zip\r
           } catch {
           }
         }
-        return import_fs27.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((filename) => {
-          const filePath = import_path31.default.join(ARCHIVES_DIR, filename);
-          const stats = import_fs27.default.statSync(filePath);
+        return import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((filename) => {
+          const filePath = import_path33.default.join(ARCHIVES_DIR, filename);
+          const stats = import_fs29.default.statSync(filePath);
           let rawDate = filename.replace(/^archive_/, "").replace(/\.zip$/, "");
           if (rawDate.startsWith("manual_")) {
             rawDate = rawDate.replace(/^manual_/, "");
@@ -33198,23 +36831,23 @@ Content-Type: application/zip\r
       async restoreFromArchive(filename) {
         const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
         await restoreBackup2(filename);
-        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path31.default.basename(filename)}`);
+        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path33.default.basename(filename)}`);
       }
       /**
        * Delete a specific archive.
        */
       deleteArchive(filename) {
-        const sanitized = import_path31.default.basename(filename);
+        const sanitized = import_path33.default.basename(filename);
         if (!sanitized.endsWith(".zip")) {
           throw new Error("Invalid archive filename");
         }
-        const filePath = import_path31.default.join(ARCHIVES_DIR, sanitized);
-        const resolvedPath = import_path31.default.resolve(filePath);
-        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path31.default.sep)) {
+        const filePath = import_path33.default.join(ARCHIVES_DIR, sanitized);
+        const resolvedPath = import_path33.default.resolve(filePath);
+        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path33.default.sep)) {
           throw new Error("Access denied");
         }
-        if (import_fs27.default.existsSync(filePath)) {
-          import_fs27.default.unlinkSync(filePath);
+        if (import_fs29.default.existsSync(filePath)) {
+          import_fs29.default.unlinkSync(filePath);
           console.log(`[Backup] Deleted archive: ${sanitized}`);
         }
       }
@@ -33717,10 +37350,10 @@ var init_migrationMeta = __esm({
 async function validateStagingDatabaseFile(dbPath) {
   const errors = [];
   const tableCounts = {};
-  if (!import_fs28.default.existsSync(dbPath)) {
+  if (!import_fs30.default.existsSync(dbPath)) {
     return { valid: false, errors: ["Database file does not exist"], tableCounts };
   }
-  const stat = import_fs28.default.statSync(dbPath);
+  const stat = import_fs30.default.statSync(dbPath);
   if (stat.size < 1024) {
     errors.push("Database file is too small to be a valid SQLite backup");
   }
@@ -33777,11 +37410,11 @@ async function validateStagingDatabaseFile(dbPath) {
   }
   return { valid: errors.length === 0, errors, tableCounts };
 }
-var import_fs28, REQUIRED_TABLES;
+var import_fs30, REQUIRED_TABLES;
 var init_validateStagingDatabase = __esm({
   "src/utils/validateStagingDatabase.ts"() {
     "use strict";
-    import_fs28 = __toESM(require("fs"), 1);
+    import_fs30 = __toESM(require("fs"), 1);
     REQUIRED_TABLES = ["medicines", "inventory_master", "sales_invoices", "purchases"];
   }
 });
@@ -36445,8 +40078,8 @@ async function runManualMigrationQueue(tasks) {
         const task = migrationQueue.shift();
         const taskIndex = completedTasks;
         currentMsgPrefix = `[File ${taskIndex + 1}/${totalTasks}] `;
-        const filePath = import_path32.default.join(MIGRATION_DIR, task.fileName);
-        if (!import_fs29.default.existsSync(filePath)) {
+        const filePath = import_path34.default.join(MIGRATION_DIR, task.fileName);
+        if (!import_fs31.default.existsSync(filePath)) {
           throw new Error(`File ${task.fileName} does not exist in MIGRATION SAMPEL folder.`);
         }
         const lowerFileName = task.fileName.toLowerCase();
@@ -36518,11 +40151,11 @@ async function gunzipToFile(srcPath, destPath) {
         reject(err);
       }
     });
-    const writeStream = import_fs29.default.createWriteStream(destPath);
+    const writeStream = import_fs31.default.createWriteStream(destPath);
     writeStream.on("close", resolve);
     writeStream.on("finish", resolve);
     writeStream.on("error", reject);
-    import_fs29.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
+    import_fs31.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
   });
 }
 async function processMigrationFile(originalFilePath, dataType, mapping, skipLines = 0, sheetIndex = 0, filters, medicineActions, isIntermediate = false) {
@@ -36530,26 +40163,26 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   let tempCsvPath = "";
   let tempProcessingPath = "";
   try {
-    const ext = import_path32.default.extname(originalFilePath).toLowerCase();
-    const basename = import_path32.default.basename(originalFilePath);
-    tempProcessingPath = import_path32.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
-    import_fs29.default.copyFileSync(originalFilePath, tempProcessingPath);
+    const ext = import_path34.default.extname(originalFilePath).toLowerCase();
+    const basename = import_path34.default.basename(originalFilePath);
+    tempProcessingPath = import_path34.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
+    import_fs31.default.copyFileSync(originalFilePath, tempProcessingPath);
     Object.assign(migrationStatus, { active: true, progress: 0, message: "Processing migration file...", file: basename, errorCount: 0 });
-    const archiveDir = import_path32.default.join(getAppDataDir(), "data", "archived_migrations");
-    if (!import_fs29.default.existsSync(archiveDir)) import_fs29.default.mkdirSync(archiveDir, { recursive: true });
+    const archiveDir = import_path34.default.join(getAppDataDir(), "data", "archived_migrations");
+    if (!import_fs31.default.existsSync(archiveDir)) import_fs31.default.mkdirSync(archiveDir, { recursive: true });
     try {
       const { closeAllStagingConnections: closeAllStagingConnections2 } = await Promise.resolve().then(() => (init_migration(), migration_exports));
       await closeAllStagingConnections2();
     } catch (_) {
     }
-    const stagingExists = import_fs29.default.existsSync(STAGING_DB_PATH);
+    const stagingExists = import_fs31.default.existsSync(STAGING_DB_PATH);
     if (!isIntermediate || !stagingExists) {
       if (stagingExists) {
         for (let retry = 0; retry < 5; retry++) {
           try {
-            if (import_fs29.default.existsSync(STAGING_DB_PATH)) import_fs29.default.unlinkSync(STAGING_DB_PATH);
-            if (import_fs29.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs29.default.unlinkSync(STAGING_DB_PATH + "-wal");
-            if (import_fs29.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs29.default.unlinkSync(STAGING_DB_PATH + "-shm");
+            if (import_fs31.default.existsSync(STAGING_DB_PATH)) import_fs31.default.unlinkSync(STAGING_DB_PATH);
+            if (import_fs31.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs31.default.unlinkSync(STAGING_DB_PATH + "-wal");
+            if (import_fs31.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs31.default.unlinkSync(STAGING_DB_PATH + "-shm");
             break;
           } catch (_) {
             await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -36557,7 +40190,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
       }
       migrationStatus.message = "Creating staging database...";
-      if (import_fs29.default.existsSync(DB_PATH13)) {
+      if (import_fs31.default.existsSync(DB_PATH13)) {
         try {
           const Database6 = (await import("better-sqlite3")).default;
           const appDb = new Database6(DB_PATH13);
@@ -36569,7 +40202,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         let copySuccess = false;
         for (let copyRetry = 0; copyRetry < 5; copyRetry++) {
           try {
-            await import_fs29.default.promises.copyFile(DB_PATH13, STAGING_DB_PATH);
+            await import_fs31.default.promises.copyFile(DB_PATH13, STAGING_DB_PATH);
             copySuccess = true;
             break;
           } catch (copyErr) {
@@ -36623,11 +40256,11 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     let sqlFilePath = tempProcessingPath;
     if (ext === ".db") {
       migrationStatus.message = "Database backup detected \u2014 validating and loading into staging...";
-      import_fs29.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
+      import_fs31.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
       const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
       if (!validation.valid) {
         try {
-          import_fs29.default.unlinkSync(STAGING_DB_PATH);
+          import_fs31.default.unlinkSync(STAGING_DB_PATH);
         } catch (_) {
         }
         throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -36641,7 +40274,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       });
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs29.default.copyFileSync(tempProcessingPath, import_path32.default.join(archiveDir, basename));
+          import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
@@ -36654,8 +40287,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       const sheetName = workbook.SheetNames[sheetIndex] || workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const csvContent = XLSX4.utils.sheet_to_csv(worksheet);
-      tempCsvPath = import_path32.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
-      import_fs29.default.writeFileSync(tempCsvPath, csvContent);
+      tempCsvPath = import_path34.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
+      import_fs31.default.writeFileSync(tempCsvPath, csvContent);
       actualFilePath = tempCsvPath;
     }
     if (ext === ".csv" || ext === ".xlsx" || ext === ".xls") {
@@ -36666,13 +40299,13 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs29.default.copyFileSync(tempProcessingPath, import_path32.default.join(archiveDir, basename));
+          import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
       }
-      if (tempCsvPath && import_fs29.default.existsSync(tempCsvPath)) {
-        import_fs29.default.unlinkSync(tempCsvPath);
+      if (tempCsvPath && import_fs31.default.existsSync(tempCsvPath)) {
+        import_fs31.default.unlinkSync(tempCsvPath);
       }
       return;
     } else if (ext === ".sql") {
@@ -36680,15 +40313,15 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     } else if (ext === ".gz" || tempProcessingPath.toLowerCase().endsWith(".sql.gz") || tempProcessingPath.toLowerCase().endsWith(".db.gz")) {
       const isDb = tempProcessingPath.toLowerCase().endsWith(".db.gz");
       migrationStatus.message = isDb ? "Decompressing database backup snapshot..." : "Decompressing GZIP file...";
-      extractPath = import_path32.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs29.default.mkdirSync(extractPath, { recursive: true });
-      sqlFilePath = isDb ? STAGING_DB_PATH : import_path32.default.join(extractPath, "decompressed_backup.sql");
+      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs31.default.mkdirSync(extractPath, { recursive: true });
+      sqlFilePath = isDb ? STAGING_DB_PATH : import_path34.default.join(extractPath, "decompressed_backup.sql");
       await gunzipToFile(tempProcessingPath, sqlFilePath);
       if (isDb) {
         const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
         if (!validation.valid) {
           try {
-            import_fs29.default.unlinkSync(STAGING_DB_PATH);
+            import_fs31.default.unlinkSync(STAGING_DB_PATH);
           } catch (_) {
           }
           throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -36702,7 +40335,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         });
         if (!originalFilePath.includes("archived_migrations")) {
           try {
-            import_fs29.default.copyFileSync(tempProcessingPath, import_path32.default.join(archiveDir, basename));
+            import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
           } catch (archiveErr) {
             console.warn("Failed to archive migration file:", archiveErr);
           }
@@ -36710,20 +40343,20 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         return;
       }
     } else if (ext === ".zip") {
-      extractPath = import_path32.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs29.default.mkdirSync(extractPath, { recursive: true });
+      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs31.default.mkdirSync(extractPath, { recursive: true });
       const headerBuf = Buffer.alloc(2);
-      const fdCheck = import_fs29.default.openSync(tempProcessingPath, "r");
-      import_fs29.default.readSync(fdCheck, headerBuf, 0, 2, 0);
-      import_fs29.default.closeSync(fdCheck);
+      const fdCheck = import_fs31.default.openSync(tempProcessingPath, "r");
+      import_fs31.default.readSync(fdCheck, headerBuf, 0, 2, 0);
+      import_fs31.default.closeSync(fdCheck);
       const isActuallyGzip = headerBuf[0] === 31 && headerBuf[1] === 139;
       if (isActuallyGzip) {
         migrationStatus.message = "Decompressing GZIP backup (detected inside .zip container)...";
-        sqlFilePath = import_path32.default.join(extractPath, "decompressed_backup.sql");
+        sqlFilePath = import_path34.default.join(extractPath, "decompressed_backup.sql");
         await gunzipToFile(tempProcessingPath, sqlFilePath);
       } else {
         try {
-          await import_fs29.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
+          await import_fs31.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
         } catch (unzipError) {
           try {
             const { execSync: execSync2 } = await import("child_process");
@@ -36735,10 +40368,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         migrationStatus.message = "Scanning extracted files...";
         const findFileInDir = (dir, matcher) => {
           try {
-            const list = import_fs29.default.readdirSync(dir);
+            const list = import_fs31.default.readdirSync(dir);
             for (const item of list) {
-              const fullPath = import_path32.default.join(dir, item);
-              const stat = import_fs29.default.statSync(fullPath);
+              const fullPath = import_path34.default.join(dir, item);
+              const stat = import_fs31.default.statSync(fullPath);
               if (stat.isDirectory()) {
                 const found = findFileInDir(fullPath, matcher);
                 if (found) return found;
@@ -36756,12 +40389,12 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           if (dbFilePath.toLowerCase().endsWith(".gz")) {
             await gunzipToFile(dbFilePath, STAGING_DB_PATH);
           } else {
-            import_fs29.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
+            import_fs31.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
           }
           const zipDbValidation = await validateStagingDatabaseFile(STAGING_DB_PATH);
           if (!zipDbValidation.valid) {
             try {
-              import_fs29.default.unlinkSync(STAGING_DB_PATH);
+              import_fs31.default.unlinkSync(STAGING_DB_PATH);
             } catch (_) {
             }
             throw new Error(`Invalid database backup in ZIP: ${zipDbValidation.errors.join("; ")}`);
@@ -36775,7 +40408,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           });
           if (!originalFilePath.includes("archived_migrations")) {
             try {
-              import_fs29.default.copyFileSync(tempProcessingPath, import_path32.default.join(archiveDir, basename));
+              import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
             } catch (archiveErr) {
               console.warn("Failed to archive migration file:", archiveErr);
             }
@@ -36788,7 +40421,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
         if (foundSql.toLowerCase().endsWith(".gz")) {
           migrationStatus.message = "Decompressing .sql.gz found inside ZIP archive...";
-          sqlFilePath = import_path32.default.join(extractPath, "decompressed_nested_backup.sql");
+          sqlFilePath = import_path34.default.join(extractPath, "decompressed_nested_backup.sql");
           await gunzipToFile(foundSql, sqlFilePath);
         } else {
           sqlFilePath = foundSql;
@@ -36796,8 +40429,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
     } else if (ext === ".tar" || ext === ".tgz" || tempProcessingPath.toLowerCase().endsWith(".tar.gz")) {
       migrationStatus.message = "Extracting TAR archive...";
-      extractPath = import_path32.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs29.default.mkdirSync(extractPath, { recursive: true });
+      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs31.default.mkdirSync(extractPath, { recursive: true });
       const { execSync: execSync2 } = await import("child_process");
       try {
         execSync2(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
@@ -36805,10 +40438,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         throw new Error(`Failed to extract TAR archive: ${tarError.message}`);
       }
       const findSqlFile = (dir) => {
-        const list = import_fs29.default.readdirSync(dir);
+        const list = import_fs31.default.readdirSync(dir);
         for (const item of list) {
-          const fullPath = import_path32.default.join(dir, item);
-          const stat = import_fs29.default.statSync(fullPath);
+          const fullPath = import_path34.default.join(dir, item);
+          const stat = import_fs31.default.statSync(fullPath);
           if (stat.isDirectory()) {
             const found = findSqlFile(fullPath);
             if (found) return found;
@@ -36840,7 +40473,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     }
     if (!originalFilePath.includes("archived_migrations")) {
       try {
-        import_fs29.default.copyFileSync(tempProcessingPath, import_path32.default.join(archiveDir, basename));
+        import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
       } catch (archiveErr) {
         console.warn("Failed to archive migration file:", archiveErr);
       }
@@ -36850,16 +40483,16 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     Object.assign(migrationStatus, { active: false, progress: 0, message: `Failed: ${err.message}`, file: null });
     throw err;
   } finally {
-    if (tempProcessingPath && import_fs29.default.existsSync(tempProcessingPath)) {
+    if (tempProcessingPath && import_fs31.default.existsSync(tempProcessingPath)) {
       try {
-        import_fs29.default.unlinkSync(tempProcessingPath);
+        import_fs31.default.unlinkSync(tempProcessingPath);
       } catch (cleanupError) {
         console.warn("Failed to cleanup temp copy:", cleanupError);
       }
     }
-    if (extractPath && import_fs29.default.existsSync(extractPath)) {
+    if (extractPath && import_fs31.default.existsSync(extractPath)) {
       try {
-        import_fs29.default.rmSync(extractPath, { recursive: true, force: true });
+        import_fs31.default.rmSync(extractPath, { recursive: true, force: true });
       } catch (cleanupError) {
         console.warn("Failed to cleanup extraction directory:", cleanupError);
       }
@@ -36867,7 +40500,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   }
 }
 async function detectDumpFormat(sqlPath) {
-  const fileStream = import_fs29.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs31.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline2.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   const headerLines = [];
   for await (const line of rl) {
@@ -37223,7 +40856,7 @@ async function parseAndImportPgDump(sqlPath, targetDbPath) {
   }
 }
 async function streamPgDump(sqlPath, handlers, db2) {
-  const fileStream = import_fs29.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs31.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline2.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   let currentTable = null;
   let currentColumns = [];
@@ -37299,8 +40932,8 @@ async function streamPgDump(sqlPath, handlers, db2) {
   fileStream.destroy();
 }
 async function generateMigrationReport(db2, stats) {
-  const reportsDir = import_path32.default.join(getAppDataDir(), "data", "migration_reports");
-  if (!import_fs29.default.existsSync(reportsDir)) import_fs29.default.mkdirSync(reportsDir, { recursive: true });
+  const reportsDir = import_path34.default.join(getAppDataDir(), "data", "migration_reports");
+  if (!import_fs31.default.existsSync(reportsDir)) import_fs31.default.mkdirSync(reportsDir, { recursive: true });
   await saveMigrationAuditSummary(db2);
   const auditSummary = await getMigrationAuditSummary(db2);
   const summary = {
@@ -37322,12 +40955,12 @@ async function generateMigrationReport(db2, stats) {
     },
     audit_summary: auditSummary
   };
-  import_fs29.default.writeFileSync(
-    import_path32.default.join(reportsDir, "migration_summary.json"),
+  import_fs31.default.writeFileSync(
+    import_path34.default.join(reportsDir, "migration_summary.json"),
     JSON.stringify(summary, null, 2)
   );
-  import_fs29.default.writeFileSync(
-    import_path32.default.join(reportsDir, "migration_audit_report.json"),
+  import_fs31.default.writeFileSync(
+    import_path34.default.join(reportsDir, "migration_audit_report.json"),
     JSON.stringify(auditSummary, null, 2)
   );
   const counts = {};
@@ -37340,8 +40973,8 @@ async function generateMigrationReport(db2, stats) {
       counts[tbl] = -1;
     }
   }
-  import_fs29.default.writeFileSync(
-    import_path32.default.join(reportsDir, "row_counts.json"),
+  import_fs31.default.writeFileSync(
+    import_path34.default.join(reportsDir, "row_counts.json"),
     JSON.stringify(counts, null, 2)
   );
   console.log("Migration reports saved to:", reportsDir);
@@ -37353,7 +40986,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
     await db2.run("PRAGMA busy_timeout = 30000");
     await ensureStagingFts(db2);
     await ensureMigrationErrorsTable(db2);
-    const fileStream = import_fs29.default.createReadStream(sqlPath);
+    const fileStream = import_fs31.default.createReadStream(sqlPath);
     const rl = import_readline2.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -37387,7 +41020,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
         const errMsg = err.message || "Unknown processing error";
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path32.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
+          [import_path34.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
         );
       }
       if (migrated) {
@@ -37412,14 +41045,14 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await ensureMigrationErrorsTable(db2);
     if (skipLines > 0) {
       try {
-        const content = import_fs29.default.readFileSync(csvPath, "utf8");
+        const content = import_fs31.default.readFileSync(csvPath, "utf8");
         const lines = content.split(/\r?\n/).slice(0, skipLines);
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           if (line) {
             await db2.run(
               "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-              [import_path32.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
+              [import_path34.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
             );
           }
         }
@@ -37533,7 +41166,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const errorMsg = validation.errors.join("; ");
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
+          [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
         );
         insertCount++;
         return;
@@ -37546,7 +41179,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
+            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
           );
           insertCount++;
           return;
@@ -37689,7 +41322,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -37719,7 +41352,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (patientName) {
           customerId = null;
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "customer",
@@ -37741,7 +41374,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (doctorName) {
           doctorId = null;
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "doctor",
@@ -37779,7 +41412,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
+            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -37840,7 +41473,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "purchase",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -37861,7 +41494,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "purchases",
             record_identifier: invoiceNo,
             entity_type: "distributor",
@@ -37901,7 +41534,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
+            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -37946,7 +41579,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const returnNo = returnNoKey ? String(cleanRow[returnNoKey] || "").trim() : "";
         if (!returnNo) {
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "return",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -37973,7 +41606,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path32.default.basename(csvPath),
+            file_name: import_path34.default.basename(csvPath),
             record_type: "returns",
             record_identifier: returnNo,
             entity_type: "distributor",
@@ -38010,7 +41643,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
+            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -38055,7 +41688,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path32.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
+            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
           );
           insertCount++;
           return;
@@ -38118,7 +41751,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (patientName) {
             customerId = null;
             queueMigrationAudit({
-              file_name: import_path32.default.basename(csvPath),
+              file_name: import_path34.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "customer",
@@ -38144,7 +41777,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (doctorName) {
             doctorId = null;
             queueMigrationAudit({
-              file_name: import_path32.default.basename(csvPath),
+              file_name: import_path34.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "doctor",
@@ -38164,7 +41797,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (distributorName) {
             distributorId = null;
             queueMigrationAudit({
-              file_name: import_path32.default.basename(csvPath),
+              file_name: import_path34.default.basename(csvPath),
               record_type: "purchases",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "distributor",
@@ -38364,7 +41997,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
       }
     };
     await new Promise((resolve, reject) => {
-      const stream = import_fs29.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
+      const stream = import_fs31.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
         if (dataType === "inventory" || dataType === "combined") {
           for (const rawHeader of headers) {
             const rawColName = rawHeader.trim();
@@ -38457,12 +42090,12 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await db2.close();
   }
 }
-var import_fs29, import_path32, import_url27, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline2, import_csv_parser3, XLSX4, __filename25, __dirname25, MIGRATION_DIR, TEMP_DIR3, DB_PATH13, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
+var import_fs31, import_path34, import_url27, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline2, import_csv_parser3, XLSX4, __filename25, __dirname25, MIGRATION_DIR, TEMP_DIR3, DB_PATH13, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
 var init_migrationWorker = __esm({
   "src/worker/migrationWorker.ts"() {
     "use strict";
-    import_fs29 = __toESM(require("fs"), 1);
-    import_path32 = __toESM(require("path"), 1);
+    import_fs31 = __toESM(require("fs"), 1);
+    import_path34 = __toESM(require("path"), 1);
     import_url27 = require("url");
     import_unzipper = __toESM(require("unzipper"), 1);
     import_zlib4 = __toESM(require("zlib"), 1);
@@ -38498,11 +42131,11 @@ var init_migrationWorker = __esm({
     init_inventoryParser();
     init_salesParser();
     __filename25 = (0, import_url27.fileURLToPath)(import_meta_url);
-    __dirname25 = import_path32.default.dirname(__filename25);
-    MIGRATION_DIR = import_path32.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    TEMP_DIR3 = import_path32.default.join(getAppDataDir(), "data", "temp_migration");
+    __dirname25 = import_path34.default.dirname(__filename25);
+    MIGRATION_DIR = import_path34.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    TEMP_DIR3 = import_path34.default.join(getAppDataDir(), "data", "temp_migration");
     DB_PATH13 = config.dbPath;
-    STAGING_DB_PATH = import_path32.default.join(import_path32.default.dirname(DB_PATH13), "staging.db");
+    STAGING_DB_PATH = import_path34.default.join(import_path34.default.dirname(DB_PATH13), "staging.db");
     currentMsgPrefix = "";
     migrationStatus = new Proxy({
       active: false,
@@ -38524,8 +42157,8 @@ var init_migrationWorker = __esm({
         return true;
       }
     });
-    if (!import_fs29.default.existsSync(MIGRATION_DIR)) import_fs29.default.mkdirSync(MIGRATION_DIR, { recursive: true });
-    if (!import_fs29.default.existsSync(TEMP_DIR3)) import_fs29.default.mkdirSync(TEMP_DIR3, { recursive: true });
+    if (!import_fs31.default.existsSync(MIGRATION_DIR)) import_fs31.default.mkdirSync(MIGRATION_DIR, { recursive: true });
+    if (!import_fs31.default.existsSync(TEMP_DIR3)) import_fs31.default.mkdirSync(TEMP_DIR3, { recursive: true });
     isQueueRunning = false;
     migrationQueue = [];
   }
@@ -38587,7 +42220,7 @@ async function readCsvHeaders(filePath, skipLines = 0) {
   const samples = [];
   let totalRows = 0;
   await new Promise((resolve, reject) => {
-    import_fs30.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
+    import_fs32.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
       totalRows++;
       if (samples.length < 100) samples.push(row);
     }).on("end", resolve).on("error", reject);
@@ -38615,7 +42248,7 @@ function readExcelHeaders(filePath, skipLines = 0, sheetIdx = 0) {
   }
   return { headers, samples, sheetNames: wb.SheetNames, totalRows };
 }
-var import_express6, import_sqlite7, import_sqlite36, import_path33, import_url28, import_fs30, import_multer, XLSX5, import_csv_parser4, __filename26, __dirname26, DB_PATH14, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router6, migration_default;
+var import_express6, import_sqlite7, import_sqlite36, import_path35, import_url28, import_fs32, import_multer, XLSX5, import_csv_parser4, __filename26, __dirname26, DB_PATH14, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router6, migration_default;
 var init_migration = __esm({
   "src/routes/migration.ts"() {
     "use strict";
@@ -38623,9 +42256,9 @@ var init_migration = __esm({
     import_sqlite7 = require("sqlite");
     import_sqlite36 = __toESM(require("sqlite3"), 1);
     init_connection();
-    import_path33 = __toESM(require("path"), 1);
+    import_path35 = __toESM(require("path"), 1);
     import_url28 = require("url");
-    import_fs30 = __toESM(require("fs"), 1);
+    import_fs32 = __toESM(require("fs"), 1);
     import_multer = __toESM(require("multer"), 1);
     XLSX5 = __toESM(require("xlsx"), 1);
     init_migrationWorker();
@@ -38638,11 +42271,11 @@ var init_migration = __esm({
     init_reportCutover();
     init_config();
     __filename26 = (0, import_url28.fileURLToPath)(import_meta_url);
-    __dirname26 = import_path33.default.dirname(__filename26);
+    __dirname26 = import_path35.default.dirname(__filename26);
     DB_PATH14 = config.dbPath;
-    MIGRATION_DIR2 = import_path33.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    STAGING_DB_PATH2 = import_path33.default.join(import_path33.default.dirname(DB_PATH14), "staging.db");
-    if (!import_fs30.default.existsSync(MIGRATION_DIR2)) import_fs30.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
+    MIGRATION_DIR2 = import_path35.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    STAGING_DB_PATH2 = import_path35.default.join(import_path35.default.dirname(DB_PATH14), "staging.db");
+    if (!import_fs32.default.existsSync(MIGRATION_DIR2)) import_fs32.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
     openConnections = /* @__PURE__ */ new Set();
     stagingDbLocked = false;
     ALLOWED_MIGRATION_EXTENSIONS = /\.(zip|sql|gz|tgz|csv|xlsx|xls|db)$/i;
@@ -38652,7 +42285,7 @@ var init_migration = __esm({
         cb(null, MIGRATION_DIR2);
       },
       filename: (_req, file, cb) => {
-        const sanitized = import_path33.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const sanitized = import_path35.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
         cb(null, `${Date.now()}-${sanitized}`);
       }
     });
@@ -38714,9 +42347,9 @@ var init_migration = __esm({
     router6.post("/analyze", async (req, res) => {
       const { fileName, skipLines } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path33.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs30.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
-      const ext = import_path33.default.extname(fileName).toLowerCase();
+      const filePath = import_path35.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs32.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const ext = import_path35.default.extname(fileName).toLowerCase();
       const skipCount = parseInt(skipLines) || 0;
       try {
         let headers = [];
@@ -38739,7 +42372,7 @@ var init_migration = __esm({
           sheetNames = r.sheetNames;
           totalRows = r.totalRows;
         }
-        const stat = import_fs30.default.statSync(filePath);
+        const stat = import_fs32.default.statSync(filePath);
         const lowercaseHeaders = headers.map((h) => h.toLowerCase().trim());
         const detected = detectDataModules(headers);
         res.json({
@@ -38760,10 +42393,10 @@ var init_migration = __esm({
     router6.post("/pre-migration-analyze", async (req, res) => {
       const { fileName, skipLines, sheetIndex, userMapping } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path33.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs30.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const filePath = import_path35.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs32.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
       try {
-        const ext = import_path33.default.extname(fileName).toLowerCase().replace(".", "");
+        const ext = import_path35.default.extname(fileName).toLowerCase().replace(".", "");
         const skipCount = parseInt(skipLines) || 0;
         const sheetIdx = parseInt(sheetIndex) || 0;
         let headers = [];
@@ -38919,7 +42552,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/errors", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -38937,7 +42570,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/inventory", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -38957,7 +42590,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/sales", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -38977,7 +42610,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/purchases", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -38996,7 +42629,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/returns", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -39017,12 +42650,12 @@ var init_migration = __esm({
     router6.delete("/staging/rollback", async (_req, res) => {
       try {
         await closeAllStagingConnections();
-        if (import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+        if (import_fs32.default.existsSync(STAGING_DB_PATH2)) {
           for (let retry = 0; retry < 5; retry++) {
             try {
-              if (import_fs30.default.existsSync(STAGING_DB_PATH2)) import_fs30.default.unlinkSync(STAGING_DB_PATH2);
-              if (import_fs30.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs30.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
-              if (import_fs30.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs30.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
+              if (import_fs32.default.existsSync(STAGING_DB_PATH2)) import_fs32.default.unlinkSync(STAGING_DB_PATH2);
+              if (import_fs32.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs32.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
+              if (import_fs32.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs32.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
               break;
             } catch (_) {
               await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -39036,7 +42669,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/summary", async (_req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({ success: true, ready: false, stats: {}, errorCount: 0, conflictCount: 0 });
       }
       try {
@@ -39082,7 +42715,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/audit", async (_req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({
           unresolvedCustomers: 0,
           unresolvedDoctors: 0,
@@ -39103,7 +42736,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/audits", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -39116,7 +42749,7 @@ var init_migration = __esm({
       }
     });
     router6.get("/staging/conflicts", async (_req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
       try {
         const db2 = await openStagingDb();
         const rows = await db2.all(`
@@ -39146,7 +42779,7 @@ var init_migration = __esm({
       if (!conflictId || !resolution) {
         return res.status(400).json({ error: "conflictId and resolution are required" });
       }
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       const allowed = ["merge", "overwrite", "skip", "keep_new"];
@@ -39228,7 +42861,7 @@ var init_migration = __esm({
     });
     router6.post("/staging/resolve-all-similar", async (req, res) => {
       const minScore = typeof req.body?.minScore === "number" ? req.body.minScore : 85;
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       try {
@@ -39288,7 +42921,7 @@ var init_migration = __esm({
       try {
         const db2 = await dbManager.getConnection();
         const snap = await db2.get("SELECT * FROM migration_snapshots WHERE id = ?", [snapshotId]);
-        if (!snap?.backup_path || !import_fs30.default.existsSync(snap.backup_path)) {
+        if (!snap?.backup_path || !import_fs32.default.existsSync(snap.backup_path)) {
           return res.status(404).json({ error: "Snapshot backup file not found on disk" });
         }
         try {
@@ -39298,16 +42931,16 @@ var init_migration = __esm({
         }
         await closeAllStagingConnections();
         await dbManager.close(true);
-        if (import_fs30.default.existsSync(DB_PATH14)) {
+        if (import_fs32.default.existsSync(DB_PATH14)) {
           const emergency = DB_PATH14 + ".pre_restore_" + Date.now();
-          import_fs30.default.copyFileSync(DB_PATH14, emergency);
+          import_fs32.default.copyFileSync(DB_PATH14, emergency);
         }
-        import_fs30.default.copyFileSync(snap.backup_path, DB_PATH14);
+        import_fs32.default.copyFileSync(snap.backup_path, DB_PATH14);
         ["app.db-wal", "app.db-shm"].forEach((f) => {
-          const p = import_path33.default.join(import_path33.default.dirname(DB_PATH14), f);
-          if (import_fs30.default.existsSync(p)) {
+          const p = import_path35.default.join(import_path35.default.dirname(DB_PATH14), f);
+          if (import_fs32.default.existsSync(p)) {
             try {
-              import_fs30.default.unlinkSync(p);
+              import_fs32.default.unlinkSync(p);
             } catch (_) {
             }
           }
@@ -39336,7 +42969,7 @@ var init_migration = __esm({
       }
     });
     router6.post("/staging/finalize", async (req, res) => {
-      if (!import_fs30.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
+      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
       const { regenerateInvoices, reportCutoverDate } = req.body;
       let backupPath = null;
       try {
@@ -39434,7 +43067,7 @@ var init_migration = __esm({
         }
         await dbManager.close(true);
         dbManager.suspend();
-        if (import_fs30.default.existsSync(DB_PATH14)) {
+        if (import_fs32.default.existsSync(DB_PATH14)) {
           const Database6 = (await import("better-sqlite3")).default;
           let tempAppDb = null;
           try {
@@ -39452,19 +43085,19 @@ var init_migration = __esm({
         }
         const timestamp = Date.now();
         backupPath = DB_PATH14 + ".bak_" + timestamp;
-        if (import_fs30.default.existsSync(DB_PATH14)) {
-          import_fs30.default.copyFileSync(DB_PATH14, backupPath);
+        if (import_fs32.default.existsSync(DB_PATH14)) {
+          import_fs32.default.copyFileSync(DB_PATH14, backupPath);
         }
         ["app.db-wal", "app.db-shm", "staging.db-wal", "staging.db-shm"].forEach((f) => {
-          const p = import_path33.default.join(import_path33.default.dirname(DB_PATH14), f);
-          if (import_fs30.default.existsSync(p)) {
+          const p = import_path35.default.join(import_path35.default.dirname(DB_PATH14), f);
+          if (import_fs32.default.existsSync(p)) {
             try {
-              import_fs30.default.unlinkSync(p);
+              import_fs32.default.unlinkSync(p);
             } catch (_) {
             }
           }
         });
-        import_fs30.default.copyFileSync(STAGING_DB_PATH2, DB_PATH14);
+        import_fs32.default.copyFileSync(STAGING_DB_PATH2, DB_PATH14);
         try {
           const Database6 = (await import("better-sqlite3")).default;
           const checkDb = new Database6(DB_PATH14, { readonly: true });
@@ -39481,20 +43114,20 @@ var init_migration = __esm({
             throw new Error(`Integrity check failed: ${JSON.stringify(checkResult)}`);
           }
           try {
-            import_fs30.default.unlinkSync(STAGING_DB_PATH2);
+            import_fs32.default.unlinkSync(STAGING_DB_PATH2);
           } catch (_) {
           }
         } catch (integrityErr) {
           if (String(integrityErr?.message).includes("vtable constructor failed")) {
             console.warn("[Migration Finalize] Swapped app.db has a damaged search index; will rebuild index on connection boot.");
             try {
-              import_fs30.default.unlinkSync(STAGING_DB_PATH2);
+              import_fs32.default.unlinkSync(STAGING_DB_PATH2);
             } catch (_) {
             }
           } else {
             console.error("[Migration Finalize] Swapped app.db integrity check failed:", integrityErr);
-            if (backupPath && import_fs30.default.existsSync(backupPath)) {
-              import_fs30.default.copyFileSync(backupPath, DB_PATH14);
+            if (backupPath && import_fs32.default.existsSync(backupPath)) {
+              import_fs32.default.copyFileSync(backupPath, DB_PATH14);
             }
             throw new Error(`Swapped database integrity check failed. Restored from backup. Details: ${integrityErr.message}`);
           }
@@ -39572,8 +43205,8 @@ var init_migration = __esm({
         console.error("[Migration Finalize] Error during finalize:", e);
         dbManager.resume();
         try {
-          if (backupPath && import_fs30.default.existsSync(backupPath) && !import_fs30.default.existsSync(DB_PATH14)) {
-            import_fs30.default.copyFileSync(backupPath, DB_PATH14);
+          if (backupPath && import_fs32.default.existsSync(backupPath) && !import_fs32.default.existsSync(DB_PATH14)) {
+            import_fs32.default.copyFileSync(backupPath, DB_PATH14);
           }
           await dbManager.getConnection();
         } catch (restoreErr) {
@@ -39593,19 +43226,19 @@ var init_migration = __esm({
           { path: "D:\\redbook\\DGH_Backup", label: "DGH Backup Folder" },
           { path: "D:\\redbook", label: "RedBook Root" },
           { path: MIGRATION_DIR2, label: "Migration Sample Folder" },
-          { path: import_path33.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
+          { path: import_path35.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
         ];
         const backups = [];
         const ALLOWED_BACKUP_EXT = /\.(zip|sql|gz|tgz|db)$/i;
         for (const dirObj of backupDirs) {
-          if (import_fs30.default.existsSync(dirObj.path)) {
+          if (import_fs32.default.existsSync(dirObj.path)) {
             try {
-              const files = import_fs30.default.readdirSync(dirObj.path);
+              const files = import_fs32.default.readdirSync(dirObj.path);
               for (const f of files) {
                 if (ALLOWED_BACKUP_EXT.test(f)) {
-                  const fullPath = import_path33.default.join(dirObj.path, f);
+                  const fullPath = import_path35.default.join(dirObj.path, f);
                   try {
-                    const stat = import_fs30.default.statSync(fullPath);
+                    const stat = import_fs32.default.statSync(fullPath);
                     if (stat.isFile()) {
                       backups.push({
                         name: f,
@@ -39613,7 +43246,7 @@ var init_migration = __esm({
                         sourceLabel: dirObj.label,
                         sizeBytes: stat.size,
                         lastModified: stat.mtime.toISOString(),
-                        ext: import_path33.default.extname(f).toLowerCase().replace(".", ""),
+                        ext: import_path35.default.extname(f).toLowerCase().replace(".", ""),
                         isDbDump: true
                       });
                     }
@@ -39637,15 +43270,15 @@ var init_migration = __esm({
         let targetPath = fullPath;
         let targetName = fileName;
         if (!targetPath && targetName) {
-          targetPath = import_path33.default.join(MIGRATION_DIR2, targetName);
+          targetPath = import_path35.default.join(MIGRATION_DIR2, targetName);
         }
-        if (!targetPath || !import_fs30.default.existsSync(targetPath)) {
+        if (!targetPath || !import_fs32.default.existsSync(targetPath)) {
           return res.status(404).json({ error: "Local backup file not found at: " + targetPath });
         }
-        targetName = import_path33.default.basename(targetPath);
-        const destPath = import_path33.default.join(MIGRATION_DIR2, targetName);
-        if (import_path33.default.resolve(targetPath) !== import_path33.default.resolve(destPath)) {
-          import_fs30.default.copyFileSync(targetPath, destPath);
+        targetName = import_path35.default.basename(targetPath);
+        const destPath = import_path35.default.join(MIGRATION_DIR2, targetName);
+        if (import_path35.default.resolve(targetPath) !== import_path35.default.resolve(destPath)) {
+          import_fs32.default.copyFileSync(targetPath, destPath);
         }
         runManualMigration(targetName, "inventory").catch((err) => {
           console.error("Local backup background migration error:", err);
@@ -39743,14 +43376,14 @@ __export(searchCache_exports, {
   SearchCache: () => SearchCache,
   searchCache: () => searchCache
 });
-var import_fs31, import_path34, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
+var import_fs33, import_path36, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
 var init_searchCache = __esm({
   "src/services/searchCache.ts"() {
     "use strict";
-    import_fs31 = __toESM(require("fs"), 1);
-    import_path34 = __toESM(require("path"), 1);
+    import_fs33 = __toESM(require("fs"), 1);
+    import_path36 = __toESM(require("path"), 1);
     init_config();
-    PERSIST_FILE = import_path34.default.join(getAppDataDir(), "data", "search-cache.json");
+    PERSIST_FILE = import_path36.default.join(getAppDataDir(), "data", "search-cache.json");
     SAVE_DEBOUNCE_MS = 2e3;
     STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
     SearchCache = class {
@@ -39828,8 +43461,8 @@ var init_searchCache = __esm({
       }
       loadFromDisk() {
         try {
-          if (!import_fs31.default.existsSync(PERSIST_FILE)) return;
-          const raw = JSON.parse(import_fs31.default.readFileSync(PERSIST_FILE, "utf-8"));
+          if (!import_fs33.default.existsSync(PERSIST_FILE)) return;
+          const raw = JSON.parse(import_fs33.default.readFileSync(PERSIST_FILE, "utf-8"));
           if (!Array.isArray(raw)) return;
           const now = Date.now();
           for (const pair of raw) {
@@ -39856,8 +43489,8 @@ var init_searchCache = __esm({
       }
       flushToDisk() {
         try {
-          import_fs31.default.mkdirSync(import_path34.default.dirname(PERSIST_FILE), { recursive: true });
-          import_fs31.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
+          import_fs33.default.mkdirSync(import_path36.default.dirname(PERSIST_FILE), { recursive: true });
+          import_fs33.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
         } catch {
         }
       }
@@ -39871,16 +43504,16 @@ var utilities_exports = {};
 __export(utilities_exports, {
   default: () => utilities_default
 });
-var import_express7, import_path35, import_url29, import_fs32, import_pdfkit4, import_qrcode3, import_better_sqlite34, import_adm_zip3, __filename27, __dirname27, getDbPath4, router7, utilities_default;
+var import_express7, import_path37, import_url29, import_fs34, import_pdfkit4, import_qrcode3, import_better_sqlite34, import_adm_zip3, __filename27, __dirname27, getDbPath4, router7, utilities_default;
 var init_utilities = __esm({
   "src/routes/utilities.ts"() {
     "use strict";
     import_express7 = __toESM(require("express"), 1);
     init_connection();
-    import_path35 = __toESM(require("path"), 1);
+    import_path37 = __toESM(require("path"), 1);
     import_url29 = require("url");
     init_config();
-    import_fs32 = __toESM(require("fs"), 1);
+    import_fs34 = __toESM(require("fs"), 1);
     import_pdfkit4 = __toESM(require("pdfkit"), 1);
     import_qrcode3 = __toESM(require("qrcode"), 1);
     init_barcodeService();
@@ -39890,7 +43523,7 @@ var init_utilities = __esm({
     import_better_sqlite34 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip3 = __toESM(require("adm-zip"), 1);
     __filename27 = (0, import_url29.fileURLToPath)(import_meta_url);
-    __dirname27 = import_path35.default.dirname(__filename27);
+    __dirname27 = import_path37.default.dirname(__filename27);
     getDbPath4 = () => config.dbPath;
     router7 = import_express7.default.Router();
     router7.post("/backup", async (_req, res) => {
@@ -39948,13 +43581,13 @@ var init_utilities = __esm({
         return res.status(400).json({ error: "Items array is required" });
       }
       try {
-        const uploadsDir = import_path35.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs32.default.existsSync(uploadsDir)) {
-          import_fs32.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs34.default.existsSync(uploadsDir)) {
+          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ margin: 30 });
-        const pdfPath = import_path35.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
-        const stream = import_fs32.default.createWriteStream(pdfPath);
+        const pdfPath = import_path37.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
+        const stream = import_fs34.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.fontSize(13).text("Medicine Barcode Stickers (QR + Code128)", { align: "center" });
         doc.moveDown(0.5);
@@ -39993,7 +43626,7 @@ var init_utilities = __esm({
         }
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path35.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
@@ -40003,13 +43636,13 @@ var init_utilities = __esm({
     router7.get("/barcode/:code", async (req, res) => {
       const { code } = req.params;
       try {
-        const uploadsDir = import_path35.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs32.default.existsSync(uploadsDir)) {
-          import_fs32.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs34.default.existsSync(uploadsDir)) {
+          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default();
-        const pdfPath = import_path35.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
-        const stream = import_fs32.default.createWriteStream(pdfPath);
+        const pdfPath = import_path37.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
+        const stream = import_fs34.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         const qrBuffer = await import_qrcode3.default.toBuffer(code, { width: 200, margin: 1 });
         doc.fontSize(20).text("Invoice / Bill Barcode Label", { align: "center", underline: true });
@@ -40021,7 +43654,7 @@ var init_utilities = __esm({
         doc.image(qrBuffer, xPos, doc.y, { width: imageWidth, height: imageWidth });
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path35.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
@@ -40034,7 +43667,7 @@ var init_utilities = __esm({
         const s3 = new AWS.S3();
         const bucketName = process.env.S3_BUCKET_NAME || "ai-pharmacy-backups";
         const key = `backups/app_${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db`;
-        const fileStream = import_fs32.default.createReadStream(getDbPath4());
+        const fileStream = import_fs34.default.createReadStream(getDbPath4());
         const uploadParams = {
           Bucket: bucketName,
           Key: key,
@@ -40113,14 +43746,14 @@ var init_utilities = __esm({
           }
         }
         const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path35.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path35.default.join(BACKUP_DIR3, "archives");
+        const SNAPSHOTS_DIR2 = import_path37.default.join(BACKUP_DIR3, "snapshots");
+        const ARCHIVES_DIR2 = import_path37.default.join(BACKUP_DIR3, "archives");
         let totalSize = 0;
         const calculateFolderSize = (dir) => {
-          if (import_fs32.default.existsSync(dir)) {
-            import_fs32.default.readdirSync(dir).forEach((f) => {
+          if (import_fs34.default.existsSync(dir)) {
+            import_fs34.default.readdirSync(dir).forEach((f) => {
               try {
-                const stats = import_fs32.default.statSync(import_path35.default.join(dir, f));
+                const stats = import_fs34.default.statSync(import_path37.default.join(dir, f));
                 if (stats.isFile()) {
                   totalSize += stats.size;
                 }
@@ -40192,29 +43825,29 @@ var init_utilities = __esm({
     router7.post("/backup/manual", async (req, res) => {
       try {
         const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path35.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path35.default.join(BACKUP_DIR3, "archives");
+        const SNAPSHOTS_DIR2 = import_path37.default.join(BACKUP_DIR3, "snapshots");
+        const ARCHIVES_DIR2 = import_path37.default.join(BACKUP_DIR3, "archives");
         const archiveName = `archive_manual_${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}_${Date.now()}.zip`;
-        const archivePath = import_path35.default.join(ARCHIVES_DIR2, archiveName);
+        const archivePath = import_path37.default.join(ARCHIVES_DIR2, archiveName);
         const snapshotFile = await backupRecoveryService.createSnapshot();
-        const files = import_fs32.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+        const files = import_fs34.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
         if (files.length > 0) {
           const zip = new import_adm_zip3.default();
-          files.forEach((f) => zip.addLocalFile(import_path35.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => zip.addLocalFile(import_path37.default.join(SNAPSHOTS_DIR2, f)));
           zip.writeZip(archivePath);
-          files.forEach((f) => import_fs32.default.unlinkSync(import_path35.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => import_fs34.default.unlinkSync(import_path37.default.join(SNAPSHOTS_DIR2, f)));
           await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
         } else {
           const tempDbFile = `snapshot_manual_${Date.now()}.db`;
-          const tempDbPath = import_path35.default.join(SNAPSHOTS_DIR2, tempDbFile);
+          const tempDbPath = import_path37.default.join(SNAPSHOTS_DIR2, tempDbFile);
           const tempDb = new import_better_sqlite34.default(getDbPath4());
           await tempDb.backup(tempDbPath);
           tempDb.close();
           const zip = new import_adm_zip3.default();
           zip.addLocalFile(tempDbPath);
           zip.writeZip(archivePath);
-          import_fs32.default.unlinkSync(tempDbPath);
+          import_fs34.default.unlinkSync(tempDbPath);
           await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
         }
@@ -40452,33 +44085,33 @@ var init_utilities = __esm({
           } catch (_) {
           }
         }
-        const uploadsDir = import_path35.default.resolve(getAppDataDir(), "uploads");
-        const attachmentsDir = import_path35.default.resolve(getAppDataDir(), "attachments");
-        const reportsDir = import_path35.default.resolve(getAppDataDir(), "reports");
-        const dataUploadsDir = import_path35.default.resolve(getAppDataDir(), "data", "uploads");
-        const dataAttachmentsDir = import_path35.default.resolve(getAppDataDir(), "data", "attachments");
-        const dataReportsDir = import_path35.default.resolve(getAppDataDir(), "data", "reports");
-        const rawDir = import_path35.default.resolve(getAppDataDir(), "catalogue", "raw");
-        const migrationReportsDir = import_path35.default.resolve(getAppDataDir(), "data", "migration_reports");
-        const auditImagesDir = import_path35.default.resolve(getAppDataDir(), "data", "audit_images");
+        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
+        const attachmentsDir = import_path37.default.resolve(getAppDataDir(), "attachments");
+        const reportsDir = import_path37.default.resolve(getAppDataDir(), "reports");
+        const dataUploadsDir = import_path37.default.resolve(getAppDataDir(), "data", "uploads");
+        const dataAttachmentsDir = import_path37.default.resolve(getAppDataDir(), "data", "attachments");
+        const dataReportsDir = import_path37.default.resolve(getAppDataDir(), "data", "reports");
+        const rawDir = import_path37.default.resolve(getAppDataDir(), "catalogue", "raw");
+        const migrationReportsDir = import_path37.default.resolve(getAppDataDir(), "data", "migration_reports");
+        const auditImagesDir = import_path37.default.resolve(getAppDataDir(), "data", "audit_images");
         const clearDir = (dirPath, preserveFiles = []) => {
-          if (!import_fs32.default.existsSync(dirPath)) return;
-          const files = import_fs32.default.readdirSync(dirPath);
+          if (!import_fs34.default.existsSync(dirPath)) return;
+          const files = import_fs34.default.readdirSync(dirPath);
           for (const file of files) {
-            const filePath = import_path35.default.join(dirPath, file);
-            const stat = import_fs32.default.statSync(filePath);
+            const filePath = import_path37.default.join(dirPath, file);
+            const stat = import_fs34.default.statSync(filePath);
             if (stat.isDirectory()) {
               clearDir(filePath, preserveFiles);
               try {
-                if (import_fs32.default.readdirSync(filePath).length === 0) {
-                  import_fs32.default.rmdirSync(filePath);
+                if (import_fs34.default.readdirSync(filePath).length === 0) {
+                  import_fs34.default.rmdirSync(filePath);
                 }
               } catch (_) {
               }
             } else {
               if (!preserveFiles.includes(file)) {
                 try {
-                  import_fs32.default.unlinkSync(filePath);
+                  import_fs34.default.unlinkSync(filePath);
                 } catch (_) {
                 }
               }
@@ -40497,9 +44130,9 @@ var init_utilities = __esm({
         if (wipeAll) {
           const backupDir = config.backupDir;
           clearDir(backupDir);
-          const dataDir = import_path35.default.resolve(getAppDataDir(), "data");
-          const stagingDbPath = import_path35.default.join(dataDir, "staging.db");
-          if (import_fs32.default.existsSync(stagingDbPath)) {
+          const dataDir = import_path37.default.resolve(getAppDataDir(), "data");
+          const stagingDbPath = import_path37.default.join(dataDir, "staging.db");
+          if (import_fs34.default.existsSync(stagingDbPath)) {
             try {
               const { open: open6 } = await import("sqlite");
               const { default: sqlite37 } = await import("sqlite3");
@@ -40527,7 +44160,7 @@ var init_utilities = __esm({
           const stagingDbFiles = ["staging.db", "staging.db-wal", "staging.db-shm"];
           for (const f of stagingDbFiles) {
             try {
-              if (import_fs32.default.existsSync(import_path35.default.join(dataDir, f))) import_fs32.default.unlinkSync(import_path35.default.join(dataDir, f));
+              if (import_fs34.default.existsSync(import_path37.default.join(dataDir, f))) import_fs34.default.unlinkSync(import_path37.default.join(dataDir, f));
             } catch (_) {
             }
           }
@@ -40536,13 +44169,13 @@ var init_utilities = __esm({
             unlockStagingDb2();
           } catch (_) {
           }
-          const migrationSampelDir = import_path35.default.resolve(getAppDataDir(), "MIGRATION SAMPEL");
+          const migrationSampelDir = import_path37.default.resolve(getAppDataDir(), "MIGRATION SAMPEL");
           clearDir(migrationSampelDir);
           const tempDirs = [
-            import_path35.default.resolve(getAppDataDir(), "data", "temp_migration"),
-            import_path35.default.resolve(getAppDataDir(), "data", "temp_ocr"),
-            import_path35.default.resolve(getAppDataDir(), "data", "search_screenshots"),
-            import_path35.default.resolve(getAppDataDir(), "data", "archived_migrations")
+            import_path37.default.resolve(getAppDataDir(), "data", "temp_migration"),
+            import_path37.default.resolve(getAppDataDir(), "data", "temp_ocr"),
+            import_path37.default.resolve(getAppDataDir(), "data", "search_screenshots"),
+            import_path37.default.resolve(getAppDataDir(), "data", "archived_migrations")
           ];
           for (const d of tempDirs) clearDir(d);
           try {
@@ -40550,20 +44183,20 @@ var init_utilities = __esm({
             stopEmailPoller2();
           } catch (_) {
           }
-          if (import_fs32.default.existsSync(dataDir)) {
-            for (const f of import_fs32.default.readdirSync(dataDir)) {
+          if (import_fs34.default.existsSync(dataDir)) {
+            for (const f of import_fs34.default.readdirSync(dataDir)) {
               if (f === "app.db" || f === "app.db-wal" || f === "app.db-shm") continue;
               if (f === "models") continue;
-              const fullPath = import_path35.default.join(dataDir, f);
-              const stat = import_fs32.default.statSync(fullPath);
+              const fullPath = import_path37.default.join(dataDir, f);
+              const stat = import_fs34.default.statSync(fullPath);
               if (stat.isDirectory()) continue;
               try {
-                import_fs32.default.unlinkSync(fullPath);
+                import_fs34.default.unlinkSync(fullPath);
               } catch (_) {
               }
             }
           }
-          const catalogueDir = import_path35.default.resolve(getAppDataDir(), "catalogue");
+          const catalogueDir = import_path37.default.resolve(getAppDataDir(), "catalogue");
           clearDir(catalogueDir);
           try {
             const { destroyClient: destroyClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
@@ -40571,13 +44204,13 @@ var init_utilities = __esm({
           } catch (err) {
             console.warn("[Reset] Failed to destroy WhatsApp client before wipe:", err.message);
           }
-          const wwwebAuthDir = import_path35.default.resolve(getAppDataDir(), ".wwebjs_auth");
-          const wwwebCacheDir = import_path35.default.resolve(getAppDataDir(), ".wwebjs_cache");
+          const wwwebAuthDir = import_path37.default.resolve(getAppDataDir(), ".wwebjs_auth");
+          const wwwebCacheDir = import_path37.default.resolve(getAppDataDir(), ".wwebjs_cache");
           const removeDirWithRetry = async (dirPath, attempts = 3) => {
-            if (!import_fs32.default.existsSync(dirPath)) return;
+            if (!import_fs34.default.existsSync(dirPath)) return;
             for (let i = 0; i < attempts; i++) {
               try {
-                import_fs32.default.rmSync(dirPath, { recursive: true, force: true });
+                import_fs34.default.rmSync(dirPath, { recursive: true, force: true });
                 return;
               } catch (err) {
                 if (i === attempts - 1) {
@@ -40596,16 +44229,16 @@ var init_utilities = __esm({
           } catch (err) {
             console.warn("[Reset] Failed to kill Chrome processes:", err.message);
           }
-          const pharmarackProfilePath = import_path35.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const pharmarackProfilePath = import_path37.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
           await removeDirWithRetry(pharmarackProfilePath);
-          if (import_fs32.default.existsSync(dataDir)) {
-            for (const entry of import_fs32.default.readdirSync(dataDir)) {
+          if (import_fs34.default.existsSync(dataDir)) {
+            for (const entry of import_fs34.default.readdirSync(dataDir)) {
               if (entry.startsWith("pharmarack_profile_temp_")) {
-                await removeDirWithRetry(import_path35.default.join(dataDir, entry));
+                await removeDirWithRetry(import_path37.default.join(dataDir, entry));
               }
             }
           }
-          const cachePath = import_path35.default.resolve(getAppDataDir(), "data", "cache");
+          const cachePath = import_path37.default.resolve(getAppDataDir(), "data", "cache");
           await removeDirWithRetry(cachePath);
           try {
             const { searchCache: searchCache2 } = await Promise.resolve().then(() => (init_searchCache(), searchCache_exports));
@@ -40614,10 +44247,10 @@ var init_utilities = __esm({
           }
           const accidentalDirs = ["PHARMACY", "WORKING", "ON", "PROJECT"];
           for (const d of accidentalDirs) {
-            const fullPath = import_path35.default.resolve(__dirname27, "..", "..", d);
-            if (import_fs32.default.existsSync(fullPath)) {
+            const fullPath = import_path37.default.resolve(__dirname27, "..", "..", d);
+            if (import_fs34.default.existsSync(fullPath)) {
               try {
-                import_fs32.default.rmSync(fullPath, { recursive: true, force: true });
+                import_fs34.default.rmSync(fullPath, { recursive: true, force: true });
               } catch (_) {
               }
             }
@@ -40636,27 +44269,27 @@ var init_utilities = __esm({
     });
     router7.post("/clear-cache", async (req, res) => {
       try {
-        const dataDir = import_path35.default.resolve(getAppDataDir(), "data");
-        const cachePath = import_path35.default.join(dataDir, "cache");
-        if (import_fs32.default.existsSync(cachePath)) {
+        const dataDir = import_path37.default.resolve(getAppDataDir(), "data");
+        const cachePath = import_path37.default.join(dataDir, "cache");
+        if (import_fs34.default.existsSync(cachePath)) {
           try {
-            import_fs32.default.rmSync(cachePath, { recursive: true, force: true });
+            import_fs34.default.rmSync(cachePath, { recursive: true, force: true });
           } catch (err) {
             console.warn("[Clear Cache] Failed to delete cache directory:", err);
           }
         }
         const tempDirs = [
-          import_path35.default.join(dataDir, "temp_migration"),
-          import_path35.default.join(dataDir, "temp_ocr"),
-          import_path35.default.join(dataDir, "search_screenshots")
+          import_path37.default.join(dataDir, "temp_migration"),
+          import_path37.default.join(dataDir, "temp_ocr"),
+          import_path37.default.join(dataDir, "search_screenshots")
         ];
         for (const d of tempDirs) {
-          if (import_fs32.default.existsSync(d)) {
+          if (import_fs34.default.existsSync(d)) {
             try {
-              const files = import_fs32.default.readdirSync(d);
+              const files = import_fs34.default.readdirSync(d);
               for (const file of files) {
                 try {
-                  import_fs32.default.unlinkSync(import_path35.default.join(d, file));
+                  import_fs34.default.unlinkSync(import_path37.default.join(d, file));
                 } catch (_) {
                 }
               }
@@ -40709,14 +44342,14 @@ var init_utilities = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path35.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs32.default.existsSync(uploadsDir)) {
-          import_fs32.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs34.default.existsSync(uploadsDir)) {
+          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path35.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs32.default.createWriteStream(pdfPath);
+        const pdfPath = import_path37.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs34.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -40742,7 +44375,7 @@ var init_utilities = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path35.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -40866,11 +44499,11 @@ var init_scan = __esm({
 
 // src/utils/password.ts
 function hashPassword(password) {
-  const salt = import_crypto2.default.randomBytes(16).toString("hex");
+  const salt = import_crypto3.default.randomBytes(16).toString("hex");
   const iterations = 1e5;
   const keylen = 64;
   const digest = "sha512";
-  const hash = import_crypto2.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
+  const hash = import_crypto3.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
   return `pbkdf2:${iterations}:${salt}:${hash}`;
 }
 function verifyPassword(providedPass, storedPass) {
@@ -40882,22 +44515,22 @@ function verifyPassword(providedPass, storedPass) {
     const salt = parts[2];
     const storedHash = parts[3];
     if (isNaN(iterations) || !salt || !storedHash) return false;
-    const testHash = import_crypto2.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
+    const testHash = import_crypto3.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
     const bufA2 = Buffer.from(testHash, "hex");
     const bufB2 = Buffer.from(storedHash, "hex");
     if (bufA2.length !== bufB2.length) return false;
-    return import_crypto2.default.timingSafeEqual(bufA2, bufB2);
+    return import_crypto3.default.timingSafeEqual(bufA2, bufB2);
   }
   const bufA = Buffer.from(providedPass);
   const bufB = Buffer.from(storedPass);
   if (bufA.length !== bufB.length) return false;
-  return import_crypto2.default.timingSafeEqual(bufA, bufB);
+  return import_crypto3.default.timingSafeEqual(bufA, bufB);
 }
-var import_crypto2;
+var import_crypto3;
 var init_password = __esm({
   "src/utils/password.ts"() {
     "use strict";
-    import_crypto2 = __toESM(require("crypto"), 1);
+    import_crypto3 = __toESM(require("crypto"), 1);
   }
 });
 
@@ -40906,19 +44539,19 @@ var security_exports = {};
 __export(security_exports, {
   default: () => security_default
 });
-var import_crypto3, import_express9, import_path36, import_url30, __filename28, __dirname28, DB_PATH15, router9, security_default;
+var import_crypto4, import_express9, import_path38, import_url30, __filename28, __dirname28, DB_PATH15, router9, security_default;
 var init_security = __esm({
   "src/routes/security.ts"() {
     "use strict";
-    import_crypto3 = __toESM(require("crypto"), 1);
+    import_crypto4 = __toESM(require("crypto"), 1);
     import_express9 = __toESM(require("express"), 1);
-    import_path36 = __toESM(require("path"), 1);
+    import_path38 = __toESM(require("path"), 1);
     import_url30 = require("url");
     init_connection();
     init_password();
     __filename28 = (0, import_url30.fileURLToPath)(import_meta_url);
-    __dirname28 = import_path36.default.dirname(__filename28);
-    DB_PATH15 = process.env.DB_PATH || import_path36.default.resolve(__dirname28, "..", "..", "data", "app.db");
+    __dirname28 = import_path38.default.dirname(__filename28);
+    DB_PATH15 = process.env.DB_PATH || import_path38.default.resolve(__dirname28, "..", "..", "data", "app.db");
     router9 = import_express9.default.Router();
     router9.post("/admin/login", async (req, res) => {
       if (!req.body) {
@@ -40957,7 +44590,7 @@ var init_security = __esm({
         let tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'license_session_token'");
         let sessionToken = tokenRow?.value;
         if (!sessionToken) {
-          sessionToken = import_crypto3.default.randomUUID();
+          sessionToken = import_crypto4.default.randomUUID();
           await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('license_session_token', ?)", [sessionToken]);
         }
         await db2.run(
@@ -40994,21 +44627,21 @@ var email_exports = {};
 __export(email_exports, {
   default: () => email_default
 });
-var import_express10, import_path37, import_url31, import_fs33, __filename29, __dirname29, getUploadsDir2, router10, email_default;
+var import_express10, import_path39, import_url31, import_fs35, __filename29, __dirname29, getUploadsDir2, router10, email_default;
 var init_email = __esm({
   "src/routes/email.ts"() {
     "use strict";
     import_express10 = __toESM(require("express"), 1);
     init_connection();
-    import_path37 = __toESM(require("path"), 1);
+    import_path39 = __toESM(require("path"), 1);
     import_url31 = require("url");
     init_emailService();
     init_eventService();
     init_config();
-    import_fs33 = __toESM(require("fs"), 1);
+    import_fs35 = __toESM(require("fs"), 1);
     __filename29 = (0, import_url31.fileURLToPath)(import_meta_url);
-    __dirname29 = import_path37.default.dirname(__filename29);
-    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path37.default.resolve(getAppDataDir(), "uploads");
+    __dirname29 = import_path39.default.dirname(__filename29);
+    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path39.default.resolve(getAppDataDir(), "uploads");
     router10 = import_express10.default.Router();
     router10.post("/", async (req, res) => {
       const { subject, from, body, attachments } = req.body;
@@ -41163,13 +44796,13 @@ var init_email = __esm({
     router10.get("/attachments", async (req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs33.default.existsSync(uploadsDir)) {
-          import_fs33.default.mkdirSync(uploadsDir, { recursive: true });
+        if (!import_fs35.default.existsSync(uploadsDir)) {
+          import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const files = import_fs33.default.readdirSync(uploadsDir);
+        const files = import_fs35.default.readdirSync(uploadsDir);
         const attachments = files.map((filename) => {
-          const filePath = import_path37.default.join(uploadsDir, filename);
-          const stats = import_fs33.default.statSync(filePath);
+          const filePath = import_path39.default.join(uploadsDir, filename);
+          const stats = import_fs35.default.statSync(filePath);
           return {
             filename,
             size: stats.size,
@@ -41203,25 +44836,25 @@ var init_email = __esm({
       }
       try {
         const uploadsDir = getUploadsDir2();
-        const filePath = import_path37.default.resolve(uploadsDir, filename);
+        const filePath = import_path39.default.resolve(uploadsDir, filename);
         if (!filePath.startsWith(uploadsDir)) {
           return res.status(403).json({ error: "Access denied" });
         }
-        if (!import_fs33.default.existsSync(filePath)) {
+        if (!import_fs35.default.existsSync(filePath)) {
           return res.status(404).json({ error: "Attachment file not found" });
         }
-        const ext = import_path37.default.extname(filename).toLowerCase();
+        const ext = import_path39.default.extname(filename).toLowerCase();
         if (ext === ".txt" || ext === ".csv") {
-          const text = await import_fs33.default.promises.readFile(filePath, "utf-8");
+          const text = await import_fs35.default.promises.readFile(filePath, "utf-8");
           res.json({ success: true, type: "text", content: text.substring(0, 5e4) });
         } else if (ext === ".pdf") {
           const { default: pdfParse3 } = await import("pdf-parse");
-          const dataBuffer = await import_fs33.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs35.default.promises.readFile(filePath);
           const data = await pdfParse3(dataBuffer);
           res.json({ success: true, type: "text", content: data.text });
         } else if (ext === ".xlsx" || ext === ".xls") {
           const { default: XLSX7 } = await import("xlsx");
-          const dataBuffer = await import_fs33.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs35.default.promises.readFile(filePath);
           const workbook = XLSX7.read(dataBuffer, { type: "buffer" });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
@@ -41241,14 +44874,14 @@ var init_email = __esm({
         return res.status(400).json({ error: "filename is required" });
       }
       try {
-        let filePath = import_path37.default.resolve(getUploadsDir2(), filename);
-        if (!import_fs33.default.existsSync(filePath)) {
+        let filePath = import_path39.default.resolve(getUploadsDir2(), filename);
+        if (!import_fs35.default.existsSync(filePath)) {
           const db2 = await dbManager.getConnection();
           const att = await db2.get(
             "SELECT local_path FROM email_attachments WHERE filename = ? OR filename LIKE ? OR local_path LIKE ?",
             [filename, `%${filename}%`, `%${filename}%`]
           );
-          if (att && att.local_path && import_fs33.default.existsSync(att.local_path)) {
+          if (att && att.local_path && import_fs35.default.existsSync(att.local_path)) {
             filePath = att.local_path;
           } else {
             return res.status(404).json({ error: "Attachment file not found" });
@@ -41266,15 +44899,15 @@ var init_email = __esm({
     router10.delete("/attachments/cache", async (req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs33.default.existsSync(uploadsDir)) {
+        if (!import_fs35.default.existsSync(uploadsDir)) {
           return res.json({ success: true, count: 0, message: "Uploads directory does not exist" });
         }
-        const files = import_fs33.default.readdirSync(uploadsDir);
+        const files = import_fs35.default.readdirSync(uploadsDir);
         let count = 0;
         for (const filename of files) {
           if (filename.startsWith("att-")) {
-            const filePath = import_path37.default.join(uploadsDir, filename);
-            import_fs33.default.unlinkSync(filePath);
+            const filePath = import_path39.default.join(uploadsDir, filename);
+            import_fs35.default.unlinkSync(filePath);
             count++;
           }
         }
@@ -42684,14 +46317,14 @@ __export(bouncedAlertService_exports, {
   BouncedAlertService: () => BouncedAlertService,
   bouncedAlertService: () => bouncedAlertService
 });
-var import_fs34, BouncedAlertService, bouncedAlertService;
+var import_fs36, BouncedAlertService, bouncedAlertService;
 var init_bouncedAlertService = __esm({
   "src/services/bouncedAlertService.ts"() {
     "use strict";
     init_connection();
     init_emailService();
     init_whatsappQueueWorker();
-    import_fs34 = __toESM(require("fs"), 1);
+    import_fs36 = __toESM(require("fs"), 1);
     BouncedAlertService = class {
       /**
        * Run the bounced products check for order emails received in the last 30 hours,
@@ -42744,7 +46377,7 @@ var init_bouncedAlertService = __esm({
             );
             let attachmentParsed = false;
             for (const att of attachments) {
-              if (att.local_path && import_fs34.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs36.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -43950,13 +47583,13 @@ var settings_exports = {};
 __export(settings_exports, {
   default: () => settings_default
 });
-var import_express12, import_path38, import_fs35, import_url32, __filename30, __dirname30, DB_PATH16, UPLOADS_DIR2, router12, settings_default;
+var import_express12, import_path40, import_fs37, import_url32, __filename30, __dirname30, DB_PATH16, UPLOADS_DIR2, router12, settings_default;
 var init_settings = __esm({
   "src/routes/settings.ts"() {
     "use strict";
     import_express12 = __toESM(require("express"), 1);
-    import_path38 = __toESM(require("path"), 1);
-    import_fs35 = __toESM(require("fs"), 1);
+    import_path40 = __toESM(require("path"), 1);
+    import_fs37 = __toESM(require("fs"), 1);
     import_url32 = require("url");
     init_connection();
     init_telegramBot();
@@ -43969,9 +47602,9 @@ var init_settings = __esm({
     init_paymentQrService();
     init_eventService();
     __filename30 = (0, import_url32.fileURLToPath)(import_meta_url);
-    __dirname30 = import_path38.default.dirname(__filename30);
-    DB_PATH16 = process.env.DB_PATH || import_path38.default.resolve(__dirname30, "..", "..", "data", "app.db");
-    UPLOADS_DIR2 = import_path38.default.resolve(getAppDataDir(), "uploads");
+    __dirname30 = import_path40.default.dirname(__filename30);
+    DB_PATH16 = process.env.DB_PATH || import_path40.default.resolve(__dirname30, "..", "..", "data", "app.db");
+    UPLOADS_DIR2 = import_path40.default.resolve(getAppDataDir(), "uploads");
     router12 = import_express12.default.Router();
     router12.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -44323,9 +47956,9 @@ var init_settings = __esm({
     });
     router12.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs35.default.existsSync(stampPath)) {
-          const data = import_fs35.default.readFileSync(stampPath);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs37.default.existsSync(stampPath)) {
+          const data = import_fs37.default.readFileSync(stampPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -44340,11 +47973,11 @@ var init_settings = __esm({
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs35.default.existsSync(UPLOADS_DIR2)) {
-          import_fs35.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) {
+          import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs35.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs37.default.writeFileSync(stampPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'true')");
         res.json({ success: true, message: "Custom stamp uploaded and enabled" });
@@ -44355,9 +47988,9 @@ var init_settings = __esm({
     });
     router12.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs35.default.existsSync(stampPath)) {
-          import_fs35.default.unlinkSync(stampPath);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs37.default.existsSync(stampPath)) {
+          import_fs37.default.unlinkSync(stampPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'false')");
@@ -44368,9 +48001,9 @@ var init_settings = __esm({
     });
     router12.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs35.default.existsSync(sigPath)) {
-          const data = import_fs35.default.readFileSync(sigPath);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs37.default.existsSync(sigPath)) {
+          const data = import_fs37.default.readFileSync(sigPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -44385,11 +48018,11 @@ var init_settings = __esm({
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs35.default.existsSync(UPLOADS_DIR2)) {
-          import_fs35.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) {
+          import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs35.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs37.default.writeFileSync(sigPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'true')");
         res.json({ success: true, message: "Custom signature uploaded and enabled" });
@@ -44400,9 +48033,9 @@ var init_settings = __esm({
     });
     router12.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs35.default.existsSync(sigPath)) {
-          import_fs35.default.unlinkSync(sigPath);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs37.default.existsSync(sigPath)) {
+          import_fs37.default.unlinkSync(sigPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'false')");
@@ -44777,9 +48410,9 @@ var init_settings = __esm({
     });
     router12.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs35.default.existsSync(stampPath)) {
-          const buffer = import_fs35.default.readFileSync(stampPath);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs37.default.existsSync(stampPath)) {
+          const buffer = import_fs37.default.readFileSync(stampPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -44793,11 +48426,11 @@ var init_settings = __esm({
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs35.default.existsSync(UPLOADS_DIR2)) import_fs35.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs35.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs37.default.writeFileSync(stampPath, buffer);
         res.json({ success: true, message: "Stamp uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload stamp:", error);
@@ -44806,9 +48439,9 @@ var init_settings = __esm({
     });
     router12.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path38.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs35.default.existsSync(stampPath)) {
-          import_fs35.default.unlinkSync(stampPath);
+        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs37.default.existsSync(stampPath)) {
+          import_fs37.default.unlinkSync(stampPath);
         }
         res.json({ success: true, message: "Stamp deleted successfully" });
       } catch (error) {
@@ -44818,9 +48451,9 @@ var init_settings = __esm({
     });
     router12.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs35.default.existsSync(sigPath)) {
-          const buffer = import_fs35.default.readFileSync(sigPath);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs37.default.existsSync(sigPath)) {
+          const buffer = import_fs37.default.readFileSync(sigPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -44834,11 +48467,11 @@ var init_settings = __esm({
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs35.default.existsSync(UPLOADS_DIR2)) import_fs35.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs35.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs37.default.writeFileSync(sigPath, buffer);
         res.json({ success: true, message: "Signature uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload signature:", error);
@@ -44847,9 +48480,9 @@ var init_settings = __esm({
     });
     router12.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path38.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs35.default.existsSync(sigPath)) {
-          import_fs35.default.unlinkSync(sigPath);
+        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs37.default.existsSync(sigPath)) {
+          import_fs37.default.unlinkSync(sigPath);
         }
         res.json({ success: true, message: "Signature deleted successfully" });
       } catch (error) {
@@ -45293,7 +48926,7 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       SearchKeyword: keyword,
       StoreId: hasStoreFilter && isMapped ? [storeId] : [],
       NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
-      Count: 50,
+      Count: 100,
       SkipCount: 0,
       isMappedSearch: hasStoreFilter ? isMapped : null,
       IsStock: 2,
@@ -45340,6 +48973,10 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
       });
       const qLower = qRaw.toLowerCase().trim();
       results.sort((a, b) => {
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
         const nameA = String(a.name || "").toLowerCase();
         const nameB = String(b.name || "").toLowerCase();
         const aStarts = nameA.startsWith(qLower);
@@ -45355,6 +48992,10 @@ async function performPharmarackSearch(qRaw, storeId, isMapped) {
     if (offline.length > 0) {
       const qLower = qRaw.toLowerCase().trim();
       offline.sort((a, b) => {
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
         const nameA = String(a.name || "").toLowerCase();
         const nameB = String(b.name || "").toLowerCase();
         const aStarts = nameA.startsWith(qLower);
@@ -45729,14 +49370,14 @@ async function verifyOrderPlacedInPharmarack(storeId) {
   }
   return false;
 }
-var import_express13, import_path39, import_url33, import_fs36, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, handleManualReauth, pharmarack_default;
+var import_express13, import_path41, import_url33, import_fs38, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
     import_express13 = __toESM(require("express"), 1);
-    import_path39 = __toESM(require("path"), 1);
+    import_path41 = __toESM(require("path"), 1);
     import_url33 = require("url");
-    import_fs36 = __toESM(require("fs"), 1);
+    import_fs38 = __toESM(require("fs"), 1);
     init_lazyPuppeteer();
     init_connection();
     init_eventService();
@@ -45754,8 +49395,8 @@ var init_pharmarack = __esm({
     init_activityTracker();
     execAsync3 = (0, import_util3.promisify)(import_child_process6.exec);
     __filename31 = (0, import_url33.fileURLToPath)(import_meta_url);
-    __dirname31 = import_path39.default.dirname(__filename31);
-    DB_PATH17 = process.env.DB_PATH || import_path39.default.resolve(__dirname31, "..", "..", "data", "app.db");
+    __dirname31 = import_path41.default.dirname(__filename31);
+    DB_PATH17 = process.env.DB_PATH || import_path41.default.resolve(__dirname31, "..", "..", "data", "app.db");
     router13 = import_express13.default.Router();
     searchRevalidations = /* @__PURE__ */ new Map();
     router13.get("/search", async (req, res) => {
@@ -45905,7 +49546,7 @@ var init_pharmarack = __esm({
       (async () => {
         let browser;
         let tempProfilePathToDelete = "";
-        const mainProfilePath = import_path39.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path41.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         const puppeteer = await getPuppeteer();
         try {
           console.log("Killing any orphan Chrome processes holding locks on pharmarack_profile...");
@@ -45923,7 +49564,7 @@ var init_pharmarack = __esm({
           } catch (launchErr) {
             console.warn("Failed to launch Chrome with main profile, attempting temp profile fallback...", launchErr.message);
             const randomSuffix = Math.floor(Math.random() * 1e6);
-            const tempProfilePath = import_path39.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
+            const tempProfilePath = import_path41.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
             await copyProfileFolder2(mainProfilePath, tempProfilePath);
             cleanProfileLockFiles(tempProfilePath);
             browser = await puppeteer.launch({
@@ -46157,8 +49798,8 @@ var init_pharmarack = __esm({
               console.warn("[Pharmarack Login Window] Could not copy temp profile back to main profile:", copyBackErr.message);
             }
             try {
-              if (import_fs36.default.existsSync(tempProfilePathToDelete)) {
-                import_fs36.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
+              if (import_fs38.default.existsSync(tempProfilePathToDelete)) {
+                import_fs38.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
                 console.log(`[Pharmarack Login Window] Cleared temp profile directory at ${tempProfilePathToDelete}`);
               }
             } catch (rmErr) {
@@ -46426,6 +50067,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
+    pharmarackDeleteChain = Promise.resolve();
     router13.post("/delete-cart-item", async (req, res) => {
       const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = req.body;
       if (!storeId || !productId && !productCode && !productName) {
@@ -46443,7 +50085,10 @@ var init_pharmarack = __esm({
         storeName
       };
       try {
-        const success = await executeSingleItemDelete(deleteItem);
+        const task = pharmarackDeleteChain.catch(() => {
+        }).then(() => executeSingleItemDelete(deleteItem));
+        pharmarackDeleteChain = task;
+        const success = await task;
         if (success) {
           return res.json({ success: true, message: "Item deleted from Pharmarack live cart" });
         } else {
@@ -46807,11 +50452,27 @@ var init_pharmarack = __esm({
         const settings = await getPharmarackSettings();
         const token = settings["pharmarack_session_token"] || "";
         if (!token) {
-          return res.json({ healthy: false, mode: "Live", isRefreshing, reason: "NO_TOKEN", message: "Session not linked" });
+          return res.json({ healthy: false, mode: "Live", isRefreshing, daysLeft: null, expiresAt: null, reason: "NO_TOKEN", message: "Session not linked" });
         }
         let healthy = false;
         let reason = "EXPIRED";
         let message = "Session expired";
+        let daysLeft = null;
+        let expiresAt = null;
+        try {
+          const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
+          const parts = cleanToken.split(".");
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+            if (payload.exp && typeof payload.exp === "number") {
+              const expMs = payload.exp * 1e3;
+              expiresAt = new Date(expMs).toISOString();
+              const diffMs = expMs - Date.now();
+              daysLeft = Math.max(0, Math.ceil(diffMs / (1e3 * 60 * 60 * 24)));
+            }
+          }
+        } catch {
+        }
         try {
           const probe = await probeUserCartDetails(6e3);
           if (probe.ok) {
@@ -46827,7 +50488,15 @@ var init_pharmarack = __esm({
           reason = "NETWORK_ERROR";
           message = err.message || "Network timeout/connection error";
         }
-        return res.json({ healthy, mode: "Live", isRefreshing, reason: healthy ? void 0 : reason, message: healthy ? "Session active" : message });
+        return res.json({
+          healthy,
+          mode: "Live",
+          isRefreshing,
+          daysLeft,
+          expiresAt,
+          reason: healthy ? void 0 : reason,
+          message: healthy ? "Session active" : message
+        });
       } catch (err) {
         console.error("Session status check error:", err);
         return res.status(500).json({ error: "Internal server error" });
@@ -46842,9 +50511,9 @@ var init_pharmarack = __esm({
         Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
         });
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-        const pharmarackProfilePath = import_path39.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (import_fs36.default.existsSync(pharmarackProfilePath)) {
-          import_fs36.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
+        const pharmarackProfilePath = import_path41.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (import_fs38.default.existsSync(pharmarackProfilePath)) {
+          import_fs38.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
           console.log("Cleared Pharmarack Puppeteer profile directory.");
         }
         res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
@@ -47371,21 +51040,21 @@ var dispatch_exports = {};
 __export(dispatch_exports, {
   default: () => dispatch_default
 });
-var import_express14, import_path40, import_url34, __filename32, __dirname32, DB_PATH18, router14, deliveryBoysTableInitialized, ensureDeliveryBoysTable, dispatch_default;
+var import_express14, import_path42, import_url34, __filename32, __dirname32, DB_PATH18, router14, deliveryBoysTableInitialized, ensureDeliveryBoysTable, dispatch_default;
 var init_dispatch = __esm({
   "src/routes/dispatch.ts"() {
     "use strict";
     import_express14 = __toESM(require("express"), 1);
     init_connection();
-    import_path40 = __toESM(require("path"), 1);
+    import_path42 = __toESM(require("path"), 1);
     import_url34 = require("url");
     init_notificationService();
     init_distributorDispatchReminderWorker();
     init_eventService();
     init_storeContextService();
     __filename32 = (0, import_url34.fileURLToPath)(import_meta_url);
-    __dirname32 = import_path40.default.dirname(__filename32);
-    DB_PATH18 = process.env.DB_PATH || import_path40.default.resolve(__dirname32, "..", "..", "data", "app.db");
+    __dirname32 = import_path42.default.dirname(__filename32);
+    DB_PATH18 = process.env.DB_PATH || import_path42.default.resolve(__dirname32, "..", "..", "data", "app.db");
     router14 = import_express14.default.Router();
     router14.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -47912,19 +51581,19 @@ var learning_exports = {};
 __export(learning_exports, {
   default: () => learning_default
 });
-var import_express15, import_path41, import_url35, import_fs37, __filename33, __dirname33, DB_PATH19, router15, handleRetrainOrRefresh, learning_default;
+var import_express15, import_path43, import_url35, import_fs39, __filename33, __dirname33, DB_PATH19, router15, handleRetrainOrRefresh, learning_default;
 var init_learning = __esm({
   "src/routes/learning.ts"() {
     "use strict";
     import_express15 = __toESM(require("express"), 1);
     init_connection();
-    import_path41 = __toESM(require("path"), 1);
+    import_path43 = __toESM(require("path"), 1);
     import_url35 = require("url");
-    import_fs37 = __toESM(require("fs"), 1);
+    import_fs39 = __toESM(require("fs"), 1);
     init_summaryCacheService();
     __filename33 = (0, import_url35.fileURLToPath)(import_meta_url);
-    __dirname33 = import_path41.default.dirname(__filename33);
-    DB_PATH19 = process.env.DB_PATH || import_path41.default.resolve(__dirname33, "..", "..", "data", "app.db");
+    __dirname33 = import_path43.default.dirname(__filename33);
+    DB_PATH19 = process.env.DB_PATH || import_path43.default.resolve(__dirname33, "..", "..", "data", "app.db");
     router15 = import_express15.default.Router();
     router15.post("/", async (req, res) => {
       const { payload } = req.body;
@@ -48234,9 +51903,9 @@ var init_learning = __esm({
         db2 = await dbManager.getConnection();
         const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [distId]);
         for (const f of files) {
-          if (f.file_path && import_fs37.default.existsSync(f.file_path)) {
+          if (f.file_path && import_fs39.default.existsSync(f.file_path)) {
             try {
-              import_fs37.default.unlinkSync(f.file_path);
+              import_fs39.default.unlinkSync(f.file_path);
             } catch (e) {
               console.warn("Failed to delete file:", f.file_path, e);
             }
@@ -48364,9 +52033,9 @@ var init_learning = __esm({
         db2 = await dbManager.getConnection();
         const fileRecord = await db2.get("SELECT file_path FROM distributor_historical_files WHERE id = ?", [fileId]);
         if (fileRecord) {
-          if (fileRecord.file_path && import_fs37.default.existsSync(fileRecord.file_path)) {
+          if (fileRecord.file_path && import_fs39.default.existsSync(fileRecord.file_path)) {
             try {
-              import_fs37.default.unlinkSync(fileRecord.file_path);
+              import_fs39.default.unlinkSync(fileRecord.file_path);
             } catch (e) {
               console.warn("Failed to delete file from disk:", fileRecord.file_path, e);
             }
@@ -48420,20 +52089,20 @@ function findChromePath3() {
   const paths = [
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    process.env.LOCALAPPDATA ? import_path42.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-    process.env.PROGRAMFILES ? import_path42.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
+    process.env.LOCALAPPDATA ? import_path44.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+    process.env.PROGRAMFILES ? import_path44.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    process.env.LOCALAPPDATA ? import_path42.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+    process.env.LOCALAPPDATA ? import_path44.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
   ].filter(Boolean);
   for (const p of paths) {
-    if (import_fs38.default.existsSync(p)) {
+    if (import_fs40.default.existsSync(p)) {
       return p;
     }
   }
   return null;
 }
-var import_express16, import_qrcode4, import_fs38, import_path42, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
+var import_express16, import_qrcode4, import_fs40, import_path44, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
 var init_messaging = __esm({
   "src/routes/messaging.ts"() {
     "use strict";
@@ -48443,8 +52112,8 @@ var init_messaging = __esm({
     init_connection();
     init_eventService();
     init_whatsappQueueWorker();
-    import_fs38 = __toESM(require("fs"), 1);
-    import_path42 = __toESM(require("path"), 1);
+    import_fs40 = __toESM(require("fs"), 1);
+    import_path44 = __toESM(require("path"), 1);
     init_lazyPuppeteer();
     init_config();
     init_tokenRefreshScheduler();
@@ -48546,7 +52215,7 @@ var init_messaging = __esm({
           await destroyClient();
           await new Promise((resolve) => setTimeout(resolve, 2500));
           console.log("[WhatsApp] Launching Chrome for WhatsApp login from:", chromePath);
-          const authPath = import_path42.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
+          const authPath = import_path44.default.resolve(getAppDataDir(), ".wwebjs_auth", "session");
           cleanProfileLockFiles(authPath);
           const puppeteer = await getPuppeteer();
           browser = await puppeteer.launch({
@@ -48806,12 +52475,12 @@ var init_messaging = __esm({
         if (!safeId) {
           return res.status(400).json({ error: "Invalid media id" });
         }
-        const dir = import_path42.default.resolve(process.cwd(), "data", "inbound_media");
-        const filePath = import_path42.default.join(dir, `${safeId}.jpg`);
-        if (!import_fs38.default.existsSync(filePath)) {
+        const dir = import_path44.default.resolve(process.cwd(), "data", "inbound_media");
+        const filePath = import_path44.default.join(dir, `${safeId}.jpg`);
+        if (!import_fs40.default.existsSync(filePath)) {
           return res.status(404).json({ error: "Media not found" });
         }
-        const data = await import_fs38.default.promises.readFile(filePath);
+        const data = await import_fs40.default.promises.readFile(filePath);
         res.json({ mimetype: "image/jpeg", data: data.toString("base64") });
       } catch (err) {
         console.error("Error fetching WA inbound media:", err);
@@ -48873,13 +52542,13 @@ var init_messaging = __esm({
           id: row.id,
           hasMedia: !!row.has_media,
           downloadMedia: async () => {
-            const uploadsDir = import_path42.default.resolve(getAppDataDir(), "uploads");
-            if (import_fs38.default.existsSync(uploadsDir)) {
-              const files = import_fs38.default.readdirSync(uploadsDir);
+            const uploadsDir = import_path44.default.resolve(getAppDataDir(), "uploads");
+            if (import_fs40.default.existsSync(uploadsDir)) {
+              const files = import_fs40.default.readdirSync(uploadsDir);
               const matched = files.find((f) => f.startsWith(messageId));
               if (matched) {
-                const ext = import_path42.default.extname(matched).toLowerCase();
-                const data = import_fs38.default.readFileSync(import_path42.default.join(uploadsDir, matched)).toString("base64");
+                const ext = import_path44.default.extname(matched).toLowerCase();
+                const data = import_fs40.default.readFileSync(import_path44.default.join(uploadsDir, matched)).toString("base64");
                 let mimetype = "image/jpeg";
                 if (ext === ".png") mimetype = "image/png";
                 else if (ext === ".pdf") mimetype = "application/pdf";
@@ -48908,13 +52577,13 @@ var init_messaging = __esm({
         }
         try {
           const safeId = String(messageId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
-          const inboundFile = import_path42.default.resolve(process.cwd(), "data", "inbound_media", `${safeId}.jpg`);
-          if (safeId && import_fs38.default.existsSync(inboundFile)) await import_fs38.default.promises.unlink(inboundFile).catch(() => {
+          const inboundFile = import_path44.default.resolve(process.cwd(), "data", "inbound_media", `${safeId}.jpg`);
+          if (safeId && import_fs40.default.existsSync(inboundFile)) await import_fs40.default.promises.unlink(inboundFile).catch(() => {
           });
-          const uploadsDir = import_path42.default.resolve(getAppDataDir(), "uploads");
-          if (import_fs38.default.existsSync(uploadsDir)) {
-            for (const f of import_fs38.default.readdirSync(uploadsDir)) {
-              if (f.startsWith(messageId)) await import_fs38.default.promises.unlink(import_path42.default.join(uploadsDir, f)).catch(() => {
+          const uploadsDir = import_path44.default.resolve(getAppDataDir(), "uploads");
+          if (import_fs40.default.existsSync(uploadsDir)) {
+            for (const f of import_fs40.default.readdirSync(uploadsDir)) {
+              if (f.startsWith(messageId)) await import_fs40.default.promises.unlink(import_path44.default.join(uploadsDir, f)).catch(() => {
               });
             }
           }
@@ -49056,29 +52725,29 @@ var aiCamera_exports = {};
 __export(aiCamera_exports, {
   default: () => aiCamera_default
 });
-var import_express17, import_path43, import_fs39, import_url36, __filename34, __dirname34, DB_PATH20, AUDIT_QUEUE_PATH, router17, aiCamera_default;
+var import_express17, import_path45, import_fs41, import_url36, __filename34, __dirname34, DB_PATH20, AUDIT_QUEUE_PATH, router17, aiCamera_default;
 var init_aiCamera = __esm({
   "src/routes/aiCamera.ts"() {
     "use strict";
     import_express17 = __toESM(require("express"), 1);
     init_connection();
-    import_path43 = __toESM(require("path"), 1);
-    import_fs39 = __toESM(require("fs"), 1);
+    import_path45 = __toESM(require("path"), 1);
+    import_fs41 = __toESM(require("fs"), 1);
     import_url36 = require("url");
     init_aiCameraService();
     init_productNameFilterService();
     init_config();
     __filename34 = (0, import_url36.fileURLToPath)(import_meta_url);
-    __dirname34 = import_path43.default.dirname(__filename34);
-    DB_PATH20 = process.env.DB_PATH || import_path43.default.resolve(__dirname34, "..", "..", "data", "app.db");
-    AUDIT_QUEUE_PATH = import_path43.default.resolve(getAppDataDir(), "data", "audit_queue.json");
+    __dirname34 = import_path45.default.dirname(__filename34);
+    DB_PATH20 = process.env.DB_PATH || import_path45.default.resolve(__dirname34, "..", "..", "data", "app.db");
+    AUDIT_QUEUE_PATH = import_path45.default.resolve(getAppDataDir(), "data", "audit_queue.json");
     router17 = import_express17.default.Router();
     router17.get("/audit/queue", async (req, res) => {
       try {
-        if (!import_fs39.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs41.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.json([]);
         }
-        const data = await import_fs39.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs41.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         const queue2 = JSON.parse(data || "[]");
         const pending2 = queue2.filter((item) => item.status === "pending_human_review");
         res.json(pending2);
@@ -49093,10 +52762,10 @@ var init_aiCamera = __esm({
         return res.status(400).json({ error: "Queue entry ID is required" });
       }
       try {
-        if (!import_fs39.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs41.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.status(404).json({ error: "Audit queue not found" });
         }
-        const data = await import_fs39.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs41.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         const queue2 = JSON.parse(data || "[]");
         const index = queue2.findIndex((item) => item.id === id);
         if (index === -1) {
@@ -49126,8 +52795,8 @@ var init_aiCamera = __esm({
             );
           }
           try {
-            if (import_fs39.default.existsSync(AUDIT_QUEUE_PATH)) {
-              const auditData = await import_fs39.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+            if (import_fs41.default.existsSync(AUDIT_QUEUE_PATH)) {
+              const auditData = await import_fs41.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
               const auditQueue = JSON.parse(auditData || "[]");
               const auditEntry = auditQueue.find((item) => item.id === id);
               if (auditEntry && auditEntry.rawOcrText) {
@@ -49145,7 +52814,7 @@ var init_aiCamera = __esm({
         queue2[index].status = action === "dismiss" ? "dismissed" : "resolved";
         queue2[index].resolvedAt = (/* @__PURE__ */ new Date()).toISOString();
         queue2[index].resolvedWith = name || "";
-        await import_fs39.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
+        await import_fs41.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
         res.json({
           success: true,
           message: `Queue entry ${id} successfully ${queue2[index].status}`
@@ -49158,17 +52827,17 @@ var init_aiCamera = __esm({
     router17.delete("/audit/:id", async (req, res) => {
       const { id } = req.params;
       try {
-        if (!import_fs39.default.existsSync(AUDIT_QUEUE_PATH)) {
+        if (!import_fs41.default.existsSync(AUDIT_QUEUE_PATH)) {
           return res.status(404).json({ error: "Audit queue not found" });
         }
-        const data = await import_fs39.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
+        const data = await import_fs41.default.promises.readFile(AUDIT_QUEUE_PATH, "utf8");
         let queue2 = JSON.parse(data || "[]");
         const initialLen = queue2.length;
         queue2 = queue2.filter((item) => item.id !== id);
         if (queue2.length === initialLen) {
           return res.status(404).json({ error: "Queue entry not found" });
         }
-        await import_fs39.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
+        await import_fs41.default.promises.writeFile(AUDIT_QUEUE_PATH, JSON.stringify(queue2, null, 2));
         res.json({ success: true, message: `Queue entry ${id} deleted` });
       } catch (err) {
         res.status(500).json({ error: "Failed to delete entry" });
@@ -49210,21 +52879,21 @@ __export(whatsappInvoiceService_exports, {
   WhatsappInvoiceService: () => WhatsappInvoiceService,
   whatsappInvoiceService: () => whatsappInvoiceService
 });
-var import_path44, import_fs40, import_url37, __filename35, __dirname35, DB_PATH21, UPLOADS_DIR3, WhatsappInvoiceService, whatsappInvoiceService;
+var import_path46, import_fs42, import_url37, __filename35, __dirname35, DB_PATH21, UPLOADS_DIR3, WhatsappInvoiceService, whatsappInvoiceService;
 var init_whatsappInvoiceService = __esm({
   "src/services/whatsappInvoiceService.ts"() {
     "use strict";
     init_connection();
-    import_path44 = __toESM(require("path"), 1);
-    import_fs40 = __toESM(require("fs"), 1);
+    import_path46 = __toESM(require("path"), 1);
+    import_fs42 = __toESM(require("fs"), 1);
     import_url37 = require("url");
     init_pdfInvoiceService();
     init_whatsappQueueWorker();
     init_config();
     __filename35 = (0, import_url37.fileURLToPath)(import_meta_url);
-    __dirname35 = import_path44.default.dirname(__filename35);
-    DB_PATH21 = process.env.DB_PATH || import_path44.default.resolve(__dirname35, "..", "..", "data", "app.db");
-    UPLOADS_DIR3 = import_path44.default.resolve(getAppDataDir(), "uploads");
+    __dirname35 = import_path46.default.dirname(__filename35);
+    DB_PATH21 = process.env.DB_PATH || import_path46.default.resolve(__dirname35, "..", "..", "data", "app.db");
+    UPLOADS_DIR3 = import_path46.default.resolve(getAppDataDir(), "uploads");
     WhatsappInvoiceService = class {
       async sendInvoiceViaWhatsApp(invoiceId) {
         let db2;
@@ -49330,13 +52999,13 @@ var init_whatsappInvoiceService = __esm({
           caption += `\u2014 AI Pharmacy OS`;
           let pdfPath = void 0;
           try {
-            if (!import_fs40.default.existsSync(UPLOADS_DIR3)) {
-              import_fs40.default.mkdirSync(UPLOADS_DIR3, { recursive: true });
+            if (!import_fs42.default.existsSync(UPLOADS_DIR3)) {
+              import_fs42.default.mkdirSync(UPLOADS_DIR3, { recursive: true });
             }
             const pdfFilename = `invoice_${invoice.invoice_no.replace(/[^a-zA-Z0-9-]/g, "_")}_${Date.now()}.pdf`;
-            const fullPdfPath = import_path44.default.join(UPLOADS_DIR3, pdfFilename);
+            const fullPdfPath = import_path46.default.join(UPLOADS_DIR3, pdfFilename);
             await pdfInvoiceService.generateInvoicePdf(invoiceId, fullPdfPath);
-            if (import_fs40.default.existsSync(fullPdfPath)) {
+            if (import_fs42.default.existsSync(fullPdfPath)) {
               pdfPath = fullPdfPath;
             }
           } catch (pdfErr) {
@@ -49387,18 +53056,18 @@ var telegramPrescription_exports = {};
 __export(telegramPrescription_exports, {
   default: () => telegramPrescription_default
 });
-var import_express18, import_path45, import_url38, __filename36, __dirname36, DB_PATH22, router18, telegramPrescription_default;
+var import_express18, import_path47, import_url38, __filename36, __dirname36, DB_PATH22, router18, telegramPrescription_default;
 var init_telegramPrescription = __esm({
   "src/routes/telegramPrescription.ts"() {
     "use strict";
     import_express18 = __toESM(require("express"), 1);
     init_connection();
-    import_path45 = __toESM(require("path"), 1);
+    import_path47 = __toESM(require("path"), 1);
     import_url38 = require("url");
     init_telegramPrescriptionService();
     __filename36 = (0, import_url38.fileURLToPath)(import_meta_url);
-    __dirname36 = import_path45.default.dirname(__filename36);
-    DB_PATH22 = process.env.DB_PATH || import_path45.default.resolve(__dirname36, "..", "..", "data", "app.db");
+    __dirname36 = import_path47.default.dirname(__filename36);
+    DB_PATH22 = process.env.DB_PATH || import_path47.default.resolve(__dirname36, "..", "..", "data", "app.db");
     router18 = import_express18.default.Router();
     router18.get("/cart/:chatId", async (req, res) => {
       try {
@@ -50054,14 +53723,14 @@ Your regular prescription is due for refill:
 ${medList}${dueSuffix}${timingSection}${cta}`;
   }
 }
-var import_express19, import_path46, import_fs41, import_url39, __filename37, __dirname37, DB_PATH23, router19, refillsTableInitialized, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
+var import_express19, import_path48, import_fs43, import_url39, __filename37, __dirname37, DB_PATH23, router19, refillsTableInitialized, deletePatientRefillsHandler, handleRefillStatusUpdate, refills_default;
 var init_refills = __esm({
   "src/routes/refills.ts"() {
     "use strict";
     import_express19 = __toESM(require("express"), 1);
     init_connection();
-    import_path46 = __toESM(require("path"), 1);
-    import_fs41 = __toESM(require("fs"), 1);
+    import_path48 = __toESM(require("path"), 1);
+    import_fs43 = __toESM(require("fs"), 1);
     import_url39 = require("url");
     init_refillService();
     init_whatsappClient();
@@ -50074,8 +53743,8 @@ var init_refills = __esm({
     init_orderScheduleService();
     init_storeContextService();
     __filename37 = (0, import_url39.fileURLToPath)(import_meta_url);
-    __dirname37 = import_path46.default.dirname(__filename37);
-    DB_PATH23 = process.env.DB_PATH || import_path46.default.resolve(__dirname37, "..", "..", "data", "app.db");
+    __dirname37 = import_path48.default.dirname(__filename37);
+    DB_PATH23 = process.env.DB_PATH || import_path48.default.resolve(__dirname37, "..", "..", "data", "app.db");
     router19 = import_express19.default.Router();
     refillsTableInitialized = false;
     router19.use(async (_req, _res, next) => {
@@ -51203,12 +54872,12 @@ var init_refills = __esm({
         );
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path46.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs41.default.existsSync(uploadsDir)) {
-            import_fs41.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path48.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs43.default.existsSync(uploadsDir)) {
+            import_fs43.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `refill_slip_${id}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path46.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path48.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateRefillSchedulePdf(Number(id), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -52286,7 +55955,7 @@ function createStaffToken(data) {
   const timestamp = Date.now();
   const perms = (data.permissions || ["*"]).join(",");
   const payload = `${data.userId}:${data.storeId}:${data.role}:${data.username}:${perms}:${timestamp}`;
-  const signature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+  const signature = import_crypto5.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 function verifyStaffToken(tokenStr) {
@@ -52302,8 +55971,8 @@ function verifyStaffToken(tokenStr) {
     if (isNaN(userId) || isNaN(storeId) || isNaN(timestamp)) return null;
     if (Date.now() - timestamp > TOKEN_TTL_MS) return null;
     const payload = `${userIdStr}:${storeIdStr}:${role}:${username}:${permsStr}:${timestampStr}`;
-    const expectedSignature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
-    if (import_crypto4.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    const expectedSignature = import_crypto5.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+    if (import_crypto5.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return {
         userId,
         storeId,
@@ -52366,11 +56035,11 @@ async function tenantAuthMiddleware(req, res, next) {
     res.status(500).json({ error: "Internal tenant authorization error" });
   }
 }
-var import_crypto4, AUTH_SECRET, TOKEN_TTL_MS;
+var import_crypto5, AUTH_SECRET, TOKEN_TTL_MS;
 var init_tenantAuth = __esm({
   "src/middleware/tenantAuth.ts"() {
     "use strict";
-    import_crypto4 = __toESM(require("crypto"), 1);
+    import_crypto5 = __toESM(require("crypto"), 1);
     init_connection();
     init_storeContextService();
     AUTH_SECRET = process.env.STAFF_AUTH_SECRET || "ai_pharmacy_staff_auth_secret_2026";
@@ -52384,22 +56053,22 @@ __export(auth_exports, {
   default: () => auth_default
 });
 function hashPassword2(password, salt) {
-  return import_crypto5.default.pbkdf2Sync(password, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto6.default.pbkdf2Sync(password, salt, 1e3, 32, "sha256").toString("hex");
 }
 function verifyPassword2(password, expectedHash, salt) {
   const computed = hashPassword2(password, salt);
   try {
-    return import_crypto5.default.timingSafeEqual(Buffer.from(computed, "utf8"), Buffer.from(expectedHash, "utf8"));
+    return import_crypto6.default.timingSafeEqual(Buffer.from(computed, "utf8"), Buffer.from(expectedHash, "utf8"));
   } catch (_) {
     return false;
   }
 }
-var import_express23, import_crypto5, router23, auth_default;
+var import_express23, import_crypto6, router23, auth_default;
 var init_auth = __esm({
   "src/routes/auth.ts"() {
     "use strict";
     import_express23 = __toESM(require("express"), 1);
-    import_crypto5 = __toESM(require("crypto"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
     init_connection();
     init_tenantAuth();
     init_storeContextService();
@@ -52915,13 +56584,13 @@ var websiteOrders_exports = {};
 __export(websiteOrders_exports, {
   default: () => websiteOrders_default
 });
-var import_express25, import_fs42, import_path47, router25, broadcastOrdersChanged, websiteOrders_default;
+var import_express25, import_fs44, import_path49, router25, broadcastOrdersChanged, websiteOrders_default;
 var init_websiteOrders = __esm({
   "src/routes/websiteOrders.ts"() {
     "use strict";
     import_express25 = __toESM(require("express"), 1);
-    import_fs42 = __toESM(require("fs"), 1);
-    import_path47 = __toESM(require("path"), 1);
+    import_fs44 = __toESM(require("fs"), 1);
+    import_path49 = __toESM(require("path"), 1);
     init_config();
     init_connection();
     init_returnWindowService();
@@ -53855,17 +57524,17 @@ Thank you for your payment.`;
         }
         const savedUrls = [];
         if (imageList.length > 0) {
-          const uploadsDir = import_path47.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-          if (!import_fs42.default.existsSync(uploadsDir)) {
-            import_fs42.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path49.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+          if (!import_fs44.default.existsSync(uploadsDir)) {
+            import_fs44.default.mkdirSync(uploadsDir, { recursive: true });
           }
           for (let i = 0; i < imageList.length; i++) {
             const rawImg = imageList[i];
             const base64Str = rawImg.replace(/^data:image\/\w+;base64,/, "");
             const buffer = Buffer.from(base64Str, "base64");
             const safeName = `Rx_Web_${Date.now()}_${i + 1}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-            const fullPath = import_path47.default.join(uploadsDir, safeName);
-            import_fs42.default.writeFileSync(fullPath, buffer);
+            const fullPath = import_path49.default.join(uploadsDir, safeName);
+            import_fs44.default.writeFileSync(fullPath, buffer);
             savedUrls.push(`/uploads/prescriptions/${safeName}`);
           }
         }
@@ -53966,2418 +57635,6 @@ Please check counter availability and send me the price estimate and UPI payment
       }
     });
     websiteOrders_default = router25;
-  }
-});
-
-// src/services/catalogImageService.ts
-var import_fs43, import_path48, import_crypto6, DOSAGE_FORMS2, CatalogImageService, catalogImageService;
-var init_catalogImageService = __esm({
-  "src/services/catalogImageService.ts"() {
-    "use strict";
-    import_fs43 = __toESM(require("fs"), 1);
-    import_path48 = __toESM(require("path"), 1);
-    import_crypto6 = __toESM(require("crypto"), 1);
-    init_connection();
-    init_eventService();
-    DOSAGE_FORMS2 = [
-      "TABLET",
-      "TABLETS",
-      "TAB",
-      "TABS",
-      "DT",
-      "CAPSULE",
-      "CAPSULES",
-      "CAP",
-      "CAPS",
-      "SYRUP",
-      "SYP",
-      "SUSPENSION",
-      "SUSP",
-      "INJECTION",
-      "INJ",
-      "IV",
-      "IM",
-      "CREAM",
-      "GEL",
-      "OINTMENT",
-      "OINT",
-      "DROPS",
-      "DROP",
-      "EYE DROPS",
-      "EAR DROPS",
-      "INHALER",
-      "RESPULES",
-      "ROTACAPS",
-      "ROTACAP",
-      "POWDER",
-      "LOTION",
-      "SHAMPOO",
-      "SPRAY",
-      "SOLUTION"
-    ];
-    CatalogImageService = class _CatalogImageService {
-      static instance;
-      static getInstance() {
-        if (!_CatalogImageService.instance) {
-          _CatalogImageService.instance = new _CatalogImageService();
-        }
-        return _CatalogImageService.instance;
-      }
-      /**
-       * Compute SHA-256 hash of an image file for deduplication
-       */
-      computeFileHash(filePath) {
-        try {
-          if (!import_fs43.default.existsSync(filePath)) return null;
-          const buffer = import_fs43.default.readFileSync(filePath);
-          return import_crypto6.default.createHash("sha256").update(buffer).digest("hex");
-        } catch (e) {
-          return null;
-        }
-      }
-      /**
-       * Extract primary dosage form from text
-       */
-      extractDosageForm(text) {
-        if (!text) return null;
-        const upper = text.replace(/[-_.]/g, " ").toUpperCase();
-        for (const form of DOSAGE_FORMS2) {
-          const regex = new RegExp(`\\b${form}\\b`, "i");
-          if (regex.test(upper)) {
-            if (form.startsWith("TAB") || form === "DT") return "TABLET";
-            if (form.startsWith("CAP")) return "CAPSULE";
-            if (form.startsWith("SYP") || form.startsWith("SYRUP") || form.startsWith("SUSP")) return "SYRUP";
-            if (form.startsWith("INJ") || form === "IV" || form === "IM") return "INJECTION";
-            if (form === "GEL" || form === "CREAM" || form.startsWith("OINT")) return "TOPICAL";
-            if (form.startsWith("DROP")) return "DROPS";
-            if (form.startsWith("INH") || form.startsWith("ROTA") || form.startsWith("RESP")) return "INHALER";
-            return form;
-          }
-        }
-        return null;
-      }
-      /**
-       * Extract strength from text (e.g. "20 MG", "500MG", "500/125 MG", "0.5 ML")
-       */
-      extractStrength(text) {
-        if (!text) return null;
-        const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
-        return match ? match[0].toUpperCase().replace(/\s+/g, "") : null;
-      }
-      /**
-       * Extract core brand name (strips dosage, packaging, company brackets)
-       */
-      extractCoreBrand(raw) {
-        if (!raw) return "";
-        let c = raw.replace(/\[.*?\]/g, " ");
-        c = c.replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ");
-        c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, " ");
-        const words = c.split(/[^A-Za-z0-9\+\-]+/).filter((w) => w.length >= 2 && !DOSAGE_FORMS2.includes(w.toUpperCase()));
-        return words[0] ? words[0].toUpperCase() : "";
-      }
-      /**
-       * Multi-Signal AI Confidence Scoring
-       * Evaluates Company (15%), Brand (35%), Strength (20%), Dosage Form (15%), Pack (5%), OCR (10%).
-       */
-      computeConfidence(medicine, candidate) {
-        const medBrand = this.extractCoreBrand(medicine.name);
-        const candUpper = (candidate.name || "").toUpperCase();
-        const pathUpper = (candidate.imagePath || "").replace(/[-_.]/g, " ").toUpperCase();
-        const ocrUpper = (candidate.ocrText || "").toUpperCase();
-        let brandMatch = false;
-        let brandScore = 0;
-        if (medBrand) {
-          const normMedBrand = medBrand.replace(/[-_]/g, " ").trim();
-          const cleanCandStr = (candUpper + " " + pathUpper).replace(/[-_]/g, " ");
-          const candWords = cleanCandStr.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 2);
-          const exactWordMatch = candWords.some((w) => w === medBrand || w === normMedBrand || medBrand.length >= 5 && w.startsWith(medBrand));
-          const wordBoundaryMatch = new RegExp(`\\b${normMedBrand}\\b`, "i").test(cleanCandStr);
-          const subWords = normMedBrand.split(" ").filter((w) => w.length >= 2 && !/^\d+$/.test(w));
-          const subWordMatch = subWords.length > 0 && subWords.every((sw) => new RegExp(`\\b${sw}\\b`, "i").test(cleanCandStr));
-          if (exactWordMatch || wordBoundaryMatch || subWordMatch) {
-            brandMatch = true;
-            brandScore = 35;
-          }
-        }
-        let companyMatch = false;
-        let companyScore = 5;
-        const medMfg = (medicine.manufacturer || "").toUpperCase().trim();
-        const candMfg = (candidate.manufacturer || "").toUpperCase().trim();
-        if (medMfg && candMfg) {
-          const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
-          const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim();
-          if (cleanCandMfg && cleanMedMfg.includes(cleanCandMfg.slice(0, 5))) {
-            companyMatch = true;
-            companyScore = 15;
-          } else {
-            companyScore = 0;
-          }
-        } else if (medMfg && ocrUpper.includes(medMfg.slice(0, 6))) {
-          companyMatch = true;
-          companyScore = 15;
-        }
-        const medStr = this.extractStrength(medicine.strength || "") || this.extractStrength(medicine.name);
-        const candStr = this.extractStrength(candidate.name) || this.extractStrength(candidate.imagePath || "") || this.extractStrength(candidate.ocrText || "");
-        let strengthMatch = false;
-        let strengthConflict = false;
-        let strengthScore = 10;
-        if (medStr && candStr) {
-          if (medStr === candStr) {
-            strengthMatch = true;
-            strengthScore = 20;
-          } else {
-            strengthConflict = true;
-            strengthScore = -40;
-          }
-        } else if (medStr && !candStr) {
-          strengthScore = 10;
-        }
-        const medForm = this.extractDosageForm(medicine.name) || this.extractDosageForm(medicine.packaging || "");
-        const candNameForm = this.extractDosageForm(candidate.name);
-        const candPathForm = this.extractDosageForm(candidate.imagePath || "");
-        const candForm = candNameForm || candPathForm || this.extractDosageForm(candidate.ocrText || "");
-        let dosageFormMatch = false;
-        let dosageFormConflict = false;
-        let dosageFormScore = 8;
-        if (medForm) {
-          if (candNameForm && candNameForm !== medForm) {
-            dosageFormConflict = true;
-            dosageFormScore = -40;
-          } else if (candPathForm && candPathForm !== medForm) {
-            dosageFormConflict = true;
-            dosageFormScore = -40;
-          } else if (candForm === medForm) {
-            dosageFormMatch = true;
-            dosageFormScore = 15;
-          }
-        }
-        let packMatch = false;
-        let packScore = 0;
-        const cleanMedPack = (medicine.packaging || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
-        const cleanCandPack = (candidate.name || "").replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|MCG|IU|%)\b/gi, "");
-        const medPack = cleanMedPack.match(/\b\d+\b/)?.[0];
-        const candPack = cleanCandPack.match(/\b\d+\b/)?.[0];
-        if (medPack && candPack && medPack === candPack) {
-          packMatch = true;
-          packScore = 5;
-        } else if (!medPack || !candPack) {
-          packScore = 4;
-        }
-        let ocrMatch = false;
-        let ocrScore = 0;
-        if (candidate.ocrText && candidate.ocrText.length > 5) {
-          if (medBrand && ocrUpper.includes(medBrand)) {
-            ocrMatch = true;
-            ocrScore = 10;
-          } else if (ocrUpper.length > 40 && !ocrUpper.includes(medBrand) && !brandMatch) {
-            ocrScore = -15;
-          }
-        } else {
-          if (brandMatch) ocrScore = 9;
-        }
-        let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore;
-        let verificationStatus = "PENDING_REVIEW";
-        if (!brandMatch || strengthConflict || dosageFormConflict) {
-          totalScore = Math.min(totalScore, 30);
-          verificationStatus = "REJECTED";
-        } else if (totalScore >= 80) {
-          verificationStatus = "HIGH_CONFIDENCE";
-        } else if (totalScore < 45) {
-          verificationStatus = "REJECTED";
-        } else {
-          verificationStatus = "PENDING_REVIEW";
-        }
-        totalScore = Math.max(0, Math.min(100, Math.round(totalScore)));
-        const reasons = [];
-        if (brandMatch) reasons.push(`Brand matched ("${medBrand}")`);
-        else reasons.push(`Brand mismatch ("${medBrand}" not found)`);
-        if (strengthConflict) reasons.push(`Strength conflict (${medStr} vs ${candStr})`);
-        else if (strengthMatch) reasons.push(`Strength verified (${medStr})`);
-        if (dosageFormConflict) reasons.push(`Dosage form conflict (${medForm} vs ${candForm})`);
-        else if (dosageFormMatch) reasons.push(`Form matched (${medForm})`);
-        if (companyMatch) reasons.push("Manufacturer verified");
-        if (ocrMatch) reasons.push("OCR packaging text verified");
-        return {
-          confidenceScore: totalScore,
-          verificationStatus,
-          reason: reasons.join(" \u2022 "),
-          signals: {
-            brandMatch,
-            brandScore,
-            companyMatch,
-            companyScore,
-            strengthMatch,
-            strengthConflict,
-            strengthScore,
-            dosageFormMatch,
-            dosageFormConflict,
-            dosageFormScore,
-            packMatch,
-            packScore,
-            ocrMatch,
-            ocrScore
-          }
-        };
-      }
-      /**
-       * Fetch paginated catalog images with filtering
-       */
-      async getImages(options) {
-        const db2 = await dbManager.getConnection();
-        const page = Math.max(1, options.page || 1);
-        const limit = Math.min(100, Math.max(1, options.limit || 20));
-        const offset = (page - 1) * limit;
-        let whereSql = "1=1";
-        const params = [];
-        if (options.status && options.status !== "all") {
-          if (options.status === "review" || options.status === "pending") {
-            whereSql += " AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING')";
-          } else if (options.status === "missing_angles") {
-            whereSql += ` AND ci.medicine_id IN (
-          SELECT ci_sub.medicine_id FROM catalog_images ci_sub 
-          WHERE ci_sub.is_active = 1 
-          GROUP BY ci_sub.medicine_id 
-          HAVING COUNT(*) < 2
-        )`;
-          } else if (options.status === "high_confidence") {
-            whereSql += " AND ci.verification_status = 'HIGH_CONFIDENCE'";
-          } else if (options.status === "approved") {
-            whereSql += " AND ci.verification_status = 'APPROVED'";
-          } else if (options.status === "rejected") {
-            whereSql += " AND ci.verification_status = 'REJECTED'";
-          } else if (options.status === "removed") {
-            whereSql += " AND ci.verification_status = 'REMOVED'";
-          } else {
-            whereSql += " AND ci.verification_status = ?";
-            params.push(options.status.toUpperCase());
-          }
-        }
-        if (options.groupByMedicine) {
-          whereSql += " AND (ci.is_primary = 1 OR ci.id = (SELECT MIN(ci3.id) FROM catalog_images ci3 WHERE ci3.medicine_id = ci.medicine_id))";
-        }
-        if (options.medicine_id) {
-          whereSql += " AND ci.medicine_id = ?";
-          params.push(options.medicine_id);
-        }
-        if (options.search) {
-          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
-          const term = `%${options.search}%`;
-          params.push(term, term, term, term);
-        }
-        const countRow = await db2.get(
-          `SELECT COUNT(*) as count 
-       FROM catalog_images ci 
-       LEFT JOIN medicines m ON m.id = ci.medicine_id 
-       WHERE ${whereSql}`,
-          params
-        );
-        const totalCount = countRow ? countRow.count : 0;
-        const rows = await db2.all(
-          `SELECT ci.*, 
-              m.name as medicine_name, 
-              m.generic_name, 
-              m.strength, 
-              m.packaging, 
-              m.mrp, 
-              m.manufacturer,
-              (SELECT COUNT(*) FROM catalog_images ci2 WHERE ci2.medicine_id = ci.medicine_id AND ci2.is_active = 1) as angle_count
-       FROM catalog_images ci 
-       LEFT JOIN medicines m ON m.id = ci.medicine_id 
-       WHERE ${whereSql}
-       ORDER BY 
-         CASE WHEN ci.verification_status = 'PENDING_REVIEW' THEN 1 
-              WHEN ci.verification_status = 'HIGH_CONFIDENCE' THEN 2 
-              ELSE 3 END,
-         ci.confidence_score DESC,
-         ci.id DESC
-       LIMIT ? OFFSET ?`,
-          [...params, limit, offset]
-        );
-        return {
-          images: rows,
-          totalCount,
-          totalPages: Math.ceil(totalCount / limit) || 1,
-          page
-        };
-      }
-      /**
-       * Get counts across all verification buckets for Quick Assist & UI chips
-       */
-      async getCounts() {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          `SELECT verification_status, COUNT(*) as count 
-       FROM catalog_images 
-       GROUP BY verification_status`
-        );
-        const counts = {
-          total: 0,
-          pending_review: 0,
-          high_confidence: 0,
-          approved: 0,
-          rejected: 0,
-          removed: 0,
-          missing_angles: 0
-        };
-        for (const r of rows) {
-          counts.total += r.count;
-          if (r.verification_status === "PENDING_REVIEW" || r.verification_status === "PENDING") counts.pending_review += r.count;
-          else if (r.verification_status === "HIGH_CONFIDENCE") counts.high_confidence = r.count;
-          else if (r.verification_status === "APPROVED") counts.approved = r.count;
-          else if (r.verification_status === "REJECTED") counts.rejected = r.count;
-          else if (r.verification_status === "REMOVED") counts.removed = r.count;
-        }
-        const missingRow = await db2.get(
-          `SELECT COUNT(*) as count FROM (
-         SELECT medicine_id FROM catalog_images WHERE is_active = 1 GROUP BY medicine_id HAVING COUNT(*) < 2
-       )`
-        ).catch(() => ({ count: 0 }));
-        counts.missing_angles = missingRow?.count || 0;
-        return counts;
-      }
-      /**
-       * Approve an image -> marks as APPROVED and active catalogue image for its image_type slot
-       */
-      async approveImage(imageId, verifiedBy = "pharmacist", imageType = "combined", isPrimary) {
-        const db2 = await dbManager.getConnection();
-        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!image) return false;
-        const targetType = imageType || image.image_type || "combined";
-        let primaryVal = isPrimary ? 1 : 0;
-        if (isPrimary === void 0) {
-          if (targetType === "combined") {
-            primaryVal = 1;
-          } else {
-            const existingPrimary = await db2.get(
-              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
-              [image.medicine_id]
-            );
-            primaryVal = existingPrimary ? 0 : 1;
-          }
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
-            [image.medicine_id, targetType, imageId]
-          );
-          if (primaryVal === 1) {
-            await db2.run(
-              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
-              [image.medicine_id, imageId]
-            );
-          }
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'APPROVED', 
-             is_active = 1, 
-             image_type = ?,
-             is_primary = ?,
-             verified_by = ?, 
-             verified_at = CURRENT_TIMESTAMP, 
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [targetType, primaryVal, verifiedBy, imageId]
-          );
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: image.medicine_id,
-            status: "APPROVED",
-            image_type: targetType,
-            is_primary: primaryVal,
-            is_active: 1
-          });
-          return true;
-        } catch (e) {
-          await db2.run("ROLLBACK");
-          throw e;
-        }
-      }
-      /**
-       * Reject an image -> logs rejection to prevent reuse and initiates auto-redownload
-       */
-      async rejectImage(imageId, reason = "Incorrect product image", verifiedBy = "pharmacist") {
-        const db2 = await dbManager.getConnection();
-        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!image) return { success: false, rejectionLogged: false, autoRedownloadTriggered: false };
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'REJECTED', 
-             is_active = 0, 
-             verification_reason = ?, 
-             verified_by = ?, 
-             verified_at = CURRENT_TIMESTAMP, 
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [reason, verifiedBy, imageId]
-          );
-          if (image.source_url || image.image_hash) {
-            await db2.run(
-              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
-           VALUES (?, ?, ?, ?, ?)`,
-              [image.medicine_id, image.source_url || null, image.image_hash || null, image.image_source || "pharmeasy", reason]
-            );
-          }
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: image.medicine_id,
-            status: "REJECTED",
-            is_active: 0
-          });
-          this.searchAndDownloadCandidate(image.medicine_id, (image.retry_count || 0) + 1).catch((err) => {
-            console.error(`[CatalogImageService] Auto-redownload failed for medicine ${image.medicine_id}:`, err.message);
-          });
-          return {
-            success: true,
-            rejectionLogged: true,
-            autoRedownloadTriggered: true
-          };
-        } catch (e) {
-          await db2.run("ROLLBACK");
-          throw e;
-        }
-      }
-      /**
-       * Remove image from catalogue without deleting the medicine
-       */
-      async removeImage(imageId, verifiedBy = "pharmacist") {
-        const db2 = await dbManager.getConnection();
-        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!image) return false;
-        await db2.run(
-          `UPDATE catalog_images 
-       SET verification_status = 'REMOVED', 
-           is_active = 0, 
-           verified_by = ?, 
-           verified_at = CURRENT_TIMESTAMP, 
-           updated_at = CURRENT_TIMESTAMP 
-       WHERE id = ?`,
-          [verifiedBy, imageId]
-        );
-        eventService.broadcast("catalog_image_updated", {
-          id: imageId,
-          medicine_id: image.medicine_id,
-          status: "REMOVED",
-          is_active: 0
-        });
-        return true;
-      }
-      /**
-       * Replace image with a custom uploaded file or URL
-       */
-      async replaceImage(imageId, newImagePath, sourceUrl = null, verifiedBy = "pharmacist") {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return null;
-        const hash = this.computeFileHash(newImagePath);
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            `UPDATE catalog_images 
-         SET is_active = 0, 
-             verification_status = 'REPLACED', 
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [imageId]
-          );
-          const res = await db2.run(
-            `INSERT INTO catalog_images (
-           medicine_id, company_name, product_name, image_path, thumbnail_path,
-           image_source, source_url, image_hash, confidence_score, matching_method,
-           verification_status, is_active, replaced_from_image_id, verified_by, verified_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_replacement', 'APPROVED', 1, ?, ?, CURRENT_TIMESTAMP)`,
-            [
-              current.medicine_id,
-              current.company_name,
-              current.product_name,
-              newImagePath,
-              newImagePath,
-              "manual_upload",
-              sourceUrl,
-              hash,
-              imageId,
-              verifiedBy
-            ]
-          );
-          await db2.run("COMMIT");
-          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
-          eventService.broadcast("catalog_image_updated", {
-            id: res.lastID,
-            medicine_id: current.medicine_id,
-            status: "APPROVED",
-            is_active: 1
-          });
-          return newRecord;
-        } catch (e) {
-          await db2.run("ROLLBACK");
-          throw e;
-        }
-      }
-      /**
-       * Search and download candidate image online, strictly excluding rejected URLs/hashes
-       */
-      async searchAndDownloadCandidate(medicineId, retryCount = 1) {
-        if (retryCount > 3) {
-          console.warn(`[CatalogImageService] Max retry count (3) reached for medicine ID ${medicineId}. Stopping.`);
-          return null;
-        }
-        const db2 = await dbManager.getConnection();
-        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
-        if (!med) return null;
-        const rejections = await db2.all(
-          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
-          [medicineId]
-        );
-        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
-        const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
-        const cleanQuery = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
-        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
-        let products = [];
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            },
-            signal: AbortSignal.timeout(8e3)
-          });
-          if (resp.ok) {
-            const json = await resp.json();
-            products = json?.data?.products || [];
-          }
-        } catch (err) {
-          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
-          return null;
-        }
-        if (products.length === 0) return null;
-        let selectedCandidate = null;
-        let selectedImageUrl = null;
-        for (const prod of products) {
-          const damImages = prod.damImages || [];
-          const frontImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
-          if (!frontImg || !frontImg.url) continue;
-          const candidateUrl = frontImg.url.split("?")[0];
-          if (rejectedUrls.has(candidateUrl)) {
-            continue;
-          }
-          selectedCandidate = prod;
-          selectedImageUrl = candidateUrl;
-          break;
-        }
-        if (!selectedCandidate || !selectedImageUrl) {
-          console.log(`[CatalogImageService] No un-rejected candidate found for medicine ${med.name}`);
-          return null;
-        }
-        const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
-        const filename = `${slug}-candidate-${Date.now()}.jpg`;
-        const frontendDir = import_path48.default.resolve(process.cwd(), "frontend/public/products");
-        const uploadsDir = import_path48.default.resolve(process.cwd(), "uploads/products");
-        import_fs43.default.mkdirSync(frontendDir, { recursive: true });
-        import_fs43.default.mkdirSync(uploadsDir, { recursive: true });
-        const frontendPath = import_path48.default.join(frontendDir, filename);
-        const uploadsPath = import_path48.default.join(uploadsDir, filename);
-        try {
-          const imgRes = await fetch(selectedImageUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-            signal: AbortSignal.timeout(1e4)
-          });
-          if (!imgRes.ok) return null;
-          const buffer = Buffer.from(await imgRes.arrayBuffer());
-          const hash = import_crypto6.default.createHash("sha256").update(buffer).digest("hex");
-          if (rejectedHashes.has(hash)) {
-            console.warn(`[CatalogImageService] Downloaded image content hash matches previously rejected image for medicine ${med.name}.`);
-            return null;
-          }
-          import_fs43.default.writeFileSync(frontendPath, buffer);
-          import_fs43.default.writeFileSync(uploadsPath, buffer);
-          const matchResult = this.computeConfidence(med, {
-            name: selectedCandidate.name,
-            manufacturer: selectedCandidate.manufacturer
-          });
-          const relPath = `/products/${filename}`;
-          const isActive = matchResult.verificationStatus === "HIGH_CONFIDENCE" ? 1 : 0;
-          if (isActive === 1) {
-            await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
-          }
-          const insertRes = await db2.run(
-            `INSERT INTO catalog_images (
-           medicine_id, company_name, product_name, image_path, thumbnail_path,
-           image_source, source_url, image_hash, confidence_score, matching_method,
-           verification_status, verification_reason, is_active, retry_count
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?)`,
-            [
-              med.id,
-              med.manufacturer || null,
-              selectedCandidate.name,
-              relPath,
-              relPath,
-              "pharmeasy",
-              selectedImageUrl,
-              hash,
-              matchResult.confidenceScore,
-              matchResult.verificationStatus,
-              matchResult.reason,
-              isActive,
-              retryCount
-            ]
-          );
-          const record = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [insertRes.lastID]);
-          eventService.broadcast("catalog_image_updated", {
-            id: insertRes.lastID,
-            medicine_id: med.id,
-            status: matchResult.verificationStatus,
-            confidence: matchResult.confidenceScore
-          });
-          return record;
-        } catch (downloadErr) {
-          console.error(`[CatalogImageService] Download error:`, downloadErr.message);
-          return null;
-        }
-      }
-      /**
-       * One-time sync/backfill of existing downloaded images from data/image_download_state.json into catalog_images
-       */
-      async syncExistingDownloadedImages() {
-        const db2 = await dbManager.getConnection();
-        const stateFile = import_path48.default.resolve(process.cwd(), "data/image_download_state.json");
-        if (!import_fs43.default.existsSync(stateFile)) {
-          return { synced: 0, skipped: 0, totalInState: 0 };
-        }
-        const stateData = JSON.parse(import_fs43.default.readFileSync(stateFile, "utf-8"));
-        const products = stateData.products || {};
-        const entries = Object.entries(products);
-        const medRows = await db2.all("SELECT id, name, manufacturer, strength, packaging, mrp FROM medicines");
-        const medMap = /* @__PURE__ */ new Map();
-        for (const m of medRows) {
-          if (m.name) {
-            medMap.set(m.name.trim().toLowerCase(), m);
-          }
-        }
-        const existingImages = await db2.all("SELECT medicine_id, image_path FROM catalog_images");
-        const existingSet = new Set(existingImages.map((r) => `${r.medicine_id}::${r.image_path}`));
-        let synced = 0;
-        let skipped = 0;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (const [rawName, p] of entries) {
-            const item = p;
-            if (item.status !== "success" || !item.images) {
-              skipped++;
-              continue;
-            }
-            const front = item.images.front || item.images["box-front"] || item.images.default || Object.values(item.images)[0];
-            if (!front || !front.url) {
-              skipped++;
-              continue;
-            }
-            let matchedMed = medMap.get(rawName.trim().toLowerCase());
-            if (!matchedMed) {
-              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
-              matchedMed = medMap.get(clean);
-            }
-            if (!matchedMed) {
-              skipped++;
-              continue;
-            }
-            const imageKey = `${matchedMed.id}::${front.url}`;
-            if (existingSet.has(imageKey)) {
-              skipped++;
-              continue;
-            }
-            const matchRes = this.computeConfidence(matchedMed, {
-              name: item.matched_name || matchedMed.name,
-              manufacturer: matchedMed.manufacturer
-            });
-            const status = matchRes.verificationStatus === "HIGH_CONFIDENCE" ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
-            const isActive = status === "HIGH_CONFIDENCE" ? 1 : 0;
-            await db2.run(
-              `INSERT INTO catalog_images (
-             medicine_id, company_name, product_name, image_path, thumbnail_path,
-             image_source, source_url, image_hash, confidence_score, matching_method,
-             verification_status, verification_reason, is_active
-           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, ?, 'ai_multi_signal', ?, ?, ?)`,
-              [
-                matchedMed.id,
-                matchedMed.manufacturer || null,
-                item.matched_name || matchedMed.name,
-                front.url,
-                front.url,
-                front.url,
-                matchRes.confidenceScore,
-                status,
-                matchRes.reason,
-                isActive
-              ]
-            );
-            existingSet.add(imageKey);
-            synced++;
-          }
-          await db2.run("COMMIT");
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-        return { synced, skipped, totalInState: entries.length };
-      }
-      /**
-       * Check if image file physically exists on disk (Section 7 & 15)
-       */
-      verifyImageFileExists(imagePath) {
-        if (!imagePath) return false;
-        const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
-        const p1 = import_path48.default.resolve(process.cwd(), "frontend/public", cleanPath);
-        const p2 = import_path48.default.resolve(process.cwd(), cleanPath);
-        const p3 = import_path48.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
-        return import_fs43.default.existsSync(p1) || import_fs43.default.existsSync(p2) || import_fs43.default.existsSync(p3);
-      }
-      /**
-       * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
-       * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
-       */
-      async resolveProductImage(medicineId, options = { version: true }) {
-        const db2 = await dbManager.getConnection();
-        const row = await db2.get(
-          `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
-       FROM catalog_images 
-       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
-       ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
-          [medicineId]
-        ).catch(() => null);
-        if (!row || !row.image_path) {
-          return null;
-        }
-        if (!this.verifyImageFileExists(row.image_path)) {
-          await db2.run(
-            `UPDATE catalog_images SET is_active = 0, verification_status = 'BROKEN', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [row.id]
-          ).catch(() => null);
-          return null;
-        }
-        let url = row.image_path;
-        if (options.version && row.updated_at) {
-          const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
-          url = `${url}?v=${v}`;
-        }
-        return {
-          url,
-          status: row.verification_status,
-          id: row.id
-        };
-      }
-      /**
-       * Multi-Angle Gallery Resolver for Customer Portal & Website Shop
-       * Resolves up to 4-5 verified angle images per medicine (Combined, Front, Back, Box, Tablet)
-       */
-      async resolveProductImages(medicineId, options = { version: true }) {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
-       FROM catalog_images 
-       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
-       ORDER BY 
-         is_primary DESC,
-         CASE COALESCE(image_type, 'combined')
-           WHEN 'combined' THEN 1
-           WHEN 'front' THEN 2
-           WHEN 'back' THEN 3
-           WHEN 'box' THEN 4
-           WHEN 'tablet' THEN 5
-           ELSE 6
-         END ASC,
-         id DESC`,
-          [medicineId]
-        ).catch(() => []);
-        const gallery = [];
-        const imagesDict = {};
-        const seenTypes = /* @__PURE__ */ new Set();
-        const LABEL_MAP = {
-          combined: "Front & Back (Combined)",
-          front: "Front View",
-          back: "Back / Blister View",
-          box: "Packaging Box",
-          tablet: "Tablet / Pill"
-        };
-        for (const row of rows) {
-          if (!row.image_path) continue;
-          if (!this.verifyImageFileExists(row.image_path)) continue;
-          const type = (row.image_type || "combined").toLowerCase();
-          if (seenTypes.has(type) && gallery.length >= 4) continue;
-          seenTypes.add(type);
-          let url = row.image_path;
-          if (options.version && row.updated_at) {
-            const v = Math.floor(new Date(row.updated_at).getTime() / 1e3) || 1;
-            url = `${url}?v=${v}`;
-          }
-          const item = {
-            url,
-            type,
-            label: LABEL_MAP[type] || "Product View",
-            is_primary: row.is_primary === 1 || gallery.length === 0
-          };
-          gallery.push(item);
-          imagesDict[type] = item;
-          if (gallery.length >= 4) break;
-        }
-        const primary = gallery.find((g) => g.is_primary) || gallery[0] || null;
-        return {
-          primaryUrl: primary ? primary.url : null,
-          images: imagesDict,
-          gallery
-        };
-      }
-      /**
-       * Normalize image state cache angles into structured 3-4 image gallery
-       */
-      extractGalleryFromState(imgData) {
-        if (!imgData || !imgData.images) return [];
-        const gallery = [];
-        const seenTypes = /* @__PURE__ */ new Set();
-        const LABEL_MAP = {
-          combined: "Front & Back (Combined)",
-          front: "Front View",
-          back: "Back / Blister View",
-          box: "Packaging Box",
-          tablet: "Tablet / Pill"
-        };
-        const typeMapping = [
-          { raw: "combo", normalized: "combined" },
-          { raw: "combo-front", normalized: "combined" },
-          { raw: "front", normalized: "front" },
-          { raw: "back", normalized: "back" },
-          { raw: "box-front", normalized: "box" },
-          { raw: "box-back", normalized: "box" },
-          { raw: "box-side", normalized: "box" },
-          { raw: "side", normalized: "tablet" }
-        ];
-        for (const map of typeMapping) {
-          if (seenTypes.has(map.normalized)) continue;
-          const imgObj = imgData.images[map.raw];
-          if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
-            seenTypes.add(map.normalized);
-            gallery.push({
-              url: imgObj.url,
-              type: map.normalized,
-              label: LABEL_MAP[map.normalized] || "Product View",
-              is_primary: map.normalized === "combined" || gallery.length === 0 && !seenTypes.has("combined")
-            });
-          }
-          if (gallery.length >= 4) break;
-        }
-        if (gallery.length === 0) {
-          const keys = Object.keys(imgData.images);
-          for (const k of keys) {
-            const imgObj = imgData.images[k];
-            if (imgObj && imgObj.url && this.verifyImageFileExists(imgObj.url)) {
-              gallery.push({
-                url: imgObj.url,
-                type: "front",
-                label: "Front View",
-                is_primary: true
-              });
-              break;
-            }
-          }
-        }
-        return gallery;
-      }
-      /**
-       * Backfill all available secondary angles (back, box, tablet, combined) from data/image_download_state.json
-       */
-      async syncMultiAngleImages() {
-        const db2 = await dbManager.getConnection();
-        const stateFile = import_path48.default.resolve(process.cwd(), "data/image_download_state.json");
-        if (!import_fs43.default.existsSync(stateFile)) {
-          return { added: 0, total: 0 };
-        }
-        const stateData = JSON.parse(import_fs43.default.readFileSync(stateFile, "utf-8"));
-        const products = stateData.products || {};
-        const entries = Object.entries(products);
-        const meds = await db2.all("SELECT id, name, manufacturer FROM medicines");
-        const medMap = /* @__PURE__ */ new Map();
-        for (const m of meds) {
-          if (m.name) medMap.set(m.name.trim().toLowerCase(), m);
-        }
-        const existing = await db2.all("SELECT medicine_id, image_path, image_type FROM catalog_images");
-        const existingSet = new Set(existing.map((e) => `${e.medicine_id}::${e.image_path}`));
-        const existingTypes = /* @__PURE__ */ new Map();
-        for (const e of existing) {
-          if (!existingTypes.has(e.medicine_id)) existingTypes.set(e.medicine_id, /* @__PURE__ */ new Set());
-          existingTypes.get(e.medicine_id).add(e.image_type || "combined");
-        }
-        const typeMapping = [
-          { raw: "combo", normalized: "combined", slot: 1 },
-          { raw: "combo-front", normalized: "combined", slot: 1 },
-          { raw: "front", normalized: "front", slot: 2 },
-          { raw: "back", normalized: "back", slot: 3 },
-          { raw: "box-front", normalized: "box", slot: 4 },
-          { raw: "box-back", normalized: "box", slot: 4 },
-          { raw: "side", normalized: "tablet", slot: 5 }
-        ];
-        let added = 0;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (const [rawName, p] of entries) {
-            const item = p;
-            if (item.status !== "success" || !item.images) continue;
-            let med = medMap.get(rawName.trim().toLowerCase());
-            if (!med) {
-              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
-              med = medMap.get(clean);
-            }
-            if (!med) continue;
-            const currentTypes = existingTypes.get(med.id) || /* @__PURE__ */ new Set();
-            for (const tm of typeMapping) {
-              const imgObj = item.images[tm.raw];
-              if (!imgObj || !imgObj.url) continue;
-              if (!this.verifyImageFileExists(imgObj.url)) continue;
-              const key = `${med.id}::${imgObj.url}`;
-              if (existingSet.has(key)) continue;
-              if (currentTypes.has(tm.normalized)) continue;
-              const isPrimary = tm.normalized === "combined" ? 1 : 0;
-              await db2.run(
-                `INSERT INTO catalog_images (
-               medicine_id, company_name, product_name, image_path, thumbnail_path,
-               image_source, source_url, image_hash, confidence_score, matching_method,
-               verification_status, verification_reason, is_active, image_type, is_primary, slot_number
-             ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, NULL, 90, 'state_sync', 'HIGH_CONFIDENCE', 'Downloaded angle', 1, ?, ?, ?)`,
-                [
-                  med.id,
-                  med.manufacturer || null,
-                  item.matched_name || med.name,
-                  imgObj.url,
-                  imgObj.url,
-                  imgObj.url,
-                  tm.normalized,
-                  isPrimary,
-                  tm.slot
-                ]
-              );
-              currentTypes.add(tm.normalized);
-              existingSet.add(key);
-              added++;
-            }
-          }
-          await db2.run("COMMIT");
-        } catch (e) {
-          await db2.run("ROLLBACK");
-          throw e;
-        }
-        return { added, total: entries.length };
-      }
-      /**
-       * Multi-tier query generation for pharmaceutical search (Section 10 & 34)
-       */
-      generateAccurateQueries(rawName, mfg) {
-        const queries = [];
-        const clean = rawName.replace(/\[.*?\]/g, " ").replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ").replace(/\s+/g, " ").trim();
-        if (/^BUDETROL\b/i.test(rawName)) {
-          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "400";
-          queries.push(`Budetrol ${str}`, `Budetrol Inhalation`);
-        } else if (/^THYROX\b/i.test(rawName)) {
-          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
-          queries.push(`Thyrox ${str} Macleods`, `Thyrox ${str}`, `Thyrox`);
-        } else if (/^DAPARYL\b/i.test(rawName)) {
-          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
-          queries.push(`Daparyl ${str}`, `Daparyl`);
-        } else if (/^VOGS M\b/i.test(rawName)) {
-          const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "";
-          queries.push(`Vogs M ${str}`, `Vogs M`);
-        } else if (/^O2 TAB/i.test(rawName)) {
-          queries.push("O2 Tablet", "O2 Medley Tablet");
-        }
-        const brand = this.extractCoreBrand(rawName);
-        const strength = this.extractStrength(rawName);
-        if (brand && strength) {
-          queries.push(`${brand} ${strength}`);
-        }
-        queries.push(clean);
-        if (brand && mfg) {
-          const cleanMfg = mfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim().split(/\s+/)[0];
-          if (cleanMfg && cleanMfg.length >= 3) {
-            queries.push(`${brand} ${cleanMfg}`);
-          }
-        }
-        if (brand) {
-          queries.push(brand);
-        }
-        return Array.from(new Set(queries.filter((q) => q && q.trim().length >= 2)));
-      }
-      /**
-       * Batch auto-approve high-confidence pending images (Section 10 & 34)
-       * Promotes PENDING_REVIEW images with score >= 80% and verified physical file to HIGH_CONFIDENCE and active.
-       */
-      async autoApproveHighConfidence() {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.confidence_score, ci.image_path,
-              m.name as med_name, m.manufacturer, m.strength, m.packaging
-       FROM catalog_images ci
-       JOIN medicines m ON m.id = ci.medicine_id
-       WHERE ci.is_active = 0 AND ci.verification_status IN ('PENDING_REVIEW', 'HIGH_CONFIDENCE')`
-        );
-        let approved = 0;
-        let skipped = 0;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (const row of rows) {
-            if (!this.verifyImageFileExists(row.image_path)) {
-              skipped++;
-              continue;
-            }
-            const matchRes = this.computeConfidence(
-              {
-                name: row.med_name,
-                manufacturer: row.manufacturer,
-                strength: row.strength,
-                packaging: row.packaging
-              },
-              {
-                name: row.product_name,
-                manufacturer: row.manufacturer
-              }
-            );
-            if (matchRes.verificationStatus === "HIGH_CONFIDENCE" || matchRes.confidenceScore >= 80) {
-              await db2.run(
-                "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND id != ?",
-                [row.medicine_id, row.id]
-              );
-              await db2.run(
-                `UPDATE catalog_images 
-             SET verification_status = 'HIGH_CONFIDENCE',
-                 confidence_score = ?,
-                 verification_reason = ?,
-                 is_active = 1,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-                [matchRes.confidenceScore, matchRes.reason, row.id]
-              );
-              approved++;
-            } else {
-              skipped++;
-            }
-          }
-          await db2.run("COMMIT");
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-        eventService.broadcast("catalog_image_updated", {
-          action: "auto_approve_completed",
-          approved,
-          evaluated: rows.length
-        });
-        return { evaluated: rows.length, approved, skipped };
-      }
-      /**
-       * Image Health Auditor (Section 6, 7, 19, 34 of PRODUCT IMAGE MISSING.MD)
-       * Audits all database medicines and monthly refill catalog items.
-       */
-      async auditImageHealth() {
-        const db2 = await dbManager.getConnection();
-        const totalMedsRow = await db2.get("SELECT COUNT(*) as count FROM medicines");
-        const totalMedicines = totalMedsRow ? totalMedsRow.count : 0;
-        const statusRows = await db2.all(
-          `SELECT verification_status, is_active, COUNT(*) as count 
-       FROM catalog_images 
-       GROUP BY verification_status, is_active`
-        );
-        let approved = 0;
-        let highConfidence = 0;
-        let pendingReview = 0;
-        let rejected = 0;
-        for (const r of statusRows) {
-          if (r.verification_status === "APPROVED") approved += r.count;
-          else if (r.verification_status === "HIGH_CONFIDENCE") highConfidence += r.count;
-          else if (r.verification_status === "PENDING_REVIEW") pendingReview += r.count;
-          else if (r.verification_status === "REJECTED") rejected += r.count;
-        }
-        const activeRows = await db2.all(
-          `SELECT id, medicine_id, image_path FROM catalog_images WHERE is_active = 1`
-        );
-        let healthyActive = 0;
-        let broken = 0;
-        for (const img of activeRows) {
-          if (this.verifyImageFileExists(img.image_path)) {
-            healthyActive++;
-          } else {
-            broken++;
-          }
-        }
-        const refillMissingItems = [];
-        let refillCatalogMedicines = 0;
-        try {
-          const csvPath = import_path48.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-          if (import_fs43.default.existsSync(csvPath)) {
-            const content = import_fs43.default.readFileSync(csvPath, "utf-8");
-            const lines = content.split(/\r?\n/).slice(1);
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              refillCatalogMedicines++;
-              const parts = line.split(",");
-              const category = parts[0]?.replace(/^"|"$/g, "").trim() || "";
-              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
-              if (!name) continue;
-              const med = await db2.get(
-                `SELECT id FROM medicines WHERE name = ? OR name LIKE ? LIMIT 1`,
-                [name, `${name.split(" ")[0]}%`]
-              );
-              if (!med) {
-                refillMissingItems.push({ name, category, reason: "Medicine not linked in DB" });
-                continue;
-              }
-              const activeImg = await db2.get(
-                `SELECT image_path FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1`,
-                [med.id]
-              );
-              if (!activeImg) {
-                refillMissingItems.push({ name, category, reason: "No active image record" });
-              } else if (!this.verifyImageFileExists(activeImg.image_path)) {
-                refillMissingItems.push({ name, category, reason: "Physical image file missing on disk" });
-              }
-            }
-          }
-        } catch (_) {
-        }
-        const missing = Math.max(0, totalMedicines - healthyActive);
-        return {
-          summary: {
-            totalMedicines,
-            refillCatalogMedicines,
-            healthyActive,
-            missing,
-            broken,
-            pendingReview,
-            approved,
-            highConfidence,
-            rejected
-          },
-          refillMissingItems
-        };
-      }
-      /**
-       * Bulk Missing Image Re-check & Auto-Repair Pipeline (Section 18 & 34 of PRODUCT IMAGE MISSING.MD)
-       * Scans medicines that lack an active verified image, generates tiered queries, downloads candidates,
-       * validates against product brand and strength, and activates high-confidence images.
-       */
-      async repairMissingImages(limit = 50) {
-        const db2 = await dbManager.getConnection();
-        const results = [];
-        const targetMeds = [];
-        const seenIds = /* @__PURE__ */ new Set();
-        try {
-          const csvPath = import_path48.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-          if (import_fs43.default.existsSync(csvPath)) {
-            const content = import_fs43.default.readFileSync(csvPath, "utf-8");
-            const lines = content.split(/\r?\n/).slice(1);
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              const parts = line.split(",");
-              const name = parts[1]?.replace(/^"|"$/g, "").trim() || "";
-              if (!name) continue;
-              const med = await db2.get(
-                `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging,
-                    (SELECT COUNT(*) FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) as active_count
-             FROM medicines m WHERE m.name = ? OR m.name LIKE ? LIMIT 1`,
-                [name, `${name.split(" ")[0]}%`]
-              );
-              if (med && med.active_count === 0 && !seenIds.has(med.id)) {
-                seenIds.add(med.id);
-                targetMeds.push(med);
-                if (targetMeds.length >= limit) break;
-              }
-            }
-          }
-        } catch (_) {
-        }
-        if (targetMeds.length < limit) {
-          const remainingLimit = limit - targetMeds.length;
-          const additional = await db2.all(
-            `SELECT m.id, m.name, m.manufacturer, m.strength, m.packaging
-         FROM medicines m
-         WHERE m.id NOT IN (SELECT medicine_id FROM catalog_images WHERE is_active = 1)
-         ORDER BY m.id ASC
-         LIMIT ?`,
-            [remainingLimit]
-          );
-          for (const m of additional) {
-            if (!seenIds.has(m.id)) {
-              seenIds.add(m.id);
-              targetMeds.push(m);
-            }
-          }
-        }
-        let repaired = 0;
-        let failed = 0;
-        for (const med of targetMeds) {
-          try {
-            const queries = this.generateAccurateQueries(med.name, med.manufacturer);
-            let matchedCandidate = null;
-            let matchedImageUrl = null;
-            let bestScoreResult = null;
-            const rejections = await db2.all(
-              "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
-              [med.id]
-            );
-            const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
-            const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
-            for (const query of queries) {
-              const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
-              try {
-                const resp = await fetch(url, {
-                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-                  signal: AbortSignal.timeout(6e3)
-                });
-                if (!resp.ok) continue;
-                const json = await resp.json();
-                const products = json?.data?.products || [];
-                for (const prod of products) {
-                  const damImages = prod.damImages || [];
-                  const frontImg = damImages.find((img) => img.face === "front" || img.face === "box-front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
-                  if (!frontImg || !frontImg.url) continue;
-                  const candidateUrl = frontImg.url.split("?")[0];
-                  if (rejectedUrls.has(candidateUrl)) continue;
-                  const matchRes = this.computeConfidence(med, {
-                    name: prod.name,
-                    manufacturer: prod.manufacturer
-                  });
-                  if (matchRes.verificationStatus === "REJECTED" || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict) {
-                    continue;
-                  }
-                  if (matchRes.confidenceScore >= 75) {
-                    matchedCandidate = prod;
-                    matchedImageUrl = candidateUrl;
-                    bestScoreResult = matchRes;
-                    break;
-                  }
-                }
-              } catch (_) {
-              }
-              if (matchedCandidate) break;
-              await new Promise((r) => setTimeout(r, 100));
-            }
-            if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
-              failed++;
-              results.push({
-                medicine_id: med.id,
-                name: med.name,
-                status: "NOT_FOUND",
-                reason: "No high-confidence non-conflicting online image candidate found"
-              });
-              continue;
-            }
-            const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 50);
-            const filename = `${slug}-${Date.now()}.jpg`;
-            const frontendDir = import_path48.default.resolve(process.cwd(), "frontend/public/products");
-            const uploadsDir = import_path48.default.resolve(process.cwd(), "uploads/products");
-            import_fs43.default.mkdirSync(frontendDir, { recursive: true });
-            import_fs43.default.mkdirSync(uploadsDir, { recursive: true });
-            const frontendPath = import_path48.default.join(frontendDir, filename);
-            const uploadsPath = import_path48.default.join(uploadsDir, filename);
-            const imgRes = await fetch(matchedImageUrl, {
-              headers: { "User-Agent": "Mozilla/5.0" },
-              signal: AbortSignal.timeout(8e3)
-            });
-            if (!imgRes.ok) {
-              failed++;
-              results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
-              continue;
-            }
-            const buffer = Buffer.from(await imgRes.arrayBuffer());
-            const hash = import_crypto6.default.createHash("sha256").update(buffer).digest("hex");
-            if (rejectedHashes.has(hash)) {
-              failed++;
-              results.push({ medicine_id: med.id, name: med.name, status: "HASH_BLACKLISTED" });
-              continue;
-            }
-            import_fs43.default.writeFileSync(frontendPath, buffer);
-            import_fs43.default.writeFileSync(uploadsPath, buffer);
-            const relPath = `/products/${filename}`;
-            const isHighConfidence = bestScoreResult.verificationStatus === "HIGH_CONFIDENCE" || bestScoreResult.confidenceScore >= 80;
-            const status = isHighConfidence ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
-            const isActive = isHighConfidence ? 1 : 0;
-            await db2.run("BEGIN TRANSACTION");
-            if (isActive === 1) {
-              await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
-            }
-            await db2.run(
-              `INSERT INTO catalog_images (
-             medicine_id, company_name, product_name, image_path, thumbnail_path,
-             image_source, source_url, image_hash, confidence_score, matching_method,
-             verification_status, verification_reason, is_active
-           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
-              [
-                med.id,
-                med.manufacturer || null,
-                matchedCandidate.name,
-                relPath,
-                relPath,
-                matchedImageUrl,
-                hash,
-                bestScoreResult.confidenceScore,
-                status,
-                bestScoreResult.reason,
-                isActive
-              ]
-            );
-            await db2.run("COMMIT");
-            try {
-              const stateFile = import_path48.default.resolve(process.cwd(), "data/image_download_state.json");
-              if (import_fs43.default.existsSync(stateFile)) {
-                const state = JSON.parse(import_fs43.default.readFileSync(stateFile, "utf-8"));
-                if (!state.products) state.products = {};
-                state.products[med.name] = {
-                  status: "success",
-                  matched_name: matchedCandidate.name,
-                  slug,
-                  images: {
-                    front: {
-                      fileName: filename,
-                      url: relPath,
-                      uploadsUrl: `/uploads/products/${filename}`,
-                      bytes: buffer.length
-                    }
-                  },
-                  verified: isHighConfidence,
-                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
-                };
-                state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
-                import_fs43.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
-              }
-            } catch (_) {
-            }
-            repaired++;
-            results.push({
-              medicine_id: med.id,
-              name: med.name,
-              status,
-              matched_name: matchedCandidate.name,
-              reason: bestScoreResult.reason
-            });
-          } catch (err) {
-            failed++;
-            results.push({
-              medicine_id: med.id,
-              name: med.name,
-              status: "ERROR",
-              reason: err.message
-            });
-          }
-        }
-        eventService.broadcast("catalog_image_updated", {
-          action: "repair_batch_completed",
-          repaired,
-          failed,
-          scanned: targetMeds.length
-        });
-        return {
-          scanned: targetMeds.length,
-          repaired,
-          failed,
-          results
-        };
-      }
-      /**
-       * Dedicated Correction Queue:
-       * Returns unresolved images (PENDING_REVIEW, PENDING, INCORRECT)
-       * where next_review_at is NULL or <= CURRENT_TIMESTAMP.
-       * Excludes CORRECT, APPROVED, CORRECTED, and active SKIPPED.
-       */
-      async getCorrectionQueue(options) {
-        const db2 = await dbManager.getConnection();
-        const page = Math.max(1, options.page || 1);
-        const limit = Math.min(100, Math.max(1, options.limit || 20));
-        const offset = (page - 1) * limit;
-        let whereSql = "1=1";
-        const params = [];
-        const statusMode = options.status || "unresolved";
-        if (statusMode === "unresolved") {
-          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT') 
-                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
-        } else if (statusMode === "pending") {
-          whereSql += ` AND ci.verification_status IN ('PENDING_REVIEW', 'PENDING') 
-                    AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`;
-        } else if (statusMode === "incorrect") {
-          whereSql += ` AND ci.verification_status = 'INCORRECT'`;
-        } else if (statusMode === "skipped") {
-          whereSql += ` AND ci.verification_status = 'SKIPPED' AND ci.next_review_at > CURRENT_TIMESTAMP`;
-        }
-        if (options.category && options.category !== "all" && options.category !== "All Categories") {
-          whereSql += ` AND (m.category = ? OR m.packaging LIKE ? OR m.name LIKE ?)`;
-          params.push(options.category, `%${options.category}%`, `%${options.category}%`);
-        }
-        if (options.search) {
-          whereSql += " AND (ci.product_name LIKE ? OR m.name LIKE ? OR ci.company_name LIKE ? OR m.generic_name LIKE ?)";
-          const term = `%${options.search}%`;
-          params.push(term, term, term, term);
-        }
-        const countRow = await db2.get(
-          `SELECT COUNT(*) as count 
-       FROM catalog_images ci 
-       LEFT JOIN medicines m ON m.id = ci.medicine_id 
-       WHERE ${whereSql}`,
-          params
-        );
-        const totalCount = countRow ? countRow.count : 0;
-        const rows = await db2.all(
-          `SELECT ci.*, 
-              m.name as medicine_name, 
-              m.generic_name, 
-              m.strength, 
-              m.packaging, 
-              m.mrp, 
-              m.manufacturer,
-              m.category
-       FROM catalog_images ci 
-       LEFT JOIN medicines m ON m.id = ci.medicine_id 
-       WHERE ${whereSql}
-       ORDER BY 
-         CASE WHEN ci.verification_status = 'INCORRECT' THEN 1
-              WHEN ci.verification_status IN ('PENDING_REVIEW', 'PENDING') THEN 2
-              ELSE 3 END,
-         ci.id ASC
-       LIMIT ? OFFSET ?`,
-          [...params, limit, offset]
-        );
-        const categoryTokens = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "CREAM", "DROPS", "POWDER"];
-        const categories = [];
-        const unresolvedTotal = await db2.get(
-          `SELECT COUNT(*) as count 
-       FROM catalog_images ci 
-       WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
-         AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)`
-        );
-        categories.push({ category: "All Categories", count: unresolvedTotal?.count || 0 });
-        for (const token of categoryTokens) {
-          const catCount = await db2.get(
-            `SELECT COUNT(*) as count 
-         FROM catalog_images ci 
-         LEFT JOIN medicines m ON m.id = ci.medicine_id 
-         WHERE ci.verification_status IN ('PENDING_REVIEW', 'PENDING', 'INCORRECT')
-           AND (ci.next_review_at IS NULL OR ci.next_review_at <= CURRENT_TIMESTAMP)
-           AND (m.packaging LIKE ? OR m.name LIKE ?)`,
-            [`%${token}%`, `%${token}%`]
-          );
-          if (catCount && catCount.count > 0) {
-            categories.push({ category: token, count: catCount.count });
-          }
-        }
-        return {
-          images: rows,
-          totalCount,
-          totalPages: Math.ceil(totalCount / limit) || 1,
-          page,
-          categories
-        };
-      }
-      /**
-       * Quality Dashboard & Verification Stats
-       */
-      async getCorrectionStats() {
-        const db2 = await dbManager.getConnection();
-        const pendingRow = await db2.get(
-          `SELECT COUNT(*) as c FROM catalog_images 
-       WHERE verification_status IN ('PENDING_REVIEW', 'PENDING')
-         AND (next_review_at IS NULL OR next_review_at <= CURRENT_TIMESTAMP)`
-        );
-        const incorrectRow = await db2.get(
-          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'INCORRECT'`
-        );
-        const correctedRow = await db2.get(
-          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'CORRECTED'`
-        );
-        const verifiedRow = await db2.get(
-          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status IN ('APPROVED', 'CORRECT')`
-        );
-        const skippedRow = await db2.get(
-          `SELECT COUNT(*) as c FROM catalog_images WHERE verification_status = 'SKIPPED' AND next_review_at > CURRENT_TIMESTAMP`
-        );
-        const totalRow = await db2.get(`SELECT COUNT(*) as c FROM catalog_images`);
-        const verifiedTodayRow = await db2.get(
-          `SELECT COUNT(*) as c FROM image_review_history 
-       WHERE action = 'MARK_CORRECT' AND DATE(performed_at) = DATE('now')`
-        );
-        const correctedTodayRow = await db2.get(
-          `SELECT COUNT(*) as c FROM image_review_history 
-       WHERE action = 'IMAGE_REPLACED' AND DATE(performed_at) = DATE('now')`
-        );
-        const pending2 = pendingRow?.c || 0;
-        const incorrect = incorrectRow?.c || 0;
-        const corrected = correctedRow?.c || 0;
-        const verified = verifiedRow?.c || 0;
-        const skipped = skippedRow?.c || 0;
-        const total = totalRow?.c || 0;
-        const accurateCount = verified + corrected;
-        const evaluatedTotal = accurateCount + incorrect + pending2;
-        const accuracyPercent = evaluatedTotal > 0 ? Math.round(accurateCount / evaluatedTotal * 100) : 100;
-        return {
-          pending: pending2,
-          incorrect,
-          corrected,
-          verified,
-          skipped,
-          total,
-          accuracyPercent,
-          verifiedToday: verifiedTodayRow?.c || 0,
-          correctedToday: correctedTodayRow?.c || 0
-        };
-      }
-      /**
-       * Action: Mark image as CORRECT
-       */
-      async markImageCorrect(imageId, verifiedBy = "admin", imageType, isPrimary) {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return false;
-        const targetType = imageType || current.image_type || "combined";
-        let primaryVal = isPrimary ? 1 : 0;
-        if (isPrimary === void 0) {
-          if (targetType === "combined") {
-            primaryVal = 1;
-          } else {
-            const existingPrimary = await db2.get(
-              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
-              [current.medicine_id]
-            );
-            primaryVal = existingPrimary ? 0 : 1;
-          }
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
-            [current.medicine_id, targetType, imageId]
-          );
-          if (primaryVal === 1) {
-            await db2.run(
-              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
-              [current.medicine_id, imageId]
-            );
-          }
-          const nextVersion = (current.verification_version || 1) + 1;
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'APPROVED', 
-             is_active = 1, 
-             image_type = ?,
-             is_primary = ?,
-             verified_by = ?, 
-             verified_at = CURRENT_TIMESTAMP, 
-             verification_version = ?,
-             locked_by = NULL,
-             locked_at = NULL,
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [targetType, primaryVal, verifiedBy, nextVersion, imageId]
-          );
-          await db2.run(
-            `INSERT INTO image_review_history (
-           product_image_id, medicine_id, previous_status, new_status,
-           previous_image_url, new_image_url, action, reason, performed_by
-         ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'MARK_CORRECT', 'Confirmed correct by human agent', ?)`,
-            [
-              imageId,
-              current.medicine_id,
-              current.verification_status,
-              current.image_path,
-              current.image_path,
-              verifiedBy
-            ]
-          );
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: current.medicine_id,
-            status: "APPROVED",
-            image_type: targetType,
-            is_primary: primaryVal,
-            is_active: 1
-          });
-          return true;
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-      }
-      /**
-       * Action: Mark image as INCORRECT or trigger smart angle workflow
-       */
-      async markImageIncorrect(imageId, reason = "Incorrect image", verifiedBy = "admin", reasonCode) {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return { success: false, message: "Image not found" };
-        if (reasonCode === "NEED_BACKSIDE") {
-          await db2.run("BEGIN TRANSACTION");
-          try {
-            await db2.run(
-              `UPDATE catalog_images 
-           SET image_type = 'front', 
-               verification_status = 'APPROVED', 
-               is_active = 1,
-               verified_by = ?, 
-               verified_at = CURRENT_TIMESTAMP,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-              [verifiedBy, imageId]
-            );
-            await db2.run(
-              `INSERT INTO image_review_history (
-             product_image_id, medicine_id, previous_status, new_status,
-             previous_image_url, new_image_url, action, reason, performed_by
-           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_BACKSIDE', ?, ?)`,
-              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
-            );
-            await db2.run("COMMIT");
-            eventService.broadcast("catalog_image_updated", {
-              id: imageId,
-              medicine_id: current.medicine_id,
-              status: "APPROVED",
-              image_type: "front",
-              is_active: 1
-            });
-            return {
-              success: true,
-              action: "search_candidate",
-              targetType: "back",
-              medicineId: current.medicine_id,
-              message: "Front image verified! Opening search for Backside image."
-            };
-          } catch (err) {
-            await db2.run("ROLLBACK");
-            throw err;
-          }
-        }
-        if (reasonCode === "NEED_FRONT") {
-          await db2.run("BEGIN TRANSACTION");
-          try {
-            await db2.run(
-              `UPDATE catalog_images 
-           SET image_type = 'back', 
-               verification_status = 'APPROVED', 
-               is_active = 1,
-               verified_by = ?, 
-               verified_at = CURRENT_TIMESTAMP,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-              [verifiedBy, imageId]
-            );
-            await db2.run(
-              `INSERT INTO image_review_history (
-             product_image_id, medicine_id, previous_status, new_status,
-             previous_image_url, new_image_url, action, reason, performed_by
-           ) VALUES (?, ?, ?, 'APPROVED', ?, ?, 'NEED_FRONT', ?, ?)`,
-              [imageId, current.medicine_id, current.verification_status, current.image_path, current.image_path, reason, verifiedBy]
-            );
-            await db2.run("COMMIT");
-            eventService.broadcast("catalog_image_updated", {
-              id: imageId,
-              medicine_id: current.medicine_id,
-              status: "APPROVED",
-              image_type: "back",
-              is_active: 1
-            });
-            return {
-              success: true,
-              action: "search_candidate",
-              targetType: "front",
-              medicineId: current.medicine_id,
-              message: "Current image saved as Back! Opening search for Front image."
-            };
-          } catch (err) {
-            await db2.run("ROLLBACK");
-            throw err;
-          }
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          const nextVersion = (current.verification_version || 1) + 1;
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'INCORRECT', 
-             is_active = 0, 
-             verification_reason = ?, 
-             verified_by = ?, 
-             verified_at = CURRENT_TIMESTAMP, 
-             verification_version = ?,
-             locked_by = NULL,
-             locked_at = NULL,
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [reason, verifiedBy, nextVersion, imageId]
-          );
-          if (current.source_url || current.image_hash) {
-            await db2.run(
-              `INSERT INTO catalog_image_rejections (medicine_id, rejected_image_url, rejected_image_hash, rejected_source, reason) 
-           VALUES (?, ?, ?, ?, ?)`,
-              [current.medicine_id, current.source_url || null, current.image_hash || null, current.image_source || "pharmeasy", reason]
-            );
-          }
-          await db2.run(
-            `INSERT INTO image_review_history (
-           product_image_id, medicine_id, previous_status, new_status,
-           previous_image_url, new_image_url, action, reason, performed_by
-         ) VALUES (?, ?, ?, 'INCORRECT', ?, ?, 'MARK_INCORRECT', ?, ?)`,
-            [
-              imageId,
-              current.medicine_id,
-              current.verification_status,
-              current.image_path,
-              current.image_path,
-              reason,
-              verifiedBy
-            ]
-          );
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: current.medicine_id,
-            status: "INCORRECT",
-            is_active: 0
-          });
-          return {
-            success: true,
-            action: "flagged_incorrect",
-            medicineId: current.medicine_id,
-            message: "Image flagged as incorrect."
-          };
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-      }
-      /**
-       * Action: Skip image review temporarily with cooldown
-       */
-      async skipImage(imageId, hours = 24, reason = "Temporarily skipped", verifiedBy = "admin") {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return false;
-        const nextReview = new Date(Date.now() + hours * 3600 * 1e3).toISOString();
-        const nextVersion = (current.verification_version || 1) + 1;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'SKIPPED', 
-             skip_reason = ?, 
-             next_review_at = ?, 
-             verification_version = ?,
-             locked_by = NULL,
-             locked_at = NULL,
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [reason, nextReview, nextVersion, imageId]
-          );
-          await db2.run(
-            `INSERT INTO image_review_history (
-           product_image_id, medicine_id, previous_status, new_status,
-           previous_image_url, new_image_url, action, reason, performed_by, metadata
-         ) VALUES (?, ?, ?, 'SKIPPED', ?, ?, 'IMAGE_SKIPPED', ?, ?, ?)`,
-            [
-              imageId,
-              current.medicine_id,
-              current.verification_status,
-              current.image_path,
-              current.image_path,
-              reason,
-              verifiedBy,
-              JSON.stringify({ next_review_at: nextReview, skip_hours: hours })
-            ]
-          );
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: current.medicine_id,
-            status: "SKIPPED",
-            next_review_at: nextReview
-          });
-          return true;
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-      }
-      /**
-       * Search internet candidate images for review & correction
-       */
-      async searchCandidates(medicineId, queryOverride, imageType = "combined") {
-        const db2 = await dbManager.getConnection();
-        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [medicineId]);
-        if (!med) return [];
-        const rejections = await db2.all(
-          "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
-          [medicineId]
-        );
-        const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
-        const baseQuery = queryOverride && queryOverride.trim() ? queryOverride.trim() : this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, "").trim();
-        let cleanQuery = baseQuery;
-        if (imageType === "back" && !cleanQuery.toLowerCase().includes("back")) {
-          cleanQuery += " back";
-        }
-        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
-        let products = [];
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            },
-            signal: AbortSignal.timeout(8e3)
-          });
-          if (resp.ok) {
-            const json = await resp.json();
-            products = json?.data?.products || [];
-          }
-        } catch (err) {
-          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
-        }
-        const candidates = [];
-        for (const prod of products) {
-          const damImages = prod.damImages || [];
-          let targetImg = null;
-          if (imageType === "back") {
-            targetImg = damImages.find((img) => img.face === "back" || img.url && img.url.toLowerCase().includes("back"));
-            if (!targetImg && damImages.length > 1) targetImg = damImages[1];
-          } else if (imageType === "front") {
-            targetImg = damImages.find((img) => img.face === "front" || img.face === "default");
-          }
-          if (!targetImg) {
-            targetImg = damImages.find((img) => img.face === "front" || img.face === "default") || (prod.image ? { url: prod.image } : null);
-          }
-          if (!targetImg || !targetImg.url) continue;
-          const candidateUrl = targetImg.url.split("?")[0];
-          if (rejectedUrls.has(candidateUrl)) continue;
-          const scoreResult = this.computeConfidence(med, {
-            name: prod.name,
-            manufacturer: prod.manufacturer
-          });
-          candidates.push({
-            id: String(prod.productId || candidateUrl),
-            name: prod.name,
-            manufacturer: prod.manufacturer || "Unknown",
-            imageUrl: candidateUrl,
-            source: "pharmeasy",
-            confidenceScore: scoreResult.confidenceScore,
-            verificationStatus: scoreResult.verificationStatus,
-            reason: scoreResult.reason,
-            signals: scoreResult.signals
-          });
-        }
-        candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
-        return candidates;
-      }
-      /**
-       * Action: Replace or add image with chosen candidate & mark as CORRECTED
-       */
-      async replaceWithCandidate(imageId, candidateUrl, candidateTitle, verifiedBy = "admin", imageType, isPrimary, keepExisting = false) {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return null;
-        const med = await db2.get("SELECT * FROM medicines WHERE id = ?", [current.medicine_id]);
-        if (!med) return null;
-        const targetType = imageType || (keepExisting ? "back" : current.image_type || "combined");
-        let primaryVal = isPrimary ? 1 : 0;
-        if (isPrimary === void 0) {
-          if (targetType === "combined") {
-            primaryVal = 1;
-          } else {
-            const existingPrimary = await db2.get(
-              "SELECT id FROM catalog_images WHERE medicine_id = ? AND is_primary = 1 AND is_active = 1",
-              [med.id]
-            );
-            primaryVal = existingPrimary ? 0 : 1;
-          }
-        }
-        const slug = (med.name || "product").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
-        const filename = `${slug}-${targetType}-${Date.now()}.jpg`;
-        const frontendDir = import_path48.default.resolve(process.cwd(), "frontend/public/products");
-        const uploadsDir = import_path48.default.resolve(process.cwd(), "uploads/products");
-        import_fs43.default.mkdirSync(frontendDir, { recursive: true });
-        import_fs43.default.mkdirSync(uploadsDir, { recursive: true });
-        const frontendPath = import_path48.default.join(frontendDir, filename);
-        const uploadsPath = import_path48.default.join(uploadsDir, filename);
-        const imgRes = await fetch(candidateUrl, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-          signal: AbortSignal.timeout(1e4)
-        });
-        if (!imgRes.ok) {
-          throw new Error(`Failed to download candidate image: HTTP ${imgRes.status}`);
-        }
-        const buffer = Buffer.from(await imgRes.arrayBuffer());
-        const hash = import_crypto6.default.createHash("sha256").update(buffer).digest("hex");
-        const rejection = await db2.get(
-          "SELECT id FROM catalog_image_rejections WHERE medicine_id = ? AND rejected_image_hash = ?",
-          [med.id, hash]
-        );
-        if (rejection) {
-          throw new Error("This image was previously rejected for this medicine.");
-        }
-        import_fs43.default.writeFileSync(frontendPath, buffer);
-        import_fs43.default.writeFileSync(uploadsPath, buffer);
-        const relPath = `/products/${filename}`;
-        const nextVersion = (current.verification_version || 1) + 1;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          if (!keepExisting) {
-            await db2.run(
-              `UPDATE catalog_images 
-           SET is_active = 0, 
-               verification_status = 'REPLACED', 
-               updated_at = CURRENT_TIMESTAMP 
-           WHERE id = ?`,
-              [imageId]
-            );
-          }
-          await db2.run(
-            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
-            [med.id, targetType, imageId]
-          );
-          if (primaryVal === 1) {
-            await db2.run(
-              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
-              [med.id, imageId]
-            );
-          }
-          const res = await db2.run(
-            `INSERT INTO catalog_images (
-           medicine_id, company_name, product_name, image_path, thumbnail_path,
-           image_source, source_url, image_hash, confidence_score, matching_method,
-           verification_status, is_active, image_type, is_primary, replaced_from_image_id, previous_image_url,
-           verification_version, verified_by, verified_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 'human_correction', 'CORRECTED', 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-            [
-              med.id,
-              med.manufacturer || current.company_name,
-              candidateTitle || med.name,
-              relPath,
-              relPath,
-              "online_correction",
-              candidateUrl,
-              hash,
-              targetType,
-              primaryVal,
-              keepExisting ? null : imageId,
-              current.image_path,
-              nextVersion,
-              verifiedBy
-            ]
-          );
-          await db2.run(
-            `INSERT INTO image_review_history (
-           product_image_id, medicine_id, previous_status, new_status,
-           previous_image_url, new_image_url, action, reason, performed_by
-         ) VALUES (?, ?, ?, 'CORRECTED', ?, ?, 'IMAGE_REPLACED', ?, ?)`,
-            [
-              res.lastID,
-              med.id,
-              current.verification_status,
-              current.image_path,
-              relPath,
-              keepExisting ? `Added ${targetType} image` : "Replaced with online candidate",
-              verifiedBy
-            ]
-          );
-          await db2.run("COMMIT");
-          const newRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [res.lastID]);
-          eventService.broadcast("catalog_image_updated", {
-            id: res.lastID,
-            medicine_id: med.id,
-            status: "CORRECTED",
-            image_type: targetType,
-            is_primary: primaryVal,
-            is_active: 1
-          });
-          return newRecord;
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-      }
-      /**
-       * Retrieve all image slots / angles for a specific medicine
-       */
-      async getMedicineGallery(medicineId) {
-        const db2 = await dbManager.getConnection();
-        return db2.all(
-          `SELECT ci.*, m.category, m.packaging, m.strength, m.generic_name
-       FROM catalog_images ci
-       LEFT JOIN medicines m ON m.id = ci.medicine_id
-       WHERE ci.medicine_id = ? 
-       ORDER BY 
-         ci.is_active DESC,
-         ci.is_primary DESC,
-         CASE COALESCE(ci.image_type, 'combined')
-           WHEN 'combined' THEN 1 
-           WHEN 'front' THEN 2 
-           WHEN 'back' THEN 3 
-           WHEN 'box' THEN 4 
-           WHEN 'tablet' THEN 5 
-           ELSE 6 END,
-         ci.id DESC`,
-          [medicineId]
-        ).catch(() => []);
-      }
-      /**
-       * Action: Reopen an approved/corrected image for QC review
-       */
-      async reopenImage(imageId, verifiedBy = "admin") {
-        const db2 = await dbManager.getConnection();
-        const current = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
-        if (!current) return false;
-        const nextVersion = (current.verification_version || 1) + 1;
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run(
-            `UPDATE catalog_images 
-         SET verification_status = 'PENDING_REVIEW', 
-             next_review_at = NULL, 
-             verification_version = ?,
-             updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [nextVersion, imageId]
-          );
-          await db2.run(
-            `INSERT INTO image_review_history (
-           product_image_id, medicine_id, previous_status, new_status,
-           previous_image_url, new_image_url, action, reason, performed_by
-         ) VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, 'REOPENED', 'Reopened for quality control review', ?)`,
-            [
-              imageId,
-              current.medicine_id,
-              current.verification_status,
-              current.image_path,
-              current.image_path,
-              verifiedBy
-            ]
-          );
-          await db2.run("COMMIT");
-          eventService.broadcast("catalog_image_updated", {
-            id: imageId,
-            medicine_id: current.medicine_id,
-            status: "PENDING_REVIEW"
-          });
-          return true;
-        } catch (err) {
-          await db2.run("ROLLBACK");
-          throw err;
-        }
-      }
-      /**
-       * Fetch complete audit log from image_review_history
-       */
-      async getImageHistory(medicineId) {
-        const db2 = await dbManager.getConnection();
-        return db2.all(
-          `SELECT * FROM image_review_history WHERE medicine_id = ? ORDER BY performed_at DESC`,
-          [medicineId]
-        );
-      }
-      /**
-       * Filename-based auto-match engine.
-       * Scans both frontend/public/products and uploads/products directories,
-       * matches filenames to medicines using brand index & strict multi-signal scoring,
-       * and inserts into catalog_images.
-       * Idempotent — skips files already linked by image_path.
-       */
-      async scanAndAutoMatchLocalImages() {
-        const db2 = await dbManager.getConnection();
-        const publicDir = import_path48.default.join(process.cwd(), "frontend", "public", "products");
-        const uploadsDir = import_path48.default.join(process.cwd(), "uploads", "products");
-        const fileEntries = [];
-        if (import_fs43.default.existsSync(publicDir)) {
-          const publicFiles = import_fs43.default.readdirSync(publicDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
-          for (const f of publicFiles) {
-            fileEntries.push({ filename: f, relPath: `/products/${f}` });
-          }
-        }
-        if (import_fs43.default.existsSync(uploadsDir)) {
-          const uploadFiles = import_fs43.default.readdirSync(uploadsDir).filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f));
-          for (const f of uploadFiles) {
-            fileEntries.push({ filename: f, relPath: `uploads/products/${f}` });
-          }
-        }
-        if (fileEntries.length === 0) {
-          return { matched: 0, pending_review: 0, unmatched: 0, skipped: 0 };
-        }
-        const existing = await db2.all("SELECT image_path FROM catalog_images");
-        const existingSet = new Set(existing.map((r) => r.image_path));
-        const allMeds = await db2.all("SELECT id, name, manufacturer, strength, packaging FROM medicines");
-        const brandMap = /* @__PURE__ */ new Map();
-        for (const med of allMeds) {
-          const brand = this.extractCoreBrand(med.name);
-          if (brand) {
-            const key = brand.toUpperCase();
-            if (!brandMap.has(key)) brandMap.set(key, []);
-            brandMap.get(key).push(med);
-          }
-        }
-        const activeMedsRows = await db2.all(
-          "SELECT DISTINCT medicine_id FROM catalog_images WHERE is_active = 1"
-        );
-        const activeMedsSet = new Set(activeMedsRows.map((r) => r.medicine_id));
-        let matched = 0, pending_review = 0, unmatched = 0, skipped = 0;
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        for (const entry of fileEntries) {
-          if (existingSet.has(entry.relPath)) {
-            skipped++;
-            continue;
-          }
-          const filename = entry.filename;
-          const relPath = entry.relPath;
-          let cleanName = filename.replace(/\.(jpg|jpeg|png|webp)$/i, "").replace(/-candidate-\d+$/i, "").replace(/-(front|back|side|box|tablet|combo|combined)$/i, "").replace(/-/g, " ").trim();
-          const angleMatch = filename.match(/-(front|back|side|box|tablet|combo|combined)\.(jpg|jpeg|png|webp)$/i);
-          const imageType = angleMatch ? angleMatch[1].toLowerCase() === "combo" ? "combined" : angleMatch[1].toLowerCase() : "combined";
-          const fileBrand = this.extractCoreBrand(cleanName);
-          const candidates = fileBrand ? brandMap.get(fileBrand.toUpperCase()) || [] : [];
-          let bestId = null;
-          let bestScore = 0;
-          let bestMed = null;
-          let bestResult = null;
-          for (const med of candidates) {
-            const result = this.computeConfidence(med, {
-              name: cleanName,
-              manufacturer: med.manufacturer,
-              imagePath: relPath
-            });
-            if (result.confidenceScore > bestScore) {
-              bestScore = result.confidenceScore;
-              bestId = med.id;
-              bestMed = med;
-              bestResult = result;
-            }
-          }
-          const hasActivePrimary = bestId ? activeMedsSet.has(bestId) : false;
-          const isPrimary = !hasActivePrimary && (imageType === "combined" || imageType === "front") ? 1 : 0;
-          if (bestScore >= 80 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict && bestResult.signals.brandMatch) {
-            await db2.run(
-              `INSERT INTO catalog_images
-             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
-              confidence_score, matching_method, verification_status, verification_reason, is_active,
-              image_type, is_primary, match_source, match_confidence,
-              verified_by, verified_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'HIGH_CONFIDENCE', ?, 1,
-                   ?, ?, 'filename_auto', ?, 'system_scanner', ?, ?, ?)`,
-              [
-                bestId,
-                bestMed?.name || cleanName,
-                bestMed?.manufacturer || null,
-                relPath,
-                relPath,
-                bestScore,
-                bestResult.reason,
-                imageType,
-                isPrimary,
-                bestScore,
-                now,
-                now,
-                now
-              ]
-            );
-            existingSet.add(relPath);
-            activeMedsSet.add(bestId);
-            matched++;
-          } else if (bestScore >= 50 && bestId && bestResult && !bestResult.signals.strengthConflict && !bestResult.signals.dosageFormConflict) {
-            await db2.run(
-              `INSERT INTO catalog_images
-             (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
-              confidence_score, matching_method, verification_status, verification_reason, is_active,
-              image_type, is_primary, match_source, match_confidence,
-              created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'PENDING_REVIEW', ?, 0,
-                   ?, 0, 'filename_auto', ?, ?, ?)`,
-              [
-                bestId,
-                bestMed?.name || cleanName,
-                bestMed?.manufacturer || null,
-                relPath,
-                relPath,
-                bestScore,
-                bestResult.reason,
-                imageType,
-                bestScore,
-                now,
-                now
-              ]
-            );
-            existingSet.add(relPath);
-            pending_review++;
-          } else {
-            if (bestId) {
-              await db2.run(
-                `INSERT INTO catalog_images
-               (medicine_id, product_name, company_name, image_path, thumbnail_path, image_source,
-                confidence_score, matching_method, verification_status, verification_reason, is_active,
-                image_type, is_primary, match_source, match_confidence,
-                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'local_file', ?, 'filename_auto', 'REJECTED', ?, 0,
-                     ?, 0, 'filename_unmatched', ?, ?, ?)`,
-                [
-                  bestId,
-                  cleanName,
-                  bestMed?.manufacturer || null,
-                  relPath,
-                  relPath,
-                  bestScore,
-                  bestResult?.reason || "Unmatched or conflict detected",
-                  imageType,
-                  bestScore,
-                  now,
-                  now
-                ]
-              );
-            }
-            existingSet.add(relPath);
-            unmatched++;
-          }
-        }
-        return { matched, pending_review, unmatched, skipped };
-      }
-      /**
-       * Clean stale and rejected catalog images.
-       * Purges rejected/incorrect records, orphaned database entries, and broken image paths
-       * while keeping verified active images safe.
-       */
-      async cleanStaleAndRejectedImages(options) {
-        const purgeRejected = options?.purgeRejected ?? true;
-        const purgeMissingFiles = options?.purgeMissingFiles ?? true;
-        const purgeOrphans = options?.purgeOrphans ?? true;
-        const db2 = await dbManager.getConnection();
-        let purged_rejected = 0;
-        let purged_missing_files = 0;
-        let purged_orphans = 0;
-        if (purgeRejected) {
-          const res = await db2.run(
-            `DELETE FROM catalog_images WHERE verification_status IN ('REJECTED', 'INCORRECT')`
-          );
-          purged_rejected = res.changes || 0;
-        }
-        if (purgeOrphans) {
-          const res = await db2.run(
-            `DELETE FROM catalog_images WHERE medicine_id IS NULL OR medicine_id NOT IN (SELECT id FROM medicines)`
-          );
-          purged_orphans = res.changes || 0;
-        }
-        if (purgeMissingFiles) {
-          const images = await db2.all(
-            `SELECT id, image_path FROM catalog_images WHERE image_path IS NOT NULL AND image_path NOT LIKE 'http%'`
-          );
-          const toDeleteIds = [];
-          const cwd = process.cwd();
-          const publicDir = import_path48.default.resolve(cwd, "frontend/public");
-          const uploadsDir = import_path48.default.resolve(cwd, "uploads");
-          for (const img of images) {
-            const cleanPath = img.image_path.replace(/^[\/\\]/, "");
-            const p1 = import_path48.default.join(publicDir, cleanPath);
-            const p2 = import_path48.default.join(cwd, cleanPath);
-            const p3 = import_path48.default.join(uploadsDir, cleanPath.replace(/^uploads[\/\\]/, ""));
-            if (!import_fs43.default.existsSync(p1) && !import_fs43.default.existsSync(p2) && !import_fs43.default.existsSync(p3)) {
-              toDeleteIds.push(img.id);
-            }
-          }
-          if (toDeleteIds.length > 0) {
-            for (let i = 0; i < toDeleteIds.length; i += 500) {
-              const chunk = toDeleteIds.slice(i, i + 500);
-              const placeholders = chunk.map(() => "?").join(",");
-              await db2.run(`DELETE FROM catalog_images WHERE id IN (${placeholders})`, chunk);
-            }
-            purged_missing_files = toDeleteIds.length;
-          }
-        }
-        const counts = await db2.get(
-          `SELECT COUNT(*) as total, SUM(CASE WHEN is_active = 1 AND verification_status IN ('HIGH_CONFIDENCE', 'APPROVED', 'CORRECT') THEN 1 ELSE 0 END) as active FROM catalog_images`
-        );
-        return {
-          purged_rejected,
-          purged_missing_files,
-          purged_orphans,
-          total_remaining: counts?.total || 0,
-          active_verified: counts?.active || 0
-        };
-      }
-      /**
-       * Audit all catalog images against medicines using the strict validation engine.
-       * Deactivates and marks as REJECTED any records with dosage form conflicts,
-       * strength conflicts, or brand mismatches so they immediately stop displaying on wrong products.
-       */
-      async auditAndDeactivateMismatchedImages() {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          `SELECT ci.id, ci.medicine_id, ci.product_name, ci.image_path, ci.company_name, ci.verification_status, ci.is_active,
-              m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
-       FROM catalog_images ci
-       JOIN medicines m ON m.id = ci.medicine_id
-       WHERE ci.is_active = 1`
-        );
-        let dosage_form_conflicts = 0;
-        let strength_conflicts = 0;
-        let brand_mismatches = 0;
-        const toDeactivate = [];
-        for (const r of rows) {
-          const match = this.computeConfidence(
-            {
-              name: r.med_name,
-              manufacturer: r.med_mfg || r.company_name,
-              strength: r.med_strength,
-              packaging: r.med_packaging
-            },
-            {
-              name: r.product_name,
-              manufacturer: r.company_name || r.med_mfg,
-              imagePath: r.image_path
-            }
-          );
-          if (match.signals.dosageFormConflict) {
-            dosage_form_conflicts++;
-            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
-          } else if (match.signals.strengthConflict) {
-            strength_conflicts++;
-            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
-          } else if (!match.signals.brandMatch) {
-            brand_mismatches++;
-            toDeactivate.push({ id: r.id, reason: `[AUTO-AUDIT REJECTED] ${match.reason}` });
-          }
-        }
-        if (toDeactivate.length > 0) {
-          await db2.run("BEGIN TRANSACTION");
-          try {
-            for (const item of toDeactivate) {
-              await db2.run(
-                `UPDATE catalog_images
-             SET is_active = 0,
-                 is_primary = 0,
-                 verification_status = 'REJECTED',
-                 confidence_score = 30,
-                 verification_reason = ?,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-                [item.reason, item.id]
-              );
-            }
-            await db2.run("COMMIT");
-          } catch (err) {
-            await db2.run("ROLLBACK");
-            throw err;
-          }
-          eventService.broadcast("catalog_image_updated", {
-            action: "audit_deactivation_completed",
-            deactivated: toDeactivate.length
-          });
-        }
-        const remainingRow = await db2.get(
-          `SELECT COUNT(*) as count FROM catalog_images WHERE is_active = 1`
-        );
-        return {
-          total_audited: rows.length,
-          dosage_form_conflicts,
-          strength_conflicts,
-          brand_mismatches,
-          total_deactivated: toDeactivate.length,
-          remaining_active: remainingRow?.count || 0
-        };
-      }
-    };
-    catalogImageService = CatalogImageService.getInstance();
   }
 });
 
@@ -56867,9 +58124,9 @@ function loadCatalogAndImages() {
     return { catalog: catalogCache, images: imageStateCache };
   }
   try {
-    const csvPath = import_path49.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-    if (import_fs44.default.existsSync(csvPath)) {
-      const content = import_fs44.default.readFileSync(csvPath, "utf-8");
+    const csvPath = import_path50.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs45.default.existsSync(csvPath)) {
+      const content = import_fs45.default.readFileSync(csvPath, "utf-8");
       const lines = content.split(/\r?\n/);
       const items = [];
       for (let i = 1; i < lines.length; i++) {
@@ -56901,9 +58158,9 @@ function loadCatalogAndImages() {
         });
       }
       try {
-        const clinicalCsvPath = import_path49.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
-        if (import_fs44.default.existsSync(clinicalCsvPath)) {
-          const clinContent = import_fs44.default.readFileSync(clinicalCsvPath, "utf-8");
+        const clinicalCsvPath = import_path50.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs45.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs45.default.readFileSync(clinicalCsvPath, "utf-8");
           const clinLines = clinContent.split(/\r?\n/);
           for (let j = 1; j < clinLines.length; j++) {
             const clinLine = clinLines[j].trim();
@@ -56934,9 +58191,9 @@ function loadCatalogAndImages() {
     catalogCache = [];
   }
   try {
-    const statePath = import_path49.default.resolve(process.cwd(), "data/image_download_state.json");
-    if (import_fs44.default.existsSync(statePath)) {
-      const stateData = JSON.parse(import_fs44.default.readFileSync(statePath, "utf-8"));
+    const statePath = import_path50.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs45.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs45.default.readFileSync(statePath, "utf-8"));
       imageStateCache = stateData.products || {};
     }
   } catch (e) {
@@ -56945,14 +58202,14 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express26, import_crypto8, import_fs44, import_path49, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express26, import_crypto8, import_fs45, import_path50, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express26 = __toESM(require("express"), 1);
     import_crypto8 = __toESM(require("crypto"), 1);
-    import_fs44 = __toESM(require("fs"), 1);
-    import_path49 = __toESM(require("path"), 1);
+    import_fs45 = __toESM(require("fs"), 1);
+    import_path50 = __toESM(require("path"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_eventService();
@@ -57987,8 +59244,8 @@ ${upiUri}
       }
     });
     router26.get("/standalone-catalog", (req, res) => {
-      const filePath = import_path49.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
-      if (import_fs44.default.existsSync(filePath)) {
+      const filePath = import_path50.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs45.default.existsSync(filePath)) {
         return res.sendFile(filePath);
       }
       res.status(404).send("Live catalog website file not found");
@@ -59770,7 +61027,7 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express30, import_path50, import_fs45, import_pdfkit5, router30, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express30, import_path51, import_fs46, import_pdfkit5, router30, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
@@ -59783,8 +61040,8 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path50 = __toESM(require("path"), 1);
-    import_fs45 = __toESM(require("fs"), 1);
+    import_path51 = __toESM(require("path"), 1);
+    import_fs46 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
@@ -60470,13 +61727,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs45.default.existsSync(uploadsDir)) {
-                    import_fs45.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs46.default.existsSync(uploadsDir)) {
+                    import_fs46.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path50.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path51.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -61622,14 +62879,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs45.default.existsSync(uploadsDir)) {
-          import_fs45.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs46.default.existsSync(uploadsDir)) {
+          import_fs46.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit5.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path50.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs45.default.createWriteStream(pdfPath);
+        const pdfPath = import_path51.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs46.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -61655,7 +62912,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path50.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path51.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -62705,15 +63962,15 @@ var init_sales = __esm({
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path50.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs45.default.existsSync(uploadsDir)) {
-          import_fs45.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path51.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs46.default.existsSync(uploadsDir)) {
+          import_fs46.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path50.default.join(uploadsDir, safeName);
-        import_fs45.default.writeFileSync(fullPath, buffer);
+        const fullPath = import_path51.default.join(uploadsDir, safeName);
+        import_fs46.default.writeFileSync(fullPath, buffer);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
       } catch (err) {
@@ -62771,17 +64028,17 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express31, import_path51, import_url40, __filename38, __dirname38, DB_PATH24, router31, dashboard_default;
+var import_express31, import_path52, import_url40, __filename38, __dirname38, DB_PATH24, router31, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
     import_express31 = __toESM(require("express"), 1);
     init_connection();
-    import_path51 = __toESM(require("path"), 1);
+    import_path52 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
-    __dirname38 = import_path51.default.dirname(__filename38);
-    DB_PATH24 = process.env.DB_PATH || import_path51.default.resolve(__dirname38, "..", "..", "data", "app.db");
+    __dirname38 = import_path52.default.dirname(__filename38);
+    DB_PATH24 = process.env.DB_PATH || import_path52.default.resolve(__dirname38, "..", "..", "data", "app.db");
     router31 = import_express31.default.Router();
     router31.get("/", async (_req, res) => {
       try {
@@ -62865,12 +64122,12 @@ async function seedMasterMedicines(force = false) {
         return { loaded: 0 };
       }
     }
-    const csvPath = import_path52.default.join(process.cwd(), "data", "reference_medicines.csv");
-    if (!import_fs46.default.existsSync(csvPath)) {
+    const csvPath = import_path53.default.join(process.cwd(), "data", "reference_medicines.csv");
+    if (!import_fs47.default.existsSync(csvPath)) {
       console.warn("[MasterSeed] Reference CSV not found at:", csvPath);
       return { loaded: 0 };
     }
-    const fileStream = import_fs46.default.createReadStream(csvPath, { encoding: "utf8" });
+    const fileStream = import_fs47.default.createReadStream(csvPath, { encoding: "utf8" });
     const rl = import_readline3.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -63008,12 +64265,12 @@ async function upsertMasterMedicine(item) {
     console.warn("[MasterSeed] Failed to upsert master medicine:", cleanName, err.message);
   }
 }
-var import_fs46, import_path52, import_readline3;
+var import_fs47, import_path53, import_readline3;
 var init_masterMedicinesSeedService = __esm({
   "src/services/masterMedicinesSeedService.ts"() {
     "use strict";
-    import_fs46 = __toESM(require("fs"), 1);
-    import_path52 = __toESM(require("path"), 1);
+    import_fs47 = __toESM(require("fs"), 1);
+    import_path53 = __toESM(require("path"), 1);
     import_readline3 = __toESM(require("readline"), 1);
     init_connection();
   }
@@ -63253,13 +64510,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios2, import_fs47, import_path53, import_tesseract3, InvoiceVisionService, invoiceVisionService;
+var import_axios2, import_fs48, import_path54, import_tesseract3, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios2 = __toESM(require("axios"), 1);
-    import_fs47 = __toESM(require("fs"), 1);
-    import_path53 = __toESM(require("path"), 1);
+    import_fs48 = __toESM(require("fs"), 1);
+    import_path54 = __toESM(require("path"), 1);
     import_tesseract3 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -63270,14 +64527,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs47.default.existsSync(uploadsDir)) {
-          import_fs47.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs48.default.existsSync(uploadsDir)) {
+          import_fs48.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path53.default.extname(originalFilename) || ".jpg";
+        const ext = import_path54.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path53.default.join(uploadsDir, safeFilename);
-        import_fs47.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path54.default.join(uploadsDir, safeFilename);
+        import_fs48.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         let parsedResult = null;
@@ -63856,14 +65113,14 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express32, import_path54, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs48, __filename39, __dirname39, DB_PATH25, router32, upload2, purchases_default;
+var import_express32, import_path55, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs49, __filename39, __dirname39, DB_PATH25, router32, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
     import_express32 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path54 = __toESM(require("path"), 1);
+    import_path55 = __toESM(require("path"), 1);
     import_url41 = require("url");
     import_multer2 = __toESM(require("multer"), 1);
     import_pdf_parse2 = __toESM(require("pdf-parse"), 1);
@@ -63876,7 +65133,7 @@ var init_purchases = __esm({
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs48 = __toESM(require("fs"), 1);
+    import_fs49 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -63886,8 +65143,8 @@ var init_purchases = __esm({
     init_barcodeService();
     init_storeContextService();
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
-    __dirname39 = import_path54.default.dirname(__filename39);
-    DB_PATH25 = process.env.DB_PATH || import_path54.default.resolve(__dirname39, "..", "..", "data", "app.db");
+    __dirname39 = import_path55.default.dirname(__filename39);
+    DB_PATH25 = process.env.DB_PATH || import_path55.default.resolve(__dirname39, "..", "..", "data", "app.db");
     router32 = import_express32.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
     router32.get("/summary", async (_req, res) => {
@@ -63908,17 +65165,17 @@ var init_purchases = __esm({
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path54.default.join(getAppDataDir(), "uploads");
-        if (!import_fs48.default.existsSync(uploadsDir)) {
-          import_fs48.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path55.default.join(getAppDataDir(), "uploads");
+        if (!import_fs49.default.existsSync(uploadsDir)) {
+          import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path54.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path54.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs48.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path55.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path55.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs49.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs48.default.unlinkSync(tempPath);
+            import_fs49.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -65225,7 +66482,7 @@ var init_purchases = __esm({
           if (medNames.length === 0 && !email.medicine_names) {
             const parsedItems = [];
             for (const att of attachments) {
-              if (att.local_path && import_fs48.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs49.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items) {
@@ -65514,7 +66771,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs48.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs49.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -65623,7 +66880,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs48.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs49.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -65659,7 +66916,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs48.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs49.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -65940,14 +67197,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument7 } = await import("pdfkit");
-        const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs48.default.existsSync(uploadsDir)) {
-          import_fs48.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path55.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs49.default.existsSync(uploadsDir)) {
+          import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument7({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path54.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs48.default.createWriteStream(pdfPath);
+        const pdfPath = import_path55.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs49.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -65976,7 +67233,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path54.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path55.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -66350,14 +67607,14 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express34, import_path55, import_fs49, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router34, returns_default;
+var import_express34, import_path56, import_fs50, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router34, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
     import_express34 = __toESM(require("express"), 1);
     init_connection();
-    import_path55 = __toESM(require("path"), 1);
-    import_fs49 = __toESM(require("fs"), 1);
+    import_path56 = __toESM(require("path"), 1);
+    import_fs50 = __toESM(require("fs"), 1);
     import_pdfkit6 = __toESM(require("pdfkit"), 1);
     import_url42 = require("url");
     init_aiCameraService();
@@ -66366,8 +67623,8 @@ var init_returns = __esm({
     init_stockRebuild();
     init_eventService();
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
-    __dirname40 = import_path55.default.dirname(__filename40);
-    DB_PATH26 = process.env.DB_PATH || import_path55.default.resolve(__dirname40, "..", "..", "data", "app.db");
+    __dirname40 = import_path56.default.dirname(__filename40);
+    DB_PATH26 = process.env.DB_PATH || import_path56.default.resolve(__dirname40, "..", "..", "data", "app.db");
     router34 = import_express34.default.Router();
     router34.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -66538,8 +67795,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit6.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path55.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs49.default.createWriteStream(outPath);
+        const outPath = import_path56.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs50.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -67735,12 +68992,12 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
   let pdfPath = void 0;
   try {
-    const uploadsDir = import_path56.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs50.default.existsSync(uploadsDir)) {
-      import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
+    const uploadsDir = import_path57.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs51.default.existsSync(uploadsDir)) {
+      import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
     }
     const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path56.default.join(uploadsDir, pdfFilename);
+    const fullPdfPath = import_path57.default.join(uploadsDir, pdfFilename);
     await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
     pdfPath = fullPdfPath;
   } catch (pdfErr) {
@@ -67766,14 +69023,14 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   });
   return true;
 }
-var import_express36, import_path56, import_fs50, import_url43, __filename41, __dirname41, DB_PATH27, router36, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express36, import_path57, import_fs51, import_url43, __filename41, __dirname41, DB_PATH27, router36, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
     import_express36 = __toESM(require("express"), 1);
     init_connection();
-    import_path56 = __toESM(require("path"), 1);
-    import_fs50 = __toESM(require("fs"), 1);
+    import_path57 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
     import_url43 = require("url");
     init_whatsappClient();
     init_storeSettingsService();
@@ -67786,8 +69043,8 @@ var init_orders = __esm({
     init_returnWindowService();
     init_orderScheduleService();
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
-    __dirname41 = import_path56.default.dirname(__filename41);
-    DB_PATH27 = process.env.DB_PATH || import_path56.default.resolve(__dirname41, "..", "..", "data", "app.db");
+    __dirname41 = import_path57.default.dirname(__filename41);
+    DB_PATH27 = process.env.DB_PATH || import_path57.default.resolve(__dirname41, "..", "..", "data", "app.db");
     router36 = import_express36.default.Router();
     broadcastOrdersChanged2 = () => {
       try {
@@ -68856,20 +70113,20 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express38, import_path57, import_url44, import_fs51, __filename42, __dirname42, DB_PATH28, router38, expiry_default;
+var import_express38, import_path58, import_url44, import_fs52, __filename42, __dirname42, DB_PATH28, router38, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
     import_express38 = __toESM(require("express"), 1);
     init_connection();
-    import_path57 = __toESM(require("path"), 1);
+    import_path58 = __toESM(require("path"), 1);
     import_url44 = require("url");
-    import_fs51 = __toESM(require("fs"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
     init_reportExporter();
     init_config();
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
-    __dirname42 = import_path57.default.dirname(__filename42);
-    DB_PATH28 = process.env.DB_PATH || import_path57.default.resolve(__dirname42, "..", "..", "data", "app.db");
+    __dirname42 = import_path58.default.dirname(__filename42);
+    DB_PATH28 = process.env.DB_PATH || import_path58.default.resolve(__dirname42, "..", "..", "data", "app.db");
     router38 = import_express38.default.Router();
     router38.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
@@ -68878,11 +70135,11 @@ var init_expiry = __esm({
         const days = req.query.days ? parseInt(req.query.days, 10) : 90;
         date_to = getNDaysAheadString(days);
       }
-      const cacheDir = import_path57.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path58.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs51.default.existsSync(cacheDir);
-        const isInitialized = cacheDirExists && import_fs51.default.existsSync(import_path57.default.join(cacheDir, "manifest.json"));
+        const cacheDirExists = import_fs52.default.existsSync(cacheDir);
+        const isInitialized = cacheDirExists && import_fs52.default.existsSync(import_path58.default.join(cacheDir, "manifest.json"));
         if (!isInitialized) {
           console.log("[ExpiryCache] Cache directory or manifest missing. Using live SQL and triggering initial rebuild.");
           const db2 = await dbManager.getConnection();
@@ -68911,10 +70168,10 @@ var init_expiry = __esm({
         }
         let items = [];
         for (const ym of months) {
-          const filePath = import_path57.default.join(cacheDir, `expiry_${ym}.json`);
-          if (import_fs51.default.existsSync(filePath)) {
+          const filePath = import_path58.default.join(cacheDir, `expiry_${ym}.json`);
+          if (import_fs52.default.existsSync(filePath)) {
             try {
-              const raw = await import_fs51.default.promises.readFile(filePath, "utf-8");
+              const raw = await import_fs52.default.promises.readFile(filePath, "utf-8");
               items = items.concat(JSON.parse(raw));
             } catch (err) {
               console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -68937,12 +70194,12 @@ var init_expiry = __esm({
         date_to = getNDaysAheadString(days);
       }
       const format = req.query.format || "pdf";
-      const cacheDir = import_path57.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path58.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       let items = [];
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs51.default.existsSync(cacheDir);
-        const hasCacheFiles = cacheDirExists && import_fs51.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
+        const cacheDirExists = import_fs52.default.existsSync(cacheDir);
+        const hasCacheFiles = cacheDirExists && import_fs52.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
         if (!cacheDirExists || !hasCacheFiles) {
           const db2 = await dbManager.getConnection();
           items = await db2.all(`
@@ -68966,10 +70223,10 @@ var init_expiry = __esm({
           items = items.filter((item) => isDateInRange(item.expiry_date, date_from, date_to));
         } else {
           for (const ym of months) {
-            const filePath = import_path57.default.join(cacheDir, `expiry_${ym}.json`);
-            if (import_fs51.default.existsSync(filePath)) {
+            const filePath = import_path58.default.join(cacheDir, `expiry_${ym}.json`);
+            if (import_fs52.default.existsSync(filePath)) {
               try {
-                const raw = await import_fs51.default.promises.readFile(filePath, "utf-8");
+                const raw = await import_fs52.default.promises.readFile(filePath, "utf-8");
                 items = items.concat(JSON.parse(raw));
               } catch (err) {
                 console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -69168,17 +70425,17 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express39, import_path58, import_url45, __filename43, __dirname43, DB_PATH29, router39, compliance_default;
+var import_express39, import_path59, import_url45, __filename43, __dirname43, DB_PATH29, router39, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
     import_express39 = __toESM(require("express"), 1);
     init_connection();
-    import_path58 = __toESM(require("path"), 1);
+    import_path59 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
-    __dirname43 = import_path58.default.dirname(__filename43);
-    DB_PATH29 = process.env.DB_PATH || import_path58.default.resolve(__dirname43, "..", "..", "data", "app.db");
+    __dirname43 = import_path59.default.dirname(__filename43);
+    DB_PATH29 = process.env.DB_PATH || import_path59.default.resolve(__dirname43, "..", "..", "data", "app.db");
     router39 = import_express39.default.Router();
     router39.get("/", async (_req, res) => {
       try {
@@ -69436,7 +70693,7 @@ async function doResearch(medicine) {
   const { png, blocked, engine } = await captureSearchResults(query);
   const worker = await getOcrWorker();
   const { data } = await worker.recognize(png, {}, { blocks: true });
-  const jimpImage = await import_jimp4.Jimp.read(png);
+  const jimpImage = await import_jimp5.Jimp.read(png);
   const imageWidth = jimpImage.bitmap.width;
   const imageHeight = jimpImage.bitmap.height;
   const words = (data.blocks || []).flatMap(
@@ -69505,11 +70762,11 @@ async function doResearch(medicine) {
     engine
   };
 }
-var import_jimp4, import_tesseract4, ocrWorkerPromise, inFlight, GOOGLE_SEARCH_URL, DDG_SEARCH_URL;
+var import_jimp5, import_tesseract4, ocrWorkerPromise, inFlight, GOOGLE_SEARCH_URL, DDG_SEARCH_URL;
 var init_scheduleResearchService = __esm({
   "src/services/scheduleResearchService.ts"() {
     "use strict";
-    import_jimp4 = require("jimp");
+    import_jimp5 = require("jimp");
     import_tesseract4 = require("tesseract.js");
     init_lazyPuppeteer();
     init_chromeBrowser();
@@ -69795,31 +71052,31 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express42, import_crypto9, import_path59, import_fs52, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router42, upload_default;
+var import_express42, import_crypto9, import_path60, import_fs53, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router42, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
     import_express42 = __toESM(require("express"), 1);
     import_crypto9 = __toESM(require("crypto"), 1);
-    import_path59 = __toESM(require("path"), 1);
-    import_fs52 = __toESM(require("fs"), 1);
+    import_path60 = __toESM(require("path"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
     import_url46 = require("url");
     init_connection();
     init_config();
     __filename44 = (0, import_url46.fileURLToPath)(import_meta_url);
-    __dirname44 = import_path59.default.dirname(__filename44);
-    UPLOAD_DIR = import_path59.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR4 = import_path59.default.join(UPLOAD_DIR, "temp");
-    RAW_DIR = import_path59.default.resolve(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs52.default.existsSync(UPLOAD_DIR)) {
-      import_fs52.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+    __dirname44 = import_path60.default.dirname(__filename44);
+    UPLOAD_DIR = import_path60.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR4 = import_path60.default.join(UPLOAD_DIR, "temp");
+    RAW_DIR = import_path60.default.resolve(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs53.default.existsSync(UPLOAD_DIR)) {
+      import_fs53.default.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
-    if (!import_fs52.default.existsSync(TEMP_DIR4)) {
-      import_fs52.default.mkdirSync(TEMP_DIR4, { recursive: true });
+    if (!import_fs53.default.existsSync(TEMP_DIR4)) {
+      import_fs53.default.mkdirSync(TEMP_DIR4, { recursive: true });
     }
-    if (!import_fs52.default.existsSync(RAW_DIR)) {
-      import_fs52.default.mkdirSync(RAW_DIR, { recursive: true });
+    if (!import_fs53.default.existsSync(RAW_DIR)) {
+      import_fs53.default.mkdirSync(RAW_DIR, { recursive: true });
     }
     ALLOWED_UPLOAD_EXTENSIONS = /\.(csv|xlsx?|pdf|zip|jpg|jpeg|png|gif|bmp|tiff?)$/i;
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
@@ -69850,18 +71107,18 @@ var init_upload = __esm({
           return res.status(400).json({ error: "No file uploaded" });
         }
         const tempPath = req.file.path;
-        const originalName = req.file.originalname || import_path59.default.basename(tempPath);
+        const originalName = req.file.originalname || import_path60.default.basename(tempPath);
         const timestamp = Date.now();
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const rawFileName = `${timestamp}-${sanitizedName}`;
-        const rawPath = import_path59.default.join(RAW_DIR, rawFileName);
-        import_fs52.default.copyFileSync(tempPath, rawPath);
+        const rawPath = import_path60.default.join(RAW_DIR, rawFileName);
+        import_fs53.default.copyFileSync(tempPath, rawPath);
         try {
-          import_fs52.default.unlinkSync(tempPath);
+          import_fs53.default.unlinkSync(tempPath);
         } catch (err) {
           console.warn("Failed to delete temporary upload file:", err);
         }
-        const ext = import_path59.default.extname(originalName).toLowerCase();
+        const ext = import_path60.default.extname(originalName).toLowerCase();
         if (![".csv", ".xlsx", ".xls", ".pdf"].includes(ext)) {
           return res.status(400).json({ error: "Unsupported file format. Please upload a CSV, PDF, or Excel file." });
         }
@@ -70315,6 +71572,31 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
       }
     });
+    router43.post("/medicine/:medicineId/approve-all", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        if (!medicineId) return res.status(400).json({ success: false, error: "Invalid medicineId" });
+        const verifiedBy = req.body?.verified_by || "admin";
+        const result = await catalogImageService.approveAllForMedicine(medicineId, verifiedBy);
+        res.json({ success: true, message: `Approved ${result.approved} image(s) for medicine ${medicineId}. Published to website.`, ...result });
+      } catch (err) {
+        console.error("[CatalogImages API] Error bulk approving medicine:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to bulk approve" });
+      }
+    });
+    router43.post("/medicine/:medicineId/reject-all", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        if (!medicineId) return res.status(400).json({ success: false, error: "Invalid medicineId" });
+        const reason = req.body?.reason || "Rejected via stream - incorrect image";
+        const verifiedBy = req.body?.verified_by || "admin";
+        const result = await catalogImageService.rejectAllForMedicine(medicineId, reason, verifiedBy);
+        res.json({ success: true, message: `Rejected ${result.rejected} image(s). Re-fetch from internet initiated.`, ...result });
+      } catch (err) {
+        console.error("[CatalogImages API] Error bulk rejecting medicine:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to bulk reject" });
+      }
+    });
     router43.get("/medicine/:medicineId/gallery", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
@@ -70359,12 +71641,12 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express44, import_fs53, router44, catalog_default;
+var import_express44, import_fs54, router44, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
     import_express44 = __toESM(require("express"), 1);
-    import_fs53 = __toESM(require("fs"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
     router44 = import_express44.default.Router();
@@ -70571,9 +71853,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs53.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs54.default.existsSync(job.file_path)) {
           try {
-            import_fs53.default.unlinkSync(job.file_path);
+            import_fs54.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -71953,13 +73235,13 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express46, import_fs54, import_path60, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router46, upload4, enrichment_default;
+var import_express46, import_fs55, import_path61, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router46, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
     import_express46 = __toESM(require("express"), 1);
-    import_fs54 = __toESM(require("fs"), 1);
-    import_path60 = __toESM(require("path"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
+    import_path61 = __toESM(require("path"), 1);
     import_url47 = require("url");
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
@@ -71967,9 +73249,9 @@ var init_enrichment = __esm({
     init_onlineDataEnricher();
     init_config();
     __filename45 = (0, import_url47.fileURLToPath)(import_meta_url);
-    __dirname45 = import_path60.default.dirname(__filename45);
-    DATA_DIR2 = import_path60.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path60.default.join(DATA_DIR2, "reference_medicines.csv");
+    __dirname45 = import_path61.default.dirname(__filename45);
+    DATA_DIR2 = import_path61.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path61.default.join(DATA_DIR2, "reference_medicines.csv");
     router46 = import_express46.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
     router46.get("/enrichment/status", async (_req, res) => {
@@ -72050,8 +73332,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs54.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs54.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs55.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs55.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -72555,12 +73837,12 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express48, import_fs55, router48, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express48, import_fs56, router48, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
     import_express48 = __toESM(require("express"), 1);
-    import_fs55 = __toESM(require("fs"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
@@ -72661,9 +73943,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs55.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs56.default.existsSync(f.file_path)) {
               try {
-                import_fs55.default.unlinkSync(f.file_path);
+                import_fs56.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -72942,15 +74224,15 @@ var init_notifications2 = __esm({
       }
     });
     router49.get("/notifications/download-apk", (req, res) => {
-      const fs57 = require("fs");
-      const path62 = require("path");
+      const fs58 = require("fs");
+      const path63 = require("path");
       const candidatePaths = [
-        path62.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path62.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path62.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path62.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path63.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path63.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path63.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path63.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs57.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs58.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -73518,14 +74800,13 @@ ${order.items || "Standard Pharmacy Order"}
             const placedAt = Date.now();
             await db2.run(
               `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, 0, NULL)`,
               [
                 today2,
                 order.storeId || null,
                 order.storeName,
                 JSON.stringify(order.items || []),
                 null,
-                placedAt,
                 placedAt
               ]
             );
@@ -73592,8 +74873,8 @@ ${order.items || "Standard Pharmacy Order"}
           const placedAt = Date.now();
           await db2.run(
             `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-            [today, storeId || null, storeName, JSON.stringify(items), null, placedAt, placedAt]
+         VALUES (?, ?, ?, ?, ?, ?, 0, NULL)`,
+            [today, storeId || null, storeName, JSON.stringify(items), null, placedAt]
           );
         }
         whatsappQueueWorker.triggerProcessing();
@@ -74185,9 +75466,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path61.default.resolve(__dirname46, "..", "telegramBot.ts");
-    if (import_fs56.default.existsSync(botPath)) {
-      const src = import_fs56.default.readFileSync(botPath, "utf8");
+    const botPath = import_path62.default.resolve(__dirname46, "..", "telegramBot.ts");
+    if (import_fs57.default.existsSync(botPath)) {
+      const src = import_fs57.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -74404,12 +75685,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path61.default.resolve(__dirname46, "..", "..", "package.json"),
-    import_path61.default.resolve(process.cwd(), "package.json")
+    import_path62.default.resolve(__dirname46, "..", "..", "package.json"),
+    import_path62.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg2 = JSON.parse(import_fs56.default.readFileSync(p, "utf8"));
+      const pkg2 = JSON.parse(import_fs57.default.readFileSync(p, "utf8"));
       if (pkg2?.version) return String(pkg2.version);
     } catch (_e) {
     }
@@ -74460,17 +75741,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs56, import_path61, import_url48, import_child_process7, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs57, import_path62, import_url48, import_child_process7, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs56 = __toESM(require("fs"), 1);
-    import_path61 = __toESM(require("path"), 1);
+    import_fs57 = __toESM(require("fs"), 1);
+    import_path62 = __toESM(require("path"), 1);
     import_url48 = require("url");
     import_child_process7 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
-    __dirname46 = import_path61.default.dirname(__filename46);
+    __dirname46 = import_path62.default.dirname(__filename46);
     BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
@@ -74994,9 +76275,9 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path62.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path62.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs57.default.existsSync(pythonExecutable) || !import_fs57.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path63.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path63.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs58.default.existsSync(pythonExecutable) || !import_fs58.default.existsSync(scriptPath)) {
       return resolve([]);
     }
     const pythonProcess = (0, import_child_process8.spawn)(pythonExecutable, [scriptPath, messageText]);
@@ -75139,7 +76420,7 @@ async function gracefulShutdown(signal) {
   await dbManager.close(true);
   process.exit(0);
 }
-var import_express53, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path62, import_child_process8, import_url49, import_fs57, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
+var import_express53, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path63, import_child_process8, import_url49, import_fs58, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -75149,10 +76430,10 @@ var init_server = __esm({
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path62 = __toESM(require("path"), 1);
+    import_path63 = __toESM(require("path"), 1);
     import_child_process8 = require("child_process");
     import_url49 = require("url");
-    import_fs57 = __toESM(require("fs"), 1);
+    import_fs58 = __toESM(require("fs"), 1);
     import_axios3 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -75164,7 +76445,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
-    __dirname47 = import_path62.default.dirname(__filename47);
+    __dirname47 = import_path63.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
     import_axios3.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -75202,15 +76483,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path62.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs57.default.existsSync(UPLOAD_DIR2)) {
-      import_fs57.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path63.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs58.default.existsSync(UPLOAD_DIR2)) {
+      import_fs58.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs57.default.existsSync(TEMP_DIR5)) {
-      import_fs57.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs58.default.existsSync(TEMP_DIR5)) {
+      import_fs58.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs57.default.existsSync(RAW_DIR2)) {
-      import_fs57.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs58.default.existsSync(RAW_DIR2)) {
+      import_fs58.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
@@ -75252,10 +76533,10 @@ var init_server = __esm({
     }));
     app.use(import_express53.default.json({ limit: "15mb" }));
     app.use("/uploads", import_express53.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express53.default.static(import_path62.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express53.default.static(import_path62.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express53.default.static(import_path62.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express53.default.static(import_path62.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/products", import_express53.default.static(import_path63.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express53.default.static(import_path63.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express53.default.static(import_path63.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express53.default.static(import_path63.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -75322,14 +76603,14 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path62.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path62.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path62.default.resolve(__dirname47, "..", "frontend", "dist"),
-      import_path62.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
-      import_path62.default.resolve(process.cwd(), "dist"),
-      import_path62.default.resolve(appDataDir2, "dist")
+      import_path63.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path63.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path63.default.resolve(__dirname47, "..", "frontend", "dist"),
+      import_path63.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
+      import_path63.default.resolve(process.cwd(), "dist"),
+      import_path63.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs57.default.existsSync(import_path62.default.join(dir, "index.html"))) || frontendCandidates[0];
+    frontendDist = frontendCandidates.find((dir) => import_fs58.default.existsSync(import_path63.default.join(dir, "index.html"))) || frontendCandidates[0];
     app.use(import_express53.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
@@ -75345,8 +76626,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path62.default.join(frontendDist, "index.html");
-      if (import_fs57.default.existsSync(indexPath)) {
+      const indexPath = import_path63.default.join(frontendDist, "index.html");
+      if (import_fs58.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }

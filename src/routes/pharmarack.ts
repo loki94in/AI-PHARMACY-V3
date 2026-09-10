@@ -1588,7 +1588,7 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
 
 // Delete product directly from Pharmarack live cart
 // Mutex chain ensuring single-flight sequential execution against upstream Pharmarack cart deletion
-let pharmarackDeleteChain = Promise.resolve();
+let pharmarackDeleteChain: Promise<any> = Promise.resolve();
 
 router.post('/delete-cart-item', async (req, res) => {
   const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = req.body;
@@ -1609,9 +1609,9 @@ router.post('/delete-cart-item', async (req, res) => {
   };
 
   try {
-    const success = await (pharmarackDeleteChain = pharmarackDeleteChain.then(async () => {
-      return await executeSingleItemDelete(deleteItem);
-    }));
+    const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
+    pharmarackDeleteChain = task;
+    const success = await task;
     if (success) {
       return res.json({ success: true, message: 'Item deleted from Pharmarack live cart' });
     } else {
