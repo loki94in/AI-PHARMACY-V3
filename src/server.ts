@@ -104,11 +104,6 @@ async function startTieredPreWarm(): Promise<void> {
 
   await Promise.allSettled(loaders('hot'));
 
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`[Boot] Dev mode: skipping medium route pre-warm (routes load on demand). Hot routes ready in ${Math.round(performance.now() - t0)}ms.`);
-    return;
-  }
-
   const medium = loaders('medium');
   for (let i = 0; i < medium.length; i += 5) {
     await new Promise(resolve => setTimeout(resolve, 300));
