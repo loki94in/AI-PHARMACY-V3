@@ -789,53 +789,98 @@ const sanitizeMonth = (mStr: string): string => {
 const formatExpiryToMMYY = (val: string): string => {
   if (!val) return '';
   const cleaned = val.trim().replace(/\s+/g, '');
+  if (cleaned === '00000000' || cleaned === '00/00' || cleaned === '*' || cleaned === '***' || cleaned === '//*' || cleaned === '-') return '';
 
-  // Handle ISO YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
-    const parts = cleaned.substring(0, 10).split('-');
-    const mm = sanitizeMonth(parts[1]);
-    const yy = parts[0].substring(2, 4);
+  // 1. Handle ISO YYYY-MM-DD or YYYY-MM or YYYY/MM/DD or YYYY/MM
+  const isoMatch = cleaned.match(/^(\d{4})[\/\-](\d{1,2})(?:[\/\-](\d{1,2}))?/);
+  if (isoMatch) {
+    const mm = sanitizeMonth(isoMatch[2]);
+    const yy = isoMatch[1].substring(2, 4);
     return `${mm}/${yy}`;
   }
 
-  // Handle MM/YYYY
-  if (/^\d{1,2}\/\d{4}$/.test(cleaned)) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    const yy = parts[1].substring(2, 4);
+  // 2. Handle month names, e.g. Dec-26, Dec-2026, 31-Dec-2026, Dec/26, Dec 2026
+  const monthMap: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const monthNameMatch = cleaned.match(/(?:(\d{1,2})[\/\-\s]+)?([a-z]{3,9})[\/\-\s]+(\d{2,4})/i);
+  if (monthNameMatch) {
+    const mStr = monthNameMatch[2].substring(0, 3).toLowerCase();
+    const mm = monthMap[mStr];
+    let yy = monthNameMatch[3];
+    if (mm) {
+      if (yy.length === 4) yy = yy.substring(2, 4);
+      return `${mm}/${yy}`;
+    }
+  }
+
+  // 3. Handle 3-part dates: DD/MM/YYYY, DD-MM-YYYY, DD/MM/YY, DD-MM-YY
+  const threeParts = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (threeParts) {
+    const p1 = parseInt(threeParts[1], 10);
+    const p2 = parseInt(threeParts[2], 10);
+    let yy = threeParts[3];
+    if (yy.length === 4) yy = yy.substring(2, 4);
+
+    let mm = '';
+    if (p1 > 12 && p2 >= 1 && p2 <= 12) {
+      mm = sanitizeMonth(threeParts[2]);
+    } else if (p2 > 12 && p1 >= 1 && p1 <= 12) {
+      mm = sanitizeMonth(threeParts[1]);
+    } else if (p2 >= 1 && p2 <= 12) {
+      mm = sanitizeMonth(threeParts[2]);
+    } else if (p1 >= 1 && p1 <= 12) {
+      mm = sanitizeMonth(threeParts[1]);
+    }
+    if (mm && yy) return `${mm}/${yy}`;
+  }
+
+  // 4. Handle MM/YYYY or MM-YYYY
+  const mmYyyy = cleaned.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (mmYyyy) {
+    const mm = sanitizeMonth(mmYyyy[1]);
+    const yy = mmYyyy[2].substring(2, 4);
     return `${mm}/${yy}`;
   }
 
-  // Handle MM/YY
-  if (/^\d{1,2}\/\d{2}$/.test(cleaned)) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    const yy = parts[1];
+  // 5. Handle MM/YY or MM-YY
+  const mmYy = cleaned.match(/^(\d{1,2})[\/\-](\d{2})$/);
+  if (mmYy) {
+    const mm = sanitizeMonth(mmYy[1]);
+    const yy = mmYy[2];
     return `${mm}/${yy}`;
   }
 
-  // 4 digits: MMYY
-  if (/^\d{4}$/.test(cleaned)) {
-    const mm = sanitizeMonth(cleaned.substring(0, 2));
-    const yy = cleaned.substring(2, 4);
+  // 6. 8 digits: DDMMYYYY or YYYYMMDD
+  if (/^\d{8}$/.test(cleaned)) {
+    if (cleaned.startsWith('20')) {
+      const mm = sanitizeMonth(cleaned.substring(4, 6));
+      const yy = cleaned.substring(2, 4);
+      return `${mm}/${yy}`;
+    }
+    const mm = sanitizeMonth(cleaned.substring(2, 4));
+    const yy = cleaned.substring(6, 8);
     return `${mm}/${yy}`;
   }
 
-  // 6 digits: MMYYYY
+  // 7. 6 digits: MMYYYY
   if (/^\d{6}$/.test(cleaned)) {
+    if (cleaned.endsWith('2025') || /20[2-3]\d$/.test(cleaned)) {
+      const mm = sanitizeMonth(cleaned.substring(0, 2));
+      const yy = cleaned.substring(4, 6);
+      return `${mm}/${yy}`;
+    }
     const mm = sanitizeMonth(cleaned.substring(0, 2));
     const yy = cleaned.substring(4, 6);
     return `${mm}/${yy}`;
   }
 
-  // Fallback slash format M/YY or M/YYYY
-  if (cleaned.includes('/')) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    let yy = parts[1] || '';
-    if (yy.length >= 4) yy = yy.substring(2, 4);
-    else if (yy.length === 1) yy = `0${yy}`;
-    if (yy.length === 2) return `${mm}/${yy}`;
+  // 8. 4 digits: MMYY
+  if (/^\d{4}$/.test(cleaned)) {
+    const mm = sanitizeMonth(cleaned.substring(0, 2));
+    const yy = cleaned.substring(2, 4);
+    return `${mm}/${yy}`;
   }
 
   return cleaned;
@@ -1308,8 +1353,7 @@ const Purchases: React.FC = () => {
 
       // Escape: Close Overlays / Modals
       if (e.key === 'Escape') {
-        setShowUploadModal(false);
-            setShowDistributorModal(false);
+        setShowDistributorModal(false);
         setIsUniversalModalOpen(false);
         setPanelOpen(false);
       }
@@ -1416,13 +1460,12 @@ const Purchases: React.FC = () => {
     }
   }, [batchHighlightIndex]);
 
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [schemeMatchStatus, setSchemeMatchStatus] = useState<{ [key: string]: string }>({});
   const [showDistributorModal, setShowDistributorModal] = useState(false);
 
   // Universal Escape key dismissal for Purchases modals
-  useModalEscape(showUploadModal, () => setShowUploadModal(false));
   useModalEscape(showDistributorModal, () => setShowDistributorModal(false));
   const [editDistributorId, setEditDistributorId] = useState<number | null>(null);
   const [newDistributor, setNewDistributor] = useState({
@@ -2715,11 +2758,13 @@ const Purchases: React.FC = () => {
     }
   };
 
-  const handleFileUpload = async () => {
-    if (!uploadedFile) return;
+  const handleFileUpload = async (fileToUpload: File) => {
+    if (!fileToUpload) return;
+    setIsUploadingFile(true);
+    toastEvent.trigger(`Uploading & parsing ${fileToUpload.name}...`, 'info', '/purchases');
 
     const formData = new FormData();
-    formData.append('file', uploadedFile);
+    formData.append('file', fileToUpload);
 
     try {
       const response = await apiClient.post('/purchases/upload', formData, {
@@ -2734,29 +2779,37 @@ const Purchases: React.FC = () => {
       }
       const parsedItems = response.data.data as ParsedUploadRow[];
       const parsedGlobalCdPer = response.data.global_cd_per || '';
-      let newItems = parsedItems.map((item): BillItem => ({
-        ...createEmptyItem(),
-        medicine_name: item.name ?? '',
-        original_name: item.name ?? '',
-        qty: item.qty || item.quantity || '',
-        free_qty: item.free_qty || '',
-        rate: item.price || item.rate || '',
-        batch_no: item.batch_no || '',
-        expiry_date: formatExpiryToMMYY(item.expiry_date || ''),
-        mrp: item.mrp || '',
-        cgst_per: item.cgst_per || '',
-        sgst_per: item.sgst_per || '',
-        hsn_code: item.hsn_code || '',
-        cd_per: item.cd_per !== undefined ? (item.cd_per || '') : (parsedGlobalCdPer || ''),
-        cd_rs: item.cd_rs || '',
-        additional_discount: item.additional_discount || '',
-      }));
+      let newItems = parsedItems.map((item): BillItem => {
+        const itemRate = (item.rate !== undefined && item.rate !== null && item.rate !== '') ? item.rate : (item.price ?? '');
+        const itemMrp = item.mrp ?? '';
+        let itemBatch = String(item.batch_no || '').trim();
+        if (itemBatch === '********' || itemBatch === '//*' || itemBatch === '*' || itemBatch === '***') {
+          itemBatch = '';
+        }
+        return {
+          ...createEmptyItem(),
+          medicine_name: item.name ?? '',
+          original_name: item.name ?? '',
+          qty: item.qty || item.quantity || '',
+          free_qty: item.free_qty || '',
+          rate: (itemRate !== '' && !isNaN(Number(itemRate)) && Number(itemRate) > 0) ? itemRate : '',
+          batch_no: itemBatch,
+          expiry_date: formatExpiryToMMYY(item.expiry_date || ''),
+          mrp: (itemMrp !== '' && !isNaN(Number(itemMrp)) && Number(itemMrp) > 0) ? itemMrp : '',
+          cgst_per: item.cgst_per || '',
+          sgst_per: item.sgst_per || '',
+          hsn_code: item.hsn_code || '',
+          cd_per: item.cd_per !== undefined ? (item.cd_per || '') : (parsedGlobalCdPer || ''),
+          cd_rs: item.cd_rs || '',
+          additional_discount: item.additional_discount || '',
+        };
+      });
 
       if (newItems.length === 0) {
         newItems = [createEmptyItem()];
       }
 
-      // Auto-resolve medicine IDs and names for the uploaded items
+      // Auto-resolve medicine IDs and names for the uploaded items, and backfill missing rate/mrp from catalog
       for (let i = 0; i < newItems.length; i++) {
         const mName = newItems[i].original_name;
         if (!mName) continue;
@@ -2768,22 +2821,42 @@ const Purchases: React.FC = () => {
             newItems[i].medicine_id = match.id;
             newItems[i].medicine_name = match.name;
             newItems[i].manufacturer = match.manufacturer || newItems[i].manufacturer;
+            if ((!newItems[i].mrp || Number(newItems[i].mrp) <= 0) && match.mrp) {
+              newItems[i].mrp = match.mrp;
+            }
+            if ((!newItems[i].rate || Number(newItems[i].rate) <= 0) && ((match as any).purchase_rate || (match as any).ptr)) {
+              newItems[i].rate = (match as any).purchase_rate || (match as any).ptr;
+            }
             continue;
           }
 
-          // 2. Fallback to catalog search for EXACT matches
+          // 2. Fallback to catalog search for EXACT or FUZZY matches
           const res = (await api.catalogSearch(mName)) as CatalogSearchRow[];
           const matchedList = res || [];
+          let bestMatch: CatalogSearchRow | null = null;
           if (matchedList.length > 0) {
-            const match = matchedList.find(m => m.name && m.name.toLowerCase() === mName.toLowerCase());
-            if (match) {
-              newItems[i].medicine_id = match.id;
-              newItems[i].medicine_name = match.name;
-              newItems[i].manufacturer = match.manufacturer || newItems[i].manufacturer;
-            } else {
-              newItems[i].medicine_id = null;
-              newItems[i].medicine_name = mName;
-              newItems[i].manufacturer = '';
+            bestMatch = matchedList.find(m => m.name && m.name.toLowerCase() === mName.toLowerCase()) ?? null;
+            if (!bestMatch) {
+              const scored = matchedList.map(m => ({
+                item: m,
+                score: calculateSimilarity(mName, m.name)
+              })).filter(s => s.score >= 0.60);
+              if (scored.length > 0) {
+                scored.sort((a, b) => b.score - a.score);
+                bestMatch = scored[0]!.item;
+              }
+            }
+          }
+
+          if (bestMatch) {
+            newItems[i].medicine_id = bestMatch.id;
+            newItems[i].medicine_name = bestMatch.name;
+            newItems[i].manufacturer = bestMatch.manufacturer || newItems[i].manufacturer;
+            if ((!newItems[i].mrp || Number(newItems[i].mrp) <= 0) && bestMatch.mrp) {
+              newItems[i].mrp = bestMatch.mrp;
+            }
+            if ((!newItems[i].rate || Number(newItems[i].rate) <= 0) && ((bestMatch as any).purchase_rate || (bestMatch as any).ptr)) {
+              newItems[i].rate = (bestMatch as any).purchase_rate || (bestMatch as any).ptr;
             }
           } else {
             newItems[i].medicine_id = null;
@@ -2804,7 +2877,7 @@ const Purchases: React.FC = () => {
       if (response.data.invoice_no) {
         setInvoiceNo(response.data.invoice_no);
       } else {
-        const fileDigits = uploadedFile.name.replace(/\.[^/.]+$/, "").match(/\d+/);
+        const fileDigits = fileToUpload.name.replace(/\.[^/.]+$/, "").match(/\d+/);
         if (fileDigits) {
           setInvoiceNo(fileDigits[0]);
         }
@@ -2878,11 +2951,13 @@ const Purchases: React.FC = () => {
         setMappingConfig(response.data.mapping_config);
       }
 
-      setShowUploadModal(false);
-      setUploadedFile(null);
-    } catch (error) {
+      toastEvent.trigger(`Parsed ${newItems.length} item(s) from ${fileToUpload.name}!`, 'success', '/purchases');
+    } catch (error: any) {
       console.error('Error uploading file:', error);
-      alert('Failed to parse invoice file');
+      const errMsg = error?.response?.data?.error || error?.message || 'Failed to parse invoice file';
+      toastEvent.trigger(errMsg, 'error', '/purchases');
+    } finally {
+      setIsUploadingFile(false);
     }
   };
 
@@ -2912,7 +2987,7 @@ const Purchases: React.FC = () => {
         canvas.toBlob((blob) => {
           if (blob) {
             const file = new File([blob], "screenshot.png", { type: "image/png" });
-            setUploadedFile(file);
+            handleFileUpload(file);
           }
           stream.getTracks().forEach(track => track.stop());
         }, 'image/png');
@@ -2921,7 +2996,7 @@ const Purchases: React.FC = () => {
       }
     } catch (err) {
       console.error("Failed to capture screen:", err);
-      alert("Screen capture was canceled or failed.");
+      toastEvent.trigger("Screen capture was canceled or failed.", 'error', '/purchases');
     }
   };
 
@@ -3424,13 +3499,46 @@ const Purchases: React.FC = () => {
             />
           </div>
 
-          {/* Upload button */}
-          <div className="flex-shrink-0 flex gap-2">
+          {/* Direct File Upload & Screen Capture buttons */}
+          <div className="flex-shrink-0 flex items-center gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".pdf,.csv,.xlsx,.xls,.zip,.dav,.dac,image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleFileUpload(file);
+                }
+                e.target.value = '';
+              }}
+            />
             <button
-              onClick={() => setShowUploadModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingFile}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              title="Upload PDF, CSV, Excel, ZIP, DAV, DAC, or Image scan"
             >
-              📎 Upload
+              {isUploadingFile ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" /> Parsing...
+                </>
+              ) : (
+                <>
+                  📎 Upload
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={captureScreen}
+              disabled={isUploadingFile}
+              className="bg-purple-600 hover:bg-purple-700 text-white p-2 rounded-lg text-sm flex items-center justify-center transition-colors disabled:opacity-50"
+              title="Capture Screen / Window (Word, Email, Image)"
+            >
+              <Camera size={16} />
             </button>
           </div>
         </div>
@@ -4295,60 +4403,7 @@ const Purchases: React.FC = () => {
       </div>
     </div>
 
-      {/* Upload Modal */}
-      {showUploadModal && createPortal(
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-modal">
-          <div className="bg-bg2 border border-border rounded-xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-text mb-4">Upload or Capture Invoice</h3>
-            <p className="text-muted mb-4">Upload PDF, CSV, Excel, ZIP, DAV, DAC, or Image scans. You can also capture a window (like Word or an email) using the Screen Capture button.</p>
-            
-            <div className="flex flex-col gap-4 mb-4">
-              <input
-                type="file"
-                accept=".pdf,.csv,.xlsx,.xls,.zip,.dav,.dac,image/*"
-                onChange={(e) => setUploadedFile(e.target.files?.[0] || null)}
-                className="w-full bg-bg3 border border-border rounded-lg px-4 py-2 text-text"
-              />
-              
-              <div className="flex items-center gap-2">
-                <span className="text-muted text-sm">OR</span>
-                <button
-                  onClick={captureScreen}
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2"
-                  title="Take a screenshot of another window (e.g. Word, Email)"
-                >
-                  <Camera size={16} />
-                  Capture Screen / Window
-                </button>
-              </div>
 
-              {uploadedFile && (
-                <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded text-sm text-emerald-400 flex justify-between items-center">
-                  <span className="truncate max-w-[250px]">{uploadedFile.name}</span>
-                  <button onClick={() => setUploadedFile(null)} className="hover:text-red ml-2">✕</button>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => { setShowUploadModal(false); setUploadedFile(null); }}
-                className="border border-border text-muted hover:text-text hover:bg-bg3 px-4 py-2 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleFileUpload}
-                disabled={!uploadedFile}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
-              >
-                Upload & Parse
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
 
       {/* Add/Edit Distributor Modal */}
       {showDistributorModal && createPortal(

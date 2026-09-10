@@ -7,6 +7,39 @@
 
 ## Fixed
 
+### [Fixed] P1-21 — Live Cart Search Dropdown Priority Hardening: Strict Mapped Wall & Non-Mapped Relegation
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the "Add to Live Cart" search dropdown list, non-mapped distributors with high stock or exact name matches appeared at the top above mapped distributors, causing confusion when attempting to add items directly to the live Pharmarack cart. |
+| **Root cause** | `LiveCartAddModal.tsx` and `QuickOrderModal.tsx` evaluated query title proximity and Stock Tier at Steps 1 & 2 before Mapped vs Non-Mapped at Step 4. Consequently, an unmapped distributor with High Stock outranked a mapped distributor with Low or Out of Stock. |
+| **How it was fixed** | 1. Enforced a strict **Mapped Wall** as Rule #1 across `LiveCartAddModal.tsx` and `QuickOrderModal.tsx`: mapped distributors are guaranteed to appear first, while non-mapped distributors are strictly relegated to the bottom.<br>2. Within mapped items, preserved exact title proximity (Rule #2), Stock Tier (High > Low > Out of Stock, Rule #3), and Active Live Cart presence (Rule #4, prioritizing distributors already added to the cart).<br>3. Expanded `tests/liveCartDropdownSorting.test.ts` with 3 new regression test cases verifying non-mapped items never outrank mapped items regardless of stock level or exact title match. |
+| **Priority** | P1 |
+| **What not to touch** | Direct OpenSearch API querying; active cart item aggregation (`activeCartMap`); background session restoration. |
+| **Verified by** | `tests/liveCartDropdownSorting.test.ts` (9/9 PASS); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-20 — Application Close Confirmation & Complete Shutdown of Frontend Window and Backend Server
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. Closing the app via window 'X' or Alt+F4 closed immediately without asking for confirmation, risking lost work.<br>2. Clicking "Exit App" in the sidebar stopped the backend, but the frontend window remained open displaying an orphaned black screen: *"AI PHARMACY OS SHUT DOWN — The backend process has terminated cleanly and port 5175 is free. You can safely close this browser window."* The window was not closed automatically. |
+| **Root cause** | 1. Frontend lacked a `beforeunload` event listener to prompt for user confirmation before closing the window.<br>2. Browsers block script-initiated `window.close()` unless opened by script, leaving the dedicated Chrome `--app` window orphaned on screen.<br>3. Backend lacked tracking of the spawned desktop browser child process and did not terminate the app window process during clean exit. |
+| **How it was fixed** | 1. Added a global `beforeunload` listener in `frontend/src/components/Layout.tsx` prompting for confirmation before closing the app window.<br>2. Replaced the basic inline prompt in `ExitAppButton` with a clean confirmation dialog and full-screen graceful shutdown overlay.<br>3. Tracked the spawned app window process (`activeAppBrowserProcess`) in `src/utils/chromeBrowser.ts` and added `closeAppBrowser()`.<br>4. Integrated `closeAppBrowser()` and re-entrancy mutex (`isShuttingDown`) into `src/server.ts` `gracefulShutdown`, cleanly terminating the frontend desktop window together with the backend. |
+| **Priority** | P1 |
+| **What not to touch** | Isolated app profile path (`data/app_browser_profile`); standard graceful shutdown sequence (backup, DB close, supervisor stop); port binding logic. |
+| **Verified by** | Frontend build PASS (`tsc -b && vite build`); backend `npx tsc --noEmit` PASS; `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-19 — Rate, MRP, and Expiry Extraction Failure on Manual PC Invoice Uploads
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When uploading a manual purchase file from the PC (CSV, Excel `.xlsx`/`.xls`, Marg EDI), the Purchases page failed to populate `rate`, `mrp`, or `expiry_date` in the draft table, displaying `0` or empty values. |
+| **Root cause** | 1. `isExcluded` for rate in `src/services/emailService.ts` explicitly excluded `/ptr/`, preventing common Indian pharma rate header `PTR` (Price To Retailer) from mapping to rate.<br>2. Expiry dates formatted with 3 parts (`DD/MM/YYYY`, `DD-MM-YYYY`), month names (`Dec-26`), ISO format (`2026-12-31`), raw digits, or Excel serial numbers either failed regex matching or inverted month/day into invalid dates.<br>3. Comma-separated numbers (`1,250.00`) or currency symbols (`Rs. 180.50`, `₹`) caused `parseFloat` to yield `NaN` or truncated values.<br>4. Header row offsets in distributor Excel/CSV files with top banner rows were skipped or misread.<br>5. Frontend intake lacked fallback backfill from the master medicine catalog for matched items with zero/missing rates or MRPs. |
+| **How it was fixed** | 1. Removed `ptr`, `pts`, and `net` from rate exclusion rules and expanded header synonyms (`purrate`, `purchaserate`, `unitprice`, `basicrate`, `netrate`, `mrp`, `maxretailprice`, `srp`, `expdt`, `validity`, etc.).<br>2. Implemented universal expiry parser handling Excel serial dates, ISO dates, month names, 3-part dates, 2-part dates, and raw digits while filtering dummy values (`00000000`, `*`, `//*`).<br>3. Added `parseCleanNum` sanitizing commas and currency symbols.<br>4. Added dynamic header-row scanning (first 15 rows) and delimiter auto-detection (`,`, `;`, `\t`).<br>5. Synchronized frontend `formatExpiryToMMYY` and added automatic rate/MRP backfill from catalog when medicines match. |
+| **Priority** | P1 |
+| **What not to touch** | Direct file upload pipeline; OCR processing paths; keep-alive purchase state caching. |
+| **Verified by** | Tested with real user CSV uploads and edge-case formats (`PTR & Exp 12/2026`, `Pur.Rate & ISO Date`, `Price & Month-Year`); `npm run guardrails` PASS; `frontend` build PASS; `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-18 — Dytor 20 & Dytor 10 Packaging Image Cross-Connection & Strength Search Hardening
 
 | Field | Content |

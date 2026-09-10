@@ -40,7 +40,12 @@ function sortSuggestions(
   return [...list].sort((a, b) => {
     if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-    // 1. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
+    // 1. Mapped Wall: Mapped ALWAYS before Unmapped (Non-mapped never at top, always at bottom)
+    const aMapped = Boolean(a.mapped);
+    const bMapped = Boolean(b.mapped);
+    if (aMapped !== bMapped) return aMapped ? -1 : 1;
+
+    // 2. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
     const aName = (a.medicine_name || a.shortName || '').toLowerCase().trim();
     const bName = (b.medicine_name || b.shortName || '').toLowerCase().trim();
     const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
@@ -48,12 +53,12 @@ function sortSuggestions(
     if (aExact && !bExact) return -1;
     if (!aExact && bExact) return 1;
 
-    // 2. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
+    // 3. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
     const aStock = getStockTier(a.stock !== undefined ? String(a.stock) : undefined);
     const bStock = getStockTier(b.stock !== undefined ? String(b.stock) : undefined);
     if (aStock !== bStock) return bStock - aStock;
 
-    // 3. In Active Live Cart (within the same stock tier)
+    // 4. In Active Live Cart (within the same stock tier)
     const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
     const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
     if (aInCart && !bInCart) return -1;
@@ -66,12 +71,6 @@ function sortSuggestions(
         return (b.cartTotalAmount || 0) - (a.cartTotalAmount || 0);
       }
     }
-
-    // 4. Mapped ALWAYS before Unmapped
-    const aMapped = Boolean(a.mapped);
-    const bMapped = Boolean(b.mapped);
-    if (aMapped && !bMapped) return -1;
-    if (!aMapped && bMapped) return 1;
 
     // 5. Recent distributor boost
     if (lastDist) {
@@ -215,5 +214,91 @@ describe('Live Cart Dropdown Sorting Logic', () => {
     const sorted = sortSuggestions(suggestions, 'NICIP P');
     expect(sorted[0].medicine_name).toBe('NICIP P TABLET');
     expect(sorted[1].medicine_name).toBe('NICIP PLUS TABLET');
+  });
+
+  it('7. Non-mapped distributor with High Stock must NEVER rank above Mapped distributor (even if mapped has low or out of stock)', () => {
+    const suggestions: SuggestionMedicine[] = [
+      {
+        medicine_name: 'AZITHRAL 500 TABLET',
+        distributor: 'Unmapped Distributor (High Stock)',
+        stock: 'High',
+        mapped: false,
+        cartItemCount: 0
+      },
+      {
+        medicine_name: 'AZITHRAL 500 TABLET',
+        distributor: 'Mapped Distributor (Low Stock: 2 units)',
+        stock: '2',
+        mapped: true,
+        cartItemCount: 0
+      },
+      {
+        medicine_name: 'AZITHRAL 500 TABLET',
+        distributor: 'Mapped Distributor (Out of Stock)',
+        stock: '0',
+        mapped: true,
+        cartItemCount: 0
+      }
+    ];
+
+    const sorted = sortSuggestions(suggestions, 'AZITHRAL 500');
+    // Mapped with low stock is first
+    expect(sorted[0].distributor).toBe('Mapped Distributor (Low Stock: 2 units)');
+    // Mapped out of stock is second
+    expect(sorted[1].distributor).toBe('Mapped Distributor (Out of Stock)');
+    // Unmapped is strictly at the bottom
+    expect(sorted[2].distributor).toBe('Unmapped Distributor (High Stock)');
+  });
+
+  it('8. Non-mapped distributor with exact name match must NEVER rank above Mapped distributor', () => {
+    const suggestions: SuggestionMedicine[] = [
+      {
+        medicine_name: 'DOLO 650 TABLET',
+        distributor: 'Unmapped Distributor (Exact Title Match)',
+        stock: 'High',
+        mapped: false
+      },
+      {
+        medicine_name: 'DOLO 650 MG TABLET',
+        distributor: 'Mapped Distributor (Partial Title)',
+        stock: 'High',
+        mapped: true
+      }
+    ];
+
+    const sorted = sortSuggestions(suggestions, 'DOLO 650 TABLET');
+    expect(sorted[0].distributor).toBe('Mapped Distributor (Partial Title)');
+    expect(sorted[1].distributor).toBe('Unmapped Distributor (Exact Title Match)');
+  });
+
+  it('9. When mapped distributors have High Stock, the one already in active cart ranks #1', () => {
+    const suggestions: SuggestionMedicine[] = [
+      {
+        medicine_name: 'TELMA 40 TABLET',
+        distributor: 'Mapped Distributor A (Not in cart)',
+        stock: 'High',
+        mapped: true,
+        cartItemCount: 0
+      },
+      {
+        medicine_name: 'TELMA 40 TABLET',
+        distributor: 'Mapped Distributor B (In live cart)',
+        stock: 'High',
+        mapped: true,
+        cartItemCount: 4,
+        cartTotalAmount: 1800
+      },
+      {
+        medicine_name: 'TELMA 40 TABLET',
+        distributor: 'Unmapped Distributor C',
+        stock: 'High',
+        mapped: false
+      }
+    ];
+
+    const sorted = sortSuggestions(suggestions, 'TELMA 40');
+    expect(sorted[0].distributor).toBe('Mapped Distributor B (In live cart)');
+    expect(sorted[1].distributor).toBe('Mapped Distributor A (Not in cart)');
+    expect(sorted[2].distributor).toBe('Unmapped Distributor C');
   });
 });

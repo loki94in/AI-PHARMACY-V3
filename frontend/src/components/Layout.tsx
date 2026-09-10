@@ -131,53 +131,130 @@ interface LocalApiErrorShape {
 // Sidebar
 // ──────────────────────────────────────────────
 const ExitAppButton = () => {
-  const [confirming, setConfirming] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isShuttingDown, setIsShuttingDown] = useState(false);
+  const [shutdownSettled, setShutdownSettled] = useState(false);
 
-  if (confirming) {
-    return (
-      <div className="flex items-center gap-1.5 p-1 bg-red-500/10 border border-red-500/30 rounded-xl animate-fade-in">
-        <button
-          onClick={async () => {
-            try {
-              toastEvent.trigger('Shutting down AI Pharmacy OS...', 'info');
-              await api.shutdownSystem();
-            } catch (_) {}
-            window.close();
-            setTimeout(() => {
-              document.body.innerHTML = `
-                <div style="height:100vh;display:flex;align-items:center;justify-content:center;background:#090d16;color:#94a3b8;font-family:sans-serif;text-align:center;">
-                  <div>
-                    <h2 style="color:#ef4444;margin-bottom:8px;">AI PHARMACY OS SHUT DOWN</h2>
-                    <p style="font-size:14px;color:#cbd5e1;">The backend process has terminated cleanly and port 5175 is free.</p>
-                    <p style="font-size:12px;color:#64748b;margin-top:16px;">You can safely close this browser window.</p>
-                  </div>
-                </div>
-              `;
-            }, 400);
-          }}
-          className="flex-1 py-1.5 text-center text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors cursor-pointer"
-        >
-          Confirm Exit
-        </button>
-        <button
-          onClick={() => setConfirming(false)}
-          className="px-2.5 py-1.5 text-[11px] font-semibold text-muted hover:text-text rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
-        >
-          Cancel
-        </button>
-      </div>
-    );
-  }
+  const handleConfirmExit = async () => {
+    setIsShuttingDown(true);
+    (window as any).__AI_PHARMACY_EXITING__ = true;
+    try {
+      toastEvent.trigger('Shutting down AI Pharmacy OS...', 'info');
+      await api.shutdownSystem();
+    } catch (_) {}
+
+    try {
+      window.open('', '_self', '');
+      window.close();
+    } catch (_) {}
+
+    // In case running in a browser tab where script cannot close the tab directly,
+    // transition the overlay state cleanly after a short grace period
+    setTimeout(() => {
+      setShutdownSettled(true);
+    }, 2500);
+  };
 
   return (
-    <button
-      onClick={() => setConfirming(true)}
-      className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-red-500/80 hover:text-white hover:bg-red-500 transition-all cursor-pointer border border-red-500/20"
-      title="Shut down AI Pharmacy OS and close application"
-    >
-      <Power size={16} />
-      <span>Exit App</span>
-    </button>
+    <>
+      <button
+        onClick={() => setShowConfirmModal(true)}
+        className="w-full flex items-center gap-3 px-4 py-2 rounded-xl text-xs font-semibold text-red-500/80 hover:text-white hover:bg-red-500 transition-all cursor-pointer border border-red-500/20"
+        title="Shut down AI Pharmacy OS and close application"
+      >
+        <Power size={16} />
+        <span>Exit App</span>
+      </button>
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && !isShuttingDown && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left animate-fade-in">
+          <div className="bg-bg border border-glass-border w-full max-w-md rounded-3xl p-6 space-y-4 text-left shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-2xl bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
+                <Power size={22} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-base text-text">Exit AI Pharmacy OS?</h3>
+                <p className="text-xs text-muted mt-1 leading-relaxed">
+                  This will cleanly create an auto-backup, stop all background services, release port 5175, and close the application.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-bg2 border border-border text-[11px] text-muted space-y-1.5">
+              <div className="flex items-center gap-2 text-text font-medium">
+                <Check size={13} className="text-emerald-500 shrink-0" />
+                <span>Auto-backup and database safely closed</span>
+              </div>
+              <div className="flex items-center gap-2 text-text font-medium">
+                <Check size={13} className="text-emerald-500 shrink-0" />
+                <span>Background sync workers and sidecars terminated</span>
+              </div>
+              <div className="flex items-center gap-2 text-text font-medium">
+                <Check size={13} className="text-emerald-500 shrink-0" />
+                <span>Frontend window and backend server terminate together</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end items-center gap-2 pt-2 border-t border-glass-border/40">
+              <button
+                type="button"
+                onClick={() => setShowConfirmModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-muted hover:text-text rounded-xl hover:bg-bg3 transition-colors cursor-pointer border border-border"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmExit}
+                className="px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors cursor-pointer flex items-center gap-2 shadow-lg shadow-red-600/25 active:scale-95"
+              >
+                <Power size={14} />
+                <span>Shut Down & Exit</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Shutdown in Progress Fullscreen Overlay */}
+      {isShuttingDown && createPortal(
+        <div className="fixed inset-0 z-[999999] bg-bg/95 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 select-none animate-fade-in">
+          <div className="p-4 rounded-3xl bg-red-500/10 text-red-500 mb-4 animate-pulse border border-red-500/20">
+            <Power size={36} />
+          </div>
+          <h2 className="text-lg font-extrabold text-text tracking-tight mb-1.5">
+            {shutdownSettled ? 'AI Pharmacy OS Shut Down' : 'Shutting Down AI Pharmacy OS...'}
+          </h2>
+          <p className="text-xs text-muted max-w-sm leading-relaxed">
+            {shutdownSettled
+              ? 'The backend server process has terminated cleanly and port 5175 is free. You can safely close this window.'
+              : 'Creating database shutdown backup and stopping background services...'}
+          </p>
+          {!shutdownSettled ? (
+            <div className="mt-5 flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
+              <Loader2 size={14} className="animate-spin text-red-500" />
+              <span>Closing application completely...</span>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                try {
+                  window.open('', '_self', '');
+                  window.close();
+                } catch (_) {}
+              }}
+              className="mt-5 px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all cursor-pointer shadow-md"
+            >
+              Close Window
+            </button>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
   );
 };
 
@@ -4061,6 +4138,24 @@ export const Layout = ({
   useEffect(() => {
     setMobileNavOpen(false);
   }, [location.pathname]);
+
+  // Intercept window close ('X' button or Alt+F4) to confirm before exiting
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // If user already initiated an intentional exit via Exit App button, don't show secondary prompt
+      if ((window as any).__AI_PHARMACY_EXITING__) {
+        return;
+      }
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   useEffect(() => {
     return whatsappQueueEvent.subscribeOpen(() => {

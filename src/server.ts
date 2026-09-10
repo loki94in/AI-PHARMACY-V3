@@ -18,7 +18,7 @@ import { activityTracker } from './utils/activityTracker.js';
 import { runHeavyJob } from './utils/backgroundJobLane.js';
 import { getBackendFetchMode } from './services/dataFetchControl.js';
 import { config, getAppDataDir, isPackagedApp } from './config/index.js';
-import { launchAppBrowser } from './utils/chromeBrowser.js';
+import { launchAppBrowser, closeAppBrowser } from './utils/chromeBrowser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -851,8 +851,13 @@ app.post('/api/system/shutdown', (req, res) => {
   }, 100);
 });
 
-// Graceful shutdown with auto-backup
+let isShuttingDown = false;
+
+// Graceful shutdown with auto-backup and complete app termination
 async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
   console.log(`${signal} received. Draining in-flight requests...`);
   // Stop accepting NEW connections immediately, but let requests already being handled
   // finish naturally instead of racing them against dbManager.close(true) below.
@@ -894,6 +899,14 @@ async function gracefulShutdown(signal: string) {
     console.error('Error stopping scispaCy sidecar:', err);
   }
   await dbManager.close(true);
+
+  // Cleanly terminate the desktop app window if open, closing frontend and backend together
+  try {
+    closeAppBrowser();
+  } catch (browserErr) {
+    console.error('Error closing app browser window:', browserErr);
+  }
+
   process.exit(0);
 }
 

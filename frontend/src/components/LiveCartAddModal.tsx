@@ -1210,10 +1210,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
           };
 
           // Sort suggestions:
-          // 1. Title proximity (exact query match e.g. "NICIP P" before "NICIP PLUS")
-          // 2. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
-          // 3. In Active Live Cart (Cart Consolidation / Reach MOVs within same stock tier)
-          // 4. Mapped vs Unmapped (Mapped ALWAYS above Unmapped)
+          // 1. Mapped Wall: Mapped ALWAYS before Unmapped (Non-mapped never at top, always at bottom)
+          // 2. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
+          // 3. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
+          // 4. In Active Live Cart (Already added distributor prioritized within same stock tier)
           // 5. Recent distributor tie-break
           // 6. Effective rate
           const lastDist = (lastAddedDistributor || localStorage.getItem('pharmarack_last_added_distributor') || '').toLowerCase().trim();
@@ -1222,7 +1222,12 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
             mergedList.sort((a, b) => {
               if (a.isErrorMessage || b.isErrorMessage) return 0;
 
-              // 1. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
+              // 1. Mapped Wall: Mapped ALWAYS before Unmapped (Non-mapped never at top, always at bottom)
+              const aMapped = Boolean(a.mapped);
+              const bMapped = Boolean(b.mapped);
+              if (aMapped !== bMapped) return aMapped ? -1 : 1;
+
+              // 2. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
               const aName = (a.medicine_name || a.shortName || '').toLowerCase().trim();
               const bName = (b.medicine_name || b.shortName || '').toLowerCase().trim();
               const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
@@ -1230,12 +1235,12 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               if (aExact && !bExact) return -1;
               if (!aExact && bExact) return 1;
 
-              // 2. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
+              // 3. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
               const aStock = getStockTier(a.stock);
               const bStock = getStockTier(b.stock);
               if (aStock !== bStock) return bStock - aStock;
 
-              // 3. In Active Live Cart (within the same stock tier)
+              // 4. In Active Live Cart (Already added distributor prioritized within same stock tier)
               const aInCart = Boolean(a.cartItemCount && a.cartItemCount > 0);
               const bInCart = Boolean(b.cartItemCount && b.cartItemCount > 0);
               if (aInCart && !bInCart) return -1;
@@ -1248,12 +1253,6 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   return (b.cartTotalAmount || 0) - (a.cartTotalAmount || 0);
                 }
               }
-
-              // 4. Mapped ALWAYS before Unmapped
-              const aMapped = Boolean(a.mapped);
-              const bMapped = Boolean(b.mapped);
-              if (aMapped && !bMapped) return -1;
-              if (!aMapped && bMapped) return 1;
 
               // 5. Recent distributor boost
               if (lastDist) {

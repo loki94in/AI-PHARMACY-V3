@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, exec, ChildProcess } from 'child_process';
 import { getAppDataDir } from '../config/index.js';
 
 /**
@@ -103,6 +103,8 @@ export async function copyProfileFolder(src: string, dest: string, logPrefix = '
  * - --disable-background-networking / --disable-sync: Disables background telemetry, syncing, and auto-updates.
  * - Direct process spawn: Eliminates lingering cmd.exe / terminal processes.
  */
+let activeAppBrowserProcess: ChildProcess | null = null;
+
 export function launchAppBrowser(url: string, customProfileDir?: string, onExit?: () => void): boolean {
   try {
     const browserPath = findChromePath({ includeEdge: true });
@@ -128,12 +130,14 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
         detached: !onExit,
         stdio: 'ignore'
       });
+      activeAppBrowserProcess = child;
       child.on('error', (err) => {
         console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
       });
       if (onExit) {
         child.on('exit', (code) => {
           console.log(`[ChromeBrowser] App browser window closed (code: ${code}). Triggering app shutdown...`);
+          activeAppBrowserProcess = null;
           onExit();
         });
       } else {
@@ -161,6 +165,35 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
   } catch (err: any) {
     console.warn(`[ChromeBrowser] Fallback opener failed: ${err.message}`);
     return false;
+  }
+}
+
+/**
+ * Terminate the dedicated desktop app window (Chrome / Edge in --app mode).
+ * Called during clean backend shutdown so both backend and frontend terminate together.
+ */
+export function closeAppBrowser(): void {
+  if (activeAppBrowserProcess && activeAppBrowserProcess.pid) {
+    const pid = activeAppBrowserProcess.pid;
+    console.log(`[ChromeBrowser] Terminating app browser window process (PID: ${pid})...`);
+    try {
+      if (process.platform === 'win32') {
+        exec(`taskkill /pid ${pid} /t /f`, () => {});
+      } else {
+        activeAppBrowserProcess.kill('SIGTERM');
+      }
+    } catch (err: any) {
+      console.warn(`[ChromeBrowser] Error terminating browser process: ${err.message}`);
+    }
+    activeAppBrowserProcess = null;
+  }
+
+  // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile
+  if (process.platform === 'win32') {
+    try {
+      const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
+      exec(killCmd, () => {});
+    } catch (_) {}
   }
 }
 

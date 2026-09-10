@@ -155,13 +155,13 @@ async function getSuggestedMappingFromHeaders(headers: string[], db: any): Promi
       },
       {
         field: 'mrp',
-        priority1: /^(mrp)$/i,
-        priority2: /mrp/i
+        priority1: /^(mrp|maxretailprice|retailprice|srp)$/i,
+        priority2: /mrp|retail.*price|max.*price/i
       },
       {
         field: 'rate',
-        priority1: /^(rate|ptr|cost|price|unitrate|purrate|ftrate|srate)$/i,
-        priority2: /rate|price|ptr/i
+        priority1: /^(rate|ptr|cost|price|unitrate|purrate|purchaserate|prate|unitprice|basicrate|netrate|drate|dealerrate|tradeprice|buyprice|ftrate|srate|costprice)$/i,
+        priority2: /rate|price|ptr|cost|pur.*rate|unit.*price/i
       },
       {
         field: 'cgst',
@@ -180,18 +180,18 @@ async function getSuggestedMappingFromHeaders(headers: string[], db: any): Promi
       },
       {
         field: 'quantity',
-        priority1: /^(qty|quantity|quantitybld|bldqty)$/i,
+        priority1: /^(qty|quantity|quantitybld|bldqty|billedqty|billqty|units|nos|pack)$/i,
         priority2: /qty|quantity/i
       },
       {
         field: 'batch_no',
-        priority1: /^(batch|batchno|lot|lotno)$/i,
+        priority1: /^(batch|batchno|lot|lotno|batchnum|batchid)$/i,
         priority2: /batch|lot/i
       },
       {
         field: 'expiry_date',
-        priority1: /^(expiry|expdate|expirydate)$/i,
-        priority2: /exp|expiry/i
+        priority1: /^(expiry|expdate|expirydate|expdt|valupto|validupto|validity|exp)$/i,
+        priority2: /exp|expiry|valid/i
       },
       {
         field: 'free_qty',
@@ -238,13 +238,13 @@ async function getSuggestedMappingFromHeaders(headers: string[], db: any): Promi
       return /free|sch|adj|amt/i.test(norm);
     }
     if (field === 'rate') {
-      return /mrp|free|sch|cgst|sgst|disc|net|grs|tax|ptr|pts/i.test(norm);
+      return /mrp|free|sch|cgst|sgst|disc|discount|tax|qty|quantity|amount|total|value|hsn|batch|exp/i.test(norm);
     }
     if (field === 'cgst' || field === 'sgst') {
       return /amt|val|tax/i.test(norm);
     }
     if (field === 'expiry_date') {
-      return /year|day|month/i.test(norm);
+      return /export|expense/i.test(norm);
     }
     if (field === 'cd_per') {
       return /amt|val|rs|net/i.test(norm);
@@ -361,43 +361,117 @@ function extractBillAmount(text: string): string {
   return `₹${parsed.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function formatExpiryDate(expStr: string): string {
-  if (!expStr) return '';
-  const clean = expStr.trim();
-  if (clean === '00000000' || clean === '*' || clean === '***' || clean === '') return '';
-
-  // Format DD/MM/YYYY or MM/YYYY or DD-MM-YYYY
-  const match = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-  if (match) {
-    let month = match[2];
-    let year = match[3];
-    if (!year && match[2]) {
-      month = match[1];
-      year = match[2];
+function formatExpiryDate(expVal: any): string {
+  if (!expVal) return '';
+  // If Excel parsed it as a number (serial date 30000 - 65000)
+  if (typeof expVal === 'number' && expVal > 30000 && expVal < 65000) {
+    const d = new Date(Math.round((expVal - 25569) * 86400 * 1000));
+    if (!isNaN(d.getTime())) {
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const yy = String(d.getUTCFullYear()).slice(-2);
+      return `${mm}/${yy}`;
     }
-    if (year && year.length === 4) {
-      year = year.substring(2, 4);
-    }
-    if (!year || !month) return '';
-    return `${month.padStart(2, '0')}/${year}`;
   }
 
-  // If it's MM/YY or MM-YY
-  const matchShort = clean.match(/^(\d{1,2})[\/\-](\d{2})/);
-  if (matchShort) {
-    return `${matchShort[1].padStart(2, '0')}/${matchShort[2]}`;
+  const clean = String(expVal).trim();
+  if (!clean || clean === '00000000' || clean === '00/00' || clean === '00/0000' || clean === '*' || clean === '***' || clean === '//*' || clean === '-') {
+    return '';
   }
 
-  // If it's raw 8 digits (DDMMYYYY) or 6 digits (MMYYYY)
+  // 1. ISO format: YYYY-MM-DD or YYYY-MM or YYYY/MM/DD or YYYY/MM
+  const isoMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})(?:[\/\-](\d{1,2}))?/);
+  if (isoMatch) {
+    const yy = isoMatch[1].slice(-2);
+    const m = parseInt(isoMatch[2], 10);
+    if (m >= 1 && m <= 12) {
+      return `${String(m).padStart(2, '0')}/${yy}`;
+    }
+  }
+
+  // 2. Format with month names, e.g. Dec-26, Dec-2026, 31-Dec-2026, Dec/26, Dec 2026
+  const monthMap: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const monthNameMatch = clean.match(/(?:(\d{1,2})[\/\-\s]+)?([a-z]{3,9})[\/\-\s]+(\d{2,4})/i);
+  if (monthNameMatch) {
+    const monthPrefix = monthNameMatch[2].substring(0, 3).toLowerCase();
+    const mm = monthMap[monthPrefix];
+    let yy = monthNameMatch[3];
+    if (mm) {
+      if (yy.length === 4) yy = yy.slice(-2);
+      return `${mm}/${yy}`;
+    }
+  }
+
+  // 3. 3-segment dates: DD/MM/YYYY or DD-MM-YYYY or DD/MM/YY or DD-MM-YY
+  const threePartMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (threePartMatch) {
+    const p1 = parseInt(threePartMatch[1], 10);
+    const p2 = parseInt(threePartMatch[2], 10);
+    let yy = threePartMatch[3];
+    if (yy.length === 4) yy = yy.slice(-2);
+
+    let mm = '';
+    if (p1 > 12 && p2 >= 1 && p2 <= 12) {
+      mm = String(p2).padStart(2, '0');
+    } else if (p2 > 12 && p1 >= 1 && p1 <= 12) {
+      mm = String(p1).padStart(2, '0');
+    } else if (p2 >= 1 && p2 <= 12) {
+      mm = String(p2).padStart(2, '0');
+    } else if (p1 >= 1 && p1 <= 12) {
+      mm = String(p1).padStart(2, '0');
+    }
+    if (mm && yy) {
+      return `${mm}/${yy}`;
+    }
+  }
+
+  // 4. 2-segment dates: MM/YYYY or MM-YYYY or MM/YY or MM-YY
+  const twoPartMatch = clean.match(/^(\d{1,2})[\/\-](\d{2,4})$/);
+  if (twoPartMatch) {
+    const mm = parseInt(twoPartMatch[1], 10);
+    let yy = twoPartMatch[2];
+    if (yy.length === 4) yy = yy.slice(-2);
+    if (mm >= 1 && mm <= 12) {
+      return `${String(mm).padStart(2, '0')}/${yy}`;
+    }
+  }
+
+  // 5. Raw 8 digits (DDMMYYYY or YYYYMMDD)
   if (/^\d{8}$/.test(clean)) {
-    const month = clean.substring(2, 4);
-    const year = clean.substring(6, 8);
-    return `${month}/${year}`;
+    if (clean.startsWith('20')) {
+      const yy = clean.substring(2, 4);
+      const mm = clean.substring(4, 6);
+      const m = parseInt(mm, 10);
+      if (m >= 1 && m <= 12) return `${mm}/${yy}`;
+    }
+    const mm = clean.substring(2, 4);
+    const yy = clean.substring(6, 8);
+    const m = parseInt(mm, 10);
+    if (m >= 1 && m <= 12) return `${mm}/${yy}`;
   }
+
+  // 6. Raw 6 digits (MMYYYY or DDMMYY)
   if (/^\d{6}$/.test(clean)) {
-    const month = clean.substring(0, 2);
-    const year = clean.substring(4, 6);
-    return `${month}/${year}`;
+    if (clean.endsWith('2025') || clean.endsWith('2026') || clean.endsWith('2027') || clean.endsWith('2028') || clean.endsWith('2029') || clean.endsWith('2030') || clean.endsWith('2031') || clean.endsWith('2032')) {
+      const mm = clean.substring(0, 2);
+      const yy = clean.substring(4, 6);
+      const m = parseInt(mm, 10);
+      if (m >= 1 && m <= 12) return `${mm}/${yy}`;
+    }
+    const mm = clean.substring(0, 2);
+    const yy = clean.substring(4, 6);
+    const m = parseInt(mm, 10);
+    if (m >= 1 && m <= 12) return `${mm}/${yy}`;
+  }
+
+  // 7. Raw 4 digits (MMYY)
+  if (/^\d{4}$/.test(clean)) {
+    const mm = clean.substring(0, 2);
+    const yy = clean.substring(2, 4);
+    const m = parseInt(mm, 10);
+    if (m >= 1 && m <= 12) return `${mm}/${yy}`;
   }
 
   return '';
@@ -480,7 +554,17 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
     if (row.length < 5) continue;
     if (row[0]?.trim() !== 'T') continue;
 
-    const isLayoutB = row[11] && (row[11].includes('/') || row[11].includes('-')) && !isNaN(parseFloat(row[6]));
+    const hasSlashesIn11 = Boolean(row[11] && (row[11].includes('/') || row[11].includes('-')));
+    const isLayoutB = Boolean(
+      (hasSlashesIn11 && !isNaN(parseFloat(row[6]))) ||
+      (
+        row[2] && isNaN(Number(row[2])) &&
+        !isNaN(parseFloat(row[6])) && parseFloat(row[6]) > 0 &&
+        !isNaN(parseFloat(row[8])) && parseFloat(row[8]) > 0 &&
+        !isNaN(parseFloat(row[9])) && parseFloat(row[9]) > 0 &&
+        (!row[5] || row[5] === '' || (isNaN(Number(row[5])) && row[5].length <= 6))
+      )
+    );
 
     if (isLayoutB) {
       let name = row[2] ? row[2].trim() : '';
@@ -493,7 +577,8 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
       const free_qty = parseFloat(row[7]) || 0;
       const mrp = parseFloat(row[8]) || 0;
       const rate = parseFloat(row[9]) || 0;
-      const batch = row[10] ? row[10].trim() : '';
+      let batch = row[10] ? row[10].trim() : '';
+      if (batch === '********' || batch === '//*' || batch === '*' || batch === '***') batch = '';
       const expiry = formatExpiryDate(row[11]);
       const gst = parseFloat(row[16]) || 0;
       const mfgB = (row[1] && isNaN(Number(row[1])) && row[1].trim().length >= 2) ? row[1].trim() : '';
@@ -543,7 +628,8 @@ function parseRecordTypeInvoice(csvRecords: string[][], filename: string): {
       const free_qty = parseFloat(row[14 + offset]) || parseFloat(row[18]) || parseFloat(row[11]) || 0;
       const rate = parseFloat(row[13 + offset]) || parseFloat(row[14]) || 0;
       const mrp = parseFloat(row[15 + offset]) || parseFloat(row[16]) || 0;
-      const batch = row[7 + offset] ? row[7 + offset].trim() : (row[8] ? row[8].trim() : '');
+      let batch = row[7 + offset] ? row[7 + offset].trim() : (row[8] ? row[8].trim() : '');
+      if (batch === '********' || batch === '//*' || batch === '*' || batch === '***') batch = '';
       const expiry = formatExpiryDate(row[8 + offset] || row[9]);
       const gst = parseFloat(row[11 + offset]) || parseFloat(row[12]) || 0;
       const cd_rs = parseFloat(row[25]) || 0;
@@ -2241,11 +2327,14 @@ export class EmailService {
           const fileBuffer = fs.readFileSync(filePath);
           const textContent = fileBuffer.toString('utf8');
           const firstLine = textContent.split('\n')[0]?.trim() || '';
-          const firstField = firstLine.split(',')[0]?.trim();
+          let delimiter = ',';
+          if (firstLine.includes(';') && !firstLine.includes(',')) delimiter = ';';
+          else if (firstLine.includes('\t') && !firstLine.includes(',')) delimiter = '\t';
+          const firstField = firstLine.split(delimiter)[0]?.trim();
 
           if (firstField === 'H') {
             isRecordType = true;
-            const csvRecords = parse(fileBuffer, { columns: false, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
+            const csvRecords = parse(fileBuffer, { delimiter, columns: false, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
             recordData = parseRecordTypeInvoice(csvRecords, filePath);
             distributor_name = recordData.distributor_name;
             invoice_no = recordData.invoice_no;
@@ -2254,7 +2343,20 @@ export class EmailService {
             global_cd_per = recordData.global_cd_per || 0;
             items = recordData.items;
           } else {
-            records = parse(fileBuffer, { columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
+            // Check if top lines are metadata before header row
+            const lines = textContent.split('\n');
+            let fromLine = 1;
+            const headerKeywords = /item|product|medicine|desc|qty|quantity|rate|mrp|ptr|price|cost|batch|exp/i;
+            for (let i = 0; i < Math.min(lines.length, 15); i++) {
+              const line = lines[i]?.trim() || '';
+              const tokens = line.split(delimiter);
+              const matchCount = tokens.filter(t => t && headerKeywords.test(t.trim())).length;
+              if (matchCount >= 2) {
+                fromLine = i + 1;
+                break;
+              }
+            }
+            records = parse(fileBuffer, { delimiter, from_line: fromLine, columns: true, skip_empty_lines: true, relax_column_count: true, relax_quotes: true, bom: true, trim: true });
           }
         } else {
           const fileBuffer = fs.readFileSync(filePath);
@@ -2274,7 +2376,20 @@ export class EmailService {
               global_cd_per = recordData.global_cd_per || 0;
               items = recordData.items;
             } else {
-              records = XLSX.utils.sheet_to_json(sheet);
+              // Find the header row in the first 15 rows
+              let headerRowIndex = 0;
+              const headerKeywords = /item|product|medicine|desc|qty|quantity|rate|mrp|ptr|price|cost|batch|exp/i;
+              for (let i = 0; i < Math.min(sheetRows.length, 15); i++) {
+                const row = sheetRows[i];
+                if (Array.isArray(row)) {
+                  const matchCount = row.filter(cell => cell && headerKeywords.test(String(cell))).length;
+                  if (matchCount >= 2) {
+                    headerRowIndex = i;
+                    break;
+                  }
+                }
+              }
+              records = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex });
             }
           }
         }
@@ -2340,23 +2455,52 @@ export class EmailService {
             cn_number = r0[headerMap.cn_number] || r0['cn_number'] || r0['cn_no'] || '';
           }
 
+          // Helper to get row value using headerMap or fallback regex synonyms
+          const getFieldVal = (r: any, mappedKey: string | undefined, synonyms: RegExp[]): any => {
+            if (mappedKey && r[mappedKey] !== undefined && r[mappedKey] !== null && String(r[mappedKey]).trim() !== '') {
+              return r[mappedKey];
+            }
+            const keys = Object.keys(r);
+            for (const k of keys) {
+              const norm = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+              for (const syn of synonyms) {
+                if (syn.test(norm)) {
+                  const val = r[k];
+                  if (val !== undefined && val !== null && String(val).trim() !== '') {
+                    return val;
+                  }
+                }
+              }
+            }
+            return '';
+          };
+
+          const parseCleanNum = (val: any): number => {
+            if (val === null || val === undefined) return 0;
+            if (typeof val === 'number') return isNaN(val) ? 0 : val;
+            const str = String(val).replace(/[₹\s,]|rs\.?/gi, '').trim();
+            const num = parseFloat(str);
+            return isNaN(num) ? 0 : num;
+          };
+
           items = records.map((r: any) => {
-            const cgstVal = parseFloat(r[headerMap.cgst] || r['sgst'] || '0');
-            const sgstVal = parseFloat(r[headerMap.sgst] || r['cgst'] || '0');
-            const igstVal = parseFloat(r['igst'] || '0');
+            const cgstVal = parseCleanNum(getFieldVal(r, headerMap.cgst, [/^cgst/, /^sgst/]));
+            const sgstVal = parseCleanNum(getFieldVal(r, headerMap.sgst, [/^sgst/, /^cgst/]));
+            const igstVal = parseCleanNum(getFieldVal(r, headerMap.igst, [/^igst/]));
             const cgst_per = cgstVal || (igstVal / 2) || 0;
             const sgst_per = sgstVal || (igstVal / 2) || 0;
-            const rowCdPer = parseFloat(r[headerMap.cd_per] || r['discount'] || r['disc_per'] || r['cd_per'] || '0') || 0;
-            const rowCdRs = parseFloat(r[headerMap.cd_rs] || r['disc_amt'] || r['cd_amt'] || r['cd_value'] || '0') || 0;
-            const free_qty = parseInt(r[headerMap.free_qty] || r['free'] || r['free_qty'] || r['Free'] || '0', 10) || 0;
-            const name = (r[headerMap.name] || r['prod_name'] || r['product_name'] || r['medicine_name'] || r['Medicine Name'] || r['Product'] || r['Item'] || r['item'] || r['Name'] || r['name'] || 'Unknown CSV Item').toString().trim();
-            const quantity = parseInt(r[headerMap.quantity] || r['Qty'] || r['Quantity'] || r['Pack'] || r['qty'] || '0', 10) || 0;
-            const rate = parseFloat(r[headerMap.rate] || r['Rate'] || r['Price'] || r['rate'] || r['price'] || '0') || 0;
-            const mrp = parseFloat(r[headerMap.mrp] || r['MRP'] || r['mrp'] || '0') || 0;
-            const batch_no = (r[headerMap.batch_no] || r['pr_batchno'] || r['batch_no'] || r['Batch'] || '').toString().trim();
-            const expiry_date = formatExpiryDate(r[headerMap.expiry_date] || r['expiry'] || r['expiry_date'] || r['Expiry'] || '');
-            const manufacturer = (r[headerMap.manufacturer] || r['mfg'] || r['company'] || r['manufacturer'] || r['mfg_name'] || r['mfg_by'] || r['mfg_code'] || r['Company'] || r['Mfg'] || r['MANUFACTURER'] || r['MFG'] || '').toString().trim();
-            const hsn_code = (r[headerMap.hsn_code] || r['hsn'] || r['hsn_code'] || r['hsncode'] || r['sac'] || r['HSN'] || r['HSN Code'] || r['HSNCODE'] || '').toString().trim();
+            const rowCdPer = parseCleanNum(getFieldVal(r, headerMap.cd_per, [/^(cdper|discper|discountper|discount)$/]));
+            const rowCdRs = parseCleanNum(getFieldVal(r, headerMap.cd_rs, [/^(cdamt|cdval|discamt|cdrs)$/]));
+            const free_qty = parseCleanNum(getFieldVal(r, headerMap.free_qty, [/^(free|freeqty|fqty|sch)$/]));
+            const name = String(getFieldVal(r, headerMap.name, [/^(itemname|productname|medicinename|prodname|product|item|description|name)$/]) || 'Unknown CSV Item').trim();
+            const quantity = parseCleanNum(getFieldVal(r, headerMap.quantity, [/^(qty|quantity|pack|units|nos|billedqty|bldqty)$/]));
+            const rate = parseCleanNum(getFieldVal(r, headerMap.rate, [/^(rate|ptr|cost|price|unitrate|purrate|purchaserate|unitprice|basicrate|netrate|drate|tradeprice|buyprice|ftrate|srate|costprice)$/]));
+            const mrp = parseCleanNum(getFieldVal(r, headerMap.mrp, [/^(mrp|maxretailprice|retailprice|srp)$/]));
+            let batch_no = String(getFieldVal(r, headerMap.batch_no, [/^(batch|batchno|lot|lotno|batchnum|batchid)$/])).trim();
+            if (batch_no === '********' || batch_no === '//*' || batch_no === '*' || batch_no === '***') batch_no = '';
+            const expiry_date = formatExpiryDate(getFieldVal(r, headerMap.expiry_date, [/^(expiry|expdate|expirydate|expdt|valupto|validupto|validity|exp)$/]));
+            const manufacturer = String(getFieldVal(r, headerMap.manufacturer, [/^(mfg|company|manufacturer|mfgname|mfgby|mfgcode|maker)$/])).trim();
+            const hsn_code = String(getFieldVal(r, headerMap.hsn_code, [/^(hsn|hsncode|sac)$/])).trim();
 
             return {
               name,

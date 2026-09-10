@@ -128,57 +128,106 @@ export const sanitizeMonth = (mStr: string): string => {
 export const formatExpiryToMMYY = (val: string): string => {
   if (!val) return '';
   const cleaned = val.trim().replace(/\s+/g, '');
+  if (cleaned === '00000000' || cleaned === '00/00' || cleaned === '*' || cleaned === '***' || cleaned === '//*' || cleaned === '-') return '';
 
-  // Handle ISO YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}/.test(cleaned)) {
-    const parts = cleaned.substring(0, 10).split('-');
-    const mm = sanitizeMonth(parts[1]);
-    const yy = parts[0].substring(2, 4);
+  // 1. Handle ISO YYYY-MM-DD or YYYY-MM or YYYY/MM/DD or YYYY/MM
+  const isoMatch = cleaned.match(/^(\d{4})[\/\-](\d{1,2})(?:[\/\-](\d{1,2}))?/);
+  if (isoMatch) {
+    const mm = sanitizeMonth(isoMatch[2]);
+    const yy = isoMatch[1].substring(2, 4);
     return `${mm}/${yy}`;
   }
 
-  // Handle MM/YYYY
-  if (/^\d{1,2}\/\d{4}$/.test(cleaned)) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    const yy = parts[1].substring(2, 4);
+  // 2. Handle month names, e.g. Dec-26, Dec-2026, 31-Dec-2026, Dec/26, Dec 2026
+  const monthMap: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const monthNameMatch = cleaned.match(/(?:(\d{1,2})[\/\-\s]+)?([a-z]{3,9})[\/\-\s]+(\d{2,4})/i);
+  if (monthNameMatch) {
+    const mStr = monthNameMatch[2].substring(0, 3).toLowerCase();
+    const mm = monthMap[mStr];
+    let yy = monthNameMatch[3];
+    if (mm) {
+      if (yy.length === 4) yy = yy.substring(2, 4);
+      return `${mm}/${yy}`;
+    }
+  }
+
+  // 3. Handle 3-part dates: DD/MM/YYYY, DD-MM-YYYY, DD/MM/YY, DD-MM-YY
+  const threeParts = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (threeParts) {
+    const p1 = parseInt(threeParts[1], 10);
+    const p2 = parseInt(threeParts[2], 10);
+    let yy = threeParts[3];
+    if (yy.length === 4) yy = yy.substring(2, 4);
+
+    let mm = '';
+    if (p1 > 12 && p2 >= 1 && p2 <= 12) {
+      mm = sanitizeMonth(threeParts[2]);
+    } else if (p2 > 12 && p1 >= 1 && p1 <= 12) {
+      mm = sanitizeMonth(threeParts[1]);
+    } else if (p2 >= 1 && p2 <= 12) {
+      mm = sanitizeMonth(threeParts[2]);
+    } else if (p1 >= 1 && p1 <= 12) {
+      mm = sanitizeMonth(threeParts[1]);
+    }
+    if (mm && yy) return `${mm}/${yy}`;
+  }
+
+  // 4. Handle MM/YYYY or MM-YYYY
+  const mmYyyy = cleaned.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (mmYyyy) {
+    const mm = sanitizeMonth(mmYyyy[1]);
+    const yy = mmYyyy[2].substring(2, 4);
     return `${mm}/${yy}`;
   }
 
-  // Handle MM/YY
-  if (/^\d{1,2}\/\d{2}$/.test(cleaned)) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    const yy = parts[1];
+  // 5. Handle MM/YY or MM-YY
+  const mmYy = cleaned.match(/^(\d{1,2})[\/\-](\d{2})$/);
+  if (mmYy) {
+    const mm = sanitizeMonth(mmYy[1]);
+    const yy = mmYy[2];
     return `${mm}/${yy}`;
   }
 
-  // 4 digits: MMYY
+  // 6. 8 digits: DDMMYYYY or YYYYMMDD
+  if (/^\d{8}$/.test(cleaned)) {
+    if (cleaned.startsWith('20')) {
+      const mm = sanitizeMonth(cleaned.substring(4, 6));
+      const yy = cleaned.substring(2, 4);
+      return `${mm}/${yy}`;
+    }
+    const mm = sanitizeMonth(cleaned.substring(2, 4));
+    const yy = cleaned.substring(6, 8);
+    return `${mm}/${yy}`;
+  }
+
+  // 7. 6 digits: MMYYYY
+  if (/^\d{6}$/.test(cleaned)) {
+    if (cleaned.endsWith('2025') || cleanEndYear(cleaned)) {
+      const mm = sanitizeMonth(cleaned.substring(0, 2));
+      const yy = cleaned.substring(4, 6);
+      return `${mm}/${yy}`;
+    }
+    const mm = sanitizeMonth(cleaned.substring(0, 2));
+    const yy = cleaned.substring(4, 6);
+    return `${mm}/${yy}`;
+  }
+
+  // 8. 4 digits: MMYY
   if (/^\d{4}$/.test(cleaned)) {
     const mm = sanitizeMonth(cleaned.substring(0, 2));
     const yy = cleaned.substring(2, 4);
     return `${mm}/${yy}`;
   }
 
-  // 6 digits: MMYYYY
-  if (/^\d{6}$/.test(cleaned)) {
-    const mm = sanitizeMonth(cleaned.substring(0, 2));
-    const yy = cleaned.substring(4, 6);
-    return `${mm}/${yy}`;
-  }
-
-  // Fallback slash format M/YY or M/YYYY
-  if (cleaned.includes('/')) {
-    const parts = cleaned.split('/');
-    const mm = sanitizeMonth(parts[0]);
-    let yy = parts[1] || '';
-    if (yy.length >= 4) yy = yy.substring(2, 4);
-    else if (yy.length === 1) yy = `0${yy}`;
-    if (yy.length === 2) return `${mm}/${yy}`;
-  }
-
   return cleaned;
 };
+
+function cleanEndYear(c: string): boolean {
+  return /20[2-3]\d$/.test(c);
+}
 
 /**
  * Checks whether an expiry date string is expired relative to current month/year.
