@@ -7,7 +7,7 @@ import { dbManager } from '../database/connection.js';
 import { eventService } from '../services/eventService.js';
 import { notificationService } from '../services/notificationService.js';
 import { searchCache } from '../services/searchCache.js';
-import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses } from '../services/tokenRefreshScheduler.js';
+import { tokenRefreshScheduler, cleanProfileLockFiles, killOrphanChromeProcesses, extractTokenFromProfile } from '../services/tokenRefreshScheduler.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
@@ -612,314 +612,93 @@ router.post('/login-window', async (req, res) => {
 
   tokenRefreshScheduler.isLoginWindowActive = true;
 
-  // Clear existing session token in database so polling detects the transition
-  try {
-    const db = await dbManager.getConnection();
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
-    import('../services/pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => {});
-  } catch (err) {
-    console.error('Error clearing old session token:', err);
-  }
-
+  // Respond immediately so the UI unblocks — DB clear and Chrome launch run async below
   res.json({ success: true, message: 'Opening login window...' });
 
   (async () => {
-    let browser;
-    let tempProfilePathToDelete = '';
     const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
-    const puppeteer = await getPuppeteer();
 
     try {
-      console.log('Killing any orphan Chrome processes holding locks on pharmarack_profile...');
+      console.log('[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...');
       await killOrphanChromeProcesses('pharmarack_profile');
+      if (!fs.existsSync(mainProfilePath)) fs.mkdirSync(mainProfilePath, { recursive: true });
+      cleanProfileLockFiles(mainProfilePath);
 
-      console.log('Launching Chrome from:', chromePath);
-      try {
-        cleanProfileLockFiles(mainProfilePath);
-        browser = await puppeteer.launch({
-          executablePath: chromePath,
-          headless: false,
-          defaultViewport: null,
-          userDataDir: mainProfilePath,
-          args: ['--start-maximized', '--disable-extensions']
-        });
-      } catch (launchErr: any) {
-        console.warn('Failed to launch Chrome with main profile, attempting temp profile fallback...', launchErr.message);
-        const randomSuffix = Math.floor(Math.random() * 1000000);
-        const tempProfilePath = path.resolve(getAppDataDir(), 'data', `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
-        await copyProfileFolder(mainProfilePath, tempProfilePath);
-        cleanProfileLockFiles(tempProfilePath);
-        browser = await puppeteer.launch({
-          executablePath: chromePath,
-          headless: false,
-          defaultViewport: null,
-          userDataDir: tempProfilePath,
-          args: ['--start-maximized', '--disable-extensions']
-        });
-        tempProfilePathToDelete = tempProfilePath;
-      }
+      // Spawn Chrome directly — opens instantly, no Puppeteer init overhead.
+      // Token is captured automatically on Chrome close.
+      console.log('[LoginWindow] Spawning Chrome natively from:', chromePath);
+      const { spawn: spawnProc } = await import('child_process');
+      const chromeProc = spawnProc(chromePath, [
+        `--user-data-dir=${mainProfilePath}`,
+        '--start-maximized',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-dev-shm-usage',
+        '--disable-extensions',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--mute-audio',
+        'https://retailers.pharmarack.com/loginotp'
+      ], { detached: false, stdio: 'ignore' });
 
-      const [page] = await browser.pages();
-      
-      let extractedToken = '';
-      page.on('request', request => {
-        const headers = request.headers();
-        const auth = headers['authorization'] || headers['Authorization'];
-        if (auth && auth.length > 15) {
-          let tokenVal = auth;
-          if (auth.startsWith('Bearer ') || auth.startsWith('bearer ')) {
-            tokenVal = auth.substring(7);
-          }
-          if (tokenVal && tokenVal.length > 10) {
-            extractedToken = tokenVal;
-          }
-        }
+      chromeProc.on('error', (e: Error) => {
+        console.warn('[LoginWindow] Chrome spawn error:', e.message);
+        tokenRefreshScheduler.isLoginWindowActive = false;
       });
 
-      await page.goto('https://retailers.pharmarack.com/loginotp', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      chromeProc.on('exit', async () => {
+        console.log('[LoginWindow] Chrome login window closed. Extracting session token...');
+        tokenRefreshScheduler.isLoginWindowActive = false;
+        // Give Chrome a moment to flush cookies/localStorage to disk before reading
+        await new Promise(r => setTimeout(r, 1200));
 
-      // Auto-fill saved credentials if present in app_settings
-      const savedSettings = await getPharmarackSettings();
-      const savedUser = savedSettings['pharmarack_username'] || '';
-      const savedPass = savedSettings['pharmarack_password'] || '';
-
-      if (savedUser || savedPass) {
-        try {
-          await page.evaluate((u: string, p: string) => {
-            const inputs = Array.from(document.querySelectorAll('input'));
-            for (const input of inputs) {
-              if (p && input.type === 'password' && !input.value) {
-                input.value = p;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-              } else if (u && !input.value && (
-                input.type === 'text' || input.type === 'tel' || input.type === 'number' || input.type === 'email'
-              )) {
-                const id = (input.id || '').toLowerCase();
-                const name = (input.name || '').toLowerCase();
-                const placeholder = (input.placeholder || '').toLowerCase();
-                if (
-                  id.includes('username') || name.includes('username') ||
-                  id.includes('mobile') || name.includes('mobile') || placeholder.includes('mobile') ||
-                  id.includes('phone') || name.includes('phone') ||
-                  id.includes('login') || name.includes('login')
-                ) {
-                  input.value = u;
-                  input.dispatchEvent(new Event('input', { bubbles: true }));
-                  input.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-              }
-            }
-          }, savedUser, savedPass);
-        } catch (fillErr) {
-          console.warn('[Pharmarack Login Window] Auto-fill warning:', fillErr);
-        }
-      }
-
-      let lastUsername = '';
-      let lastPassword = '';
-
-      for (let i = 0; i < 300; i++) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const isClosed = !browser.connected || (await browser.pages().catch(() => [])).length === 0;
-        if (isClosed) {
-          console.log('Pharmarack login window closed by user.');
-          break;
-        }
-
-        // Dynamically scrape input fields for username & password
-        try {
-          const creds = await page.evaluate(`(() => {
-            const inputs = Array.from(document.querySelectorAll('input'));
-            let u = '';
-            let p = '';
-            for (const input of inputs) {
-              if (input.type === 'password') {
-                p = input.value;
-              } else if (
-                input.type === 'text' || 
-                input.type === 'tel' || 
-                input.type === 'number' || 
-                input.type === 'email'
-              ) {
-                const id = (input.id || '').toLowerCase();
-                const name = (input.name || '').toLowerCase();
-                const placeholder = (input.placeholder || '').toLowerCase();
-                if (
-                  id.includes('username') || name.includes('username') ||
-                  id.includes('mobile') || name.includes('mobile') || placeholder.includes('mobile') ||
-                  id.includes('phone') || name.includes('phone') ||
-                  id.includes('login') || name.includes('login')
-                ) {
-                  u = input.value;
-                } else if (!u && input.value) {
-                  u = input.value;
-                }
-              }
-            }
-            return { u, p };
-          })()`) as { u: string; p: string };
-          if (creds.u) lastUsername = creds.u;
-          if (creds.p) lastPassword = creds.p;
-        } catch (e) {
-          // Ignore navigation/detachment errors during evaluate
-        }
-
-        const currentUrl = page.url();
-        const isOnMainApp = currentUrl.includes('pharmarack.com') && 
-                            !currentUrl.includes('/login') && 
-                            !currentUrl.includes('/otp') && 
-                            !currentUrl.includes('/verification') && 
-                            !currentUrl.includes('/forgot');
-
-        if (extractedToken && isOnMainApp) {
-          console.log('Extracted Pharmarack Session Token from request headers!');
-          const db = await dbManager.getConnection();
-          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [extractedToken]);
-          import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
-          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-          if (lastUsername) {
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [lastUsername]);
-          }
-          if (lastPassword) {
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', ?)", [lastPassword]);
-          }
-          break;
-        }
-
-        if (isOnMainApp) {
-          console.log('Login redirect detected:', currentUrl);
-          
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          if (extractedToken) {
+        let token = extractTokenFromProfile(mainProfilePath);
+        if (token) {
+          console.log('[LoginWindow] Successfully captured token from profile storage:', token.substring(0, 15) + '...');
+          try {
             const db = await dbManager.getConnection();
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [extractedToken]);
-            import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
+            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
             await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-            if (lastUsername) {
-              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [lastUsername]);
-            }
-            if (lastPassword) {
-              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', ?)", [lastPassword]);
-            }
-            break;
-          }
-
-          const cookies = await page.cookies();
-          const token = await page.evaluate(`(() => {
-            const findTokenInString = (str) => {
-              if (str.startsWith('{') || str.startsWith('[')) {
-                try {
-                  const parsed = JSON.parse(str);
-                  if (parsed && typeof parsed === 'object') {
-                    const keys = ['token', 'access_token', 'accessToken', 'jwt', 'session', 'sessionToken', 'id_token'];
-                    for (const k of keys) {
-                      if (parsed[k] && typeof parsed[k] === 'string' && parsed[k].length > 10) {
-                        return parsed[k];
-                      }
-                    }
-                    for (const k of Object.keys(parsed)) {
-                      if (typeof parsed[k] === 'object' || typeof parsed[k] === 'string') {
-                        const res = findTokenInString(typeof parsed[k] === 'string' ? parsed[k] : JSON.stringify(parsed[k]));
-                        if (res) return res;
-                      }
-                    }
-                  }
-                } catch (e) {}
-              }
-              return '';
-            };
-
-            for (let j = 0; j < localStorage.length; j++) {
-              const key = localStorage.key(j) || '';
-              const val = localStorage.getItem(key) || '';
-              if (val.length > 10) {
-                if (
-                  key.toLowerCase().includes('token') || 
-                  key.toLowerCase().includes('jwt') || 
-                  key.toLowerCase().includes('auth') || 
-                  key.toLowerCase().includes('session') ||
-                  key.toLowerCase().includes('user')
-                ) {
-                  const nested = findTokenInString(val);
-                  if (nested) return nested;
-                  return val;
-                }
-              }
-            }
-
-            for (let j = 0; j < sessionStorage.length; j++) {
-              const key = sessionStorage.key(j) || '';
-              const val = sessionStorage.getItem(key) || '';
-              if (val.length > 10) {
-                if (
-                  key.toLowerCase().includes('token') || 
-                  key.toLowerCase().includes('jwt') || 
-                  key.toLowerCase().includes('auth') || 
-                  key.toLowerCase().includes('session') ||
-                  key.toLowerCase().includes('user')
-                ) {
-                  const nested = findTokenInString(val);
-                  if (nested) return nested;
-                  return val;
-                }
-              }
-            }
-            return '';
-          })()`) as string;
-
-          const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-          const sessionVal = token || cookieStr;
-
-          if (sessionVal) {
-            console.log('Extracted Pharmarack Session Token!');
-            
-            const db = await dbManager.getConnection();
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [sessionVal]);
+            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
             import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
-            await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-            if (lastUsername) {
-              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', ?)", [lastUsername]);
-            }
-            if (lastPassword) {
-              await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', ?)", [lastPassword]);
-            }
-            break;
+          } catch (dbErr: any) {
+            console.error('[LoginWindow] Failed to persist token:', dbErr.message);
           }
+        } else {
+          console.log('[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...');
+          token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
         }
-      }
-    } catch (err: any) {
-      console.error('Error during Pharmarack login window scraping:', err);
-    } finally {
-      if (browser) {
+
+        // Run heartbeat probe to verify live connection and warm up cart
+        await tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
+
+        // Broadcast session state so UI updates without polling
         try {
-          await browser.close();
+          const { eventService } = await import('../services/eventService.js');
+          const db2 = await dbManager.getConnection();
+          const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+          const hasToken = !!(tokenRow?.value);
+          eventService.broadcast('pharmarack_session_refreshed', {
+            status: hasToken ? 'success' : 'failed',
+            error: hasToken ? null : 'Login window closed without capturing token'
+          });
         } catch (_) {}
-      }
-      tokenRefreshScheduler.isLoginWindowActive = false;
-      console.log('Pharmarack login window closed.');
 
-      if (tempProfilePathToDelete) {
-        try {
-          console.log('[Pharmarack Login Window] Copying updated session back to main profile...');
-          await copyProfileFolder(tempProfilePathToDelete, mainProfilePath);
-        } catch (copyBackErr: any) {
-          console.warn('[Pharmarack Login Window] Could not copy temp profile back to main profile:', copyBackErr.message);
-        }
-        try {
-          if (fs.existsSync(tempProfilePathToDelete)) {
-            fs.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
-            console.log(`[Pharmarack Login Window] Cleared temp profile directory at ${tempProfilePathToDelete}`);
-          }
-        } catch (rmErr: any) {
-          console.warn(`[Pharmarack Login Window] Could not remove temp folder: ${rmErr.message}`);
-        }
-      }
+        console.log('[LoginWindow] Pharmarack login window session ended.');
+      });
+
+    } catch (err: any) {
+      console.error('[LoginWindow] Error during Pharmarack login window:', err.message);
+      tokenRefreshScheduler.isLoginWindowActive = false;
     }
   })();
 });
+
+
 
 // In-memory 30s burst cache to prevent spamming upstream Pharmarack API across multi-component mounts
 interface ServerCartCacheEntry {

@@ -165,201 +165,57 @@ router.post('/login-window', async (req, res) => {
   res.json({ success: true, message: 'Opening WhatsApp login window...' });
 
   (async () => {
-    let browser;
     try {
       // 1. Destroy background client to release session folder locks
       await destroyClient();
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Give the OS 2.5 seconds to fully release file locks on the profile directory
-      await new Promise(resolve => setTimeout(resolve, 2500));
-
-      console.log('[WhatsApp] Launching Chrome for WhatsApp login from:', chromePath);
       const authPath = path.resolve(getAppDataDir(), '.wwebjs_auth', 'session');
+      if (!fs.existsSync(authPath)) fs.mkdirSync(authPath, { recursive: true });
       cleanProfileLockFiles(authPath);
 
-      const puppeteer = await getPuppeteer();
-      browser = await puppeteer.launch({
-        executablePath: chromePath,
-        headless: false,
-        defaultViewport: null,
-        args: [
-          '--start-maximized',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-extensions',
-          '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        ],
-        userDataDir: authPath
+      // Spawn Chrome directly — opens instantly, no Puppeteer init overhead.
+      // Background whatsapp-web.js client re-inits on exit to capture the session.
+      console.log('[WhatsApp] Spawning Chrome natively from:', chromePath);
+      const { spawn: spawnProc } = await import('child_process');
+      const chromeProc = spawnProc(chromePath, [
+        `--user-data-dir=${authPath}`,
+        '--start-maximized',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-dev-shm-usage',
+        '--disable-extensions',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--mute-audio',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'https://web.whatsapp.com/'
+      ], { detached: false, stdio: 'ignore' });
+
+      chromeProc.on('error', (e: Error) => {
+        console.warn('[WhatsApp] Chrome spawn error:', e.message);
+        setLoginWindowActive(false);
       });
 
-      const [page] = await browser.pages();
-      await page.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded' });
-      const launchTime = Date.now();
-      const MIN_WINDOW_MS = 120_000; // Keep Chrome login window open for at least 2 minutes (120s)
+      chromeProc.on('exit', () => {
+        console.log('[WhatsApp] Chrome login window closed. Re-initializing background client...');
+        setLoginWindowActive(false);
+        isWhatsAppAutoConnectAllowed().then(allowed => {
+          if (allowed) initClient({ manual: true }).catch(() => {});
+        }).catch(() => {});
+      });
 
-      // Poll for login confirmation or user closure (up to 6 minutes / 360 seconds max waiting for QR scan)
-      for (let i = 0; i < 360; i++) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Check if browser was closed
-        const isClosed = !browser.connected || (await browser.pages().catch(() => [])).length === 0;
-        if (isClosed) {
-          console.log('[WhatsApp] Login window closed by user.');
-          break;
-        }
-
-        // Check if QR code is gone and chat interface is active with chats loaded
-        const loginState = await page.evaluate(() => {
-          // Check if QR code is currently displayed on screen
-          const hasQrCode = !!(
-            document.querySelector('canvas') ||
-            document.querySelector('[data-ref]') ||
-            document.querySelector('[data-testid="qrcode"]') ||
-            document.querySelector('div[aria-label*="Scan"]') ||
-            document.querySelector('div[aria-label*="scan"]')
-          );
-
-          // Check if logged-in side pane or chat list exists
-          const paneSide = document.querySelector('#pane-side');
-          const chatList = document.querySelector('[data-testid="chat-list"]');
-          const chatSearch = document.querySelector('div[contenteditable="true"]') || document.querySelector('[data-testid="chat-list-search"]');
-
-          const isLoggedIn = !hasQrCode && !!(paneSide || chatList || chatSearch);
-
-          // Check if chats have loaded into the side panel
-          let chatsCount = 0;
-          if (paneSide) {
-            chatsCount = paneSide.querySelectorAll('[role="row"], [data-testid="cell-frame-container"]').length;
-            if (chatsCount === 0 && paneSide.children.length > 0) {
-              chatsCount = paneSide.children.length;
-            }
-          }
-
-          // Check if WhatsApp is still showing a progress bar or loading overlay
-          const isDownloadingChats = !!(
-            document.querySelector('progress') ||
-            document.querySelector('[role="progressbar"]') ||
-            (document.body.innerText && (
-              document.body.innerText.includes('Downloading messages') ||
-              document.body.innerText.includes('Loading your chats')
-            ))
-          );
-
-          return {
-            isLoggedIn,
-            chatsCount,
-            isDownloadingChats
-          };
-        }).catch(() => ({ isLoggedIn: false, chatsCount: 0, isDownloadingChats: false }));
-
-        if (loginState.isLoggedIn) {
-          console.log(`[WhatsApp] Login detected! Chats count: ${loginState.chatsCount}, downloading: ${loginState.isDownloadingChats}`);
-
-          // Wait for chats to finish loading into screen if downloading (up to 60 seconds)
-          let readyWaitAttempts = 0;
-          while ((loginState.isDownloadingChats || loginState.chatsCount === 0) && readyWaitAttempts < 60) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            readyWaitAttempts++;
-
-            const isUserClosed = !browser.connected || (await browser.pages().catch(() => [])).length === 0;
-            if (isUserClosed) {
-              console.log('[WhatsApp] Login window closed by user during chat download.');
-              break;
-            }
-
-            const updateState = await page.evaluate(() => {
-              const paneSide = document.querySelector('#pane-side');
-              let chatsCount = 0;
-              if (paneSide) {
-                chatsCount = paneSide.querySelectorAll('[role="row"], [data-testid="cell-frame-container"]').length;
-                if (chatsCount === 0 && paneSide.children.length > 0) chatsCount = paneSide.children.length;
-              }
-              const isDownloadingChats = !!(
-                document.querySelector('progress') ||
-                document.querySelector('[role="progressbar"]') ||
-                (document.body.innerText && document.body.innerText.includes('Downloading messages'))
-              );
-              return { chatsCount, isDownloadingChats };
-            }).catch(() => ({ chatsCount: 0, isDownloadingChats: false }));
-
-            if (updateState.chatsCount > 0 && !updateState.isDownloadingChats) {
-              break;
-            }
-          }
-
-          // Save preference and authenticated session state to database
-          try {
-            const db = await dbManager.getConnection();
-            await db.run(
-              "INSERT INTO app_settings (key, value) VALUES ('whatsapp_preferred_system', 'automated') ON CONFLICT(key) DO UPDATE SET value = 'automated'"
-            );
-            await db.run(
-              "INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true') ON CONFLICT(key) DO UPDATE SET value = 'true'"
-            );
-            await db.run(
-              "INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-              [new Date().toISOString()]
-            );
-          } catch (e) {
-            console.warn('[WhatsApp] Could not set whatsapp_session_authenticated setting:', e);
-          }
-
-          // Enforce 2-minute (120s) minimum window duration before auto-closing, checking if user closed window manually
-          const elapsedMs = Date.now() - launchTime;
-          if (elapsedMs < MIN_WINDOW_MS) {
-            const remainingMs = MIN_WINDOW_MS - elapsedMs;
-            console.log(`[WhatsApp] Login complete & chats loaded. Holding window open for remaining ${Math.round(remainingMs / 1000)}s of minimum 2-minute duration...`);
-            for (let waitSec = 0; waitSec < Math.ceil(remainingMs / 1000); waitSec++) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              const isUserClosed = !browser.connected || (await browser.pages().catch(() => [])).length === 0;
-              if (isUserClosed) {
-                console.log('[WhatsApp] Login window closed manually by user during wait window.');
-                break;
-              }
-            }
-          } else {
-            // Give 4 seconds for session cookies and IndexedDB to persist to disk
-            await new Promise(resolve => setTimeout(resolve, 4000));
-          }
-
-          console.log('[WhatsApp] Auto-closing login window after 2+ minute window completion.');
-          break;
-        }
-      }
     } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      if (isPuppeteerDetachedError(errMsg) || errMsg.includes('ECONNREFUSED')) {
-        console.warn('[WhatsApp] Chrome login window closed or disconnected:', errMsg);
-      } else {
-        console.error('[WhatsApp] Error in Chrome login window:', err);
-        // Broadcast error message to the frontend so the user knows why it failed
-        try {
-          eventService.broadcast('auth_failure', {
-            message: `Failed to open WhatsApp login window: ${errMsg}. Ensure Chrome is installed and not already open in another process.`
-          });
-        } catch (broadcastErr) {
-          console.error('[WhatsApp] Failed to broadcast auth failure:', broadcastErr);
-        }
-      }
-    } finally {
+      console.error('[WhatsApp] Error launching Chrome login window:', err.message);
       setLoginWindowActive(false);
-      if (browser) {
-        try {
-          await browser.close();
-        } catch (err) {
-          console.error('[WhatsApp] Error closing browser:', err);
-        }
-      }
-      // Re-initialize the background client now that Chrome is closed (if authenticated session exists)
-      if (await isWhatsAppAutoConnectAllowed()) {
-        console.log('[WhatsApp] Re-initializing background client after manual user login...');
-        initClient({ manual: true }).catch(err => {
-          console.error('[WhatsApp] Re-initialization after popup failed:', err);
-        });
-      }
     }
   })();
 });
+
 
 // Logout WhatsApp session and clear all stored login data (.wwebjs_auth)
 router.post('/logout', async (req, res) => {

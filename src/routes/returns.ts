@@ -44,39 +44,81 @@ router.get('/', async (req, res) => {
     const { search, date_from, date_to, min_amount, max_amount } = req.query;
     db = await dbManager.getConnection();
     
-    let query = `
-      SELECT r.*, d.name as distributor_name 
-      FROM returns r 
-      LEFT JOIN distributors d ON r.distributor_id = d.id 
-      WHERE 1=1
-    `;
+    let whereClause = ` WHERE (r.type IS NULL OR r.type != 'sale')`;
     const params: any[] = [];
     
     if (search) {
-      query += ` AND (r.return_no LIKE ? OR d.name LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      whereClause += ` AND (r.return_no LIKE ? OR d.name LIKE ? OR p.invoice_no LIKE ? OR r.return_invoice_id LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (date_from) {
-      query += ` AND DATE(r.date, 'localtime') >= DATE(?)`;
+      whereClause += ` AND DATE(r.date, 'localtime') >= DATE(?)`;
       params.push(date_from);
     }
     if (date_to) {
-      query += ` AND DATE(r.date, 'localtime') <= DATE(?)`;
+      whereClause += ` AND DATE(r.date, 'localtime') <= DATE(?)`;
       params.push(date_to);
     }
     if (min_amount) {
-      query += ` AND r.total_amount >= ?`;
+      whereClause += ` AND r.total_amount >= ?`;
       params.push(parseFloat(min_amount as string));
     }
     if (max_amount) {
-      query += ` AND r.total_amount <= ?`;
+      whereClause += ` AND r.total_amount <= ?`;
       params.push(parseFloat(max_amount as string));
+    }
+
+    const pageVal = req.query.page ? parseInt(req.query.page as string, 10) : null;
+
+    if (pageVal !== null && !isNaN(pageVal) && pageVal > 0) {
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 30;
+      const offset = (pageVal - 1) * limit;
+
+      const countRow = await db.get(`
+        SELECT COUNT(*) as count
+        FROM returns r 
+        LEFT JOIN distributors d ON r.distributor_id = d.id 
+        LEFT JOIN purchases p ON r.original_invoice_id = p.id
+        ${whereClause}
+      `, params);
+
+      const totalItems = countRow?.count || 0;
+      const totalPages = Math.ceil(totalItems / limit) || 1;
+
+      const pagedQuery = `
+        SELECT r.*, d.name as distributor_name,
+               COALESCE(p.invoice_no, r.return_invoice_id) as purchase_invoice_no
+        FROM returns r 
+        LEFT JOIN distributors d ON r.distributor_id = d.id 
+        LEFT JOIN purchases p ON r.original_invoice_id = p.id
+        ${whereClause}
+        ORDER BY r.date DESC
+        LIMIT ? OFFSET ?
+      `;
+
+      const rows = await db.all(pagedQuery, [...params, limit, offset]);
+
+      return res.json({
+        data: rows,
+        totalItems,
+        totalPages,
+        currentPage: pageVal,
+      });
     }
     
     const hasFilters = !!(search || date_from || date_to || min_amount || max_amount);
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : (hasFilters ? 5000 : 50);
     
-    query += ` ORDER BY r.date DESC LIMIT ?`;
+    const query = `
+      SELECT r.*, d.name as distributor_name,
+             COALESCE(p.invoice_no, r.return_invoice_id) as purchase_invoice_no
+      FROM returns r 
+      LEFT JOIN distributors d ON r.distributor_id = d.id 
+      LEFT JOIN purchases p ON r.original_invoice_id = p.id
+      ${whereClause}
+      ORDER BY r.date DESC
+      LIMIT ?
+    `;
     params.push(limit);
     
     const rows = await db.all(query, params);
@@ -147,7 +189,8 @@ router.get('/near-expiry', async (req, res) => {
     // Authoritative current stock source: inventory_master where is_active=1 and quantity > 0
     const rows = await db.all(`
       SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.expiry_date, im.quantity, im.cost_price, im.mrp,
-             m.name as medicine_name, d.name as distributor_name, d.id as distributor_id
+             m.name as medicine_name, d.name as distributor_name, d.id as distributor_id,
+             p.invoice_no as purchase_invoice_no, p.app_invoice_no as purchase_number, p.date as purchase_date
       FROM inventory_master im
       JOIN medicines m ON im.medicine_id = m.id
       LEFT JOIN purchase_items pi ON pi.id = (
@@ -288,7 +331,7 @@ router.post('/ai-camera/process', async (req, res) => {
 router.get('/lookup-purchases', async (req, res) => {
   let db;
   try {
-    const { name, batch } = req.query;
+    const { name, batch, distributor_id, distributor_name } = req.query;
     if (!name) {
       return res.status(400).json({ error: 'Medicine name query is required' });
     }
@@ -314,7 +357,7 @@ router.get('/lookup-purchases', async (req, res) => {
     const medicineIds = medicines.map(m => m.id);
     let query = `
       SELECT pi.id as purchase_item_id, pi.batch_no, pi.expiry_date, pi.quantity as purchase_qty, pi.cost_price, pi.mrp, 
-             p.invoice_no, p.date as purchase_date, d.name as distributor_name, d.id as distributor_id,
+             p.invoice_no, p.app_invoice_no, p.date as purchase_date, d.name as distributor_name, d.id as distributor_id,
              m.name as medicine_name, m.id as medicine_id
       FROM purchase_items pi
       JOIN purchases p ON pi.purchase_id = p.id
@@ -328,10 +371,62 @@ router.get('/lookup-purchases', async (req, res) => {
       query += ` AND pi.batch_no LIKE ?`;
       params.push(`%${batch}%`);
     }
+    if (distributor_id) {
+      query += ` AND p.distributor_id = ?`;
+      params.push(parseInt(distributor_id as string, 10));
+    } else if (distributor_name) {
+      query += ` AND d.name LIKE ?`;
+      params.push(`%${distributor_name}%`);
+    }
     query += ` ORDER BY p.date DESC LIMIT 100`;
 
     const purchaseRecords = await db.all(query, params);
     
+    // If no purchase records found (e.g. medicine entered via inventory without purchase invoice),
+    // fallback to querying inventory_master so chemist can still return stock easily
+    if (purchaseRecords.length === 0) {
+      let invQuery = `
+        SELECT NULL as purchase_item_id, im.batch_no, im.expiry_date, im.quantity as purchase_qty, im.cost_price, im.mrp,
+               NULL as invoice_no, NULL as app_invoice_no, NULL as purchase_date,
+               'Store Stock (No Invoice)' as distributor_name, NULL as distributor_id,
+               m.name as medicine_name, m.id as medicine_id
+        FROM inventory_master im
+        JOIN medicines m ON im.medicine_id = m.id
+        WHERE im.medicine_id IN (${medicineIds.join(',')})
+      `;
+      const invParams: any[] = [];
+      if (batch) {
+        invQuery += ` AND im.batch_no LIKE ?`;
+        invParams.push(`%${batch}%`);
+      }
+      invQuery += ` ORDER BY im.expiry_date ASC LIMIT 50`;
+      const invRecords = await db.all(invQuery, invParams);
+      if (invRecords.length > 0) {
+        purchaseRecords.push(...invRecords);
+      }
+    }
+
+    // Fallback to catalog medicines if still empty
+    if (purchaseRecords.length === 0) {
+      for (const m of medicines) {
+        purchaseRecords.push({
+          purchase_item_id: null,
+          batch_no: '',
+          expiry_date: '',
+          purchase_qty: 0,
+          cost_price: 0,
+          mrp: 0,
+          invoice_no: null,
+          app_invoice_no: null,
+          purchase_date: null,
+          distributor_name: 'Catalog Medicine (Manual Details)',
+          distributor_id: null,
+          medicine_name: m.name,
+          medicine_id: m.id
+        });
+      }
+    }
+
     // Sort prefix medicine names first, then strictly alphabetically A-Z
     const cleanLower = cleanName.toLowerCase();
     const compactClean = cleanLower.replace(/[^a-z0-9]/g, '');
@@ -356,11 +451,18 @@ router.get('/lookup-purchases', async (req, res) => {
   }
 });
 
-// Process a list of batch-centric return entries
+// Process a finalized supplier return
 router.post('/process-returns', async (req, res) => {
   let db;
   try {
-    const { items, loss_percentage } = req.body;
+    const {
+      items,
+      loss_percentage,
+      distributor_id: reqDistId,
+      distributor_name: reqDistName,
+      return_sub_type: reqSubType,
+      reason: reqReason
+    } = req.body;
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'A non-empty list of return items is required' });
     }
@@ -382,6 +484,30 @@ router.post('/process-returns', async (req, res) => {
       }
     }
 
+    // Resolve target distributor id
+    const firstItem = items[0];
+    let distributorId = reqDistId || firstItem?.distributor_id || null;
+    const distributorName = reqDistName || null;
+    if (!distributorId && distributorName) {
+      const distRow = await db.get('SELECT id FROM distributors WHERE LOWER(name) = LOWER(?)', [distributorName.trim()]);
+      if (distRow) {
+        distributorId = distRow.id;
+      }
+    }
+
+    // Auto-resolve missing medicine_id by medicine_name if provided manually
+    for (const item of items) {
+      if (!item.medicine_id && item.medicine_name) {
+        const med = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) LIMIT 1', [item.medicine_name.trim()]);
+        if (med) {
+          item.medicine_id = med.id;
+        } else {
+          const newMed = await db.run('INSERT INTO medicines (name, mrp, is_active) VALUES (?, ?, 1)', [item.medicine_name.trim(), item.mrp || 0]);
+          item.medicine_id = newMed.lastID;
+        }
+      }
+    }
+
     await db.run('BEGIN TRANSACTION');
 
     const lastRet = await db.get("SELECT return_no FROM returns WHERE return_no LIKE 'PR-%' ORDER BY id DESC LIMIT 1");
@@ -397,28 +523,76 @@ router.post('/process-returns', async (req, res) => {
     }
     const returnNo = `PR-${String(nextNum).padStart(3, '0')}`;
     
-    // Group return items by distributor to create individual return references if needed,
-    // or aggregate under one single return transaction. Let's create one master return record:
-    const firstItem = items[0];
-    const distributorId = firstItem?.distributor_id || null;
     let originalInvoiceId = null;
+    let actualPurchaseInvoiceNo: string | null = null;
+    const invNo = req.body.invoice_no || firstItem?.invoice_no;
     
-    if (firstItem?.invoice_no && firstItem.invoice_no !== 'N/A') {
-      const purchase = await db.get('SELECT id FROM purchases WHERE invoice_no = ?', [firstItem.invoice_no]);
+    if (invNo && invNo !== 'N/A') {
+      const purchase = await db.get(
+        'SELECT id, invoice_no FROM purchases WHERE (invoice_no = ? OR app_invoice_no = ?)' + (distributorId ? ' AND distributor_id = ?' : ''),
+        distributorId ? [invNo, invNo, distributorId] : [invNo, invNo]
+      );
       if (purchase) {
         originalInvoiceId = purchase.id;
+        actualPurchaseInvoiceNo = purchase.invoice_no;
       }
     }
 
+    if (!originalInvoiceId && distributorId) {
+      for (const item of items) {
+        if (item.medicine_id && item.batch_no) {
+          const purchase = await db.get(
+            `SELECT p.id, p.invoice_no FROM purchase_items pi JOIN purchases p ON pi.purchase_id = p.id WHERE pi.medicine_id = ? AND pi.batch_no = ? AND p.distributor_id = ? ORDER BY p.date DESC LIMIT 1`,
+            [item.medicine_id, item.batch_no, distributorId]
+          );
+          if (purchase) {
+            originalInvoiceId = purchase.id;
+            actualPurchaseInvoiceNo = purchase.invoice_no;
+            break;
+          }
+        }
+      }
+    }
+
+    const savedReturnInvoiceNo = actualPurchaseInvoiceNo || (invNo && invNo !== 'N/A' ? invNo : (firstItem?.invoice_no && firstItem.invoice_no !== 'N/A' ? firstItem.invoice_no : 'MANUAL'));
+
+    // Resolve return sub-type ('good' for wrong product/non-expired goods return, 'expiry' for expired stock)
+    const isGoodReason = (r: string) => /wrong|non-?expir|not.*expir|damage|excess|breakage|mismatch|good/i.test(r);
+    const isExpiryReason = (r: string) => !isGoodReason(r) && /expir/i.test(r);
+
+    let resolvedSubType: 'good' | 'expiry' = 'expiry';
+    if (reqSubType === 'good' || reqSubType === 'expiry') {
+      resolvedSubType = reqSubType;
+    } else {
+      const hasExplicitGood = items.some(i => i.return_type === 'good' || (i.reason && isGoodReason(i.reason)));
+      const hasExplicitExpiry = items.some(i => i.return_type === 'expiry' || (i.reason && isExpiryReason(i.reason)));
+      if (hasExplicitGood && !hasExplicitExpiry) {
+        resolvedSubType = 'good';
+      } else {
+        resolvedSubType = 'expiry';
+      }
+    }
+
+    const resolvedReason = reqReason || items.find(i => i.reason)?.reason || (resolvedSubType === 'good' ? 'Goods Return (Wrong Product / Non-Expired)' : 'Supplier Expiry Return');
+
     const totalAmount = items.reduce((sum, item) => sum + ((item.cost_price || 0) * (item.quantity || 0)), 0);
     const result = await db.run(
-      'INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, date, return_sub_type) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)',
-      [returnNo, 'purchase', totalAmount, distributorId, originalInvoiceId, 'expiry']
+      'INSERT INTO returns (return_no, type, total_amount, distributor_id, original_invoice_id, return_invoice_id, date, return_sub_type, reason) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
+      [returnNo, 'purchase', totalAmount, distributorId, originalInvoiceId, savedReturnInvoiceNo, resolvedSubType, resolvedReason]
     );
     const returnId = result.lastID;
     
     if (distributorId) {
-      const parsedLoss = loss_percentage !== undefined ? Number(loss_percentage) : (firstItem?.loss_percentage !== undefined ? Number(firstItem.loss_percentage) : NaN);
+      let parsedLoss = NaN;
+      if (loss_percentage !== undefined && loss_percentage !== null && loss_percentage !== '') {
+        parsedLoss = Number(loss_percentage);
+      } else if (firstItem?.loss_percentage !== undefined && firstItem?.loss_percentage !== null && firstItem?.loss_percentage !== '') {
+        parsedLoss = Number(firstItem.loss_percentage);
+      } else if (resolvedSubType === 'good') {
+        // Goods returns default to 0% loss (100% full credit refund)
+        parsedLoss = 0;
+      }
+
       if (isNaN(parsedLoss) || parsedLoss < 0 || parsedLoss > 100) {
         await db.run('ROLLBACK');
         return res.status(400).json({ error: 'Return percentage required: A valid loss_percentage between 0 and 100 is required to process supplier returns and track credit notes.' });
@@ -428,14 +602,16 @@ router.post('/process-returns', async (req, res) => {
     }
 
     for (const item of items) {
-      // Record return item
+      // Record return item with expiry_date and invoice_no
       await db.run(
-        `INSERT INTO return_items (return_id, medicine_id, batch_no, quantity, cost_price, mrp, total_price) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO return_items (return_id, medicine_id, batch_no, expiry_date, invoice_no, quantity, cost_price, mrp, total_price) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           returnId,
           item.medicine_id,
           item.batch_no,
+          item.expiry_date || null,
+          item.invoice_no || savedReturnInvoiceNo || null,
           item.quantity,
           item.cost_price,
           item.mrp,
@@ -489,7 +665,7 @@ router.post('/process-returns', async (req, res) => {
 // Export consolidated PDF report grouped by distributor
 router.post('/export-pdf-report', async (req, res) => {
   try {
-    const { items } = req.body;
+    const { items, return_sub_type: pdfSubType, reason: pdfReason } = req.body;
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'A non-empty list of return items is required' });
     }
@@ -518,6 +694,16 @@ router.post('/export-pdf-report', async (req, res) => {
     } else {
       doc.fontSize(22).text('Consolidated Claims Report', { align: 'center' });
     }
+
+    if (pdfSubType === 'good') {
+      doc.fontSize(10).fillColor('#16a34a').text('Return Category: GOODS RETURN (Wrong Product / Non-Expired / Saleable)', { align: 'center' });
+    } else if (pdfSubType === 'expiry') {
+      doc.fontSize(10).fillColor('#dc2626').text('Return Category: EXPIRY RETURN (Near Expiry / Expired Claim)', { align: 'center' });
+    }
+    if (pdfReason) {
+      doc.fontSize(9).fillColor('#475569').text(`Reason: ${pdfReason}`, { align: 'center' });
+    }
+
     doc.fontSize(9).fillColor('#64748b').text('Generated on: ' + new Date().toLocaleString(), { align: 'center' });
     doc.moveDown(1.5);
 
@@ -553,8 +739,9 @@ router.post('/export-pdf-report', async (req, res) => {
 
         doc.fontSize(9).fillColor('#0f172a');
         doc.text(entry.medicine_name || '', 40, doc.y, { width: 145 });
-        doc.text(`${entry.batch_no || '-'} / ${entry.expiry_date ? entry.expiry_date.split('T')[0] : '-'}`, 190, doc.y, { width: 95 });
-        doc.text(`${entry.invoice_no || '-'} (${entry.purchase_date ? entry.purchase_date.split('T')[0] : '-'})`, 290, doc.y, { width: 95 });
+        const invRef = entry.invoice_no && entry.invoice_no !== 'N/A' ? entry.invoice_no : (entry.app_invoice_no || '-');
+        const purDate = entry.purchase_date ? String(entry.purchase_date).split('T')[0] : '';
+        doc.text(`Bill: ${invRef}${purDate ? ` (${purDate})` : ''}`, 290, doc.y, { width: 95 });
         doc.text(String(entry.quantity || 0), 390, doc.y, { width: 30, align: 'right' });
         doc.text(`₹${(entry.cost_price || 0).toFixed(2)}`, 430, doc.y, { width: 50, align: 'right' });
         doc.text(`₹${lineTotal.toFixed(2)}`, 490, doc.y, { width: 60, align: 'right' });
@@ -630,7 +817,8 @@ router.get('/:id/items', async (req, res) => {
         COALESCE(m.name, 'Unknown Medicine') AS medicine_name,
         r.distributor_id,
         d.name                             AS distributor_name,
-        p.invoice_no,
+        COALESCE(ri.invoice_no, p.invoice_no, r.return_invoice_id) AS invoice_no,
+        p.app_invoice_no,
         p.date                             AS purchase_date,
         COALESCE(ri.expiry_date, pi.expiry_date) AS expiry_date,
         COALESCE(ri.batch_no,   pi.batch_no)     AS batch_no
@@ -670,6 +858,7 @@ router.get('/:id/resolve-missing', async (req, res) => {
         r.distributor_id                   AS ret_distributor_id,
         d.name                             AS ret_distributor_name,
         p.invoice_no                       AS ret_invoice_no,
+        p.app_invoice_no                   AS ret_app_invoice_no,
         p.date                             AS ret_purchase_date
       FROM return_items ri
       LEFT JOIN medicines    m ON m.id = ri.medicine_id
@@ -705,7 +894,7 @@ router.get('/:id/resolve-missing', async (req, res) => {
       if (needs('batch_no') || needs('expiry_date') || needs('cost_price') || needs('mrp') || needs('invoice_no') || needs('distributor_name')) {
         const recent = await db.get(`
           SELECT pi.batch_no, pi.expiry_date, pi.cost_price, pi.mrp,
-                 p.invoice_no, p.date AS purchase_date,
+                 p.invoice_no, p.app_invoice_no, p.date AS purchase_date,
                  d.name AS distributor_name, d.id AS distributor_id
           FROM   purchase_items pi
           JOIN   purchases    p ON p.id  = pi.purchase_id
@@ -715,7 +904,7 @@ router.get('/:id/resolve-missing', async (req, res) => {
         `, [item.medicine_id]);
 
         if (recent) {
-          for (const f of ['batch_no', 'expiry_date', 'cost_price', 'mrp', 'invoice_no', 'distributor_name', 'distributor_id', 'purchase_date'] as const) {
+          for (const f of ['batch_no', 'expiry_date', 'cost_price', 'mrp', 'invoice_no', 'app_invoice_no', 'distributor_name', 'distributor_id', 'purchase_date'] as const) {
             if (needs(f) && recent[f]) { resolved[f] = recent[f]; if (!resolved._resolved_fields.includes(f)) resolved._resolved_fields.push(f); }
           }
         }
@@ -740,6 +929,7 @@ router.get('/:id/resolve-missing', async (req, res) => {
       // Fall back to parent return distributor / invoice if still missing
       if (!resolved.distributor_name && item.ret_distributor_name) resolved.distributor_name = item.ret_distributor_name;
       if (!resolved.invoice_no && item.ret_invoice_no) resolved.invoice_no = item.ret_invoice_no;
+      if (!resolved.app_invoice_no && item.ret_app_invoice_no) resolved.app_invoice_no = item.ret_app_invoice_no;
 
       enriched.push(resolved);
     }
@@ -765,8 +955,8 @@ router.put('/:id', async (req, res) => {
     await db.run('DELETE FROM return_items WHERE return_id = ?', [id]);
     for (const item of items) {
       await db.run(
-        `INSERT INTO return_items (return_id, medicine_id, batch_no, quantity, cost_price, mrp, total_price) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, item.medicine_id, item.batch_no, item.quantity, item.cost_price, item.mrp || 0, (item.cost_price || 0) * (item.quantity || 0)]
+        `INSERT INTO return_items (return_id, medicine_id, batch_no, expiry_date, invoice_no, quantity, cost_price, mrp, total_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, item.medicine_id, item.batch_no, item.expiry_date || null, item.invoice_no || null, item.quantity, item.cost_price, item.mrp || 0, (item.cost_price || 0) * (item.quantity || 0)]
       );
     }
     const computed = items.reduce((s, i) => s + (i.cost_price || 0) * (i.quantity || 0), 0);

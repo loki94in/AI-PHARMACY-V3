@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 56;
+const CURRENT_SCHEMA_VERSION = 57;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -554,6 +554,17 @@ export async function ensureSchema(dbPath: string) {
         }
         if (stagedCols.length > 0 && !stagedNames.has('sold_from_device')) {
           await db.run('ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT');
+        }
+      } catch (_) {}
+
+      try {
+        const retItemCols = await db.all('PRAGMA table_info(return_items)');
+        const retItemNames = new Set(retItemCols.map((c: any) => c.name));
+        if (retItemCols.length > 0) {
+          if (!retItemNames.has('invoice_no')) await db.run('ALTER TABLE return_items ADD COLUMN invoice_no TEXT');
+          if (!retItemNames.has('loose')) await db.run('ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0');
+          if (!retItemNames.has('ded_per')) await db.run('ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0');
+          if (!retItemNames.has('cd_value')) await db.run('ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0');
         }
       } catch (_) {}
 
@@ -1518,6 +1529,10 @@ export async function ensureSchema(dbPath: string) {
       igst_value REAL DEFAULT 0,
       legacy_id TEXT,
       expiry_date DATETIME,
+      invoice_no TEXT,
+      loose INTEGER DEFAULT 0,
+      ded_per REAL DEFAULT 0,
+      cd_value REAL DEFAULT 0,
       FOREIGN KEY(return_id) REFERENCES returns(id),
       FOREIGN KEY(medicine_id) REFERENCES medicines(id)
     );
@@ -2086,6 +2101,10 @@ export async function ensureSchema(dbPath: string) {
     ['catalog_images', 'match_confidence', 'ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0'],
     ['catalog_images', 'phash', 'ALTER TABLE catalog_images ADD COLUMN phash TEXT'],
     ['catalog_images', 'visual_embedding', 'ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT'],
+    ['return_items', 'invoice_no', 'ALTER TABLE return_items ADD COLUMN invoice_no TEXT'],
+    ['return_items', 'loose', 'ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0'],
+    ['return_items', 'ded_per', 'ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0'],
+    ['return_items', 'cd_value', 'ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0'],
   ];
 
   // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs

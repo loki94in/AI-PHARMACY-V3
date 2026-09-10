@@ -1,21 +1,25 @@
-import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense, useMemo } from 'react';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
-import { RotateCcw, Plus, Trash2, Search, FileText, Camera, X, Loader2, Edit, Wand2, ChevronDown, ChevronUp, Building2, Layers } from 'lucide-react';
+import { 
+  RotateCcw, Plus, Trash2, Search, FileText, Camera, X, Loader2, Edit, Wand2, 
+  Building2, Layers, CalendarDays, Users, History, ShieldAlert, CheckCircle2, Square, AlertTriangle, Calendar
+} from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
 import Expiry from '../Expiry';
 import { invalidateAfterStockWrite } from '../../utils/cacheInvalidation';
 import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
 import CustomerReturn from '../CustomerReturn';
 import CustomerReturnHistory from '../CustomerReturnHistory';
 import ExpiryReturnReview from './ExpiryReturnReview';
-import { CalendarDays, Users, History, ShieldAlert } from 'lucide-react';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
+import { useInfiniteScroll, clearInfiniteScrollCache } from '../../hooks/useInfiniteScroll';
+import { InfiniteScrollStatus } from '../../components/InfiniteScrollStatus';
+import { usePersistedDateRange } from '../../hooks/usePersistedDateRange';
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -28,7 +32,7 @@ const generateUUID = () => {
   });
 };
 
-interface ReturnItem {
+export interface ReturnItem {
   id: string;
   medicine_id: number | null;
   medicine_name: string;
@@ -39,9 +43,41 @@ interface ReturnItem {
   mrp: number | string;
   purchase_item_id?: number;
   invoice_no?: string;
+  app_invoice_no?: string;
   purchase_date?: string;
   distributor_name?: string;
   distributor_id?: number;
+  return_type?: 'good' | 'expiry';
+  reason?: string;
+}
+
+export interface ExpiredReturnRow {
+  inventory_id: number;
+  medicine_id: number;
+  medicine_name: string;
+  batch_no: string;
+  expiry_date: string;
+  available_stock: number;
+  quantity: number | string;
+  cost_price: number | string;
+  mrp: number | string;
+  selected: boolean;
+  invoice_no?: string;
+  app_invoice_no?: string;
+  purchase_date?: string;
+}
+
+export interface DistributorReturnBill {
+  id: string;
+  distributor_id: number | null;
+  distributor_name: string;
+  invoice_no?: string;
+  date: string;
+  loss_percentage: number;
+  return_sub_type?: 'good' | 'expiry';
+  reason?: string;
+  expired_items: ExpiredReturnRow[];
+  manual_items: ReturnItem[];
 }
 
 interface GroupedReturn {
@@ -51,12 +87,6 @@ interface GroupedReturn {
   purchase_date: string;
   items: ReturnItem[];
   total_amount: number;
-}
-
-interface LocalReturnsTab {
-  id: string;
-  name: string;
-  items: ReturnItem[];
 }
 
 type LocalEditableReturnItem = ReturnItem & { _resolved_fields?: string[] };
@@ -76,6 +106,7 @@ interface LocalPurchaseLookupRow {
   mrp: number | null;
   purchase_item_id?: number | null;
   invoice_no: string | null;
+  app_invoice_no?: string | null;
   purchase_date: string | null;
   distributor_name: string | null;
   distributor_id: number | null;
@@ -110,6 +141,10 @@ interface LocalReturnHistoryRow {
   original_invoice_id?: number | string | null;
   distributor_id?: number | null;
   distributor_name?: string | null;
+  purchase_invoice_no?: string | null;
+  return_invoice_id?: string | null;
+  return_sub_type?: string | null;
+  reason?: string | null;
 }
 
 interface LocalExpiryPrefillRow {
@@ -155,40 +190,86 @@ interface LocalMasterDistributor {
 
 const numOr0 = (v: unknown): number => parseFloat(String(v ?? '')) || 0;
 
-const getInitialReturnsTabs = () => {
-  const saved = localStorage.getItem('returns_draft_tabs');
+function createEmptyItem(): ReturnItem {
+  return {
+    id: generateUUID(),
+    medicine_id: null,
+    medicine_name: '',
+    batch_no: '',
+    expiry_date: '',
+    quantity: '',
+    cost_price: '',
+    mrp: '',
+    return_type: 'good',
+    reason: 'Wrong Product Delivered',
+  };
+}
+
+const getInitialBills = (): DistributorReturnBill[] => {
+  const saved = localStorage.getItem('returns_distributor_bills');
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch (e) {
-      console.error('Failed to parse saved Returns tabs:', e);
+      console.error('Failed to parse saved distributor return bills:', e);
     }
   }
+  // Graceful migration from legacy returns_draft_tabs
+  const legacySaved = localStorage.getItem('returns_draft_tabs');
+  if (legacySaved) {
+    try {
+      const legacyTabs = JSON.parse(legacySaved);
+      if (Array.isArray(legacyTabs) && legacyTabs.length > 0) {
+        const migratedBills: DistributorReturnBill[] = [];
+        legacyTabs.forEach(tab => {
+          const items = tab.items || [];
+          const distMap: Record<string, ReturnItem[]> = {};
+          items.forEach((it: any) => {
+            if (!it.medicine_name && !it.medicine_id) return;
+            const distKey = it.distributor_name || 'General Returns';
+            if (!distMap[distKey]) distMap[distKey] = [];
+            distMap[distKey].push(it);
+          });
+          Object.entries(distMap).forEach(([distName, distItems]) => {
+            const first = distItems[0];
+            migratedBills.push({
+              id: 'bill_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+              distributor_id: first?.distributor_id || null,
+              distributor_name: distName === 'General Returns' ? '' : distName,
+              invoice_no: first?.invoice_no || '',
+              date: getTodayString(),
+              loss_percentage: 0,
+              expired_items: [],
+              manual_items: distItems,
+            });
+          });
+        });
+        if (migratedBills.length > 0) return migratedBills;
+      }
+    } catch (e) {
+      console.error('Failed to migrate legacy draft tabs:', e);
+    }
+  }
+
   return [
     {
-      id: 'default',
-      name: 'Return 1',
-      items: [
-        {
-          id: generateUUID(),
-          medicine_id: null,
-          medicine_name: '',
-          batch_no: '',
-          expiry_date: '',
-          quantity: 0,
-          cost_price: 0,
-          mrp: 0,
-        }
-      ]
+      id: 'bill_' + Date.now(),
+      distributor_id: null,
+      distributor_name: '',
+      invoice_no: '',
+      date: getTodayString(),
+      loss_percentage: 0,
+      expired_items: [],
+      manual_items: [createEmptyItem()],
     }
   ];
 };
 
-const getInitialReturnsActiveTabId = (initialTabs: LocalReturnsTab[]) => {
-  const saved = localStorage.getItem('returns_active_tab_id');
-  if (saved && initialTabs.some(t => t.id === saved)) return saved;
-  return initialTabs[0]?.id || 'default';
+const getInitialActiveBillId = (initialBills: DistributorReturnBill[]): string => {
+  const saved = localStorage.getItem('returns_active_bill_id');
+  if (saved && initialBills.some(b => b.id === saved)) return saved;
+  return initialBills[0]?.id || 'default';
 };
 
 const formatExpiryToMMYY = (val: string): string => {
@@ -248,31 +329,170 @@ const getExpiryUrgencyStatus = (expiryStr: string): { label: string; className: 
 };
 
 let cachedReturnHistory: LocalReturnHistoryRow[] | null = null;
-const nowStamp = () => Date.now();
 
 const Returns: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'returns';
   const location = useLocation();
 
-  const initialTabs = getInitialReturnsTabs();
-  const initialActiveTabId = getInitialReturnsActiveTabId(initialTabs);
-  const initialActiveTab = initialTabs.find(t => t.id === initialActiveTabId) || initialTabs[0];
+  // Distributor Return Bills
+  const initialBills = getInitialBills();
+  const [bills, setBills] = useState<DistributorReturnBill[]>(initialBills);
+  const [activeBillId, setActiveBillId] = useState<string>(() => getInitialActiveBillId(initialBills));
 
-  const [tabs, setTabs] = useState<LocalReturnsTab[]>(initialTabs);
-  const [activeTabId, setActiveTabId] = useState<string>(initialActiveTabId);
+  const activeBill = useMemo(() => {
+    return bills.find(b => b.id === activeBillId) || bills[0] || {
+      id: 'default',
+      distributor_id: null,
+      distributor_name: '',
+      invoice_no: '',
+      date: getTodayString(),
+      loss_percentage: 0,
+      expired_items: [],
+      manual_items: [createEmptyItem()],
+    };
+  }, [bills, activeBillId]);
+
   const [historySubTab, setHistorySubTab] = useState<'supplier' | 'customer'>('supplier');
-
-  const [items, setItems] = useState<ReturnItem[]>(initialActiveTab.items || []);
   const [saving, setSaving] = useState(false);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
 
+  // Near-expiry items grouped by distributor directly from backend
+  const { data: nearExpiryData = [], refetch: refetchNearExpiry } = useApiQuery<Array<{
+    distributor_id: number | null;
+    distributor_name: string;
+    items: Array<{
+      inventory_id: number;
+      medicine_id: number;
+      medicine_name: string;
+      batch_no: string;
+      expiry_date: string;
+      quantity: number;
+      cost_price: number;
+      mrp: number;
+      purchase_invoice_no?: string;
+      purchase_number?: string;
+      purchase_date?: string;
+    }>;
+  }>>(
+    ['near-expiry-grouped-returns'],
+    () => api.getNearExpiry(6).then(res => Array.isArray(res) ? res : (res?.data || [])),
+    { staleTime: 30000 }
+  );
+
+  // Pending reviews count
   useEffect(() => {
     api.getExpiryReviews({ status: 'pending' }).then(res => {
       if (res?.stats) setPendingReviewCount(res.stats.pendingCount || 0);
     }).catch(() => {});
   }, []);
+
+  // Sync bills to localStorage & backward-compatible stage draft sync for Expiry page
+  useEffect(() => {
+    localStorage.setItem('returns_distributor_bills', JSON.stringify(bills));
+    localStorage.setItem('returns_active_bill_id', activeBillId);
+
+    // Projected lightweight format for Expiry staged draft indicators
+    const stagedTabs = bills.map(b => ({
+      id: b.id,
+      name: b.distributor_name || 'Draft',
+      items: [
+        ...b.expired_items.filter(i => i.selected).map(i => ({
+          medicine_id: i.medicine_id,
+          batch_no: i.batch_no,
+          quantity: i.quantity,
+        })),
+        ...b.manual_items.map(i => ({
+          medicine_id: i.medicine_id,
+          batch_no: i.batch_no,
+          quantity: i.quantity,
+        }))
+      ]
+    }));
+    localStorage.setItem('returns_draft_tabs', JSON.stringify(stagedTabs));
+    window.dispatchEvent(new CustomEvent('returns-draft-changed'));
+  }, [bills, activeBillId]);
+
+  // Reactive auto-population: when activeBill has a distributor, populate matching near-expiry stock
+  useEffect(() => {
+    if (!activeBill || (!activeBill.distributor_id && !activeBill.distributor_name)) return;
+
+    const match = nearExpiryData.find(g =>
+      (activeBill.distributor_id && g.distributor_id === activeBill.distributor_id) ||
+      (activeBill.distributor_name && g.distributor_name && g.distributor_name.toLowerCase() === activeBill.distributor_name.toLowerCase())
+    );
+
+    if (match && match.items && match.items.length > 0) {
+      setBills(prevBills => {
+        const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+        if (bIdx === -1) return prevBills;
+        const curBill = prevBills[bIdx];
+        const existingKeys = new Set(curBill.expired_items.map(i => `${i.medicine_id}_${(i.batch_no || '').trim().toLowerCase()}`));
+
+        const toAdd: ExpiredReturnRow[] = match.items
+          .filter(it => !existingKeys.has(`${it.medicine_id}_${(it.batch_no || '').trim().toLowerCase()}`))
+          .map(it => ({
+            inventory_id: it.inventory_id,
+            medicine_id: it.medicine_id,
+            medicine_name: it.medicine_name,
+            batch_no: it.batch_no || '',
+            expiry_date: formatExpiryToMMYY(it.expiry_date || ''),
+            available_stock: it.quantity || 0,
+            quantity: it.quantity || 0,
+            cost_price: it.cost_price ?? 0,
+            mrp: it.mrp ?? 0,
+            selected: true,
+            invoice_no: it.purchase_invoice_no || '',
+            app_invoice_no: it.purchase_number || '',
+            purchase_date: it.purchase_date || '',
+          }));
+
+        if (toAdd.length === 0) return prevBills;
+        
+        let autoInvNo = curBill.invoice_no;
+        if (!autoInvNo) {
+          const foundInv = match.items.find(i => i.purchase_invoice_no)?.purchase_invoice_no;
+          const foundPurNo = match.items.find(i => i.purchase_number)?.purchase_number;
+          if (foundInv) autoInvNo = foundInv;
+          else if (foundPurNo) autoInvNo = foundPurNo;
+        }
+
+        const updated = [...prevBills];
+        updated[bIdx] = {
+          ...curBill,
+          invoice_no: autoInvNo || curBill.invoice_no,
+          expired_items: [...curBill.expired_items, ...toAdd]
+        };
+        return updated;
+      });
+    }
+  }, [activeBill.id, activeBill.distributor_id, activeBill.distributor_name, nearExpiryData]);
+
+  // Master active distributors directory
+  const { data: masterDistributors = [] } = useApiQuery<LocalMasterDistributor[]>(
+    ['distributors-list'],
+    async () => {
+      const res = await api.getDistributors();
+      return (Array.isArray(res) ? res : (res?.data || [])) as LocalMasterDistributor[];
+    },
+    { staleTime: 30000 }
+  );
+
+  // Distributor search dropdown state in active bill
+  const [distributorSearchText, setDistributorSearchText] = useState('');
+  const [showDistDropdown, setShowDistDropdown] = useState(false);
+  const distributorDropdownRef = useRef<HTMLDivElement>(null);
+  useOnClickOutside(distributorDropdownRef, () => setShowDistDropdown(false));
+
+  const filteredMasterDistributors = useMemo(() => {
+    const q = distributorSearchText.trim().toLowerCase();
+    if (!q) return masterDistributors;
+    return masterDistributors.filter(d => (d.name || '').toLowerCase().includes(q));
+  }, [masterDistributors, distributorSearchText]);
+
+  // Search autocomplete for manual items
   const [searchResults, setSearchResults] = useState<LocalPurchaseLookupRow[]>([]);
+  const [otherDistributorMatches, setOtherDistributorMatches] = useState<LocalPurchaseLookupRow[]>([]);
   const [activeSearchIndex, setActiveSearchIndex] = useState<number | null>(null);
   const [searchHighlightIndex, setSearchHighlightIndex] = useState(-1);
   const searchResultsRef = useRef<HTMLDivElement>(null);
@@ -285,18 +505,693 @@ const Returns: React.FC = () => {
       }
     }
   }, [searchHighlightIndex]);
-  
+
   const activeSearchRef = useRef<HTMLDivElement>(null);
   useOnClickOutside(activeSearchRef, () => {
     setActiveSearchIndex(null);
     setSearchResults([]);
+    setOtherDistributorMatches([]);
     setSearchHighlightIndex(-1);
   });
-  const [, setGroupedReturns] = useState<GroupedReturn[]>([]);
+
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const searchMedicines = useCallback((term: string, index: number) => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    const cleanTerm = (term || '').trim().replace(/\s+/g, ' ');
+
+    if (cleanTerm.length < 2) {
+      setSearchResults([]);
+      setOtherDistributorMatches([]);
+      setActiveSearchIndex(null);
+      setSearchHighlightIndex(-1);
+      return;
+    }
+
+    const distId = activeBill.distributor_id || undefined;
+    const distName = activeBill.distributor_name || undefined;
+
+    if (cleanTerm.length === 2) {
+      setActiveSearchIndex(null);
+      searchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const response = await api.lookupPurchases(cleanTerm, undefined, distId, distName);
+          const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
+          setSearchResults(rankAndSortMedicines(raw, cleanTerm));
+          setSearchHighlightIndex(-1);
+          if (raw.length === 0 && (distId || distName)) {
+            const allRes = await api.lookupPurchases(cleanTerm);
+            const allRaw = (Array.isArray(allRes) ? allRes : (allRes?.data || [])) as LocalPurchaseLookupRow[];
+            setOtherDistributorMatches(allRaw);
+          } else {
+            setOtherDistributorMatches([]);
+          }
+        } catch (error) {
+          console.error('Error prefetching medicines:', error);
+        }
+      }, 150);
+      return;
+    }
+
+    setActiveSearchIndex(index);
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await api.lookupPurchases(cleanTerm, undefined, distId, distName);
+        const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
+        setSearchResults(rankAndSortMedicines(raw, cleanTerm));
+        setSearchHighlightIndex(-1);
+        if (raw.length === 0 && (distId || distName)) {
+          const allRes = await api.lookupPurchases(cleanTerm);
+          const allRaw = (Array.isArray(allRes) ? allRes : (allRes?.data || [])) as LocalPurchaseLookupRow[];
+          setOtherDistributorMatches(allRaw);
+        } else {
+          setOtherDistributorMatches([]);
+        }
+      } catch (error) {
+        console.error('Error searching medicines:', error);
+      }
+    }, 300);
+  }, [activeBill.distributor_id, activeBill.distributor_name]);
+
+  // AI Camera Scan
+  const [showCamera, setShowCamera] = useState(false);
+  const [cameraTargetIndex, setCameraTargetIndex] = useState<number | null>(null);
+
+  const handleCameraScanResult = (result: { medicineInfo?: LocalCameraMedicineInfo }) => {
+    if (cameraTargetIndex === null) return;
+    const info = result.medicineInfo || {};
+    const medName = info.potentialName || '';
+    const batch = info.batchNumber || '';
+    const exp = info.expiryDate ? formatExpiryToMMYY(info.expiryDate) : '';
+    const mrp = info.mrp || '';
+
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const newManual = [...curBill.manual_items];
+      const item = { ...newManual[cameraTargetIndex] };
+      if (medName) item.medicine_name = medName;
+      if (batch) item.batch_no = batch;
+      if (exp) item.expiry_date = exp;
+      if (mrp) item.mrp = mrp;
+      newManual[cameraTargetIndex] = item;
+
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, manual_items: newManual };
+      return updated;
+    });
+
+    setShowCamera(false);
+    setCameraTargetIndex(null);
+
+    if (medName) {
+      const distId = activeBill.distributor_id || undefined;
+      const distName = activeBill.distributor_name || undefined;
+
+      api.lookupPurchases(medName, batch || undefined, distId, distName).then(res => {
+        const list = (Array.isArray(res) ? res : (res?.data || [])) as LocalPurchaseLookupRow[];
+        if (list.length > 0) {
+          selectMedicineForManualItem(list[0], cameraTargetIndex);
+        } else if (distId || distName) {
+          api.lookupPurchases(medName, batch || undefined).then(allRes => {
+            const allList = (Array.isArray(allRes) ? allRes : (allRes?.data || [])) as LocalPurchaseLookupRow[];
+            if (allList.length > 0) {
+              const actualDist = allList[0].distributor_name || 'another distributor';
+              selectMedicineForManualItem(allList[0], cameraTargetIndex);
+              toastEvent.trigger(
+                `Scanned drug "${allList[0].medicine_name}" was purchased from ${actualDist}. Added to ${activeBill.distributor_name || 'return bill'}.`,
+                'info',
+                '/returns'
+              );
+            } else {
+              toastEvent.trigger(`Scanned drug "${medName}". No purchase records found in app — you can enter manual bill details.`, 'info', '/returns');
+            }
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  };
+
+  // Bill Mutation Helpers
+  const updateActiveBill = (fields: Partial<DistributorReturnBill>) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const updated = [...prevBills];
+      updated[bIdx] = { ...updated[bIdx], ...fields };
+      return updated;
+    });
+  };
+
+  const toggleExpiredItem = (index: number) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextExpired = [...curBill.expired_items];
+      nextExpired[index] = { ...nextExpired[index], selected: !nextExpired[index].selected };
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, expired_items: nextExpired };
+      return updated;
+    });
+  };
+
+  const updateExpiredItemQty = (index: number, qtyVal: string | number) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextExpired = [...curBill.expired_items];
+      nextExpired[index] = { ...nextExpired[index], quantity: qtyVal };
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, expired_items: nextExpired };
+      return updated;
+    });
+  };
+
+  const selectAllExpired = (selected: boolean) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextExpired = curBill.expired_items.map(i => ({ ...i, selected }));
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, expired_items: nextExpired };
+      return updated;
+    });
+  };
+
+  const removeExpiredItem = (index: number) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextExpired = curBill.expired_items.filter((_, i) => i !== index);
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, expired_items: nextExpired };
+      return updated;
+    });
+  };
+
+  const addManualItem = () => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, manual_items: [...curBill.manual_items, createEmptyItem()] };
+      return updated;
+    });
+  };
+
+  const updateManualItem = (index: number, field: keyof ReturnItem, value: any) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextManual = [...curBill.manual_items];
+      nextManual[index] = { ...nextManual[index], [field]: value };
+      const updated = [...prevBills];
+      updated[bIdx] = { ...curBill, manual_items: nextManual };
+      return updated;
+    });
+  };
+
+  const removeManualItem = (index: number) => {
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const nextManual = curBill.manual_items.filter((_, i) => i !== index);
+      const updated = [...prevBills];
+      updated[bIdx] = {
+        ...curBill,
+        manual_items: nextManual.length > 0 ? nextManual : [createEmptyItem()]
+      };
+      return updated;
+    });
+  };
+
+  const selectMedicineForManualItem = (purchase: LocalPurchaseLookupRow, index: number) => {
+    const isCrossDistributor = Boolean(
+      activeBill.distributor_name &&
+      purchase.distributor_name &&
+      purchase.distributor_name !== 'Store Stock (No Invoice)' &&
+      !purchase.distributor_name.includes('Catalog') &&
+      activeBill.distributor_name.trim().toLowerCase() !== purchase.distributor_name.trim().toLowerCase()
+    );
+
+    if (isCrossDistributor) {
+      toastEvent.trigger(
+        `Added "${purchase.medicine_name}" (originally bought from ${purchase.distributor_name}) to ${activeBill.distributor_name} return.`,
+        'info',
+        '/returns'
+      );
+    }
+
+    setBills(prevBills => {
+      const bIdx = prevBills.findIndex(b => b.id === activeBill.id);
+      if (bIdx === -1) return prevBills;
+      const curBill = prevBills[bIdx];
+      const newManual = [...curBill.manual_items];
+      const item = { ...newManual[index] };
+
+      item.medicine_id = purchase.medicine_id;
+      item.medicine_name = purchase.medicine_name;
+      item.batch_no = purchase.batch_no || '';
+      item.expiry_date = formatExpiryToMMYY(purchase.expiry_date || '');
+      item.cost_price = purchase.cost_price ?? '';
+      item.mrp = purchase.mrp ?? '';
+      item.purchase_item_id = purchase.purchase_item_id || undefined;
+      item.invoice_no = purchase.invoice_no || purchase.app_invoice_no || undefined;
+      item.app_invoice_no = purchase.app_invoice_no || undefined;
+      item.distributor_name = isCrossDistributor ? (curBill.distributor_name || undefined) : (purchase.distributor_name || undefined);
+      item.distributor_id = isCrossDistributor ? (curBill.distributor_id || undefined) : (purchase.distributor_id || undefined);
+
+      const expStatus = getExpiryUrgencyStatus(purchase.expiry_date || '');
+      const isExpiredOrNear = expStatus?.label === 'EXPIRED' || expStatus?.label === 'NEAR EXPIRY';
+      if (!item.reason || item.reason === 'Wrong Product Delivered' || item.reason === 'Near Expiry / Expired') {
+        item.return_type = isExpiredOrNear ? 'expiry' : 'good';
+        item.reason = isExpiredOrNear ? 'Near Expiry / Expired' : 'Wrong Product Delivered';
+      }
+
+      let updatedDistId = curBill.distributor_id;
+      let updatedDistName = curBill.distributor_name;
+      if (!updatedDistName && purchase.distributor_name && purchase.distributor_name !== 'Store Stock (No Invoice)' && !purchase.distributor_name.includes('Catalog')) {
+        updatedDistName = purchase.distributor_name;
+        updatedDistId = purchase.distributor_id || null;
+      }
+
+      let updatedInvNo = curBill.invoice_no;
+      if (!updatedInvNo && !isCrossDistributor && (purchase.invoice_no || purchase.app_invoice_no)) {
+        updatedInvNo = purchase.invoice_no || purchase.app_invoice_no || '';
+      }
+
+      newManual[index] = item;
+      const updated = [...prevBills];
+      updated[bIdx] = {
+        ...curBill,
+        distributor_id: updatedDistId,
+        distributor_name: updatedDistName,
+        invoice_no: updatedInvNo || curBill.invoice_no,
+        return_sub_type: curBill.return_sub_type || (curBill.expired_items.length === 0 ? 'good' : undefined),
+        manual_items: newManual
+      };
+      return updated;
+    });
+
+    setSearchResults([]);
+    setOtherDistributorMatches([]);
+    setActiveSearchIndex(null);
+    setSearchHighlightIndex(-1);
+  };
+
+  const addNewBill = (distributor?: { id?: number; name: string }) => {
+    const newId = 'bill_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+    const newBill: DistributorReturnBill = {
+      id: newId,
+      distributor_id: distributor?.id || null,
+      distributor_name: distributor?.name || '',
+      invoice_no: '',
+      date: getTodayString(),
+      loss_percentage: 0,
+      expired_items: [],
+      manual_items: [createEmptyItem()],
+    };
+    setBills(prev => [...prev, newBill]);
+    setActiveBillId(newId);
+    setDistributorSearchText('');
+  };
+
+  const closeBillTab = (tabId: string) => {
+    if (bills.length === 1) {
+      const fresh: DistributorReturnBill = {
+        id: 'bill_' + Date.now(),
+        distributor_id: null,
+        distributor_name: '',
+        invoice_no: '',
+        date: getTodayString(),
+        loss_percentage: 0,
+        expired_items: [],
+        manual_items: [createEmptyItem()],
+      };
+      setBills([fresh]);
+      setActiveBillId(fresh.id);
+      return;
+    }
+    const filtered = bills.filter(b => b.id !== tabId);
+    setBills(filtered);
+    if (activeBillId === tabId) {
+      setActiveBillId(filtered[filtered.length - 1].id);
+    }
+  };
+
+  // Prefilled items handoff from Expiry Monitor page: groups by distributor
+  useEffect(() => {
+    const prefilledItems = location.state?.prefilledReturnItems;
+    if (prefilledItems && Array.isArray(prefilledItems) && prefilledItems.length > 0) {
+      setBills(prevBills => {
+        const nextBills = [...prevBills];
+        const groups: Record<string, { distributor_id?: number; distributor_name: string; items: any[] }> = {};
+
+        prefilledItems.forEach((item: LocalExpiryPrefillRow) => {
+          const distName = item.distributor_name || item.supplier_name || item.distributor || 'General Returns';
+          const distId = item.distributor_id || item.supplier_id || undefined;
+          const key = distId ? `id_${distId}` : `name_${distName.toLowerCase()}`;
+          if (!groups[key]) {
+            groups[key] = { distributor_id: distId, distributor_name: distName, items: [] };
+          }
+          groups[key].items.push(item);
+        });
+
+        let firstTargetBillId: string | null = null;
+
+        Object.values(groups).forEach(g => {
+          let targetBill = nextBills.find(b => 
+            (g.distributor_id && b.distributor_id === g.distributor_id) ||
+            (b.distributor_name && b.distributor_name.toLowerCase() === g.distributor_name.toLowerCase())
+          );
+
+          const mappedExpiredItems: ExpiredReturnRow[] = g.items.map(it => ({
+            inventory_id: it.id || 0,
+            medicine_id: it.medicine_id || it.id || 0,
+            medicine_name: it.medicine_name || it.name || it.item_name || 'Unknown',
+            batch_no: it.batch_no || it.batch || '',
+            expiry_date: formatExpiryToMMYY(it.expiry_date || it.expiry || ''),
+            available_stock: it.quantity ?? it.current_stock ?? 1,
+            quantity: it.quantity ?? it.current_stock ?? 1,
+            cost_price: it.cost_price ?? it.purchase_cost_price ?? it.purchase_cost ?? it.mrp ?? 0,
+            mrp: it.mrp ?? 0,
+            selected: true,
+          }));
+
+          if (targetBill) {
+            const existingKeys = new Set(targetBill.expired_items.map(i => `${i.medicine_id}_${i.batch_no}`));
+            const toAdd = mappedExpiredItems.filter(i => !existingKeys.has(`${i.medicine_id}_${i.batch_no}`));
+            targetBill.expired_items = [...targetBill.expired_items, ...toAdd];
+            if (!firstTargetBillId) firstTargetBillId = targetBill.id;
+          } else {
+            const emptyBillIdx = nextBills.findIndex(b => !b.distributor_name && b.manual_items.every(m => !m.medicine_name) && b.expired_items.length === 0);
+            const newBillId = emptyBillIdx !== -1 ? nextBills[emptyBillIdx].id : 'bill_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+            const newBill: DistributorReturnBill = {
+              id: newBillId,
+              distributor_id: g.distributor_id || null,
+              distributor_name: g.distributor_name === 'General Returns' ? '' : g.distributor_name,
+              invoice_no: '',
+              date: getTodayString(),
+              loss_percentage: 0,
+              expired_items: mappedExpiredItems,
+              manual_items: [createEmptyItem()],
+            };
+            if (emptyBillIdx !== -1) {
+              nextBills[emptyBillIdx] = newBill;
+            } else {
+              nextBills.push(newBill);
+            }
+            if (!firstTargetBillId) firstTargetBillId = newBill.id;
+          }
+        });
+
+        if (firstTargetBillId) {
+          setActiveBillId(firstTargetBillId);
+        }
+        return nextBills;
+      });
+
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  // Active Bill Calculations
+  const selectedExpiredItems = useMemo(() => {
+    return (activeBill.expired_items || []).filter(i => i.selected && numOr0(i.quantity) > 0);
+  }, [activeBill.expired_items]);
+
+  const validManualItems = useMemo(() => {
+    return (activeBill.manual_items || []).filter(i => (i.medicine_name || i.medicine_id) && numOr0(i.quantity) > 0);
+  }, [activeBill.manual_items]);
+
+  const expiredSubtotal = useMemo(() => {
+    return selectedExpiredItems.reduce((s, i) => s + (numOr0(i.cost_price) * numOr0(i.quantity)), 0);
+  }, [selectedExpiredItems]);
+
+  const manualSubtotal = useMemo(() => {
+    return validManualItems.reduce((s, i) => s + (numOr0(i.cost_price) * numOr0(i.quantity)), 0);
+  }, [validManualItems]);
+
+  const totalClaimAmount = expiredSubtotal + manualSubtotal;
+  const totalClaimItemsCount = selectedExpiredItems.length + validManualItems.length;
+  const netCreditExpected = totalClaimAmount * (1 - (activeBill.loss_percentage || 0) / 100);
+
+  // Total return products across all bills for top switcher pill
+  const totalSupplierReturnItemsCount = useMemo(() => {
+    return bills.reduce((acc, b) => {
+      const exp = b.expired_items.filter(i => i.selected).length;
+      const man = b.manual_items.filter(i => (i.medicine_name || i.medicine_id) && numOr0(i.quantity) > 0).length;
+      return acc + exp + man;
+    }, 0);
+  }, [bills]);
+
+  // Modal State for Confirm Process
+  const [showProcessConfirmModal, setShowProcessConfirmModal] = useState(false);
+
+  // Return Processing
+  const handleConfirmProcessReturn = async () => {
+    if (!activeBill.distributor_name && !activeBill.distributor_id) {
+      toastEvent.trigger('Please select or specify a distributor for this return.', 'error', '/returns');
+      setShowProcessConfirmModal(false);
+      return;
+    }
+
+    const itemsToSubmit = [
+      ...selectedExpiredItems.map(i => ({
+        medicine_id: i.medicine_id,
+        medicine_name: i.medicine_name,
+        batch_no: i.batch_no,
+        expiry_date: i.expiry_date,
+        quantity: numOr0(i.quantity),
+        cost_price: numOr0(i.cost_price),
+        mrp: numOr0(i.mrp),
+        distributor_id: activeBill.distributor_id || undefined,
+        invoice_no: i.invoice_no || activeBill.invoice_no || 'N/A',
+        app_invoice_no: i.app_invoice_no,
+        return_type: 'expiry' as const,
+        reason: 'Expired / Near-Expiry',
+      })),
+      ...validManualItems.map(i => ({
+        medicine_id: i.medicine_id,
+        medicine_name: i.medicine_name,
+        batch_no: i.batch_no,
+        expiry_date: i.expiry_date,
+        quantity: numOr0(i.quantity),
+        cost_price: numOr0(i.cost_price),
+        mrp: numOr0(i.mrp),
+        distributor_id: activeBill.distributor_id || undefined,
+        invoice_no: i.invoice_no || activeBill.invoice_no || 'N/A',
+        app_invoice_no: i.app_invoice_no,
+        return_type: i.return_type || 'good',
+        reason: i.reason || 'Wrong Product Delivered',
+      }))
+    ];
+
+    if (itemsToSubmit.length === 0) {
+      toastEvent.trigger('No valid return items with quantity > 0.', 'error', '/returns');
+      setShowProcessConfirmModal(false);
+      return;
+    }
+
+    const hasExpired = selectedExpiredItems.length > 0 || validManualItems.some(i => i.return_type === 'expiry');
+    const hasGoods = validManualItems.some(i => i.return_type === 'good' || !i.return_type);
+    const billSubType: 'good' | 'expiry' = activeBill.return_sub_type || (hasGoods && !hasExpired ? 'good' : (hasExpired && !hasGoods ? 'expiry' : (hasExpired ? 'expiry' : 'good')));
+    const billReason = activeBill.reason || (billSubType === 'good' ? (validManualItems.find(i => i.reason)?.reason || 'Goods Return (Wrong Product / Non-Expired)') : 'Supplier Expiry Return');
+
+    setSaving(true);
+    try {
+      await api.processReturns(
+        itemsToSubmit,
+        activeBill.loss_percentage,
+        activeBill.distributor_id || undefined,
+        activeBill.distributor_name || undefined,
+        activeBill.invoice_no || undefined,
+        billSubType,
+        billReason
+      );
+      toastEvent.trigger(`Successfully processed ${billSubType === 'good' ? 'Goods Return' : 'return'} for ${activeBill.distributor_name || 'supplier'} (${itemsToSubmit.length} items)!`, 'success', '/returns');
+
+      invalidateAfterStockWrite(queryClient);
+      refetchNearExpiry().catch(() => {});
+      refetchHistory().catch(() => {});
+      api.getCompactInventory().catch(() => {});
+
+      setShowProcessConfirmModal(false);
+
+      if (bills.length > 1) {
+        closeBillTab(activeBill.id);
+      } else {
+        setBills([{
+          id: 'bill_' + Date.now(),
+          distributor_id: null,
+          distributor_name: '',
+          invoice_no: '',
+          date: getTodayString(),
+          loss_percentage: 0,
+          return_sub_type: 'good',
+          reason: 'Wrong Product Delivered',
+          expired_items: [],
+          manual_items: [createEmptyItem()],
+        }]);
+      }
+    } catch (error: any) {
+      console.error('Error processing return:', error);
+      const msg = error?.response?.data?.error || error?.message || 'Failed to process return claim. Please try again.';
+      toastEvent.trigger(msg, 'error', '/returns');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // PDF Export for active bill
+  const handleExportDistributorPDF = async () => {
+    const itemsForPDF = [
+      ...selectedExpiredItems.map(i => ({
+        medicine_name: i.medicine_name,
+        batch_no: i.batch_no,
+        expiry_date: i.expiry_date,
+        quantity: numOr0(i.quantity),
+        cost_price: numOr0(i.cost_price),
+        mrp: numOr0(i.mrp),
+        invoice_no: i.invoice_no || activeBill.invoice_no || 'N/A',
+        app_invoice_no: i.app_invoice_no,
+        distributor_name: activeBill.distributor_name || 'Distributor',
+        return_type: 'expiry',
+        reason: 'Expired / Near-Expiry',
+      })),
+      ...validManualItems.map(i => ({
+        medicine_name: i.medicine_name,
+        batch_no: i.batch_no,
+        expiry_date: i.expiry_date,
+        quantity: numOr0(i.quantity),
+        cost_price: numOr0(i.cost_price),
+        mrp: numOr0(i.mrp),
+        invoice_no: i.invoice_no || activeBill.invoice_no || 'N/A',
+        app_invoice_no: i.app_invoice_no,
+        distributor_name: i.distributor_name || activeBill.distributor_name || 'Distributor',
+        return_type: i.return_type || 'good',
+        reason: i.reason || 'Wrong Product Delivered',
+      }))
+    ];
+
+    if (itemsForPDF.length === 0) {
+      toastEvent.trigger('No valid return items to export.', 'info', '/returns');
+      return;
+    }
+
+    const hasExpired = selectedExpiredItems.length > 0 || validManualItems.some(i => i.return_type === 'expiry');
+    const hasGoods = validManualItems.some(i => i.return_type === 'good' || !i.return_type);
+    const billSubType: 'good' | 'expiry' = activeBill.return_sub_type || (hasGoods && !hasExpired ? 'good' : (hasExpired && !hasGoods ? 'expiry' : (hasExpired ? 'expiry' : 'good')));
+    const billReason = activeBill.reason || (billSubType === 'good' ? (validManualItems.find(i => i.reason)?.reason || 'Goods Return (Wrong Product / Non-Expired)') : 'Supplier Expiry Return');
+
+    try {
+      const blob = await api.exportReturnsPDF(itemsForPDF as unknown as ReadonlyArray<Record<string, unknown>>, billSubType, billReason);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${billSubType === 'good' ? 'goods-return' : 'debit-note'}-${(activeBill.distributor_name || 'supplier').replace(/\s+/g, '_')}-${Date.now()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toastEvent.trigger(`${billSubType === 'good' ? 'Goods return statement' : 'Debit note'} PDF downloaded.`, 'success', '/returns');
+    } catch (error) {
+      console.error('Error exporting PDF:', error);
+      toastEvent.trigger('Failed to export PDF statement.', 'error', '/returns');
+    }
+  };
+
+  // ──────────────────────────────────────────────
+  // Return History Section Logic
+  // ──────────────────────────────────────────────
+  const todayStr = getTodayString();
+  const thirtyDaysAgoStr = getNDaysAgoString(30);
+
+  const dateRangeHelper = usePersistedDateRange({
+    storageKey: 'supplier-returns-date-range',
+    defaultFrom: thirtyDaysAgoStr,
+    defaultTo: todayStr,
+  });
+
+  const [searchFilterText, setSearchFilterText] = useState('');
+
+  const queryClient = useQueryClient();
+  const {
+    items: returnHistory,
+    totalItems: returnHistoryTotal,
+    isFetching: loadingHistory,
+    isFetchingNextPage: loadingMoreHistory,
+    hasNextPage: hasMoreHistory,
+    fetchNextPage: fetchMoreHistory,
+    sentinelRef: historySentinelRef,
+    refetch: refetchHistory,
+  } = useInfiniteScroll<LocalReturnHistoryRow>({
+    queryKey: 'supplier-return-history-list',
+    cacheKey: 'supplier-return-history-cache',
+    serverFilters: {
+      search: searchFilterText.trim(),
+      date_from: dateRangeHelper.dateRange.from,
+      date_to: dateRangeHelper.dateRange.to,
+    },
+    fetchPage: async (pageParam, filters) => {
+      const response = await api.getReturns({
+        page: pageParam,
+        limit: 30,
+        search: filters.search || undefined,
+        date_from: filters.date_from || undefined,
+        date_to: filters.date_to || undefined,
+      });
+      if (response && response.data) {
+        return {
+          data: response.data || [],
+          totalItems: response.totalItems || 0,
+          totalPages: response.totalPages || 1,
+        };
+      } else {
+        const list = Array.isArray(response) ? response : [];
+        return {
+          data: list,
+          totalItems: list.length,
+          totalPages: 1,
+        };
+      }
+    },
+  });
+
+  useEffect(() => {
+    const handleStockWrite = () => {
+      refetchHistory().catch(() => {});
+    };
+    window.addEventListener('stock-write-completed', handleStockWrite);
+    window.addEventListener('sse-return-created', handleStockWrite);
+    return () => {
+      window.removeEventListener('stock-write-completed', handleStockWrite);
+      window.removeEventListener('sse-return-created', handleStockWrite);
+    };
+  }, [refetchHistory]);
 
   const [selectedHistoryReturn, setSelectedHistoryReturn] = useState<LocalReturnHistoryRow | null>(null);
   const [historyReturnItems, setHistoryReturnItems] = useState<LocalHistoryReturnDetail[]>([]);
   const [loadingHistoryItems, setLoadingHistoryItems] = useState(false);
+  const [isEditingHistory, setIsEditingHistory] = useState(false);
+  const [editingItems, setEditingItems] = useState<LocalEditableReturnItem[]>([]);
+  const [isResolving, setIsResolving] = useState(false);
+  const [deleteConfirmReturn, setDeleteConfirmReturn] = useState<LocalReturnHistoryRow | null>(null);
+
+  const hasMissingData = historyReturnItems.some(
+    i => !i.batch_no || !i.expiry_date || !(i.cost_price)
+  );
 
   const handleSelectHistoryReturn = async (ret: LocalReturnHistoryRow) => {
     setSelectedHistoryReturn(ret);
@@ -313,21 +1208,18 @@ const Returns: React.FC = () => {
         quantity: item.quantity ?? null,
         cost_price: item.cost_price ?? null,
         mrp: item.mrp || 0,
-        // Prefer the invoice_no joined from purchases; fall back to parent return's original_invoice_id
-        invoice_no: item.invoice_no || (ret.original_invoice_id ? String(ret.original_invoice_id) : 'N/A'),
+        invoice_no: item.invoice_no || ret.purchase_invoice_no || ret.return_invoice_id || 'N/A',
         purchase_date: item.purchase_date || '',
-        // Prefer distributor from the joined row; fall back to parent return
         distributor_name: item.distributor_name || ret.distributor_name || 'Unknown Distributor',
         distributor_id: item.distributor_id || ret.distributor_id || undefined,
       }));
       setHistoryReturnItems(mapped);
-      const toEditable = (i: LocalHistoryReturnDetail): LocalEditableReturnItem => ({
+      setEditingItems(mapped.map(i => ({
         ...i,
         quantity: i.quantity ?? '',
         cost_price: i.cost_price ?? '',
         mrp: i.mrp ?? 0,
-      });
-      setEditingItems(mapped.map(toEditable));
+      })));
     } catch (error) {
       console.error('Error fetching return items:', error);
     } finally {
@@ -340,27 +1232,22 @@ const Returns: React.FC = () => {
     setHistoryReturnItems([]);
   };
 
-  const handleDeleteReturn = async (ret: LocalReturnHistoryRow, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm(`Delete return ${ret.return_no}? This cannot be undone.`)) return;
+  const handleConfirmDeleteReturn = async () => {
+    if (!deleteConfirmReturn) return;
     try {
-      await api.deleteReturn(ret.id);
-      if (selectedHistoryReturn?.id === ret.id) handleClearHistorySelection();
-      // Centralized cache invalidation for frontend lists and local infinite scroll caches
+      await api.deleteReturn(deleteConfirmReturn.id);
+      if (selectedHistoryReturn?.id === deleteConfirmReturn.id) handleClearHistorySelection();
       invalidateAfterStockWrite(queryClient);
-
-      // Refresh local POS inventory search cache
+      clearInfiniteScrollCache('supplier-return-history-cache');
+      refetchHistory().catch(() => {});
       api.getCompactInventory().catch(() => {});
+      toastEvent.trigger(`Return ${deleteConfirmReturn.return_no} deleted.`, 'success', '/returns');
     } catch (err) {
       console.error('Failed to delete return:', err);
-      alert('Failed to delete return');
+      toastEvent.trigger('Failed to delete return.', 'error', '/returns');
+    } finally {
+      setDeleteConfirmReturn(null);
     }
-  };
-
-  const handleEditHistoryReturn = async (ret: LocalReturnHistoryRow, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await handleSelectHistoryReturn(ret);
-    setIsEditingHistory(true);
   };
 
   const handleSaveHistoryEdit = async () => {
@@ -372,14 +1259,14 @@ const Returns: React.FC = () => {
       await api.updateReturn(selectedHistoryReturn.id, { items: validItems as unknown as Array<Record<string, unknown>>, total_amount: total });
       setIsEditingHistory(false);
       await handleSelectHistoryReturn(selectedHistoryReturn);
-      // Centralized cache invalidation for frontend lists and local infinite scroll caches
       invalidateAfterStockWrite(queryClient);
-
-      // Refresh local POS inventory search cache
+      clearInfiniteScrollCache('supplier-return-history-cache');
+      refetchHistory().catch(() => {});
       api.getCompactInventory().catch(() => {});
+      toastEvent.trigger('Return claim updated successfully.', 'success', '/returns');
     } catch (err) {
       console.error('Failed to save return:', err);
-      alert('Failed to save changes');
+      toastEvent.trigger('Failed to save changes.', 'error', '/returns');
     } finally {
       setSaving(false);
     }
@@ -407,783 +1294,20 @@ const Returns: React.FC = () => {
       }));
       setEditingItems(mapped);
       setIsEditingHistory(true);
+      toastEvent.trigger('Missing fields resolved from purchase history.', 'success', '/returns');
     } catch (err) {
       console.error('Failed to resolve missing data:', err);
-      alert('Failed to auto-fill missing data');
+      toastEvent.trigger('Failed to auto-fill missing data.', 'error', '/returns');
     } finally {
       setIsResolving(false);
     }
   };
 
-  // Sync items to active tab
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror active draft items into its tab
-    setTabs(prev => {
-      const idx = prev.findIndex(t => t.id === activeTabId);
-      if (idx === -1) return prev;
-      const t = prev[idx];
-      if (t.items !== items) {
-        const next = [...prev];
-        next[idx] = {
-          ...t,
-          items: items
-        };
-        return next;
-      }
-      return prev;
-    });
-  }, [items, activeTabId]);
-
-  // Persist to localStorage & dispatch real-time event for Expiry synchronization
-  useEffect(() => {
-    localStorage.setItem('returns_draft_tabs', JSON.stringify(tabs));
-    window.dispatchEvent(new CustomEvent('returns-draft-changed'));
-  }, [tabs]);
-
-  // Clean up any potential legacy conflicting local storage keys to ensure robust cache
-  useEffect(() => {
-    localStorage.removeItem('returns_tabs');
-    localStorage.removeItem('return_draft_tabs');
-    localStorage.removeItem('returns_active_tab');
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('returns_active_tab_id', activeTabId);
-  }, [activeTabId]);
-
-  const switchTab = (newTabId: string) => {
-    if (newTabId === activeTabId && !selectedHistoryReturn) return;
-    const target = tabs.find(t => t.id === newTabId);
-    if (target) {
-      setItems(target.items || [createEmptyItem()]);
-      setActiveTabId(newTabId);
-      setSelectedHistoryReturn(null); // Clear selected history return!
-    }
-  };
-
-  const addNewTab = () => {
-    const nextNum = tabs.length + 1;
-    const newId = 'tab_' + nowStamp();
-    const newTab = {
-      id: newId,
-      name: `Return ${nextNum}`,
-      items: [createEmptyItem()]
-    };
-
-    setTabs(prev => [...prev, newTab]);
-    setItems([createEmptyItem()]);
-    setActiveTabId(newId);
-    setSelectedHistoryReturn(null); // Clear selected history return!
-  };
-
-  const closeTab = (tabId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (tabs.length === 1) return;
-
-    const filtered = tabs.filter(t => t.id !== tabId);
-    if (activeTabId === tabId) {
-      const fallback = filtered[filtered.length - 1];
-      setItems(fallback.items || [createEmptyItem()]);
-      setActiveTabId(fallback.id);
-    }
-    setTabs(filtered.map((t, idx) => ({
-      ...t,
-      name: t.name.startsWith('Return ') ? `Return ${idx + 1}` : t.name
-    })));
-  };
-
-  // Filters
-  const [dateFrom, setDateFrom] = useState(getNDaysAgoString(15));
-  const [dateTo, setDateTo] = useState(getTodayString());
-  const [manualToDate, setManualToDate] = useState(false);
-  const [minAmount, setMinAmount] = useState('');
-  const [maxAmount, setMaxAmount] = useState('');
-  const [distributorFilter, setDistributorFilter] = useState('');
-  const [searchFilterText, setSearchFilterText] = useState('');
-  const queryClient = useQueryClient();
-  const returnHistoryKey = ['return-history', dateFrom, dateTo, minAmount, maxAmount] as const;
-  const { data: returnHistory = [], isLoading: loading, refetch: refetchHistory } = useApiQuery<LocalReturnHistoryRow[]>(
-    returnHistoryKey,
-    async () => {
-      const params = {
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        min_amount: minAmount ? parseFloat(minAmount) : undefined,
-        max_amount: maxAmount ? parseFloat(maxAmount) : undefined,
-      };
-      const response = await api.getReturns(params);
-      const list = (Array.isArray(response) ? response : (response.data || [])) as LocalReturnHistoryRow[];
-      cachedReturnHistory = list;
-      return list;
-    },
-    {
-      initialData: cachedReturnHistory || undefined,
-      staleTime: 10000,
-    }
-  );
-
-  // Master active distributors directory
-  const { data: masterDistributors = [] } = useApiQuery<LocalMasterDistributor[]>(
-    ['distributors-list'],
-    async () => {
-      const res = await api.getDistributors();
-      return (Array.isArray(res) ? res : (res?.data || [])) as LocalMasterDistributor[];
-    },
-    { staleTime: 30000 }
-  );
-
-  // P1 "events, not timers": history refetches ONLY when a return actually
-  // happened (window events + SSE push) — no 10s polling of unchanged data.
-  useEffect(() => {
-    const handleStockWrite = () => {
-      refetchHistory().catch(() => {});
-    };
-
-    window.addEventListener('stock-write-completed', handleStockWrite);
-    window.addEventListener('sse-return-created', handleStockWrite);
-
-    return () => {
-      window.removeEventListener('stock-write-completed', handleStockWrite);
-      window.removeEventListener('sse-return-created', handleStockWrite);
-    };
-  }, [refetchHistory]);
-
-  const [showCamera, setShowCamera] = useState(false);
-  const [cameraTargetIndex, setCameraTargetIndex] = useState<number | null>(null);
-
-
-  // Edit history state
-  const [isEditingHistory, setIsEditingHistory] = useState(false);
-  const [editingItems, setEditingItems] = useState<LocalEditableReturnItem[]>([]);
-  const [isResolving, setIsResolving] = useState(false);
-
-  // True when any loaded history item has null/zero batch, expiry, or cost
-  const hasMissingData = historyReturnItems.some(
-    i => !i.batch_no || !i.expiry_date || !(i.cost_price)
-  );
-
-  useEffect(() => {
-    if (!manualToDate) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- default date-to only until user overrides
-      setDateTo(getTodayString());
-    }
-  }, [manualToDate]);
-
-  const handleDateFromChange = (val: string) => {
-    if (val && val < '2020-01-01') {
-      setDateFrom('2020-01-01');
-    } else {
-      setDateFrom(val);
-    }
-  };
-
-  const handleDateToChange = (val: string) => {
-    if (val && val < '2020-01-01') {
-      setDateTo('2020-01-01');
-    } else {
-      setDateTo(val);
-    }
-  };
-
-  const handleCameraScanResult = (result: { medicineInfo?: LocalCameraMedicineInfo }) => {
-    if (cameraTargetIndex === null) return;
-    const info = result.medicineInfo || {};
-    const newItems = [...items];
-    const item = newItems[cameraTargetIndex];
-
-    if (info.potentialName) {
-      item.medicine_name = info.potentialName;
-    }
-    if (info.batchNumber) {
-      item.batch_no = info.batchNumber;
-    }
-    if (info.expiryDate) {
-      item.expiry_date = formatExpiryToMMYY(info.expiryDate);
-    }
-    if (info.mrp) {
-      item.mrp = info.mrp;
-    }
-    
-    // Attempt auto-reconciliation/fetching distributor details from purchase history
-    const resolveDetails = async () => {
-      try {
-        const res = await api.lookupPurchases(item.medicine_name, item.batch_no || undefined);
-        const list = (Array.isArray(res) ? res : (res?.data || [])) as LocalPurchaseLookupRow[];
-        if (list.length > 0) {
-          const purchase = list[0];
-
-          const existingIndex = items.findIndex(
-            (it, idx) => idx !== cameraTargetIndex &&
-              it.medicine_id === purchase.medicine_id &&
-              (it.batch_no || '').trim().toLowerCase() === (purchase.batch_no || '').trim().toLowerCase()
-          );
-
-          if (existingIndex !== -1) {
-            alert(`Scanned drug "${purchase.medicine_name}" (Batch: ${purchase.batch_no}) is already in your return cart!\n\nIncrementing quantity of the existing line.`);
-            const updatedItems = [...items];
-            const existingQty = numOr0(updatedItems[existingIndex].quantity);
-            updatedItems[existingIndex].quantity = (existingQty + 1).toString();
-            if (updatedItems.length > 1) {
-              updatedItems.splice(cameraTargetIndex, 1);
-            } else {
-              updatedItems[cameraTargetIndex] = createEmptyItem();
-            }
-            setItems(updatedItems);
-            return;
-          }
-
-          item.medicine_id = purchase.medicine_id;
-          item.medicine_name = purchase.medicine_name;
-          item.batch_no = purchase.batch_no || '';
-          item.expiry_date = formatExpiryToMMYY(purchase.expiry_date || '');
-          item.cost_price = purchase.cost_price ?? '';
-          item.mrp = purchase.mrp ?? '';
-          item.purchase_item_id = purchase.purchase_item_id || undefined;
-          item.invoice_no = purchase.invoice_no || undefined;
-          item.purchase_date = purchase.purchase_date || undefined;
-          item.distributor_name = purchase.distributor_name || undefined;
-          item.distributor_id = purchase.distributor_id || undefined;
-        }
-        setItems(newItems);
-      } catch (err) {
-        console.error('Failed to look up matching purchases for returns scan:', err);
-      }
-    };
-    
-    resolveDetails();
-    setShowCamera(false);
-    setCameraTargetIndex(null);
-  };
-
-  function createEmptyItem(): ReturnItem {
-    return {
-      id: generateUUID(),
-      medicine_id: null,
-      medicine_name: '',
-      batch_no: '',
-      expiry_date: '',
-      quantity: '',
-      cost_price: '',
-      mrp: '',
-    };
-  }
-
-  useEffect(() => {
-    // Auto-prefill from Expiry page navigation or location state with robust property fallbacks
-    const prefilledItems = location.state?.prefilledReturnItems;
-    if (prefilledItems && Array.isArray(prefilledItems) && prefilledItems.length > 0) {
-      const mappedItems: ReturnItem[] = prefilledItems.map((item: LocalExpiryPrefillRow) => ({
-        id: String(item.id || item.medicine_id || generateUUID()),
-        medicine_id: item.medicine_id || item.id || null,
-        medicine_name: item.medicine_name || item.name || item.item_name || '',
-        batch_no: item.batch_no || item.batch || '',
-        expiry_date: formatExpiryToMMYY(item.expiry_date || item.expiry || ''),
-        quantity: (item.quantity ?? item.pack_quantity ?? item.current_stock ?? item.stock_quantity ?? 1).toString(),
-        cost_price: (item.cost_price ?? item.purchase_cost_price ?? item.purchase_cost ?? item.mrp ?? 0).toString(),
-        mrp: (item.mrp ?? 0).toString(),
-        purchase_item_id: item.purchase_item_id || undefined,
-        invoice_no: item.invoice_no || item.purchase_invoice_no || undefined,
-        purchase_date: item.purchase_date || undefined,
-        distributor_name: item.distributor_name || item.supplier_name || item.distributor || undefined,
-        distributor_id: item.distributor_id || item.supplier_id || undefined,
-      }));
-
-      // Append prefilled items without duplicating existing batch IDs
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot navigation hand-off prefill merge
-      setItems(prev => {
-        const existingKeys = new Set(prev.map(i => `${i.medicine_id}_${i.batch_no}`));
-        const newUnique = mappedItems.filter(i => !existingKeys.has(`${i.medicine_id}_${i.batch_no}`));
-        const nonEmptyExisting = prev.filter(i => i.medicine_name || i.medicine_id);
-        return [...nonEmptyExisting, ...(newUnique.length > 0 ? newUnique : mappedItems)];
-      });
-    }
-  }, [location.state]);
-
-  // RQ re-fetches automatically when returnHistoryKey changes (dateFrom/dateTo/minAmount/maxAmount)
-
-  const searchTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const searchMedicines = useCallback((term: string, index: number) => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    const cleanTerm = (term || '').trim().replace(/\s+/g, ' ');
-
-    if (cleanTerm.length < 2) {
-      setSearchResults([]);
-      setActiveSearchIndex(null);
-      setSearchHighlightIndex(-1);
-      return;
-    }
-
-    if (cleanTerm.length === 2) {
-      // Prefetch 2 characters in background, no dropdown
-      setActiveSearchIndex(null);
-      searchTimeoutRef.current = setTimeout(async () => {
-        try {
-          const response = await api.lookupPurchases(cleanTerm);
-          const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
-          setSearchResults(rankAndSortMedicines(raw, cleanTerm));
-          setSearchHighlightIndex(-1);
-        } catch (error) {
-          console.error('Error prefetching medicines:', error);
-        }
-      }, 150);
-      return;
-    }
-
-    // >= 3 characters: show dropdown immediately
-    setActiveSearchIndex(index);
-
-    searchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const response = await api.lookupPurchases(cleanTerm);
-        const raw = (Array.isArray(response) ? response : (response?.data || [])) as LocalPurchaseLookupRow[];
-        setSearchResults(rankAndSortMedicines(raw, cleanTerm));
-        setSearchHighlightIndex(-1);
-      } catch (error) {
-        console.error('Error searching medicines:', error);
-      }
-    }, 300);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const selectMedicine = (purchase: LocalPurchaseLookupRow, index: number) => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    // Check if this medicine batch is already in the return cart at another row
-    const existingIndex = items.findIndex(
-      (it, idx) => idx !== index && 
-        it.medicine_id === purchase.medicine_id && 
-        (it.batch_no || '').trim().toLowerCase() === (purchase.batch_no || '').trim().toLowerCase()
-    );
-
-    if (existingIndex !== -1) {
-      alert(`"${purchase.medicine_name}" (Batch: ${purchase.batch_no}) is already in your return cart!\n\nIncrementing the quantity of the existing line.`);
-      
-      const newItems = [...items];
-      const existingQty = numOr0(newItems[existingIndex].quantity);
-      newItems[existingIndex].quantity = (existingQty + 1).toString();
-      
-      if (newItems.length > 1) {
-        newItems.splice(index, 1);
-      } else {
-        newItems[index] = createEmptyItem();
-      }
-
-      setItems(newItems);
-      setSearchResults([]);
-      setActiveSearchIndex(null);
-      setSearchHighlightIndex(-1);
-      return;
-    }
-
-    const newItems = [...items];
-    const item = newItems[index];
-
-    item.medicine_id = purchase.medicine_id;
-    item.medicine_name = purchase.medicine_name;
-    item.batch_no = purchase.batch_no || '';
-    item.expiry_date = formatExpiryToMMYY(purchase.expiry_date || '');
-    item.cost_price = purchase.cost_price ?? '';
-    item.mrp = purchase.mrp ?? '';
-    item.purchase_item_id = purchase.purchase_item_id || undefined;
-    item.invoice_no = purchase.invoice_no || undefined;
-    item.purchase_date = purchase.purchase_date || undefined;
-    item.distributor_name = purchase.distributor_name || undefined;
-    item.distributor_id = purchase.distributor_id || undefined;
-
-    setItems(newItems);
-    setSearchResults([]);
-    setActiveSearchIndex(null);
-    setSearchHighlightIndex(-1);
-  };
-
-  const updateItem = (index: number, field: 'medicine_name' | 'batch_no' | 'expiry_date' | 'quantity' | 'cost_price', value: string, format = false) => {
-    const newItems = [...items];
-    const item = newItems[index];
-
-    if (field === 'expiry_date') {
-      item[field] = format ? formatExpiryToMMYY(value) : value;
-    } else {
-      item[field] = value;
-    }
-
-    setItems(newItems);
-  };
-
-  const removeItem = (index: number) => {
-    if (items.length === 1) {
-      setItems([createEmptyItem()]);
-      return;
-    }
-    setItems(items.filter((_, i) => i !== index));
-  };
-
-  const addItem = () => {
-    setItems([...items, createEmptyItem()]);
-  };
-
-  interface DraftGroup {
-    key: string;
-    distributor_id: number | null;
-    distributor_name: string;
-    invoice_no: string;
-    purchase_date: string;
-    items: { item: ReturnItem; originalIndex: number }[];
-    total_amount: number;
-  }
-
-  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>({});
-  const [distributorSidebarSearch, setDistributorSidebarSearch] = useState('');
-  const [focusedDistributorKey, setFocusedDistributorKey] = useState<string | null>(null);
-
-  const toggleCardCollapse = (key: string) => {
-    setCollapsedCards(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
-
-  const collapseAllCards = () => {
-    const all = groupAllItemsByDistributor();
-    const map: Record<string, boolean> = {};
-    all.forEach(g => { map[g.key] = true; });
-    setCollapsedCards(map);
-  };
-
-  const expandAllCards = () => {
-    setCollapsedCards({});
-  };
-
-  const groupAllItemsByDistributor = (): DraftGroup[] => {
-    const grouped: { [key: string]: DraftGroup } = {};
-
-    items.forEach((item, index) => {
-      const hasDist = Boolean(item.distributor_name || item.distributor_id);
-      const key = hasDist
-        ? `${item.distributor_id || 'name_' + item.distributor_name}_${item.invoice_no || 'N/A'}`
-        : 'unassigned';
-
-      const distName = hasDist ? (item.distributor_name || 'Unknown Supplier') : 'New / Unassigned Items';
-      const invNo = hasDist ? (item.invoice_no || 'N/A') : 'Draft';
-      const purchaseDate = item.purchase_date || '';
-
-      const qty = numOr0(item.quantity);
-      const costPrice = numOr0(item.cost_price);
-
-      if (!grouped[key]) {
-        grouped[key] = {
-          key,
-          distributor_id: item.distributor_id || null,
-          distributor_name: distName,
-          invoice_no: invNo,
-          purchase_date: purchaseDate,
-          items: [],
-          total_amount: 0,
-        };
-      }
-
-      grouped[key].items.push({ item, originalIndex: index });
-      grouped[key].total_amount += costPrice * qty;
-    });
-
-    const result = Object.values(grouped);
-    // Auto-Sort items in each distributor card by Expiry Urgency Rank then Expiry Date
-    result.forEach(group => {
-      group.items.sort((a, b) => {
-        const statusA = getExpiryUrgencyStatus(a.item.expiry_date);
-        const statusB = getExpiryUrgencyStatus(b.item.expiry_date);
-        const rankA = statusA ? statusA.rank : 99;
-        const rankB = statusB ? statusB.rank : 99;
-        if (rankA !== rankB) return rankA - rankB;
-        return (a.item.expiry_date || '').localeCompare(b.item.expiry_date || '');
-      });
-    });
-
-    return result;
-  };
-
-  const processSingleGroup = async (group: DraftGroup) => {
-    const validItems = group.items.filter(entry => {
-      const qty = numOr0(entry.item.quantity);
-      return entry.item.medicine_id && qty > 0;
-    });
-
-    if (validItems.length === 0) {
-      alert(`Please add at least one valid medicine with quantity for ${group.distributor_name}`);
-      return;
-    }
-
-    let lossPercentage: number | undefined = undefined;
-    if (group.distributor_id) {
-      const lossInput = window.prompt(
-        `Enter agreed Distributor Return Loss / Deduction % for ${group.distributor_name} (0% to 100%, enter 0 for 100% full credit note claim):`,
-        '0'
-      );
-      if (lossInput === null) return;
-      lossPercentage = parseFloat(lossInput);
-      if (isNaN(lossPercentage) || lossPercentage < 0 || lossPercentage > 100) {
-        alert('Return percentage required: Please enter a valid number between 0 and 100.');
-        return;
-      }
-    }
-
-    setSaving(true);
-    try {
-      await api.processReturns(validItems.map(entry => ({
-        medicine_id: entry.item.medicine_id,
-        batch_no: entry.item.batch_no,
-        quantity: numOr0(entry.item.quantity),
-        cost_price: numOr0(entry.item.cost_price),
-        mrp: numOr0(entry.item.mrp),
-        distributor_id: group.distributor_id,
-        invoice_no: group.invoice_no,
-      })), lossPercentage);
-
-      alert(`Successfully processed return for ${group.distributor_name} (${validItems.length} item(s))!`);
-      
-      const processedIndices = new Set(validItems.map(e => e.originalIndex));
-      const remainingItems = items.filter((_, idx) => !processedIndices.has(idx));
-      setItems(remainingItems.length > 0 ? remainingItems : [createEmptyItem()]);
-
-      invalidateAfterStockWrite(queryClient);
-      api.getCompactInventory().catch(() => {});
-    } catch (error) {
-      console.error('Error processing single return:', error);
-      alert('Failed to process return for ' + group.distributor_name);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const exportSingleGroupPDF = async (group: DraftGroup) => {
-    const validItems = group.items
-      .map(e => e.item)
-      .filter(item => numOr0(item.quantity) > 0);
-
-    if (validItems.length === 0) {
-      alert('No valid items with quantity to export for ' + group.distributor_name);
-      return;
-    }
-
-    try {
-      const parsedItemsForExport = validItems.map(item => ({
-        ...item,
-        quantity: numOr0(item.quantity),
-        cost_price: numOr0(item.cost_price),
-        mrp: numOr0(item.mrp)
-      }));
-      const blob = await api.exportReturnsPDF(parsedItemsForExport as unknown as ReadonlyArray<Record<string, unknown>>);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-        a.href = url;
-        a.download = `return-${group.distributor_name}-${group.invoice_no}-${nowStamp()}.pdf`;
-        document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (error) {
-      console.error('Error exporting PDF:', error);
-      alert('Failed to export PDF');
-    }
-  };
-
-  const addItemToDistributorGroup = (group: DraftGroup) => {
-    const newItem = createEmptyItem();
-    if (group.distributor_name !== 'New / Unassigned Items') {
-      newItem.distributor_name = group.distributor_name;
-      newItem.distributor_id = group.distributor_id || undefined;
-      newItem.invoice_no = group.invoice_no !== 'N/A' ? group.invoice_no : undefined;
-    }
-    setItems(prev => [...prev, newItem]);
-  };
-
-  const handleSelectDistributorFromSidebar = (dist: { id?: number; name: string }) => {
-    const allGroups = groupAllItemsByDistributor();
-    const existing = allGroups.find(g => 
-      (dist.id && g.distributor_id === dist.id) || 
-      g.distributor_name.toLowerCase() === dist.name.toLowerCase()
-    );
-
-    if (existing) {
-      setCollapsedCards(prev => ({ ...prev, [existing.key]: false }));
-      setFocusedDistributorKey(existing.key);
-      setTimeout(() => {
-        const elem = document.getElementById(`dist-card-${existing.key}`);
-        if (elem) {
-          elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-      }, 50);
-    } else {
-      // Automatically generate a new dedicated return card for this distributor!
-      const newItem = createEmptyItem();
-      newItem.distributor_id = dist.id || undefined;
-      newItem.distributor_name = dist.name;
-      newItem.invoice_no = 'N/A';
-
-      const emptyUnassignedIdx = items.findIndex(i => !i.medicine_name && !i.distributor_name && !i.distributor_id);
-      if (emptyUnassignedIdx !== -1 && items.length === 1) {
-        setItems([newItem]);
-      } else {
-        setItems(prev => [...prev, newItem]);
-      }
-
-      const newKey = `${dist.id || 'name_' + dist.name}_N/A`;
-      setCollapsedCards(prev => ({ ...prev, [newKey]: false }));
-      setFocusedDistributorKey(newKey);
-      setTimeout(() => {
-        const elem = document.getElementById(`dist-card-${newKey}`);
-        if (elem) {
-          elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-      }, 100);
-    }
-  };
-
-  // Group items by distributor + invoice
-  const groupItemsByInvoice = (): GroupedReturn[] => {
-    const validItems = items.filter(item => {
-      const qty = numOr0(item.quantity);
-      return item.medicine_id && qty > 0;
-    });
-    
-    const grouped: { [key: string]: GroupedReturn } = {};
-    
-    validItems.forEach(item => {
-      // Create key from distributor + invoice to group
-      const key = `${item.distributor_id}_${item.invoice_no}`;
-      const qty = numOr0(item.quantity);
-      const costPrice = numOr0(item.cost_price);
-      
-      if (!grouped[key]) {
-        grouped[key] = {
-          distributor_id: item.distributor_id || 0,
-          distributor_name: item.distributor_name || 'Unknown',
-          invoice_no: item.invoice_no || 'N/A',
-          purchase_date: item.purchase_date || '',
-          items: [],
-          total_amount: 0,
-        };
-      }
-      
-      grouped[key].items.push(item);
-      grouped[key].total_amount += costPrice * qty;
-    });
-    
-    return Object.values(grouped);
-  };
-
-  const calculateGrandTotal = () => {
-    return items
-      .filter(item => {
-        const qty = numOr0(item.quantity);
-        return item.medicine_id && qty > 0;
-      })
-      .reduce((sum, item) => {
-        const qty = numOr0(item.quantity);
-        const costPrice = numOr0(item.cost_price);
-        return sum + (costPrice * qty);
-      }, 0);
-  };
-
-  const processReturn = async () => {
-    const grouped = groupItemsByInvoice();
-    
-    if (grouped.length === 0) {
-      alert('Please add at least one medicine with quantity');
-      return;
-    }
-
-    const lossInput = window.prompt(
-      'Enter agreed Distributor Return Loss / Deduction % (0% to 100%, enter 0 for 100% full credit note claim):',
-      '0'
-    );
-    if (lossInput === null) return;
-    const lossPercentage = parseFloat(lossInput);
-    if (isNaN(lossPercentage) || lossPercentage < 0 || lossPercentage > 100) {
-      alert('Return percentage required: Please enter a valid number between 0 and 100.');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      // Process each group separately (one return per distributor/invoice)
-      for (const group of grouped) {
-        await api.processReturns(group.items.map(item => ({
-          medicine_id: item.medicine_id,
-          batch_no: item.batch_no,
-          quantity: numOr0(item.quantity),
-          cost_price: numOr0(item.cost_price),
-          mrp: numOr0(item.mrp),
-          distributor_id: group.distributor_id,
-          invoice_no: group.invoice_no,
-        })), lossPercentage);
-      }
-
-      alert(`Successfully processed ${grouped.length} return(s)!`);
-      setItems([createEmptyItem()]);
-      setGroupedReturns([]);
-      // Centralized cache invalidation for frontend lists and local infinite scroll caches
-      invalidateAfterStockWrite(queryClient);
-
-      // Refresh local POS inventory search cache
-      api.getCompactInventory().catch(() => {});
-    } catch (error) {
-      console.error('Error processing return:', error);
-      alert('Failed to process return');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const exportPDF = async () => {
-    const grouped = groupItemsByInvoice();
-    if (grouped.length === 0) {
-      alert('No items to export');
-      return;
-    }
-
-    try {
-      // Export each group as separate PDF
-      for (const group of grouped) {
-        const parsedItemsForExport = group.items.map(item => ({
-          ...item,
-          quantity: numOr0(item.quantity),
-          cost_price: numOr0(item.cost_price),
-          mrp: numOr0(item.mrp)
-        }));
-        const blob = await api.exportReturnsPDF(parsedItemsForExport);
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-      a.download = `return-${group.distributor_name}-${group.invoice_no}-${nowStamp()}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      }
-    } catch (error) {
-      console.error('Error exporting PDF:', error);
-      alert('Failed to export PDF');
-    }
-  };
-
   return (
     <div className="h-full flex flex-col fade-in relative overflow-hidden gap-3 p-4 text-text">
-      {/* Premium Glassmorphic Top Bar */}
+      
+      {/* Top Bar: Title & Navigation Pills */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-3 px-5 shadow-sm shrink-0">
-        {/* Title & Quick Stats */}
         <div className="flex items-center gap-4">
           <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shadow-sm shrink-0">
             <RotateCcw size={22} className="animate-in spin-in-180 duration-500" />
@@ -1192,21 +1316,21 @@ const Returns: React.FC = () => {
             <div className="flex items-center gap-2">
               <h1 className="text-base font-extrabold text-text tracking-tight leading-none">Returns & Expiry Command Center</h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                LIVE HUB
+                DISTRIBUTOR HUB
               </span>
             </div>
-            <p className="text-[11px] text-muted font-medium mt-1">Manage supplier debit notes, near-expiry inventory alerts & customer claim processing</p>
+            <p className="text-[11px] text-muted font-medium mt-1">Manage distributor returns bill-by-bill, near-expiry inventory alerts & debit notes</p>
           </div>
         </div>
 
         {/* Tab Switcher Pills */}
         <div className="flex items-center gap-1.5 bg-bg3/60 p-1.5 rounded-xl border border-border/60 overflow-x-auto scrollbar-none shadow-inner">
           {[
-            { id: 'returns', label: 'Supplier Returns', icon: RotateCcw, count: tabs.length },
+            { id: 'returns', label: 'Supplier Returns', icon: RotateCcw, count: totalSupplierReturnItemsCount },
             { id: 'expiry', label: 'Expiry Monitor', icon: CalendarDays },
             { id: 'expiry-review', label: 'Expiry Return Review', icon: ShieldAlert, count: pendingReviewCount },
             { id: 'customer', label: 'Customer Returns', icon: Users },
-            { id: 'customer-history', label: 'Return History', icon: History, count: returnHistory.length },
+            { id: 'customer-history', label: 'Return History', icon: History, count: returnHistoryTotal || returnHistory.length },
           ].map(t => {
             const Icon = t.icon;
             const isActive = currentTab === t.id;
@@ -1235,6 +1359,9 @@ const Returns: React.FC = () => {
         </div>
       </div>
 
+      {/* ────────────────────────────────────────────────────────────── */}
+      {/* Tab 1: EXPIRY MONITOR                                          */}
+      {/* ────────────────────────────────────────────────────────────── */}
       {currentTab === 'expiry' ? (
         <div className="flex-1 flex flex-col overflow-hidden relative min-h-0 bg-bg2/50 border border-border/60 rounded-2xl p-4">
           <Expiry />
@@ -1249,7 +1376,7 @@ const Returns: React.FC = () => {
         </div>
       ) : currentTab === 'customer-history' ? (
         <div className="flex-1 flex flex-col overflow-hidden relative min-h-0 bg-bg2/50 border border-border/60 rounded-2xl p-4 gap-3">
-          {/* Subtabs for Return History: Supplier Returns vs Customer Returns */}
+          
           <div className="flex items-center justify-between pb-2 border-b border-border/60 shrink-0">
             <div className="flex items-center gap-2">
               <History className="w-5 h-5 text-primary" />
@@ -1265,7 +1392,7 @@ const Returns: React.FC = () => {
                 }`}
               >
                 <RotateCcw size={13} />
-                <span>Supplier Returns ({returnHistory.length})</span>
+                <span>Supplier Returns ({returnHistoryTotal || returnHistory.length})</span>
               </button>
               <button
                 onClick={() => setHistorySubTab('customer')}
@@ -1293,7 +1420,7 @@ const Returns: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-black uppercase tracking-wider text-text">Finalized Supplier Returns</h3>
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-primary border border-border/40 font-mono">
-                      {returnHistory.length}
+                      {returnHistoryTotal || returnHistory.length}
                     </span>
                   </div>
                 </div>
@@ -1311,192 +1438,202 @@ const Returns: React.FC = () => {
                   {searchFilterText && (
                     <button
                       onClick={() => setSearchFilterText('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-full"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-full cursor-pointer"
                     >
                       <X size={12} />
                     </button>
                   )}
                 </div>
 
-                {/* Filter Bar (Date, Distributor & Amount) */}
+                {/* Date Filter Bar (Order-page style with quick presets & custom date range) */}
                 <div className="p-2.5 bg-bg3/50 rounded-xl border border-border/60 space-y-2 text-[10px] flex-shrink-0 shadow-inner">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-muted font-semibold w-7">From</label>
-                    <input
-                      type="date"
-                      value={toDateInputValue(dateFrom)}
-                      min="2020-01-01"
-                      max={getTodayString()}
-                      onChange={e => handleDateFromChange(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-bg border border-border/60 rounded-lg text-[10px] text-text font-mono focus:outline-none focus:border-primary/60"
-                    />
-                    <label className="text-muted font-semibold w-4 text-center">To</label>
-                    <input
-                      type="date"
-                      value={toDateInputValue(dateTo)}
-                      min="2020-01-01"
-                      max={getTodayString()}
-                      onChange={e => { setManualToDate(true); handleDateToChange(e.target.value); }}
-                      className="flex-1 px-2 py-1 bg-bg border border-border/60 rounded-lg text-[10px] text-text font-mono focus:outline-none focus:border-primary/60"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-muted font-semibold w-7">Min ₹</label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      placeholder="0"
-                      value={minAmount}
-                      onChange={e => setMinAmount(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-bg border border-border/60 rounded-lg text-[10px] text-text font-mono focus:outline-none focus:border-primary/60"
-                    />
-                    <label className="text-muted font-semibold w-4 text-center">Max</label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      placeholder="∞"
-                      value={maxAmount}
-                      onChange={e => setMaxAmount(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-bg border border-border/60 rounded-lg text-[10px] text-text font-mono focus:outline-none focus:border-primary/60"
-                    />
-                  </div>
-                  <div className="flex gap-1.5">
-                    <select
-                      value={distributorFilter}
-                      onChange={e => setDistributorFilter(e.target.value)}
-                      className="flex-1 px-2 py-1 bg-bg border border-border/60 rounded-lg text-[10px] text-text font-semibold focus:outline-none focus:border-primary/60"
-                    >
-                      <option value="">All Distributors</option>
-                      {[...new Set(returnHistory.map(r => r.distributor_name).filter(Boolean))].map(d => (
-                        <option key={String(d)} value={String(d)}>{String(d)}</option>
-                      ))}
-                    </select>
-                    {(distributorFilter || minAmount || maxAmount || searchFilterText) && (
+                  {/* Preset Pills */}
+                  <div className="flex items-center gap-1 bg-bg2/70 p-1 rounded-lg border border-border/50">
+                    {[
+                      {
+                        label: '30 Days',
+                        key: '30d',
+                        action: () => dateRangeHelper.setPreset(30),
+                        active: dateRangeHelper.dateRange.from === thirtyDaysAgoStr && dateRangeHelper.dateRange.to === todayStr,
+                      },
+                      {
+                        label: 'Today',
+                        key: 'today',
+                        action: () => dateRangeHelper.setDateRange({ from: todayStr, to: todayStr }),
+                        active: dateRangeHelper.dateRange.from === todayStr && dateRangeHelper.dateRange.to === todayStr,
+                      },
+                      {
+                        label: 'This Month',
+                        key: 'month',
+                        action: () => {
+                          const n = new Date();
+                          const f = new Date(n.getFullYear(), n.getMonth(), 1).toISOString().slice(0, 10);
+                          dateRangeHelper.setDateRange({ from: f, to: todayStr });
+                        },
+                        active: dateRangeHelper.dateRange.from === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10) && dateRangeHelper.dateRange.to === todayStr,
+                      },
+                      {
+                        label: 'All Time',
+                        key: 'all',
+                        action: () => dateRangeHelper.setDateRange({ from: '', to: '' }),
+                        active: !dateRangeHelper.dateRange.from && !dateRangeHelper.dateRange.to,
+                      },
+                    ].map(p => (
                       <button
-                        onClick={() => { setDistributorFilter(''); setMinAmount(''); setMaxAmount(''); setSearchFilterText(''); }}
-                        className="text-[9px] text-red hover:underline font-bold px-2 bg-red-500/10 border border-red-500/20 rounded-lg flex-shrink-0"
-                      >✕ Clear</button>
-                    )}
+                        key={p.key}
+                        type="button"
+                        onClick={p.action}
+                        className={`flex-1 py-1 px-1 rounded-md text-[10px] font-bold transition-all text-center cursor-pointer ${
+                          p.active
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'text-muted hover:text-text hover:bg-bg3'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom From/To Date Inputs */}
+                  <div className="flex items-center gap-1.5 bg-bg border border-border/60 rounded-lg px-2 py-1">
+                    <Calendar size={12} className="text-primary shrink-0" />
+                    <span className="text-muted font-bold text-[10px] uppercase">From</span>
+                    <input
+                      type="date"
+                      value={toDateInputValue(dateRangeHelper.dateRange.from)}
+                      max={todayStr}
+                      onChange={e => dateRangeHelper.handleFromChange(e.target.value)}
+                      className="flex-1 bg-transparent text-[10px] text-text font-mono focus:outline-none cursor-pointer w-0 min-w-0"
+                    />
+                    <span className="text-muted font-bold text-[10px] uppercase ml-1">To</span>
+                    <input
+                      type="date"
+                      value={toDateInputValue(dateRangeHelper.dateRange.to)}
+                      max={todayStr}
+                      onChange={e => dateRangeHelper.handleToChange(e.target.value)}
+                      className="flex-1 bg-transparent text-[10px] text-text font-mono focus:outline-none cursor-pointer w-0 min-w-0"
+                    />
                   </div>
                 </div>
 
-                {/* Returns List */}
-                <div className="space-y-1.5 flex-1 overflow-y-auto scrollbar-thin pr-0.5">
-                  {loading ? (
-                    <div className="flex items-center justify-center py-6 text-xs text-muted font-semibold gap-2">
-                      <Loader2 size={16} className="animate-spin text-primary" />
-                      Fetching History...
+                {/* Finalized Returns List */}
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar min-h-0">
+                  {loadingHistory && returnHistory.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-32 gap-2 text-muted">
+                      <Loader2 size={20} className="animate-spin text-primary" />
+                      <span className="text-xs">Loading returns...</span>
                     </div>
-                  ) : returnHistory.filter(ret => {
-                      const itemDate = ret.date ? ret.date.substring(0, 10) : '';
-                      const matchesDate = (!dateFrom || itemDate >= dateFrom) && (!dateTo || itemDate <= dateTo);
-                      const matchesMin = !minAmount || (ret.total_amount || 0) >= Number(minAmount);
-                      const matchesMax = !maxAmount || (ret.total_amount || 0) <= Number(maxAmount);
-                      const matchesDist = !distributorFilter || ret.distributor_name === distributorFilter;
-                      
-                      let matchesText = true;
-                      if (searchFilterText) {
-                        const q = searchFilterText.toLowerCase();
-                        const retNoMatch = (ret.return_no || '').toLowerCase().includes(q);
-                        const distMatch = (ret.distributor_name || '').toLowerCase().includes(q);
-                        matchesText = retNoMatch || distMatch;
-                      }
-
-                      return matchesDate && matchesMin && matchesMax && matchesDist && matchesText;
-                    }).length === 0 ? (
-                    <div className="text-center py-8 text-xs text-muted/70 italic font-medium bg-bg3/20 rounded-xl border border-border/30 p-4">
-                      No matching finalized supplier return entries found.
-                    </div>
+                  ) : returnHistory.length === 0 ? (
+                    <div className="text-center py-8 text-muted text-xs italic">No supplier return records found.</div>
                   ) : (
-                    returnHistory.filter(ret => {
-                      const itemDate = ret.date ? ret.date.substring(0, 10) : '';
-                      const matchesDate = (!dateFrom || itemDate >= dateFrom) && (!dateTo || itemDate <= dateTo);
-                      const matchesMin = !minAmount || (ret.total_amount || 0) >= Number(minAmount);
-                      const matchesMax = !maxAmount || (ret.total_amount || 0) <= Number(maxAmount);
-                      const matchesDist = !distributorFilter || ret.distributor_name === distributorFilter;
-
-                      let matchesText = true;
-                      if (searchFilterText) {
-                        const q = searchFilterText.toLowerCase();
-                        const retNoMatch = (ret.return_no || '').toLowerCase().includes(q);
-                        const distMatch = (ret.distributor_name || '').toLowerCase().includes(q);
-                        matchesText = retNoMatch || distMatch;
-                      }
-
-                      return matchesDate && matchesMin && matchesMax && matchesDist && matchesText;
-                    }).map(ret => {
-                      const isSelected = selectedHistoryReturn?.id === ret.id;
-                      return (
-                        <div 
-                          key={ret.id} 
-                          onClick={() => handleSelectHistoryReturn(ret)}
-                          className={`p-2.5 rounded-xl border transition-all duration-200 flex flex-col gap-1 text-[10px] font-medium cursor-pointer select-none group/hist ${
-                            isSelected 
-                              ? 'bg-primary/10 border-primary text-text font-bold shadow-sm ring-1 ring-primary/30' 
-                              : 'border-border/50 bg-bg3/30 hover:bg-bg3/70 hover:border-border'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center text-text font-bold">
-                            <span className="font-mono text-xs text-text">{ret.return_no}</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-emerald-500 font-extrabold font-mono text-xs">₹{ret.total_amount?.toFixed(2) || '0.00'}</span>
+                    <>
+                      {returnHistory.map(ret => {
+                        const isSelected = selectedHistoryReturn?.id === ret.id;
+                        return (
+                          <div
+                            key={ret.id}
+                            onClick={() => handleSelectHistoryReturn(ret)}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 select-none ${
+                              isSelected
+                                ? 'bg-primary/10 border-primary text-text font-bold ring-1 ring-primary/30'
+                                : 'bg-bg3/40 border-border/50 text-muted hover:text-text hover:bg-bg3/80'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono text-xs font-bold text-text">{ret.return_no || `RET-${ret.id}`}</span>
+                                {ret.return_sub_type === 'good' ? (
+                                  <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
+                                    Goods Return
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-red-500/10 text-red-500 border border-red-500/20 font-mono">
+                                    Expiry
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-emerald-500 font-extrabold text-xs font-mono">₹{Number(ret.total_amount || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="truncate font-semibold text-text">{ret.distributor_name || 'Direct Supplier'}</span>
+                              <span className="font-mono text-muted">{ret.date ? ret.date.substring(0, 10) : '—'}</span>
+                            </div>
+                            {ret.reason && (
+                              <div className="text-[10px] text-muted truncate font-medium flex items-center gap-1">
+                                <span className="text-[9px] uppercase font-bold text-text/70">Reason:</span>
+                                <span>{ret.reason}</span>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/30 mt-0.5">
+                              <span className="font-mono text-[11px] text-blue-500 font-bold" title="Their Purchase Bill Invoice Number">
+                                Bill: {ret.purchase_invoice_no || ret.return_invoice_id || '—'}
+                              </span>
                               <button
-                                onClick={(e) => handleEditHistoryReturn(ret, e)}
-                                className="p-1 rounded-lg hover:bg-primary/20 text-muted hover:text-primary transition-colors flex-shrink-0"
-                                title="Edit this return claim"
-                                aria-label={`Edit return ${ret.return_no}`}
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setDeleteConfirmReturn(ret); }}
+                                className="text-muted hover:text-red p-1 rounded hover:bg-red/10 transition-colors cursor-pointer"
+                                title="Delete return"
                               >
-                                <Edit size={11} />
-                              </button>
-                              <button
-                                onClick={(e) => handleDeleteReturn(ret, e)}
-                                className="p-1 rounded-lg hover:bg-red/20 text-muted hover:text-red transition-colors flex-shrink-0"
-                                title="Delete this return entry"
-                                aria-label={`Delete return ${ret.return_no}`}
-                              >
-                                <Trash2 size={11} />
+                                <Trash2 size={12} />
                               </button>
                             </div>
                           </div>
-                          {ret.distributor_name && (
-                            <div className="text-[10px] text-muted truncate font-semibold flex items-center gap-1">
-                              <span>🏭</span>
-                              <span className="truncate">{ret.distributor_name}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between items-center text-muted text-[9px] mt-0.5 font-medium">
-                            <span className="font-mono">{ret.date ? ret.date.substring(0, 10) : 'N/A'}</span>
-                            <span className="capitalize px-1.5 py-0.2 rounded-full text-[8px] bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
-                              {ret.type || 'supplier'}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })
+                        );
+                      })}
+                      <InfiniteScrollStatus
+                        totalItems={returnHistoryTotal}
+                        loadedCount={returnHistory.length}
+                        isFetching={loadingHistory}
+                        isFetchingNextPage={loadingMoreHistory}
+                        hasNextPage={hasMoreHistory}
+                        onLoadMore={fetchMoreHistory}
+                        sentinelRef={historySentinelRef}
+                        itemName="returns"
+                      />
+                    </>
                   )}
                 </div>
               </div>
 
-              {/* Right Column: Historical Return Inspector & Editor */}
-              <div className="flex-1 flex flex-col gap-0 min-h-0 overflow-hidden bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl shadow-sm">
-                {selectedHistoryReturn !== null ? (
-                  <div className="flex-1 flex flex-col gap-4 min-h-0 overflow-hidden p-5">
-                    {/* History Header */}
-                    <div className="flex justify-between items-center border-b border-border/60 pb-3">
+              {/* Right Column: Return Items Details */}
+              <div className="flex-1 flex flex-col min-h-0 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-4 shadow-sm overflow-hidden">
+                {selectedHistoryReturn ? (
+                  <div className="flex-1 flex flex-col min-h-0 gap-3">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-3 flex-shrink-0">
                       <div>
-                        <h2 className="text-base font-bold text-text flex items-center gap-2">
-                          {isEditingHistory && <span className="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg font-bold">Editing</span>}
-                          <span className="font-mono">{isEditingHistory ? 'Edit Return: ' : 'Finalized Return: '}{selectedHistoryReturn.return_no}</span>
-                        </h2>
-                        <p className="text-xs text-muted font-medium mt-0.5">
-                          {isEditingHistory
-                            ? 'Modify return quantities or purchase cost prices below, then click Save.'
-                            : `Read-only return statement for ${selectedHistoryReturn.distributor_name || 'supplier'}.`}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-sm font-black text-text">Return Claim #{selectedHistoryReturn.return_no}</h3>
+                          {selectedHistoryReturn.return_sub_type === 'good' ? (
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                              🟢 Goods Return
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20">
+                              🔴 Expiry Return
+                            </span>
+                          )}
+                          {(selectedHistoryReturn.purchase_invoice_no || selectedHistoryReturn.return_invoice_id) && (
+                            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
+                              Purchase Bill: {selectedHistoryReturn.purchase_invoice_no || selectedHistoryReturn.return_invoice_id}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                            Finalized
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted mt-0.5">
+                          Supplier: <strong>{selectedHistoryReturn.distributor_name || 'Direct Supplier'}</strong>
+                          {(selectedHistoryReturn.purchase_invoice_no || selectedHistoryReturn.return_invoice_id) && (
+                            <> • Purchase Bill: <strong className="text-blue-500 font-mono">{selectedHistoryReturn.purchase_invoice_no || selectedHistoryReturn.return_invoice_id}</strong></>
+                          )}
+                          {" "}• Date: {selectedHistoryReturn.date?.substring(0, 10)}
+                          {selectedHistoryReturn.reason && (
+                            <> • Reason: <strong className="text-text">{selectedHistoryReturn.reason}</strong></>
+                          )}
                         </p>
                       </div>
-                      <div className="flex gap-2">
+
+                      <div className="flex items-center gap-2">
                         {isEditingHistory ? (
                           <>
                             <button
@@ -1515,16 +1652,15 @@ const Returns: React.FC = () => {
                           </>
                         ) : (
                           <>
-                            {hasMissingData && !isEditingHistory && (
+                            {hasMissingData && (
                               <button
                                 onClick={handleResolveMissing}
                                 disabled={isResolving}
                                 className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all disabled:opacity-60 cursor-pointer"
                                 title="Auto-fill missing batch, expiry, cost from purchase history"
                               >
-                                {isResolving
-                                  ? <><Loader2 size={13} className="animate-spin" /> Resolving…</>
-                                  : <><Wand2 size={13} /> Auto-fill Missing</>}
+                                {isResolving ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                                <span>Auto-fill Missing</span>
                               </button>
                             )}
                             <button
@@ -1549,7 +1685,7 @@ const Returns: React.FC = () => {
                               <FileText size={13} /> Export PDF
                             </button>
                             <button
-                              onClick={() => { setEditingItems(historyReturnItems.map(i => ({ ...i, quantity: i.quantity ?? '', cost_price: i.cost_price ?? '', mrp: i.mrp ?? 0 }))); setIsEditingHistory(true); }}
+                              onClick={() => setIsEditingHistory(true)}
                               className="bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                             >
                               <Edit size={13} /> Edit
@@ -1558,146 +1694,54 @@ const Returns: React.FC = () => {
                               onClick={handleClearHistorySelection}
                               className="bg-bg3 border border-border/60 hover:bg-bg3/80 text-text font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                             >
-                              <span>Back</span>
+                              Back
                             </button>
                           </>
                         )}
                       </div>
                     </div>
 
-                    {/* Table Viewer / Editor */}
+                    {/* Table View */}
                     <div className="flex-1 overflow-auto bg-bg/40 rounded-2xl border border-border/60">
                       {loadingHistoryItems ? (
                         <div className="flex flex-col items-center justify-center h-full py-12 gap-3 text-muted">
                           <Loader2 className="animate-spin text-primary" size={32} />
                           <span className="text-xs font-bold">Loading finalized items...</span>
                         </div>
-                      ) : isEditingHistory ? (
-                        <table className="w-full text-left border-collapse">
-                          <thead className="sticky top-0 z-20 bg-bg2 border-b border-border/60 shadow-sm">
-                            <tr className="text-left text-muted border-b border-border/60">
-                              <th className="p-3 text-xs font-bold w-10">#</th>
-                              <th className="p-3 text-xs font-bold min-w-[260px]">Medicine</th>
-                              <th className="p-3 text-xs font-bold w-32">Batch</th>
-                              <th className="p-3 text-xs font-bold w-32">Expiry</th>
-                              <th className="p-3 text-xs font-bold w-24 text-center">Qty</th>
-                              <th className="p-3 text-xs font-bold w-28 text-right">Cost Price</th>
-                              <th className="p-3 text-xs font-bold w-28 text-right">Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {editingItems.map((item, idx) => {
-                              const rf: string[] = item._resolved_fields || [];
-                              const hi = (f: string) => rf.includes(f)
-                                ? 'ring-1 ring-amber-400 bg-amber-400/10'
-                                : '';
-                              return (
-                                <tr key={item.id} className="border-b border-border/40 hover:bg-bg3/30 transition-colors">
-                                  <td className="p-3 text-xs text-muted font-mono">{idx + 1}</td>
-                                  <td className="p-3 text-xs font-bold text-text">{item.medicine_name}</td>
-                                  <td className="p-2">
-                                    <input
-                                      type="text"
-                                      value={item.batch_no}
-                                      onChange={e => setEditingItems(prev => prev.map((it, i) => i === idx ? { ...it, batch_no: e.target.value } : it))}
-                                      className={`w-full bg-bg3 border border-border/60 rounded-lg px-2.5 py-1 text-xs text-text font-mono focus:outline-none focus:ring-1 focus:ring-primary ${hi('batch_no')}`}
-                                      placeholder="—"
-                                    />
-                                  </td>
-                                  <td className="p-2">
-                                    <input
-                                      type="text"
-                                      value={item.expiry_date}
-                                      onChange={e => setEditingItems(prev => prev.map((it, i) => i === idx ? { ...it, expiry_date: e.target.value } : it))}
-                                      className={`w-full bg-bg3 border border-border/60 rounded-lg px-2.5 py-1 text-xs text-text font-mono focus:outline-none focus:ring-1 focus:ring-primary ${hi('expiry_date')}`}
-                                      placeholder="MM/YY"
-                                    />
-                                  </td>
-                                  <td className="p-2 text-center">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={item.quantity}
-                                      onChange={e => setEditingItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: parseFloat(e.target.value) || 0 } : it))}
-                                      className="w-20 bg-bg3 border border-border/60 rounded-lg px-2 py-1 text-xs text-text text-center font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-                                    />
-                                  </td>
-                                  <td className="p-2 text-right">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={item.cost_price}
-                                      onChange={e => setEditingItems(prev => prev.map((it, i) => i === idx ? { ...it, cost_price: parseFloat(e.target.value) || 0 } : it))}
-                                      className={`w-24 bg-bg3 border border-border/60 rounded-lg px-2 py-1 text-xs text-text font-mono text-right focus:outline-none focus:ring-1 focus:ring-primary ${hi('cost_price')}`}
-                                    />
-                                  </td>
-                                  <td className="p-3 text-xs text-text font-bold font-mono text-right">
-                                    ₹{(Number(item.cost_price || 0) * Number(item.quantity || 0)).toFixed(2)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                          <tfoot className="sticky bottom-0 bg-bg2 border-t border-border/60">
-                            <tr>
-                              <td colSpan={6} className="p-3 text-xs font-bold text-text text-right">Updated Claim Total:</td>
-                              <td className="p-3 text-sm font-black text-emerald-500 font-mono text-right">
-                                ₹{editingItems.reduce((s, i) => s + Number(i.cost_price || 0) * Number(i.quantity || 0), 0).toFixed(2)}
-                              </td>
-                            </tr>
-                            {editingItems.some(i => (i._resolved_fields || []).length > 0) && (
-                              <tr>
-                                <td colSpan={7} className="px-3 py-1.5 bg-amber-500/10 border-t border-amber-500/20">
-                                  <div className="flex items-center gap-2 text-[10px] text-amber-500 font-bold">
-                                    <span className="inline-block w-3 h-3 rounded bg-amber-400/40 ring-1 ring-amber-400 flex-shrink-0" />
-                                    Highlighted cells were auto-resolved from purchase history. Please verify before saving.
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </tfoot>
-                        </table>
-                      ) : historyReturnItems.length === 0 ? (
-                        <div className="text-center py-12 text-muted text-xs italic font-medium">No items recorded for this return claim.</div>
                       ) : (
-                        <table className="w-full text-left border-collapse">
-                          <thead className="sticky top-0 z-20 bg-bg2 border-b border-border/60 shadow-sm">
-                            <tr className="text-left text-muted border-b border-border/60">
-                              <th className="p-3.5 text-xs font-bold w-12">#</th>
-                              <th className="p-3.5 text-xs font-bold min-w-[240px]">Medicine Name</th>
-                              <th className="p-3.5 text-xs font-bold w-32">Batch</th>
-                              <th className="p-3.5 text-xs font-bold w-28">Expiry</th>
-                              <th className="p-3.5 text-xs font-bold w-20 text-center">Qty</th>
-                              <th className="p-3.5 text-xs font-bold w-28 text-right">Cost Price</th>
-                              <th className="p-3.5 text-xs font-bold w-28 text-right">Total</th>
-                              <th className="p-3.5 text-xs font-bold w-36 text-center">Invoice Ref</th>
-                              <th className="p-3.5 text-xs font-bold min-w-[160px]">Distributor</th>
+                        <table className="w-full text-left border-collapse min-w-[650px]">
+                          <thead className="sticky top-0 z-20 bg-bg2 border-b border-border/60 shadow-sm text-muted text-xs font-bold">
+                            <tr>
+                              <th className="p-3 w-10">#</th>
+                              <th className="p-3 min-w-[220px]">Medicine Name</th>
+                              <th className="p-3 w-28">Batch</th>
+                              <th className="p-3 w-28">Expiry</th>
+                              <th className="p-3 w-20 text-center">Qty</th>
+                              <th className="p-3 w-24 text-right">Cost Price</th>
+                              <th className="p-3 w-24 text-right">Total</th>
+                              <th className="p-3 w-32 text-center" title="Distributor's Purchase Bill Invoice Number">Purchase Bill Inv #</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {historyReturnItems.map((item, index) => (
-                              <tr key={item.id} className="border-b border-border/40 hover:bg-bg3/30 transition-colors">
-                                <td className="p-3.5 text-xs text-muted font-mono">{index + 1}</td>
-                                <td className="p-3.5 text-xs font-bold text-text">{item.medicine_name}</td>
-                                <td className="p-3.5 text-xs font-mono text-muted font-semibold">{item.batch_no || '—'}</td>
-                                <td className="p-3.5 text-xs font-mono text-muted">{item.expiry_date || '—'}</td>
-                                <td className="p-3.5 text-xs font-bold text-text text-center font-mono">{item.quantity ?? '—'}</td>
-                                <td className="p-3.5 text-xs text-text font-mono text-right">
-                                  {item.cost_price != null ? `₹${Number(item.cost_price || 0).toFixed(2)}` : '—'}
+                            {(isEditingHistory ? editingItems : historyReturnItems).map((item, index) => (
+                              <tr key={item.id} className="border-b border-border/40 hover:bg-bg3/30 transition-colors text-xs">
+                                <td className="p-3 text-muted font-mono">{index + 1}</td>
+                                <td className="p-3 font-bold text-text">{item.medicine_name}</td>
+                                <td className="p-2 font-mono text-muted">{item.batch_no || '—'}</td>
+                                <td className="p-2 font-mono text-muted">{item.expiry_date || '—'}</td>
+                                <td className="p-2 text-center font-mono font-bold text-text">{item.quantity ?? '—'}</td>
+                                <td className="p-2 text-right font-mono text-muted">
+                                  {item.cost_price != null ? `₹${Number(item.cost_price).toFixed(2)}` : '—'}
                                 </td>
-                                <td className="p-3.5 text-xs text-text font-extrabold font-mono text-right">
+                                <td className="p-3 text-right font-mono font-bold text-text">
                                   {item.cost_price != null && item.quantity != null
-                                    ? `₹${(Number(item.cost_price || 0) * Number(item.quantity || 0)).toFixed(2)}`
+                                    ? `₹${(Number(item.cost_price) * Number(item.quantity)).toFixed(2)}`
                                     : '—'}
                                 </td>
-                                <td className="p-3.5 text-center">
-                                  <span className="px-2.5 py-1 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded-lg text-[10px] font-bold font-mono">
+                                <td className="p-2 text-center">
+                                  <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-mono text-[10px]">
                                     {item.invoice_no || 'N/A'}
                                   </span>
-                                </td>
-                                <td className="p-3.5 text-xs text-muted font-semibold truncate max-w-[180px]">
-                                  {item.distributor_name || '—'}
                                 </td>
                               </tr>
                             ))}
@@ -1724,685 +1768,1002 @@ const Returns: React.FC = () => {
           )}
         </div>
       ) : (
-        <div className="flex-1 flex gap-4 min-h-0 overflow-hidden text-text relative">
-          {/* Left Sidebar Panel: Returns & Drafts Hub (Focused purely on active return creation) */}
-          <div className="w-80 flex-shrink-0 flex flex-col gap-3 min-h-0 overflow-hidden bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-4 shadow-sm">
-            
-            {/* Header & New Return button */}
-            <div className="flex items-center justify-between border-b border-border/60 pb-3 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-xs font-black uppercase tracking-wider text-text">Returns & Drafts Hub</h2>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-primary border border-border/40 font-mono">
-                  {tabs.length}
-                </span>
-              </div>
-              <button
-                onClick={addNewTab}
-                className="flex items-center justify-center px-2.5 py-1.5 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-all bg-primary/5 active:scale-95 shadow-sm cursor-pointer"
-                title="Add New Supplier Return Draft"
-              >
-                <Plus size={14} className="mr-1" />
-                <span className="text-[11px] font-bold">New Draft</span>
-              </button>
-            </div>
-
-            {/* Quick Search Input for Draft Items */}
-            <div className="relative flex-shrink-0">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                type="text"
-                placeholder="Filter draft items..."
-                value={searchFilterText}
-                onChange={e => setSearchFilterText(e.target.value)}
-                className="w-full pl-8 pr-7 py-2 bg-bg3/80 border border-border/70 rounded-xl text-xs text-text placeholder:text-muted/60 focus:outline-none focus:border-primary/60 font-medium transition-all shadow-inner"
-              />
-              {searchFilterText && (
-                <button
-                  onClick={() => setSearchFilterText('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-full"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-
-            {/* Active Drafts Tabs List */}
-            <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1 scrollbar-thin space-y-2">
-              {tabs.filter(t => {
-                if (!searchFilterText) return true;
-                const q = searchFilterText.toLowerCase();
-                const nameMatch = t.name.toLowerCase().includes(q);
-                const itemMatch = (t.items || []).some(i => 
-                  (i.medicine_name || '').toLowerCase().includes(q) ||
-                  (i.distributor_name || '').toLowerCase().includes(q) ||
-                  (i.invoice_no || '').toLowerCase().includes(q)
-                );
-                return nameMatch || itemMatch;
-              }).map((t) => {
-                const isActive = t.id === activeTabId;
-                const count = t.items ? t.items.length : 0;
-                const firstDistributor = t.items ? t.items.find(item => item.distributor_name)?.distributor_name : null;
-                const displayName = firstDistributor ? `Ret: ${firstDistributor}` : t.name;
-                
-                const tabTotal = (t.items || []).reduce((sum, item) => {
-                  const qty = numOr0(item.quantity);
-                  const costPrice = numOr0(item.cost_price);
-                  return sum + (costPrice * qty);
-                }, 0);
+        /* ────────────────────────────────────────────────────────────── */
+        /* Tab 5: SUPPLIER RETURNS — DISTRIBUTOR-CENTRIC BILL WORKSPACE   */
+        /* ────────────────────────────────────────────────────────────── */
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden text-text gap-3">
+          
+          {/* Top Tabs Bar: Distributor Return Bills (Purchases Pattern) */}
+          <div className="bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-2 shadow-sm shrink-0 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0 scrollbar-thin py-0.5">
+              {bills.map((b) => {
+                const isActive = b.id === activeBillId;
+                const expCount = b.expired_items.filter(i => i.selected).length;
+                const manCount = b.manual_items.filter(i => (i.medicine_name || i.medicine_id) && numOr0(i.quantity) > 0).length;
+                const count = expCount + manCount;
+                const displayName = b.distributor_name && b.distributor_name.trim() ? b.distributor_name : 'New Return Bill';
 
                 return (
                   <div
-                    key={t.id}
-                    onClick={() => switchTab(t.id)}
-                    className={`flex flex-col gap-1.5 p-3 rounded-xl border transition-all duration-200 select-none cursor-pointer relative shadow-sm ${
+                    key={b.id}
+                    onClick={() => setActiveBillId(b.id)}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border font-bold text-xs transition-all select-none cursor-pointer flex-shrink-0 whitespace-nowrap ${
                       isActive 
-                        ? 'bg-primary/10 border-primary text-text font-bold ring-1 ring-primary/30' 
-                        : 'bg-bg3/40 border-border/50 text-muted hover:text-text hover:bg-bg3/80 hover:border-border'
+                        ? 'bg-primary/15 border-primary text-primary shadow-sm ring-1 ring-primary/30' 
+                        : 'bg-bg3/50 border-border/60 text-muted hover:text-text hover:bg-bg3'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className={`p-1 rounded-md ${isActive ? 'bg-primary/20 text-primary' : 'bg-bg/60 text-muted'}`}>
-                          <RotateCcw size={12} />
-                        </div>
-                        <span className="truncate text-xs font-bold text-text">{displayName}</span>
-                      </div>
-                      {tabs.length > 1 && (
-                        <button 
-                          onClick={(e) => closeTab(t.id, e)}
-                          className="hover:bg-red/10 rounded-lg p-1 transition-all text-muted hover:text-red flex-shrink-0"
-                          title="Close Tab"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] font-semibold mt-0.5">
-                      <span className="px-2 py-0.5 rounded-full bg-bg3/80 border border-border/40 text-muted font-mono">
-                        {count} {count === 1 ? 'item' : 'items'}
+                    <Building2 size={13} className={isActive ? 'text-primary' : 'text-muted'} />
+                    <span>{displayName}</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-extrabold ${isActive ? 'bg-primary/20 text-primary' : 'bg-bg/60 text-muted'}`}>
+                      {count}
+                    </span>
+                    {bills.length > 1 && (
+                      <span 
+                        onClick={(e) => { e.stopPropagation(); closeBillTab(b.id); }}
+                        className="hover:bg-red/10 hover:text-red rounded-full p-0.5 ml-0.5 transition-all cursor-pointer flex items-center justify-center text-muted"
+                        title="Close Return Bill"
+                      >
+                        <X size={11} />
                       </span>
-                      <span className="text-emerald-500 font-extrabold text-xs font-mono">₹{tabTotal.toFixed(2)}</span>
-                    </div>
+                    )}
                   </div>
                 );
               })}
-            </div>
-
-            {/* Quick Link to Return History */}
-            <div className="border-t border-border/60 pt-2.5 mt-auto">
               <button
-                onClick={() => {
-                  setSearchParams({ tab: 'customer-history' });
-                  setHistorySubTab('supplier');
-                }}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-bg3/60 hover:bg-bg3 border border-border/70 text-text transition-all text-xs font-bold cursor-pointer group shadow-sm"
-                title="Open Return History Center"
+                onClick={() => addNewBill()}
+                className="flex items-center justify-center flex-shrink-0 px-3 py-1.5 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-all bg-primary/5 active:scale-95 text-xs font-bold gap-1 cursor-pointer"
+                title="Add New Distributor Return Bill"
               >
-                <div className="flex items-center gap-2">
-                  <History size={14} className="text-primary group-hover:scale-110 transition-transform" />
-                  <span>Supplier Return History</span>
-                </div>
-                <span className="text-[10px] text-primary font-mono font-bold bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
-                  {returnHistory.length}
-                </span>
+                <Plus size={13} />
+                <span>New Bill</span>
               </button>
             </div>
           </div>
 
-          {/* Right Content Workspace: Active Draft Editor — Multi-Distributor Auto-Cards + Right Sidebar Navigation */}
-          <div className="flex-1 flex gap-0 min-h-0 overflow-hidden bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl shadow-sm">
-            <div className="flex-1 flex gap-4 min-h-0 overflow-hidden text-text p-4">
-              {/* Center / Left: Cards List Workspace */}
-              <div className="flex-1 flex flex-col gap-4 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
-                  
-                  {/* Workspace Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 p-4 rounded-2xl border border-border/70 shrink-0">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-sm font-extrabold text-text uppercase tracking-wider flex items-center gap-2">
-                          <Layers size={16} className="text-primary" />
-                          <span>Supplier Return Cards Workspace</span>
-                        </h2>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30 font-mono">
-                          {groupAllItemsByDistributor().length} Card{groupAllItemsByDistributor().length !== 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted font-medium mt-1">
-                        Medicines are automatically grouped into separate distributor cards. Review or process each supplier card independently below.
-                      </p>
-                    </div>
+          {/* Quick Distributor Overview Strip: shows bills and near-expiry opportunities */}
+          <div className="bg-bg2/60 backdrop-blur-md border border-border/70 rounded-2xl px-4 py-2 flex items-center gap-2.5 overflow-x-auto scrollbar-none shrink-0 shadow-inner">
+            <span className="text-[10px] font-black text-muted uppercase tracking-wider shrink-0 flex items-center gap-1.5">
+              <Building2 size={13} className="text-primary" />
+              <span>Distributor Hub:</span>
+            </span>
+            {bills.filter(b => b.distributor_name).map(b => {
+              const expCount = b.expired_items.filter(i => i.selected).length;
+              const manCount = b.manual_items.filter(i => numOr0(i.quantity) > 0 && i.medicine_name).length;
+              const totalCount = expCount + manCount;
+              const isCur = b.id === activeBillId;
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => setActiveBillId(b.id)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all shrink-0 cursor-pointer ${
+                    isCur
+                      ? 'bg-primary text-white border-primary shadow-sm font-bold'
+                      : 'bg-bg3/60 border-border/60 text-text hover:bg-bg3 font-medium'
+                  }`}
+                >
+                  <span className="font-semibold">{b.distributor_name}</span>
+                  <span className={`text-[10px] font-mono px-1 rounded ${isCur ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary'}`}>
+                    {totalCount} items
+                  </span>
+                </button>
+              );
+            })}
+            {nearExpiryData
+              .filter(g => g.distributor_name && !bills.some(b => b.distributor_name && b.distributor_name.toLowerCase() === g.distributor_name.toLowerCase()))
+              .map(g => (
+                <button
+                  key={g.distributor_id || g.distributor_name}
+                  onClick={() => addNewBill({ id: g.distributor_id || undefined, name: g.distributor_name })}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-all shrink-0 cursor-pointer text-xs font-semibold"
+                  title="Open return bill with near-expiry stock"
+                >
+                  <Plus size={11} />
+                  <span>{g.distributor_name} ({g.items.length} expired)</span>
+                </button>
+              ))
+            }
+          </div>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={expandAllCards}
-                        className="px-2.5 py-1.5 rounded-xl bg-bg border border-border/70 text-text hover:bg-bg3 text-[11px] font-semibold transition-all cursor-pointer"
-                        title="Expand all cards"
-                      >
-                        Expand All
-                      </button>
-                      <button
-                        onClick={collapseAllCards}
-                        className="px-2.5 py-1.5 rounded-xl bg-bg border border-border/70 text-text hover:bg-bg3 text-[11px] font-semibold transition-all cursor-pointer"
-                        title="Collapse all cards"
-                      >
-                        Collapse All
-                      </button>
-                      <button
-                        onClick={addItem}
-                        className="bg-primary hover:bg-primary/95 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
-                      >
-                        <Plus size={14} />
-                        <span>Add Row</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Multi-Distributor Auto-Cards Render */}
-                  {groupAllItemsByDistributor()
-                    .filter(group => {
-                      if (!focusedDistributorKey) return true;
-                      return group.key === focusedDistributorKey;
-                    })
-                    .map(group => {
-                      const isCollapsed = Boolean(collapsedCards[group.key]);
-                      const validCount = group.items.filter(e => (numOr0(e.item.quantity)) > 0).length;
-
-                      return (
-                        <div
-                          key={group.key}
-                          id={`dist-card-${group.key}`}
-                          className={`flex flex-col rounded-2xl border transition-all duration-300 shadow-sm overflow-hidden ${
-                            focusedDistributorKey === group.key
-                              ? 'bg-bg border-primary ring-2 ring-primary/40'
-                              : 'bg-bg border-border/80 hover:border-border'
-                          }`}
-                        >
-                          {/* Card Top Banner Header */}
-                          <div
-                            onClick={() => toggleCardCollapse(group.key)}
-                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-bg3/40 border-b border-border/60 cursor-pointer select-none hover:bg-bg3/70 transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <button
-                                type="button"
-                                className="p-1 rounded-lg bg-bg border border-border/60 text-muted hover:text-text transition-colors"
-                              >
-                                {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                              </button>
-                              
-                              <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                                <Building2 size={18} />
-                              </div>
-
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <h3 className="text-sm font-extrabold text-text tracking-tight">
-                                    {group.distributor_name}
-                                  </h3>
-                                  {group.invoice_no && group.invoice_no !== 'N/A' && (
-                                    <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono text-[10px] font-extrabold">
-                                      Invoice #{group.invoice_no}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-3 text-[11px] text-muted font-medium mt-0.5">
-                                  <span>{group.items.length} Row{group.items.length !== 1 ? 's' : ''} ({validCount} valid)</span>
-                                  {group.purchase_date && (
-                                    <>
-                                      <span>•</span>
-                                      <span>Date: {group.purchase_date.substring(0, 10)}</span>
-                                    </>
-                                  )}
-                                </div>
-                                {(() => {
-                                  const medNames = group.items.map(i => i.item.medicine_name).filter(Boolean);
-                                  return medNames.length > 0 ? (
-                                    <div className="text-[11px] text-primary font-semibold mt-1 flex items-center gap-1 truncate max-w-lg">
-                                      <span>💊 Medicines:</span>
-                                      <span className="truncate font-medium text-text">{medNames.join(', ')}</span>
-                                    </div>
-                                  ) : (
-                                    <div className="text-[11px] text-muted/60 italic font-medium mt-0.5">
-                                      No medicines added yet — type or scan to add medicines
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-
-                            {/* Card Header Actions & Subtotal */}
-                            <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
-                              <div className="text-right mr-1">
-                                <div className="text-[10px] text-muted uppercase font-bold tracking-wider">Subtotal Claim</div>
-                                <div className="text-base font-black text-emerald-500 font-mono">
-                                  ₹{group.total_amount.toFixed(2)}
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={() => exportSingleGroupPDF(group)}
-                                disabled={validCount === 0}
-                                className="p-2 px-3 rounded-xl bg-purple-600/10 border border-purple-500/30 text-purple-400 hover:bg-purple-600 hover:text-white transition-all text-xs font-bold flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
-                                title="Export PDF debit note for this distributor"
-                              >
-                                <FileText size={13} />
-                                <span className="hidden md:inline">PDF</span>
-                              </button>
-
-                              <button
-                                onClick={() => processSingleGroup(group)}
-                                disabled={saving || validCount === 0}
-                                className="p-2 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-40 cursor-pointer active:scale-95"
-                                title="Process return for this supplier only"
-                              >
-                                <RotateCcw size={13} />
-                                <span>Process Card</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Card Items Table Body */}
-                          {!isCollapsed && (
-                            <div className="flex-1 flex flex-col p-4 gap-3 bg-bg/30">
-                              <div className="overflow-x-auto rounded-xl border border-border/60 shadow-inner">
-                                <table className="w-full text-left border-collapse min-w-[700px]">
-                                  <thead className="bg-bg2/90 border-b border-border/60">
-                                    <tr className="text-muted text-[11px] font-bold">
-                                      <th className="p-2.5 w-10 text-center">#</th>
-                                      <th className="p-2.5 min-w-[220px]">Medicine Name</th>
-                                      <th className="p-2.5 w-28">Batch No</th>
-                                      <th className="p-2.5 w-28">Expiry</th>
-                                      <th className="p-2.5 w-20 text-center">Qty</th>
-                                      <th className="p-2.5 w-24 text-right">Cost Price</th>
-                                      <th className="p-2.5 w-24 text-right">Total</th>
-                                      <th className="p-2.5 w-10 text-center"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {group.items.map(({ item, originalIndex }, localIdx) => (
-                                      <tr key={item.id} className="border-b border-border/40 hover:bg-bg3/30 transition-colors text-xs">
-                                        <td className="p-2.5 text-center font-mono text-muted text-[10px]">{localIdx + 1}</td>
-                                        
-                                        {/* Medicine Name Search */}
-                                        <td className="p-2">
-                                          <div ref={activeSearchIndex === originalIndex ? activeSearchRef : null} className="relative">
-                                            <div className="flex gap-1 items-center">
-                                              <input
-                                                type="text"
-                                                value={item.medicine_name}
-                                                onChange={(e) => {
-                                                  updateItem(originalIndex, 'medicine_name', e.target.value);
-                                                  searchMedicines(e.target.value, originalIndex);
-                                                }}
-                                                className="w-full bg-bg3 border border-border/60 rounded-lg px-2.5 py-1.5 text-text font-bold text-xs focus:ring-1 focus:ring-primary focus:outline-none"
-                                                placeholder="Type 2+ chars to search..."
-                                              />
-                                              <button
-                                                onClick={() => {
-                                                  setCameraTargetIndex(originalIndex);
-                                                  setShowCamera(true);
-                                                }}
-                                                className="bg-sky/15 hover:bg-sky/30 border border-sky/30 text-sky w-7 h-7 rounded-lg text-xs flex-shrink-0 flex items-center justify-center transition-all cursor-pointer"
-                                                title="Scan drug package using AI Camera"
-                                              >
-                                                <Camera size={13} />
-                                              </button>
-                                            </div>
-                                            {activeSearchIndex === originalIndex && searchResults.length > 0 && (
-                                              <div ref={searchResultsRef} className="absolute z-30 w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-56 overflow-y-auto">
-                                                {searchResults.map((result, idx) => (
-                                                  <button
-                                                    key={result.purchase_item_id}
-                                                    type="button"
-                                                    data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
-                                                    onClick={() => selectMedicine(result, originalIndex)}
-                                                    className={`w-full text-left px-3 py-2 hover:bg-bg3 text-text text-xs border-b border-border/30 last:border-0 cursor-pointer transition-colors ${idx === searchHighlightIndex ? 'bg-primary/10 border-l-4 border-primary' : ''}`}
-                                                  >
-                                                    <div className="font-bold text-text">{result.medicine_name}</div>
-                                                    <div className="text-[10px] text-muted font-mono mt-0.5">
-                                                      Batch: <span className="font-bold text-text">{result.batch_no}</span> | Cost: ₹{result.cost_price} | {result.distributor_name}
-                                                    </div>
-                                                  </button>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                        </td>
-
-                                        {/* Batch */}
-                                        <td className="p-2">
-                                          <input
-                                            type="text"
-                                            value={item.batch_no}
-                                            onChange={(e) => updateItem(originalIndex, 'batch_no', e.target.value)}
-                                            className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs focus:ring-1 focus:ring-primary focus:outline-none"
-                                            placeholder="Batch"
-                                          />
-                                        </td>
-
-                                        {/* Expiry */}
-                                        <td className="p-2">
-                                          <div className="flex flex-col gap-1">
-                                            <input
-                                              type="text"
-                                              value={item.expiry_date}
-                                              onChange={(e) => updateItem(originalIndex, 'expiry_date', e.target.value, false)}
-                                              onBlur={(e) => updateItem(originalIndex, 'expiry_date', e.target.value, true)}
-                                              className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs focus:ring-1 focus:ring-primary focus:outline-none"
-                                              placeholder="MM/YY"
-                                            />
-                                            {(() => {
-                                              const st = getExpiryUrgencyStatus(item.expiry_date);
-                                              return st ? (
-                                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border text-center font-mono ${st.className}`}>
-                                                  {st.label}
-                                                </span>
-                                              ) : null;
-                                            })()}
-                                          </div>
-                                        </td>
-
-                                        {/* Qty */}
-                                        <td className="p-2">
-                                          <div className="flex items-center gap-1 justify-center">
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                const current = numOr0(item.quantity);
-                                                if (current > 0) updateItem(originalIndex, 'quantity', (current - 1).toString());
-                                              }}
-                                              className="w-6 h-7 rounded bg-bg3 border border-border/60 text-muted hover:text-text hover:bg-bg2 font-bold text-xs flex items-center justify-center cursor-pointer transition-colors"
-                                              title="Decrease quantity"
-                                            >
-                                              -
-                                            </button>
-                                            <input
-                                              type="number"
-                                              value={item.quantity}
-                                              onChange={(e) => updateItem(originalIndex, 'quantity', e.target.value)}
-                                              className="w-14 bg-bg3 border border-border/60 rounded-lg px-1 py-1.5 text-text font-mono text-xs text-center focus:ring-1 focus:ring-primary focus:outline-none"
-                                              min="0"
-                                            />
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                const current = numOr0(item.quantity);
-                                                updateItem(originalIndex, 'quantity', (current + 1).toString());
-                                              }}
-                                              className="w-6 h-7 rounded bg-bg3 border border-border/60 text-muted hover:text-text hover:bg-bg2 font-bold text-xs flex items-center justify-center cursor-pointer transition-colors"
-                                              title="Increase quantity"
-                                            >
-                                              +
-                                            </button>
-                                          </div>
-                                        </td>
-
-                                        {/* Cost */}
-                                        <td className="p-2">
-                                          <input
-                                            type="number"
-                                            value={item.cost_price}
-                                            onChange={(e) => updateItem(originalIndex, 'cost_price', e.target.value)}
-                                            className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs text-right focus:ring-1 focus:ring-primary focus:outline-none"
-                                            min="0"
-                                          />
-                                        </td>
-
-                                        {/* Total */}
-                                        <td className="p-2.5 text-text font-extrabold text-xs font-mono text-right">
-                                          ₹{(numOr0(item.cost_price) * numOr0(item.quantity)).toFixed(2)}
-                                        </td>
-
-                                        {/* Remove */}
-                                        <td className="p-2 text-center">
-                                          <button
-                                            onClick={() => removeItem(originalIndex)}
-                                            className="text-red/80 hover:text-red p-1 hover:bg-red/10 rounded transition-all cursor-pointer"
-                                            title="Remove Row"
-                                          >
-                                            <Trash2 size={13} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-
-                              <div className="flex justify-between items-center pt-1">
-                                <button
-                                  onClick={() => addItemToDistributorGroup(group)}
-                                  className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Plus size={13} /> Add item to {group.distributor_name}
-                                </button>
-                                <span className="text-[11px] text-muted font-medium">
-                                  Card Subtotal: <strong className="text-emerald-500 font-mono">₹{group.total_amount.toFixed(2)}</strong>
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                  {/* Bottom Master Actions Bar */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-bg3/60 p-4 rounded-2xl border border-border/70 shadow-sm shrink-0 mt-2">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted font-bold">Total Return Claim Across All Suppliers:</span>
-                        <span className="text-xl font-black text-emerald-500 font-mono">
-                          ₹{calculateGrandTotal().toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="h-4 w-[1px] bg-border/60 hidden sm:block" />
-                      <span className="text-[11px] text-muted font-semibold hidden sm:block">
-                        {items.filter(i => (numOr0(i.quantity)) > 0).length} items across {groupAllItemsByDistributor().length} supplier card{groupAllItemsByDistributor().length !== 1 ? 's' : ''}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <button
-                        onClick={exportPDF}
-                        disabled={groupItemsByInvoice().length === 0}
-                        className="flex-1 sm:flex-none bg-purple-600/90 hover:bg-purple-600 text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 active:scale-95 shadow-sm cursor-pointer"
-                      >
-                        <FileText size={14} />
-                        <span>Export All PDF Statements</span>
-                      </button>
-                      <button
-                        onClick={processReturn}
-                        disabled={saving || groupItemsByInvoice().length === 0}
-                        className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 active:scale-95 shadow-sm cursor-pointer"
-                      >
-                        <RotateCcw size={14} />
-                        <span>{saving ? 'Processing Returns…' : 'Process All Returns'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Right-Side Sidebar: Distributor Navigation & Quick Actions */}
-                <div className="w-72 flex-shrink-0 flex flex-col gap-3 min-h-0 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl p-4 shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-border/60 pb-2.5">
-                    <div className="flex items-center gap-2">
-                      <Building2 size={16} className="text-primary" />
-                      <h3 className="text-xs font-black uppercase tracking-wider text-text">Distributors Nav</h3>
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
-                      {groupAllItemsByDistributor().length}
-                    </span>
-                  </div>
-
-                  {/* Sidebar Distributor Search */}
-                  <div className="relative flex-shrink-0">
-                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          {/* Active Return Bill Sheet */}
+          <div className="flex-1 flex flex-col min-h-0 bg-bg2/90 backdrop-blur-md border border-border/80 rounded-2xl overflow-hidden shadow-sm">
+            
+            {/* Bill Header: Distributor Info & Search */}
+            <div className="p-4 pb-3 border-b border-border/60 bg-bg3/20 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                
+                {/* Distributor Field */}
+                <div className="flex-1 min-w-[280px] max-w-md relative" ref={distributorDropdownRef}>
+                  <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-1">
+                    Distributor / Supplier <span className="text-red font-bold">*</span>
+                  </label>
+                  <div className="relative">
+                    <Building2 size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                     <input
                       type="text"
-                      placeholder="Filter distributors..."
-                      value={distributorSidebarSearch}
-                      onChange={e => setDistributorSidebarSearch(e.target.value)}
-                      className="w-full pl-7 pr-6 py-1.5 bg-bg3/80 border border-border/70 rounded-xl text-xs text-text placeholder:text-muted/60 focus:outline-none focus:border-primary font-medium"
+                      placeholder="Search and select distributor..."
+                      value={activeBill.distributor_name || distributorSearchText}
+                      onChange={(e) => {
+                        setDistributorSearchText(e.target.value);
+                        updateActiveBill({ distributor_name: e.target.value, distributor_id: null });
+                        setShowDistDropdown(e.target.value.trim().length >= 1);
+                      }}
+                      onFocus={() => {
+                        if (!activeBill.distributor_name) setShowDistDropdown(true);
+                      }}
+                      className="w-full pl-9 pr-8 py-2 bg-bg3 border border-border/70 rounded-xl text-xs text-text font-bold focus:outline-none focus:border-primary transition-all"
                     />
-                    {distributorSidebarSearch && (
+                    {(activeBill.distributor_name || distributorSearchText) && (
                       <button
-                        onClick={() => setDistributorSidebarSearch('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text"
+                        onClick={() => {
+                          updateActiveBill({ distributor_name: '', distributor_id: null, expired_items: [] });
+                          setDistributorSearchText('');
+                          setShowDistDropdown(true);
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-full"
+                        title="Change distributor"
                       >
-                        <X size={12} />
+                        <X size={13} />
                       </button>
                     )}
                   </div>
 
-                  {/* Focused Filter Clear Badge */}
-                  {focusedDistributorKey && (
-                    <div className="flex items-center justify-between p-2 rounded-xl bg-primary/10 border border-primary/30 text-xs">
-                      <span className="text-primary font-bold text-[10px] truncate">Focusing 1 Card</span>
-                      <button
-                        onClick={() => setFocusedDistributorKey(null)}
-                        className="text-[10px] text-primary hover:underline font-extrabold cursor-pointer"
-                      >
-                        Show All
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Distributors List Cards Nav (Master Active Directory + Active Draft Cards) */}
-                  <div className="flex-1 overflow-y-auto pr-0.5 space-y-2 custom-scrollbar">
-                    {(() => {
-                      const activeGroups = groupAllItemsByDistributor();
-                      const activeDistNames = new Set(activeGroups.map(g => g.distributor_name.toLowerCase()));
-
-                      const sidebarEntries: Array<{
-                        id: string;
-                        distributor_id?: number;
-                        distributor_name: string;
-                        invoice_no?: string;
-                        group?: DraftGroup;
-                      }> = [];
-
-                      // 1. Add ALL active card groups (each invoice card gets its own distinct entry!)
-                      activeGroups.forEach(g => {
-                        sidebarEntries.push({
-                          id: `active_card_${g.key}`,
-                          distributor_id: g.distributor_id || undefined,
-                          distributor_name: g.distributor_name,
-                          invoice_no: g.invoice_no,
-                          group: g,
-                        });
-                      });
-
-                      // 2. Add master active distributors from DB that have no active cards yet
-                      masterDistributors.forEach(d => {
-                        const distName = d.name || 'Unknown';
-                        if (!activeDistNames.has(distName.toLowerCase())) {
-                          sidebarEntries.push({
-                            id: `master_dist_${d.id || distName}`,
-                            distributor_id: d.id,
-                            distributor_name: distName,
-                            invoice_no: undefined,
-                            group: undefined,
-                          });
-                        }
-                      });
-
-                      return sidebarEntries
-                        .filter(entry => !distributorSidebarSearch || entry.distributor_name.toLowerCase().includes(distributorSidebarSearch.toLowerCase()))
-                        .map(entry => {
-                          const g = entry.group;
-                          const isFocused = g && focusedDistributorKey === g.key;
-                          const validItemCount = g ? g.items.filter(e => (numOr0(e.item.quantity)) > 0).length : 0;
-                          
-                          // Inline preview of medicine names inside this card
-                          const medNames = g
-                            ? g.items.map(it => it.item.medicine_name).filter(Boolean)
-                            : [];
-                          const medPreviewText = medNames.length > 0
-                            ? medNames.slice(0, 2).join(', ') + (medNames.length > 2 ? '...' : '')
-                            : '';
+                  {/* Distributor Autocomplete Dropdown */}
+                  {showDistDropdown && (
+                    <div className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-2xl max-h-60 overflow-y-auto">
+                      <div className="p-2 border-b border-border/40 text-[10px] font-bold text-muted uppercase tracking-wider bg-bg3/40">
+                        Select Distributor ({filteredMasterDistributors.length} found)
+                      </div>
+                      {filteredMasterDistributors.length === 0 ? (
+                        <div className="p-3 text-xs text-muted italic">
+                          No registered distributor found. Type name to use as custom distributor.
+                        </div>
+                      ) : (
+                        filteredMasterDistributors.map((d) => {
+                          const distName = d.name || 'Unnamed';
+                          const hasExpiredCount = nearExpiryData.find(g => 
+                            (d.id && g.distributor_id === d.id) || 
+                            (g.distributor_name && g.distributor_name.toLowerCase() === distName.toLowerCase())
+                          )?.items?.length || 0;
 
                           return (
-                            <div
-                              key={entry.id}
+                            <button
+                              key={d.id || distName}
+                              type="button"
                               onClick={() => {
-                                if (g) {
-                                  setCollapsedCards(prev => ({ ...prev, [g.key]: false }));
-                                  setFocusedDistributorKey(isFocused ? null : g.key);
-                                  const elem = document.getElementById(`dist-card-${g.key}`);
-                                  if (elem) {
-                                    elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                                  }
-                                } else {
-                                  handleSelectDistributorFromSidebar({ id: entry.distributor_id, name: entry.distributor_name });
-                                }
+                                updateActiveBill({ distributor_id: d.id || null, distributor_name: distName });
+                                setDistributorSearchText('');
+                                setShowDistDropdown(false);
                               }}
-                              className={`p-3 rounded-xl border transition-all duration-200 cursor-pointer flex flex-col gap-1.5 text-xs select-none ${
-                                isFocused
-                                  ? 'bg-primary/15 border-primary text-text font-bold ring-1 ring-primary/40'
-                                  : g
-                                    ? 'bg-bg3/60 border-primary/40 hover:bg-bg3 text-text shadow-sm'
-                                    : 'bg-bg3/20 border-border/40 hover:bg-bg3/60 hover:border-border text-muted hover:text-text'
+                              className="w-full text-left px-3.5 py-2 hover:bg-bg3 border-b border-border/30 last:border-0 flex items-center justify-between text-xs text-text cursor-pointer transition-colors"
+                            >
+                              <span className="font-bold">{distName}</span>
+                              {hasExpiredCount > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/20 font-bold font-mono">
+                                  {hasExpiredCount} expired in stock
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional Invoice Ref, Date & Return Category Selector */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-1">
+                      Purchase Bill Invoice #
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Distributor's Bill # (e.g. INV-9021)"
+                      value={activeBill.invoice_no || ''}
+                      onChange={e => updateActiveBill({ invoice_no: e.target.value })}
+                      className="px-3 py-2 bg-bg3 border border-border/70 rounded-xl text-xs text-text font-mono focus:outline-none focus:border-primary"
+                      title="Distributor's printed tax invoice number from the purchase bill"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-1">
+                      Return Date
+                    </label>
+                    <input
+                      type="date"
+                      value={toDateInputValue(activeBill.date || getTodayString())}
+                      onChange={e => updateActiveBill({ date: e.target.value })}
+                      className="px-3 py-2 bg-bg3 border border-border/70 rounded-xl text-xs text-text font-mono focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-1">
+                      Return Category
+                    </label>
+                    <div className="flex items-center gap-1 bg-bg3 p-1 rounded-xl border border-border/70">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateActiveBill({ return_sub_type: 'good', loss_percentage: 0 });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          activeBill.return_sub_type === 'good' || (!activeBill.return_sub_type && selectedExpiredItems.length === 0)
+                            ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 shadow-xs'
+                            : 'text-muted hover:text-text'
+                        }`}
+                        title="Wrong product delivered or saleable non-expired stock (100% full credit refund, 0% deduction)"
+                      >
+                        <span>🟢 Goods Return</span>
+                        <span className="text-[9px] px-1 rounded bg-emerald-500/20 font-mono font-extrabold">0% Loss</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateActiveBill({ return_sub_type: 'expiry' });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          activeBill.return_sub_type === 'expiry' || (!activeBill.return_sub_type && selectedExpiredItems.length > 0)
+                            ? 'bg-red-500/20 text-red-500 border border-red-500/40 shadow-xs'
+                            : 'text-muted hover:text-text'
+                        }`}
+                        title="Near-expiry or expired medicine claim (deduction loss % applies)"
+                      >
+                        <span>🔴 Expiry Return</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Scrollable Body Containing Both Sections */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
+
+              {/* ──────────────────────────────────────────────────────────── */}
+              {/* SECTION 1: 🔴 EXPIRED & NEAR-EXPIRY PRODUCTS RETURN          */}
+              {/* ──────────────────────────────────────────────────────────── */}
+              <div className="bg-bg/40 border border-border/70 rounded-2xl overflow-hidden shadow-sm">
+                
+                {/* Section 1 Header */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-red-500/5 border-b border-border/60">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
+                      <ShieldAlert size={16} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xs font-black uppercase tracking-wider text-text">
+                          Section 1: Expired & Near-Expiry Products (Inventory Stock)
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20 font-mono">
+                          {selectedExpiredItems.length} / {activeBill.expired_items.length} Selected
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted font-medium mt-0.5">
+                        Batches currently in stock from this distributor nearing or past expiry date. Toggle items to return.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-muted">
+                      Expired Subtotal: <strong className="text-emerald-500 font-mono font-extrabold">₹{expiredSubtotal.toFixed(2)}</strong>
+                    </span>
+                    {activeBill.expired_items.length > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => selectAllExpired(true)}
+                          className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-bg2 border border-border/60 hover:bg-bg3 text-text cursor-pointer transition-colors"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectAllExpired(false)}
+                          className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-bg2 border border-border/60 hover:bg-bg3 text-muted hover:text-text cursor-pointer transition-colors"
+                        >
+                          Deselect All
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Section 1 Table */}
+                {activeBill.expired_items.length === 0 ? (
+                  <div className="p-6 text-center text-muted text-xs font-medium italic flex flex-col items-center justify-center gap-1.5">
+                    <CheckCircle2 size={22} className="text-emerald-500/60" />
+                    <span>No near-expiry or expired batches found in active inventory for this distributor.</span>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[720px]">
+                      <thead className="bg-bg2/80 border-b border-border/60 text-muted text-[11px] font-bold">
+                        <tr>
+                          <th className="p-2.5 w-10 text-center">Select</th>
+                          <th className="p-2.5 min-w-[200px]">Medicine Name</th>
+                          <th className="p-2.5 w-24">Batch</th>
+                          <th className="p-2.5 w-28">Expiry</th>
+                          <th className="p-2.5 w-28 text-center" title="Distributor's Purchase Bill Invoice Number">Purchase Bill Inv #</th>
+                          <th className="p-2.5 w-20 text-center">In Stock</th>
+                          <th className="p-2.5 w-28 text-center">Return Qty</th>
+                          <th className="p-2.5 w-24 text-right">Cost Price</th>
+                          <th className="p-2.5 w-28 text-right">Claim Total</th>
+                          <th className="p-2.5 w-10 text-center"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeBill.expired_items.map((it, idx) => {
+                          const isSel = it.selected;
+                          const urgency = getExpiryUrgencyStatus(it.expiry_date);
+                          const lineTotal = numOr0(it.cost_price) * numOr0(it.quantity);
+
+                          return (
+                            <tr
+                              key={`${it.medicine_id}_${it.batch_no}_${idx}`}
+                              className={`border-b border-border/30 text-xs transition-colors ${
+                                isSel ? 'bg-primary/5 hover:bg-primary/10' : 'opacity-60 hover:opacity-100 hover:bg-bg3/20'
                               }`}
                             >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="font-extrabold text-text truncate text-xs flex items-center gap-1.5">
-                                  <Building2 size={13} className={g ? "text-primary shrink-0" : "text-muted shrink-0"} />
-                                  <span className="truncate">{entry.distributor_name}</span>
+                              <td className="p-2.5 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpiredItem(idx)}
+                                  className="cursor-pointer text-primary focus:outline-none"
+                                >
+                                  {isSel ? (
+                                    <CheckCircle2 size={16} className="text-primary fill-primary/20" />
+                                  ) : (
+                                    <Square size={16} className="text-muted" />
+                                  )}
+                                </button>
+                              </td>
+                              <td className="p-2.5 font-bold text-text">{it.medicine_name}</td>
+                              <td className="p-2.5 font-mono text-muted text-xs">{it.batch_no || '—'}</td>
+                              <td className="p-2.5 font-mono text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <span>{it.expiry_date || '—'}</span>
+                                  {urgency && (
+                                    <span className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded border font-mono ${urgency.className}`}>
+                                      {urgency.label}
+                                    </span>
+                                  )}
                                 </div>
-                                {g ? (
-                                  <span className="text-[10px] font-mono text-emerald-500 font-extrabold shrink-0">
-                                    ₹{g.total_amount.toFixed(2)}
+                              </td>
+                              <td className="p-2.5 text-center font-mono text-xs">
+                                {it.invoice_no && it.invoice_no !== 'N/A' ? (
+                                  <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-mono text-[10px] font-bold" title="Their Purchase Bill Invoice Number">
+                                    {it.invoice_no}
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20 shrink-0 hover:bg-purple-500/20">
-                                    + Open Card
-                                  </span>
+                                  <span className="text-muted text-[10px]">—</span>
                                 )}
-                              </div>
-
-                              {/* Medicine List Preview */}
-                              {medPreviewText && (
-                                <div className="text-[10px] text-primary/90 font-semibold truncate flex items-center gap-1">
-                                  <span>💊</span>
-                                  <span className="truncate">{medPreviewText}</span>
+                              </td>
+                              <td className="p-2.5 text-center font-mono font-bold text-muted">{it.available_stock}</td>
+                              <td className="p-2 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const cur = numOr0(it.quantity);
+                                      if (cur > 1) updateExpiredItemQty(idx, cur - 1);
+                                    }}
+                                    className="w-6 h-6 rounded bg-bg3 border border-border/60 text-muted hover:text-text font-bold text-xs flex items-center justify-center cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max={it.available_stock}
+                                    value={it.quantity}
+                                    onChange={e => updateExpiredItemQty(idx, e.target.value)}
+                                    className="w-14 bg-bg3 border border-border/60 rounded px-1 py-0.5 text-text font-mono text-xs text-center focus:outline-none focus:ring-1 focus:ring-primary"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const cur = numOr0(it.quantity);
+                                      if (cur < it.available_stock) updateExpiredItemQty(idx, cur + 1);
+                                    }}
+                                    className="w-6 h-6 rounded bg-bg3 border border-border/60 text-muted hover:text-text font-bold text-xs flex items-center justify-center cursor-pointer"
+                                  >
+                                    +
+                                  </button>
                                 </div>
-                              )}
-
-                              <div className="flex items-center justify-between text-[10px] text-muted font-medium">
-                                <span className="font-mono truncate">
-                                  {entry.invoice_no && entry.invoice_no !== 'N/A' ? `Inv #${entry.invoice_no}` : (g ? 'Draft Card' : 'Active Supplier')}
-                                </span>
-                                {g ? (
-                                  <span className="px-1.5 py-0.2 rounded bg-primary/10 text-primary border border-primary/20 font-bold shrink-0">
-                                    {validItemCount} item{validItemCount !== 1 ? 's' : ''}
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] text-muted font-medium italic">Click to create card</span>
-                                )}
-                              </div>
-                            </div>
+                              </td>
+                              <td className="p-2.5 text-right font-mono text-muted text-xs">
+                                ₹{numOr0(it.cost_price).toFixed(2)}
+                              </td>
+                              <td className="p-2.5 text-right font-mono font-extrabold text-xs text-text">
+                                ₹{lineTotal.toFixed(2)}
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => removeExpiredItem(idx)}
+                                  className="text-muted hover:text-red p-1 rounded cursor-pointer transition-colors"
+                                  title="Dismiss from list"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
                           );
-                        });
-                    })()}
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* ──────────────────────────────────────────────────────────── */}
+              {/* SECTION 2: 🟢 GOODS & OTHER RETURNS (WRONG / NON-EXPIRED)     */}
+              {/* ──────────────────────────────────────────────────────────── */}
+              <div className="bg-bg/40 border border-border/70 rounded-2xl overflow-hidden shadow-sm">
+                
+                {/* Section 2 Header */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-emerald-500/5 border-b border-border/60">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                      <Layers size={16} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xs font-black uppercase tracking-wider text-text">
+                          Section 2: Goods & Other Returns (Wrong Product, Non-Expired, Excess, Breakage)
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
+                          {validManualItems.length} Products
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted font-medium mt-0.5">
+                        Return wrong products delivered by supplier or saleable non-expired stock with 0% loss deduction. Search purchase history to auto-fill details.
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Sidebar Bottom Quick Add */}
-                  <div className="border-t border-border/60 pt-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-muted">
+                      Goods Subtotal: <strong className="text-emerald-500 font-mono font-extrabold">₹{manualSubtotal.toFixed(2)}</strong>
+                    </span>
                     <button
-                      onClick={addItem}
-                      className="w-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 p-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      type="button"
+                      onClick={addManualItem}
+                      className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
                     >
-                      <Plus size={14} />
-                      <span>Add New Draft Item</span>
+                      <Plus size={13} />
+                      <span>Add Medicine Row</span>
                     </button>
                   </div>
+                </div>
 
+                {/* Section 2 Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[800px]">
+                    <thead className="bg-bg2/80 border-b border-border/60 text-muted text-[11px] font-bold">
+                      <tr>
+                        <th className="p-2.5 w-8 text-center">#</th>
+                        <th className="p-2.5 min-w-[200px]">Medicine Name (Search Purchase History)</th>
+                        <th className="p-2.5 w-24">Batch No</th>
+                        <th className="p-2.5 w-24">Expiry</th>
+                        <th className="p-2.5 w-24 text-center" title="Distributor's Purchase Bill Invoice Number">Purchase Bill Inv #</th>
+                        <th className="p-2.5 min-w-[170px]">Return Reason / Type</th>
+                        <th className="p-2.5 w-24 text-center">Qty</th>
+                        <th className="p-2.5 w-20 text-right">Cost Price</th>
+                        <th className="p-2.5 w-24 text-right">Claim Total</th>
+                        <th className="p-2.5 w-8 text-center"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeBill.manual_items.map((item, originalIndex) => {
+                        const lineTotal = numOr0(item.cost_price) * numOr0(item.quantity);
+                        const urgency = getExpiryUrgencyStatus(item.expiry_date);
+
+                        return (
+                          <tr key={item.id} className="border-b border-border/30 hover:bg-bg3/30 transition-colors text-xs">
+                            <td className="p-2.5 text-center font-mono text-muted text-[10px]">{originalIndex + 1}</td>
+
+                            {/* Medicine Search */}
+                            <td className="p-2">
+                              <div ref={activeSearchIndex === originalIndex ? activeSearchRef : null} className="relative">
+                                <div className="flex gap-1 items-center">
+                                  <input
+                                    type="text"
+                                    value={item.medicine_name}
+                                    onChange={(e) => {
+                                      updateManualItem(originalIndex, 'medicine_name', e.target.value);
+                                      searchMedicines(e.target.value, originalIndex);
+                                    }}
+                                    className="w-full bg-bg3 border border-border/60 rounded-lg px-2.5 py-1.5 text-text font-bold text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                                    placeholder="Type 2+ chars to search..."
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCameraTargetIndex(originalIndex);
+                                      setShowCamera(true);
+                                    }}
+                                    className="bg-sky/15 hover:bg-sky/30 border border-sky/30 text-sky w-7 h-7 rounded-lg text-xs flex-shrink-0 flex items-center justify-center transition-all cursor-pointer"
+                                    title="Scan drug package using AI Camera"
+                                  >
+                                    <Camera size={13} />
+                                  </button>
+                                </div>
+                                {activeSearchIndex === originalIndex && (
+                                  <div ref={searchResultsRef} className="absolute z-dropdown w-full mt-1 bg-bg2 border border-border rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                                    {searchResults.length > 0 ? (
+                                      <>
+                                        {activeBill.distributor_name && (
+                                          <div className="px-3 py-1.5 bg-primary/10 border-b border-border/40 text-[10px] font-bold text-primary flex items-center gap-1.5">
+                                            <CheckCircle2 size={11} />
+                                            <span>Purchased from {activeBill.distributor_name}</span>
+                                          </div>
+                                        )}
+                                        {searchResults.map((result, idx) => (
+                                          <button
+                                            key={result.purchase_item_id || idx}
+                                            type="button"
+                                            data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
+                                            onClick={() => selectMedicineForManualItem(result, originalIndex)}
+                                            className={`w-full text-left px-3 py-2 hover:bg-bg3 text-text text-xs border-b border-border/30 last:border-0 cursor-pointer transition-colors ${
+                                              idx === searchHighlightIndex ? 'bg-primary/10 border-l-4 border-primary' : ''
+                                            }`}
+                                          >
+                                            <div className="font-bold text-text">{result.medicine_name}</div>
+                                            <div className="text-[10px] text-muted font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                              <span>Batch: <strong className="text-text">{result.batch_no}</strong></span>
+                                              <span>| Cost: ₹{result.cost_price}</span>
+                                              {(result.invoice_no || result.app_invoice_no) && (
+                                                <span className="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
+                                                  Bill #: {result.invoice_no || 'N/A'}
+                                                </span>
+                                              )}
+                                              <span>| {result.distributor_name}</span>
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </>
+                                    ) : otherDistributorMatches.length > 0 ? (
+                                      <div className="space-y-1">
+                                        <div className="px-3 py-2 bg-amber-500/10 border-b border-border/40 flex items-center justify-between gap-2 flex-wrap">
+                                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-500">
+                                            <AlertTriangle size={12} />
+                                            <span>
+                                              {otherDistributorMatches[0].distributor_id ? (
+                                                <>Purchased from <strong>{otherDistributorMatches[0].distributor_name}</strong> (Cross-Distributor Return)</>
+                                              ) : (
+                                                <>Store Stock (No purchase invoice found in app)</>
+                                              )}
+                                            </span>
+                                          </div>
+                                          {otherDistributorMatches[0].distributor_id && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const otherDist = otherDistributorMatches[0];
+                                                const existingTab = bills.find(b => 
+                                                  (otherDist.distributor_id && b.distributor_id === otherDist.distributor_id) ||
+                                                  (b.distributor_name && b.distributor_name.toLowerCase() === (otherDist.distributor_name || '').toLowerCase())
+                                                );
+                                                if (existingTab) {
+                                                  setActiveBillId(existingTab.id);
+                                                } else {
+                                                  addNewBill({ id: otherDist.distributor_id || undefined, name: otherDist.distributor_name || 'Distributor' });
+                                                }
+                                                setActiveSearchIndex(null);
+                                                setOtherDistributorMatches([]);
+                                              }}
+                                              className="text-[10px] font-bold text-amber-600 hover:text-amber-500 underline cursor-pointer"
+                                            >
+                                              Or switch to {otherDistributorMatches[0].distributor_name} Bill
+                                            </button>
+                                          )}
+                                        </div>
+                                        {otherDistributorMatches.map((result, idx) => (
+                                          <button
+                                            key={result.purchase_item_id || idx}
+                                            type="button"
+                                            data-highlighted={idx === searchHighlightIndex ? "true" : "false"}
+                                            onClick={() => selectMedicineForManualItem(result, originalIndex)}
+                                            className={`w-full text-left px-3 py-2 hover:bg-bg3 text-text text-xs border-b border-border/30 last:border-0 cursor-pointer transition-colors ${
+                                              idx === searchHighlightIndex ? 'bg-primary/10 border-l-4 border-primary' : ''
+                                            }`}
+                                          >
+                                            <div className="flex items-center justify-between gap-1">
+                                              <span className="font-bold text-text">{result.medicine_name}</span>
+                                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30 font-semibold shrink-0">
+                                                {result.distributor_id ? 'Cross-Return' : 'Store Stock'}
+                                              </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                              <span>Batch: <strong className="text-text">{result.batch_no || '—'}</strong></span>
+                                              <span>| Exp: {result.expiry_date || '—'}</span>
+                                              <span>| Cost: ₹{result.cost_price || 0}</span>
+                                              {(result.invoice_no || result.app_invoice_no) ? (
+                                                <span className="px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">
+                                                  Orig Bill #: {result.invoice_no || result.app_invoice_no}
+                                                </span>
+                                              ) : (
+                                                <span className="px-1.5 py-0.2 rounded bg-bg3 text-muted border border-border/50 text-[9px]">
+                                                  Invoice not in app
+                                                </span>
+                                              )}
+                                              <span>| {result.distributor_name}</span>
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="p-3 text-center text-xs text-muted italic">
+                                        No records found for "{item.medicine_name}". You can type manual details directly into the row.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Batch */}
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={item.batch_no}
+                                onChange={(e) => updateManualItem(originalIndex, 'batch_no', e.target.value)}
+                                className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                                placeholder="Batch"
+                              />
+                            </td>
+
+                            {/* Expiry */}
+                            <td className="p-2">
+                              <div className="flex flex-col gap-1">
+                                <input
+                                  type="text"
+                                  value={item.expiry_date}
+                                  onChange={(e) => updateManualItem(originalIndex, 'expiry_date', e.target.value)}
+                                  onBlur={(e) => updateManualItem(originalIndex, 'expiry_date', formatExpiryToMMYY(e.target.value))}
+                                  className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                                  placeholder="MM/YY"
+                                />
+                                {urgency && (
+                                  <span className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded border text-center font-mono ${urgency.className}`}>
+                                    {urgency.label}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Purchase Bill Inv # */}
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={item.invoice_no || ''}
+                                onChange={(e) => updateManualItem(originalIndex, 'invoice_no', e.target.value)}
+                                className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text font-mono text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+                                placeholder="Manual Bill # (optional)"
+                                title="Distributor's Purchase Bill Invoice Number (or manual reference)"
+                              />
+                            </td>
+
+                            {/* Return Reason & Type */}
+                            <td className="p-2">
+                              <div className="flex flex-col gap-1">
+                                <select
+                                  value={item.reason || 'Wrong Product Delivered'}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const isExp = val === 'Near Expiry / Expired';
+                                    updateManualItem(originalIndex, 'reason', val);
+                                    updateManualItem(originalIndex, 'return_type', isExp ? 'expiry' : 'good');
+                                    if (!isExp && selectedExpiredItems.length === 0) {
+                                      updateActiveBill({ loss_percentage: 0, return_sub_type: 'good' });
+                                    }
+                                  }}
+                                  className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1.5 text-text text-xs font-semibold focus:ring-1 focus:ring-primary focus:outline-none"
+                                >
+                                  <option value="Wrong Product Delivered">📦 Wrong Product Delivered</option>
+                                  <option value="Non-Expired / Excess Stock">✅ Non-Expired / Excess Stock</option>
+                                  <option value="Damaged / Breakage">⚠️ Damaged / Breakage</option>
+                                  <option value="Batch / MRP Mismatch">🏷️ Batch / MRP Mismatch</option>
+                                  <option value="Near Expiry / Expired">⏳ Near Expiry / Expired</option>
+                                  <option value="Other (Custom)">✏️ Other (Custom)</option>
+                                </select>
+                                {item.reason === 'Other (Custom)' && (
+                                  <input
+                                    type="text"
+                                    placeholder="Type custom reason..."
+                                    className="w-full bg-bg3 border border-border/60 rounded px-2 py-1 text-text text-[11px] font-medium focus:ring-1 focus:ring-primary focus:outline-none"
+                                    onChange={(e) => {
+                                      updateManualItem(originalIndex, 'reason', e.target.value);
+                                    }}
+                                  />
+                                )}
+                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border w-fit font-mono ${
+                                  item.return_type === 'expiry' || item.reason === 'Near Expiry / Expired'
+                                    ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                                }`}>
+                                  {item.return_type === 'expiry' || item.reason === 'Near Expiry / Expired' ? '🔴 Expiry Claim' : '🟢 Goods Return (0% Loss)'}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Qty */}
+                            <td className="p-2 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const current = numOr0(item.quantity);
+                                    if (current > 0) updateManualItem(originalIndex, 'quantity', (current - 1).toString());
+                                  }}
+                                  className="w-6 h-6 rounded bg-bg3 border border-border/60 text-muted hover:text-text font-bold text-xs flex items-center justify-center cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={item.quantity}
+                                  onChange={(e) => updateManualItem(originalIndex, 'quantity', e.target.value)}
+                                  className="w-14 bg-bg3 border border-border/60 rounded px-1 py-1 text-text font-mono text-xs text-center focus:ring-1 focus:ring-primary focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const current = numOr0(item.quantity);
+                                    updateManualItem(originalIndex, 'quantity', (current + 1).toString());
+                                  }}
+                                  className="w-6 h-6 rounded bg-bg3 border border-border/60 text-muted hover:text-text font-bold text-xs flex items-center justify-center cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Cost Price */}
+                            <td className="p-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.cost_price}
+                                onChange={(e) => updateManualItem(originalIndex, 'cost_price', e.target.value)}
+                                className="w-full bg-bg3 border border-border/60 rounded-lg px-2 py-1 text-text font-mono text-xs text-right focus:ring-1 focus:ring-primary focus:outline-none"
+                              />
+                            </td>
+
+                            {/* Total */}
+                            <td className="p-2.5 text-text font-extrabold text-xs font-mono text-right">
+                              ₹{lineTotal.toFixed(2)}
+                            </td>
+
+                            {/* Remove */}
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeManualItem(originalIndex)}
+                                className="text-red/80 hover:text-red p-1 hover:bg-red/10 rounded transition-all cursor-pointer"
+                                title="Remove Row"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="p-3 border-t border-border/40 bg-bg2/40 flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={addManualItem}
+                    className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={13} /> Add another medicine row
+                  </button>
+                  <span className="text-xs text-muted font-medium">
+                    Manual Subtotal: <strong className="text-emerald-500 font-mono">₹{manualSubtotal.toFixed(2)}</strong>
+                  </span>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* Bottom Master Action Bar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-bg3/60 p-4 border-t border-border/70 shadow-sm shrink-0">
+              
+              <div className="flex flex-wrap items-center gap-4">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                    Total Return Claim ({activeBill.distributor_name || 'Supplier'})
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xl font-black text-emerald-500 font-mono">
+                      ₹{totalClaimAmount.toFixed(2)}
+                    </span>
+                    <span className="text-xs text-muted font-semibold">
+                      ({totalClaimItemsCount} item{totalClaimItemsCount !== 1 ? 's' : ''} total: {selectedExpiredItems.length} expired, {validManualItems.length} other)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Deduction Loss % Input */}
+                <div className="flex items-center gap-2 bg-bg px-3 py-1.5 rounded-xl border border-border/70">
+                  <span className="text-xs font-bold text-muted">
+                    {activeBill.return_sub_type === 'good' || (selectedExpiredItems.length === 0 && validManualItems.length > 0) ? '🟢 Goods Return Loss:' : 'Deduction / Loss:'}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={activeBill.loss_percentage}
+                    onChange={e => updateActiveBill({ loss_percentage: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })}
+                    className="w-12 bg-bg3 border border-border/60 rounded px-1.5 py-0.5 text-xs text-center font-mono font-bold text-text focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-xs font-bold text-muted">%</span>
+                  {activeBill.loss_percentage === 0 && (
+                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+                      100% Full Credit
+                    </span>
+                  )}
+                  <span className="text-xs text-muted">→ Net Credit: <strong className="text-emerald-500 font-mono font-bold">₹{netCreditExpected.toFixed(2)}</strong></span>
                 </div>
               </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleExportDistributorPDF}
+                  disabled={totalClaimItemsCount === 0}
+                  className="flex-1 sm:flex-none bg-purple-600/90 hover:bg-purple-600 text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 active:scale-95 shadow-sm cursor-pointer"
+                >
+                  <FileText size={14} />
+                  <span>Export PDF Statement</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowProcessConfirmModal(true)}
+                  disabled={saving || totalClaimItemsCount === 0}
+                  className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 active:scale-95 shadow-sm cursor-pointer"
+                >
+                  <RotateCcw size={14} />
+                  <span>{saving ? 'Processing...' : 'Process Return for ' + (activeBill.distributor_name || 'Distributor')}</span>
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* Process Return Confirmation Modal */}
+      {showProcessConfirmModal && (
+        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                  <RotateCcw size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-text uppercase tracking-wider">Confirm Supplier Return</h3>
+                  <p className="text-[11px] text-muted">{activeBill.distributor_name || 'Supplier Return'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowProcessConfirmModal(false)}
+                className="p-1 rounded-lg hover:bg-bg3 text-muted hover:text-text transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-2 bg-bg3/50 p-3.5 rounded-xl border border-border/60 text-xs">
+              <div className="flex justify-between items-center text-muted">
+                <span>Return Category:</span>
+                {activeBill.return_sub_type === 'good' || (selectedExpiredItems.length === 0 && validManualItems.every(i => i.return_type !== 'expiry')) ? (
+                  <span className="font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full text-[10px]">
+                    🟢 Goods Return (Wrong / Non-Expired)
+                  </span>
+                ) : (
+                  <span className="font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full text-[10px]">
+                    🔴 Expiry Return
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Expired / Near-Expiry Items:</span>
+                <span className="font-mono font-bold text-text">{selectedExpiredItems.length} items</span>
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Goods / Other Return Items:</span>
+                <span className="font-mono font-bold text-text">{validManualItems.length} items</span>
+              </div>
+              <div className="flex justify-between text-muted border-t border-border/40 pt-2">
+                <span>Gross Return Claim:</span>
+                <span className="font-mono font-bold text-text">₹{totalClaimAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Agreed Loss / Deduction:</span>
+                <span className="font-mono font-bold text-amber-500">
+                  {activeBill.loss_percentage}%
+                  {activeBill.loss_percentage === 0 && ' (100% Full Credit Refund)'}
+                </span>
+              </div>
+              <div className="flex justify-between border-t border-border/60 pt-2 text-sm font-extrabold text-text">
+                <span>Expected Credit Note:</span>
+                <span className="font-mono text-emerald-500">₹{netCreditExpected.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-muted font-medium">
+              Processing will deduct returned items from current inventory stock and record a debit note claim in Return History.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowProcessConfirmModal(false)}
+                className="px-4 py-2 rounded-xl bg-bg3 border border-border text-text font-bold text-xs hover:bg-bg3/80 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmProcessReturn}
+                disabled={saving}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                <span>{saving ? 'Processing...' : 'Confirm & Process Return'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Delete Return History Confirmation Modal */}
+      {deleteConfirmReturn && (
+        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-text">Delete Return Record?</h3>
+                <p className="text-xs text-muted">Claim #{deleteConfirmReturn.return_no}</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted">
+              Are you sure you want to delete this finalized return? This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setDeleteConfirmReturn(null)}
+                className="px-4 py-2 rounded-xl bg-bg3 border border-border text-text font-bold text-xs hover:bg-bg3/80 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteReturn}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs cursor-pointer shadow-sm"
+              >
+                Delete Return
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCamera && (
         <Suspense fallback={null}>
           <AICamera 

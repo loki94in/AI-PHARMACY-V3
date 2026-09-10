@@ -822,6 +822,8 @@ export interface SupplierReturnProcessItem {
   mrp?: number;
   distributor_id?: number | null;
   invoice_no?: string;
+  return_type?: 'good' | 'expiry';
+  reason?: string;
   [key: string]: unknown;
 }
 
@@ -1333,21 +1335,40 @@ export const api = {
   getSettings: () => apiClient.get('/settings').then(res => res.data),
   saveSettings: (settings: AppSettings) => apiClient.post('/settings/save', settings).then(res => res.data),
   
-  // Returns
-  getReturns: (params?: { search?: string; date_from?: string; date_to?: string; min_amount?: number; max_amount?: number; limit?: number }) => apiClient.get('/returns', { params }).then(res => res.data),
+  getReturns: (params?: { page?: number; limit?: number; search?: string; date_from?: string; date_to?: string; min_amount?: number; max_amount?: number }) => apiClient.get('/returns', { params }).then(res => res.data),
   getReturnItems: (id: number) => apiClient.get(`/returns/${id}/items`).then(res => res.data),
   resolveReturnMissing: (id: number) => apiClient.get(`/returns/${id}/resolve-missing`).then(res => res.data),
   deleteReturn: (id: number) => apiClient.delete(`/returns/${id}`).then(res => res.data),
   updateReturn: (id: number, data: { items: Array<Record<string, unknown>>; total_amount: number }) => apiClient.put(`/returns/${id}`, data).then(res => res.data),
   createReturn: (data: ReturnPayload) => apiClient.post('/returns', data).then(res => res.data),
   getNearExpiry: (months: number = 6) => apiClient.get('/returns/near-expiry', { params: { months } }).then(res => res.data),
-  lookupPurchases: (name: string, batch?: string) => {
-    const params: { name: string; batch?: string } = { name: (name || '').trim().replace(/\s+/g, ' ') };
+  lookupPurchases: (name: string, batch?: string, distributorId?: number, distributorName?: string) => {
+    const params: { name: string; batch?: string; distributor_id?: number; distributor_name?: string } = { name: (name || '').trim().replace(/\s+/g, ' ') };
     if (batch) params.batch = (batch || '').trim();
+    if (distributorId) params.distributor_id = distributorId;
+    if (distributorName) params.distributor_name = distributorName;
     return apiClient.get('/returns/lookup-purchases', { params }).then(res => res.data);
   },
-  processReturns: (items: SupplierReturnProcessItem[], lossPercentage?: number) => apiClient.post('/returns/process-returns', { items, loss_percentage: lossPercentage }).then(res => res.data),
-  exportReturnsPDF: (items: readonly Record<string, unknown>[]) => apiClient.post('/returns/export-pdf-report', { items }, { responseType: 'blob' }).then(res => res.data),
+  processReturns: (
+    items: SupplierReturnProcessItem[],
+    lossPercentage?: number,
+    distributorId?: number,
+    distributorName?: string,
+    invoiceNo?: string,
+    returnSubType?: 'good' | 'expiry',
+    reason?: string
+  ) =>
+    apiClient.post('/returns/process-returns', {
+      items,
+      loss_percentage: lossPercentage,
+      distributor_id: distributorId,
+      distributor_name: distributorName,
+      invoice_no: invoiceNo,
+      return_sub_type: returnSubType,
+      reason: reason,
+    }).then(res => res.data),
+  exportReturnsPDF: (items: readonly Record<string, unknown>[], returnSubType?: 'good' | 'expiry', reason?: string) =>
+    apiClient.post('/returns/export-pdf-report', { items, return_sub_type: returnSubType, reason }, { responseType: 'blob' }).then(res => res.data),
   
   // Expiry Return Reviews (Pharmacist Approval Gate)
   getExpiryReviews: (params?: { status?: string; search?: string; date_from?: string; date_to?: string }) =>

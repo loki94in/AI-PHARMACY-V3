@@ -7,6 +7,40 @@
 
 ## Fixed
 
+### [Fixed] P1-25 — Goods Returns (Wrong Product Delivered & Non-Expired Excess Stock)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When returning wrong medicines delivered in error by suppliers or returning non-expired, saleable excess stock, the app forced them into the Expiry Return workflow, requiring a loss percentage deduction and recording the return as an expiry debit note claim instead of a full-value (0% loss, 100% refund) Goods Return. |
+| **Root cause** | 1. `POST /api/returns/process-returns` in `src/routes/returns.ts` hardcoded `return_sub_type = 'expiry'`, did not accept `return_sub_type` or `reason` from the request payload, and failed with HTTP 400 if `loss_percentage` was missing or zero.<br>2. `frontend/src/pages/Returns/index.tsx` had no Return Reason selector in Section 2 (Other Returns) and lacked a Bill-level category toggle between Goods Return and Expiry Return.<br>3. When selecting a non-expired medicine from purchase history, the UI did not default to a Goods Return or 0% deduction. |
+| **How it was fixed** | 1. Enhanced `POST /process-returns` in `src/routes/returns.ts` to accept `return_sub_type?: 'good' | 'expiry'` and `reason?: string`, saving both into `returns`. For Goods Returns, `loss_percentage` defaults to 0% (full 100% credit) without throwing validation errors.<br>2. Updated `api.processReturns` and `api.exportReturnsPDF` in `frontend/src/services/api.ts` to support `returnSubType` and `reason`.<br>3. In `frontend/src/pages/Returns/index.tsx`, added a Return Category toggle (`🟢 Goods Return` vs `🔴 Expiry Return`) in the active bill header, and added a Return Reason & Type selector in Section 2 with presets (`Wrong Product Delivered`, `Non-Expired / Excess Stock`, `Damaged / Breakage`, `Batch / MRP Mismatch`, `Near Expiry / Expired`, and Custom).<br>4. Added smart auto-detection: selecting a medicine with future/valid expiry automatically tags it as a Goods Return with 0% loss deduction.<br>5. Displayed Goods Return badges and return reasons across the Bottom Action Bar, Confirmation Modal, Return History cards/detail panels, and PDF export statements. |
+| **Priority** | P1 |
+| **What not to touch** | Expiry return loss deduction validation (`returnLossIntegrity.test.ts`); stock decrement ledger writes; credit note reconciliation flows. |
+| **Verified by** | `tests/crossDistributorReturns.test.ts` (5/5 PASS); `tests/returnLossIntegrity.test.ts` (6/6 PASS); `npm run build:client` (PASS in 22s); `npm run guardrails` (PASS, 0 violations); `node scripts/quick-update.mjs` synced. |
+
+
+### [Fixed] P1-24 — Cross-Distributor Manual Returns Blocked & Missing Distributor Invoice Handling
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. Users could not manually return medicines to a different distributor (e.g. CFA, super-stockist, or alternate distributor). Attempting to add an item purchased from another distributor triggered an error toast: *"Cannot add ... to ...: It was purchased from ... Medicines can only be returned to the distributor from whom they were purchased."*<br>2. Searching in Section 2 (Other Returns) displayed a warning block for other distributor purchases with only a button to switch bills, preventing selection into the current bill.<br>3. AI Camera scan refused to add cross-distributor drugs.<br>4. Finalizing returns failed in backend with HTTP 400: *"Cannot return ...: It was purchased from ..., not this distributor."*<br>5. When a medicine was not purchased from the target distributor in the app or had no invoice recorded, the app could not find the distributor purchase invoice and discarded entered invoice numbers. |
+| **Root cause** | 1. `POST /api/returns/process-returns` in `src/routes/returns.ts` had a strict validation loop checking `differentDistPurchase` and returning HTTP 400.<br>2. `selectMedicineForManualItem` and `handleCameraScanResult` in `frontend/src/pages/Returns/index.tsx` returned early with blocking error toasts whenever `distributor_id` differed.<br>3. Search dropdown in Section 2 hid `otherDistributorMatches` behind an alert box with only a "Switch Bill" button instead of rendering them as selectable items.<br>4. `GET /returns/lookup-purchases` strictly filtered by `p.distributor_id` and had no fallback to `inventory_master` for medicines without purchase records in the app.<br>5. `POST /process-returns` and `PUT /:id` did not save `expiry_date` or `invoice_no` into `return_items`. |
+| **How it was fixed** | 1. Removed the cross-distributor 400 rejection from `src/routes/returns.ts` `POST /process-returns`.<br>2. Enhanced `GET /returns/lookup-purchases` with fallback to `inventory_master` (labeled `Store Stock (No Invoice)`) and catalog medicines when no purchase records exist in the app.<br>3. Updated `POST /process-returns` and `PUT /:id` to insert `expiry_date` and `invoice_no` directly into `return_items`, safely linking `original_invoice_id` only when the purchase actually belongs to the target distributor and storing manual/fallback invoice numbers in `return_invoice_id`.<br>4. Updated `selectMedicineForManualItem` and `handleCameraScanResult` in `frontend/src/pages/Returns/index.tsx` to allow cross-distributor selection with a non-blocking informational toast.<br>5. Rendered `otherDistributorMatches` in the search dropdown as clickable, selectable items with clear `Cross-Return` / `Store Stock` badges while preserving the option to switch bills. |
+| **Priority** | P1 |
+| **What not to touch** | Stock decrement logic (`applyStockDelta` / fungible pack+loose math); credit note tracking (`trackExpiryReturn`); inventory active status refresh. |
+| **Verified by** | `tests/crossDistributorReturns.test.ts` (3/3 PASS); `tests/returnLossIntegrity.test.ts` (6/6 PASS); `npm run build:client` (PASS, 0 errors); `npm run guardrails` (PASS, 0 violations); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-23 — Legacy Return Order Vouchers and Purchase Bill Invoices Skipped in PostgreSQL Migration
+
+| Field | Content |
+|---|---|
+| **What the user saw** | In the Returns module, all 1,454 migrated return orders displayed synthetic identifiers (`RET-PUR-4F`, `RET-PUR-5F`) and lacked the distributor's original purchase bill invoice number (`original_invoice_id: null`, `return_invoice_id: null`). Return items lacked loose tablet counts and distributor deduction percentages. |
+| **Root cause** | 1. In `src/worker/importers/pgReturnsImporter.ts`, `row['invoice_id']` was treated as retail sales-only, ignoring it for purchase returns and synthesizing `RET-PUR-${legacyId}` instead of using the original voucher number (e.g. `PR-4F`, `PR-7F`).<br>2. `return_order_item.invoice` (holding distributor purchase bills like `SSL/140913`, `C/826146`), `loose` tablets, `ded_per` (deduction %), and `cd_value` were dropped by the importer.<br>3. `return_items` schema lacked columns for `invoice_no`, `loose`, `ded_per`, and `cd_value`. |
+| **How it was fixed** | 1. Updated `pgReturnsImporter.ts` to preserve `row['invoice_id']` directly as `return_no` and extract `invoice`, `loose`, `ded_per`, and `cd_value` from items into `return_items` and `returns.return_invoice_id`.<br>2. Upgraded SQLite schema to v57 with columns `invoice_no`, `loose`, `ded_per`, and `cd_value` on `return_items` across full DDL and fast-boot `ensureSchema`.<br>3. Executed `scripts/backfill_migration_returns.mjs` backfilling 1,454 return orders and 4,589 return items in `data/app.db` with original voucher numbers and purchase bill links. |
+| **Priority** | P1 |
+| **What not to touch** | Active return creation (`/api/returns/process-returns`); inventory deduction and stock ledger write paths; credit note reconciliation flow. |
+| **Verified by** | `scripts/backfill_migration_returns.mjs` (1,454 returns & 4,589 items updated); `npm run guardrails` PASS; Jest tests PASS; `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-22 — WhatsApp Promotional, Scheme & Broadcast Messages Auto-Created as Quick Special Requests
 
 | Field | Content |

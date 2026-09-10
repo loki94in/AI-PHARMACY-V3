@@ -74,10 +74,10 @@ function lazyRoute(loader: () => Promise<{ default: express.Router }>, tier: Rou
   };
   registeredLazyRoutes.push({ preload, tier });
   return (req, res, next) => {
-    if (process.env.NODE_ENV !== 'production') {
-      loader().then(m => m.default(req, res, next)).catch(next);
-      return;
-    }
+    // Always use the cached router after first load (dev and prod alike).
+    // Previously dev mode called loader() on every request, causing >10s hangs
+    // for large route files (pharmarack.ts, sales.ts, etc.) because the full
+    // module + its imports had to be re-evaluated on each hit.
     if (router) return router(req, res, next);
     preload().then(r => r(req, res, next)).catch(next);
   };
@@ -470,15 +470,20 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
   const serverUrl = `http://localhost:${PORT}`;
   console.log(`Server is running on ${serverUrl} (listening ${Math.round(performance.now() - BOOT_T0)}ms after module load)`);
 
-  // Auto-open clean app window when launched from packaged executable or when configured
+  // Auto-open clean app window when launched from packaged executable or when configured.
+  // In dev mode (Vite), the React SPA is served by Vite on port 5173, not by this backend.
+  // In packaged builds the backend serves the built SPA, so serverUrl is correct.
   if (isPackagedApp() || process.env.AUTO_OPEN_BROWSER === 'true') {
+    const uiUrl = !isPackagedApp() && config.nodeEnv !== 'production'
+      ? `http://localhost:5173`  // Vite dev server
+      : serverUrl;               // Packaged: backend serves the SPA
     setTimeout(() => {
-      console.log(`[Boot] Launching dedicated app window at ${serverUrl}...`);
-      launchAppBrowser(serverUrl, undefined, () => {
+      console.log(`[Boot] Launching dedicated app window at ${uiUrl}...`);
+      launchAppBrowser(uiUrl, undefined, !isPackagedApp() ? undefined : () => {
         console.log('[Boot] Main application UI window closed. Exiting AI Pharmacy OS...');
         void gracefulShutdown('UI_WINDOW_CLOSED');
       });
-    }, 1000);
+    }, 1500);
   }
 });
 

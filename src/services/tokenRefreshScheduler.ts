@@ -100,6 +100,49 @@ export function cleanProfileLockFiles(profilePath: string) {
   }
 }
 
+/**
+ * Fast direct extraction of active Pharmarack JWT from profile LevelDB storage.
+ * Reads in <5ms without launching any browser process.
+ */
+export function extractTokenFromProfile(profilePath: string): string | null {
+  try {
+    const levelDbDir = path.resolve(profilePath, 'Default', 'Local Storage', 'leveldb');
+    if (!fs.existsSync(levelDbDir)) return null;
+    const files = fs.readdirSync(levelDbDir);
+    let bestToken: string | null = null;
+    let latestExp = 0;
+
+    for (const file of files) {
+      if (file.endsWith('.ldb') || file.endsWith('.log')) {
+        try {
+          const buf = fs.readFileSync(path.join(levelDbDir, file));
+          const str = buf.toString('latin1');
+          const matches = str.match(/eyJhbGciOiJIUzI1Ni[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
+          if (matches) {
+            for (const m of matches) {
+              try {
+                const parts = m.split('.');
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                const exp = (payload.exp || 0) * 1000;
+                if (exp > Date.now() && payload.role === 'Retailer') {
+                  if (exp > latestExp) {
+                    latestExp = exp;
+                    bestToken = m;
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    return bestToken;
+  } catch (err: any) {
+    console.warn('[TokenRefreshScheduler] Error extracting token from profile leveldb:', err.message);
+    return null;
+  }
+}
+
 export class TokenRefreshScheduler {
   private static instance: TokenRefreshScheduler;
   private intervalId: NodeJS.Timeout | null = null;
@@ -359,10 +402,22 @@ export class TokenRefreshScheduler {
 
       const db = await dbManager.getConnection();
       const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-      const token: string = tokenRow?.value || '';
+      let token: string = tokenRow?.value || '';
 
       const mainProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
       const hasStoredProfile = fs.existsSync(mainProfilePath) && fs.readdirSync(mainProfilePath).length > 0;
+
+      // Auto-extract from stored profile storage if token is missing in app_settings
+      if (!token && hasStoredProfile) {
+        const extracted = extractTokenFromProfile(mainProfilePath);
+        if (extracted) {
+          console.log('[TokenRefreshScheduler] Heartbeat found active token in profile storage. Hydrating session...');
+          token = extracted;
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [extracted]);
+          await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+          import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
+        }
+      }
 
       if (!token && !hasStoredProfile) {
         skipped = true;
@@ -472,6 +527,20 @@ export class TokenRefreshScheduler {
       console.log('[TokenRefreshScheduler] Initialized missing main profile folder at:', mainProfilePath);
     }
 
+    // 1. Instant LevelDB scan directly from profile — takes ~5ms, zero browser launch
+    const directToken = extractTokenFromProfile(mainProfilePath);
+    if (directToken) {
+      console.log('[TokenRefreshScheduler] Captured valid token directly from profile storage:', directToken.substring(0, 15) + '...');
+      this.lastCapturedAt = Date.now();
+      this.lastError = null;
+      const db = await dbManager.getConnection();
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [directToken]);
+      import('./pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+      return directToken;
+    }
+
     let browser;
     const holder = { token: null as string | null };
     let tempProfilePathToDelete = '';
@@ -490,8 +559,6 @@ export class TokenRefreshScheduler {
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--single-process',
-            '--renderer-process-limit=1',
             '--disable-gpu',
             '--disable-software-rasterizer',
             '--disable-dev-shm-usage',
@@ -517,8 +584,6 @@ export class TokenRefreshScheduler {
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--single-process',
-            '--renderer-process-limit=1',
             '--disable-gpu',
             '--disable-software-rasterizer',
             '--disable-dev-shm-usage',
@@ -573,6 +638,17 @@ export class TokenRefreshScheduler {
       const startTime = Date.now();
       while (!holder.token && Date.now() - startTime < 8000) {
         if (page.url().includes('/login')) break;
+        try {
+          const lsToken = await page.evaluate(() => {
+            let t = localStorage.getItem('token') || localStorage.getItem('originalAccessToken') || '';
+            if (t.startsWith('Bearer ') || t.startsWith('bearer ')) t = t.substring(7);
+            return t;
+          });
+          if (lsToken && lsToken.length > 20) {
+            holder.token = lsToken;
+            break;
+          }
+        } catch (_) {}
         await new Promise(resolve => setTimeout(resolve, 200));
       }
 

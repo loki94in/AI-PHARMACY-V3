@@ -35,8 +35,9 @@ export async function importReturnOrder(row: Record<string, string | null>, db: 
   const legacyDistId = row['distributor_id'];
   const distributorId = legacyDistId ? distributorMap.get(legacyDistId) : null;
 
-  // Generate a meaningful return number — use legacy ID with type prefix
-  const returnNo = `RET-${returnType === 'purchase' ? 'PUR' : 'SALE'}-${legacyId}`;
+  // Use original return voucher/invoice number from invoice_id if available, fallback to RET- prefix
+  const rawInvoiceId = (row['invoice_id'] || '').trim();
+  const returnNo = rawInvoiceId || `RET-${returnType === 'purchase' ? 'PUR' : 'SALE'}-${legacyId}`;
 
   // Resolve original invoice for sale returns
   let originalInvoiceId: number | null = null;
@@ -144,11 +145,17 @@ export async function importReturnOrderItem(row: Record<string, string | null>, 
   const legacyBatchId = row['batch_id'];
   const batchNo = legacyBatchId ? (legacyBatchIdToNoMap.get(legacyBatchId) || legacyBatchId) : null;
 
+  const invoiceNo = (row['invoice'] || '').trim() || null;
+  const loose = parseInt(row['loose'] || '0') || 0;
+  const dedPer = parseFloat(row['ded_per'] || '0') || 0;
+  const cdValue = parseFloat(row['cd_value'] || '0') || 0;
+
   returnItemBatch.push({
     return_id: returnId,
     medicine_id: medicineId || null,
     batch_no: batchNo,
     quantity: parseInt(row['quantity'] || '0') || 0,
+    loose: loose,
     cost_price: parseFloat(row['cost_price'] || '0') || 0,
     mrp: parseFloat(row['mrp'] || '0') || 0,
     total_price: parseFloat(row['total_price'] || '0') || 0,
@@ -156,6 +163,9 @@ export async function importReturnOrderItem(row: Record<string, string | null>, 
     sgst_value: parseFloat(row['sgst_value'] || '0') || 0,
     igst_value: parseFloat(row['igst_value'] || '0') || 0,
     legacy_id: legacyId,
+    invoice_no: invoiceNo,
+    ded_per: dedPer,
+    cd_value: cdValue,
   });
 
   if (returnItemBatch.length >= 2000) {
@@ -170,10 +180,16 @@ export async function flushReturnItems(db: Database) {
     for (const ri of returnItemBatch) {
       try {
         await db.run(
-          `INSERT INTO return_items (return_id, medicine_id, batch_no, quantity, cost_price, mrp, total_price, cgst_value, sgst_value, igst_value, legacy_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [ri.return_id, ri.medicine_id, ri.batch_no, ri.quantity, ri.cost_price, ri.mrp, ri.total_price, ri.cgst_value, ri.sgst_value, ri.igst_value, ri.legacy_id]
+          `INSERT INTO return_items (return_id, medicine_id, batch_no, quantity, cost_price, mrp, total_price, cgst_value, sgst_value, igst_value, legacy_id, invoice_no, loose, ded_per, cd_value)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [ri.return_id, ri.medicine_id, ri.batch_no, ri.quantity, ri.cost_price, ri.mrp, ri.total_price, ri.cgst_value, ri.sgst_value, ri.igst_value, ri.legacy_id, ri.invoice_no, ri.loose, ri.ded_per, ri.cd_value]
         );
+        if (ri.invoice_no && ri.return_id) {
+          await db.run(
+            'UPDATE returns SET return_invoice_id = ? WHERE id = ? AND (return_invoice_id IS NULL OR return_invoice_id = "")',
+            [ri.invoice_no, ri.return_id]
+          );
+        }
       } catch (err: any) {
         console.warn(`[Migration] Skipped return item ${ri.legacy_id}: ${err.message}`);
       }
