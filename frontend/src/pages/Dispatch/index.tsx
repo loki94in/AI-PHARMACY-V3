@@ -49,6 +49,7 @@ import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { sanitizePhoneInput } from '../../utils/phone';
 import { toDateInputValue } from '../../utils/date';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { DispatchWhatsAppProgressCard } from '../../components/DispatchWhatsAppProgressCard';
 
 export interface DispatchOrder {
   id: number;
@@ -913,6 +914,9 @@ const Dispatch = () => {
           </div>
         );
       })()}
+
+      {/* ── LIVE WHATSAPP DISPATCH PROGRESS CARD ── */}
+      <DispatchWhatsAppProgressCard />
 
       {/* ── TAB STRIP ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">

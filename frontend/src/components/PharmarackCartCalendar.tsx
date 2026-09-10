@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Clock, Pause, ChevronLeft, ChevronRight, ShoppingCart, Send, Store, Calendar, X, ChevronDown, Truck } from 'lucide-react';
 import { api, apiClient } from '../services/api';
-import { toastEvent } from '../services/events';
+import { toastEvent, whatsappQueueEvent } from '../services/events';
 import { useStore } from '../context/StoreContext';
 
 // Indian Public & National Holidays (2025-2027 reference)
@@ -85,8 +85,17 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   // Active store context for per-store ordering and delivery management
   const { activeStore } = useStore();
 
-  // Timer Pacing state (seconds)
-  const [timerSec, setTimerSec] = useState<number>(10);
+  // Timer Pacing state (seconds) & Mode ('auto' | 'manual')
+  const [timerSec, setTimerSec] = useState<number>(12);
+  const [pacingMode, setPacingMode] = useState<'auto' | 'manual'>('auto');
+  const [isSavingPacing, setIsSavingPacing] = useState<boolean>(false);
+
+  // Smart daily auto pacing variation (rotates 11s - 16s by day of month)
+  const todayAutoDelay = useMemo(() => {
+    const day = new Date().getDate();
+    const autoSchedule = [12, 14, 11, 15, 13, 16];
+    return autoSchedule[day % autoSchedule.length];
+  }, []);
 
   // Pharmacy Operating Hours, Weekly Off Day & Delivery Timetable state
   const [shopWeeklyOff, setShopWeeklyOff] = useState<string>('Monday');
@@ -128,6 +137,16 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       try {
         const res = await apiClient.get('/settings');
         if (mounted && res?.data) {
+          const mode = res.data.whatsapp_queue_pacing_mode === 'manual' ? 'manual' : 'auto';
+          setPacingMode(mode);
+          if (res.data.whatsapp_queue_pacing_sec) {
+            setTimerSec(Number(res.data.whatsapp_queue_pacing_sec) || 12);
+          }
+          if (mode === 'auto') {
+            const minSec = todayAutoDelay;
+            const maxSec = todayAutoDelay + 2;
+            api.updateWhatsAppPacingConfig(minSec, maxSec).catch(() => {});
+          }
           if (res.data.pharmacy_weekly_off) setShopWeeklyOff(res.data.pharmacy_weekly_off);
           if (res.data.pharmacy_open_time) setShopOpenTime(res.data.pharmacy_open_time);
           if (res.data.pharmacy_close_time) setShopCloseTime(res.data.pharmacy_close_time);
@@ -248,10 +267,42 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     }
   };
 
-  const handleTimerChange = (sec: number) => {
-    setTimerSec(sec);
-    localStorage.setItem('pharmarack_cart_timer_sec', String(sec));
-    toastEvent.trigger(`Auto-send delay set to ${sec}s per order`, 'info');
+  const handlePacingChange = async (target: 'auto' | number) => {
+    setIsSavingPacing(true);
+    try {
+      if (target === 'auto') {
+        setPacingMode('auto');
+        setTimerSec(todayAutoDelay);
+        const minSec = todayAutoDelay;
+        const maxSec = todayAutoDelay + 2;
+        await api.updateWhatsAppPacingConfig(minSec, maxSec);
+        await apiClient.post('/settings/save', {
+          whatsapp_queue_pacing_mode: 'auto',
+          whatsapp_queue_pacing_sec: String(todayAutoDelay)
+        });
+        try { localStorage.setItem('pharmarack_cart_timer_sec', String(todayAutoDelay)); } catch (_) {}
+        whatsappQueueEvent.triggerUpdated();
+        toastEvent.trigger(`Auto-send delay set to Smart Daily Auto (${todayAutoDelay}s today)`, 'info');
+      } else {
+        const sec = Math.max(10, target);
+        setPacingMode('manual');
+        setTimerSec(sec);
+        const minSec = sec;
+        const maxSec = sec + 2;
+        await api.updateWhatsAppPacingConfig(minSec, maxSec);
+        await apiClient.post('/settings/save', {
+          whatsapp_queue_pacing_mode: 'manual',
+          whatsapp_queue_pacing_sec: String(sec)
+        });
+        try { localStorage.setItem('pharmarack_cart_timer_sec', String(sec)); } catch (_) {}
+        whatsappQueueEvent.triggerUpdated();
+        toastEvent.trigger(`Auto-send delay set to ${sec}s per order`, 'info');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.message || 'Failed to update send delay', 'error');
+    } finally {
+      setIsSavingPacing(false);
+    }
   };
 
   // Generate 60-day rolling date strip (-7 days ago to +52 days ahead to fill widescreen displays)
@@ -392,14 +443,28 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             <Clock size={12} className="text-sky-500 shrink-0" />
             <span className="text-[11px] font-bold text-muted truncate mr-1">Delay:</span>
             <div className="flex items-center gap-0.5">
-              {[1, 5, 10, 30, 60].map(sec => (
+              <button
+                type="button"
+                onClick={() => handlePacingChange('auto')}
+                disabled={isSavingPacing}
+                className={`px-1.5 py-0.5 rounded-md text-[9px] font-black transition-all cursor-pointer ${
+                  pacingMode === 'auto'
+                    ? 'bg-primary/20 text-primary border border-primary/40 shadow-2xs'
+                    : 'text-muted hover:text-text hover:bg-bg3 border border-transparent'
+                }`}
+                title={`Smart Daily Auto-Pacing (Rotates daily for anti-ban safety — currently ${todayAutoDelay}s today)`}
+              >
+                Auto {pacingMode === 'auto' ? `(${todayAutoDelay}s)` : ''}
+              </button>
+              {[10, 12, 15, 16, 17, 18].map(sec => (
                 <button
                   key={sec}
                   type="button"
-                  onClick={() => handleTimerChange(sec)}
+                  onClick={() => handlePacingChange(sec)}
+                  disabled={isSavingPacing}
                   className={`px-1.5 py-0.5 rounded-md text-[9px] font-black transition-all cursor-pointer ${
-                    timerSec === sec
-                      ? 'bg-transparent text-sky-600 border border-sky-400/80 shadow-2xs'
+                    pacingMode === 'manual' && timerSec === sec
+                      ? 'bg-sky-500/15 text-sky-400 border border-sky-400/80 shadow-2xs'
                       : 'text-muted hover:text-text hover:bg-bg3 border border-transparent'
                   }`}
                   title={`Set auto-send delay timer to ${sec}s`}
