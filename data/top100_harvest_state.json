@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-11T19:35:22.520Z",
+  "last_updated": "2026-09-11T19:38:53.878Z",
   "products": {
     "880": {
       "status": "success",
@@ -276,6 +276,394 @@
     "14137": {
       "status": "not_found",
       "checked_at": "2026-09-11T19:35:22.520Z"
+    },
+    "14218": {
+      "status": "success",
+      "product_name": "Enfiera 500Mg Vial Of 50Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:35:29.543Z"
+    },
+    "14374": {
+      "status": "success",
+      "product_name": "Enfiera 100 Mg Injection",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:35:33.498Z"
+    },
+    "14492": {
+      "status": "success",
+      "product_name": "New Neurotrat Lm Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:35:37.514Z"
+    },
+    "14760": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:39.783Z"
+    },
+    "15242": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:40.930Z"
+    },
+    "15374": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:42.877Z"
+    },
+    "15725": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:44.814Z"
+    },
+    "15909": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:46.609Z"
+    },
+    "16284": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:48.308Z"
+    },
+    "16332": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:50.019Z"
+    },
+    "16736": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:51.526Z"
+    },
+    "16860": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:53.167Z"
+    },
+    "17039": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:54.354Z"
+    },
+    "17049": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:55.654Z"
+    },
+    "17158": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:56.762Z"
+    },
+    "17193": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:58.467Z"
+    },
+    "17228": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:00.256Z"
+    },
+    "17419": {
+      "status": "success",
+      "product_name": "Vivitra 440Mg Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:36:08.654Z"
+    },
+    "18057": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:10.518Z"
+    },
+    "18075": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:11.389Z"
+    },
+    "18464": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:12.402Z"
+    },
+    "18568": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:14.022Z"
+    },
+    "18585": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:15.052Z"
+    },
+    "18630": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:16.544Z"
+    },
+    "18851": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:18.043Z"
+    },
+    "19051": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:19.118Z"
+    },
+    "19087": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:20.668Z"
+    },
+    "19093": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:21.652Z"
+    },
+    "19470": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:23.400Z"
+    },
+    "19626": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:24.482Z"
+    },
+    "19718": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:25.918Z"
+    },
+    "20548": {
+      "status": "success",
+      "product_name": "Eract X Sachet 10Gm",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:36:39.391Z"
+    },
+    "20749": {
+      "status": "success",
+      "product_name": "Laglo Face Wash Gel 100Gm",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:36:45.222Z"
+    },
+    "21672": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:46.450Z"
+    },
+    "21894": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:48.084Z"
+    },
+    "22026": {
+      "status": "success",
+      "product_name": "Jubare Cream 20Gm",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:36:52.547Z"
+    },
+    "22121": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:54.472Z"
+    },
+    "22382": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:36:56.218Z"
+    },
+    "22571": {
+      "status": "success",
+      "product_name": "Renocrit 10000Iu Pre Filled Syringe Of 1Ml Injection",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:36:58.555Z"
+    },
+    "22923": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:00.332Z"
+    },
+    "23212": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:02.216Z"
+    },
+    "23428": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:03.598Z"
+    },
+    "23506": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:05.450Z"
+    },
+    "23521": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:06.948Z"
+    },
+    "23852": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:08.328Z"
+    },
+    "23871": {
+      "status": "success",
+      "product_name": "Gyargin Orange Lemon Flavour Sugar Free Sachet Of 5Gm Granules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:37:14.202Z"
+    },
+    "24036": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:15.614Z"
+    },
+    "24068": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:17.522Z"
+    },
+    "24535": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:19.120Z"
+    },
+    "24644": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:21.006Z"
+    },
+    "24778": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:22.299Z"
+    },
+    "24789": {
+      "status": "success",
+      "product_name": "Xylocaine Viscous Bottle Of 200Ml Solution",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:37:24.997Z"
+    },
+    "25103": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:26.646Z"
+    },
+    "25233": {
+      "status": "success",
+      "product_name": "Calcirol 1000Iu Mixed Fruit Flavour Bottle Of 100Ml Syrup",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 30,
+      "updated_at": "2026-09-11T19:37:32.565Z"
+    },
+    "25268": {
+      "status": "success",
+      "product_name": "Renocrit 4000Iu Pre Filled Syringe Of 0.4Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:37:36.776Z"
+    },
+    "25530": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:38.135Z"
+    },
+    "25627": {
+      "status": "success",
+      "product_name": "Nexiron Lp Plus Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:37:50.879Z"
+    },
+    "25633": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:37:52.312Z"
+    },
+    "25970": {
+      "status": "success",
+      "product_name": "Grd | Whey Protein Vanilla | Sugar Free | Jar 200 Gm Oral Powder",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:38:00.140Z"
+    },
+    "26893": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:02.222Z"
+    },
+    "27017": {
+      "status": "success",
+      "product_name": "Vivitra 150 Mg Injection ",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:38:05.944Z"
+    },
+    "27435": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:06.886Z"
+    },
+    "27464": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:08.465Z"
+    },
+    "27526": {
+      "status": "success",
+      "product_name": "Lipbless Strawberry Flavour Lip Cream 10Gm",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:38:21.140Z"
+    },
+    "28100": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:22.968Z"
+    },
+    "28334": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:24.206Z"
+    },
+    "28350": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:25.292Z"
+    },
+    "28522": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:27.034Z"
+    },
+    "28549": {
+      "status": "success",
+      "product_name": "Fair Insta | Skin Lightening Cream | Tube 20 Gm",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:38:31.286Z"
+    },
+    "28853": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:32.842Z"
+    },
+    "28935": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:34.244Z"
+    },
+    "29135": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:35.956Z"
+    },
+    "29453": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:37.464Z"
+    },
+    "29920": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:39.216Z"
+    },
+    "30022": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:40.308Z"
+    },
+    "30186": {
+      "status": "success",
+      "product_name": "Zymurine Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:38:49.864Z"
+    },
+    "30370": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:51.810Z"
+    },
+    "30447": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:52.818Z"
+    },
+    "30469": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:38:53.878Z"
     },
     "57085": {
       "status": "not_found",
