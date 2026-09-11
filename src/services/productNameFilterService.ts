@@ -99,6 +99,7 @@ export const FORMULATION_MODIFIERS = new Set([
   // Combinations & Active Additions
   'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
+  'LP', 'CV', 'KT', 'COLD', 'FLU',
   // Release Modifiers
   'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
   // Form / Dispersibility
@@ -114,7 +115,7 @@ export function stripPharmacopoeiaMarkers(text: string): string {
 
 export function extractFormulationModifiers(name: string): Set<string> {
   if (!name) return new Set();
-  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
+  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+|]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
 
@@ -122,6 +123,10 @@ export function extractFormulationModifiers(name: string): Set<string> {
     const w = words[i];
     // Skip single letter 'D' if preceded by 'VITAMIN' or 'VIT' (e.g. Vitamin D3)
     if (w === 'D' && i > 0 && (words[i - 1] === 'VITAMIN' || words[i - 1] === 'VIT')) {
+      continue;
+    }
+    // Skip 'XL' if it is a physical device/orthopedic size (e.g. Size-XL, XL Knee Cap, XL Elbow Support)
+    if (w === 'XL' && ((i > 0 && words[i - 1] === 'SIZE') || (i < words.length - 1 && words[i + 1] === 'SIZE') || /\b(BELT|SUPPORT|KNEE|ANKLE|ELBOW|WRIST|COLLAR|BANDAGE|GLOVES?)\b/i.test(name))) {
       continue;
     }
     if (FORMULATION_MODIFIERS.has(w)) {

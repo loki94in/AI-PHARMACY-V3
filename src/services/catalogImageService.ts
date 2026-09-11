@@ -4,6 +4,14 @@ import crypto from 'crypto';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { aiCameraService } from './aiCameraService.js';
+import { hasFormulationModifierConflict } from './productNameFilterService.js';
+import { Jimp } from 'jimp';
+
+export interface BestPackagingFaceResult {
+  url: string;
+  face: string;
+  stitchSecondaryUrl?: string;
+}
 
 export interface CatalogImageRecord {
   id: number;
@@ -90,6 +98,8 @@ export interface MatchScoreResult {
     packScore: number;
     ocrMatch: boolean;
     ocrScore: number;
+    modifierConflict?: boolean;
+    modifierScore?: number;
   };
 }
 
@@ -119,12 +129,13 @@ const GENERIC_CATEGORY_WORDS = new Set([
   'PAD', 'PADS', 'ROLL', 'WOOL', 'NEEDLE', 'SYRINGE', 'WIPES', 'TAPE', 'PASTE',
   'SERUM', 'WASH', 'BAR', 'SACHET', 'CASTOR', 'HONEY', 'GLYCERIN', 'GLYCERINE',
   'PETROLEUM', 'JELLY', 'VASELINE', 'NEW', 'SUPER', 'EXTRA', 'PLUS', 'PREMIUM',
-  'PURE', 'NATURAL', 'HERBAL', 'GENUINE', 'ORIGINAL'
+  'PURE', 'NATURAL', 'HERBAL', 'GENUINE', 'ORIGINAL', 'INSULIN', 'SALINE', 'DEXTROSE'
 ]);
 
 const UMBRELLA_PHARMA_BRANDS = new Set([
   'BAIDYANATH', 'BAID', 'DABUR', 'DAB', 'HIMALAYA', 'HIM', 'PATANJALI', 'PAT',
-  'ZANDU', 'ZAN', 'HAMDARD', 'SBL', 'SCHWABE', 'BEARDO', 'AYUR'
+  'ZANDU', 'ZAN', 'HAMDARD', 'SBL', 'SCHWABE', 'BEARDO', 'AYUR',
+  'FLAMINGO', 'TRUEBASICS', 'LIVEASY'
 ]);
 
 export class CatalogImageService {
@@ -183,9 +194,18 @@ export class CatalogImageService {
    */
   public extractStrength(text: string): string | null {
     if (!text) return null;
+    // Insulin syringe calibration (e.g. U-40, U40, U-100, U100) -> 40IU, 100IU
+    const uMatch = text.match(/\bU[-]?(\d+)\b/i);
+    if (uMatch) {
+      return `${uMatch[1]}IU`;
+    }
     const match = text.match(/\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(?:MG|ML|GM|G|MCG|IU|%|MCG\/ML|MG\/ML)\b/i);
     if (!match) return null;
     let s = match[0].toUpperCase().replace(/\s+/g, '');
+    // Gauge like 31G, 26G in medical device text should not be parsed as grams
+    if (/^\d{2}G$/i.test(s) && /\b(gauge|needle|syringe|syr|syrange|mm)\b/i.test(text)) {
+      return null;
+    }
     if (s.endsWith('G') && !s.endsWith('MG') && !s.endsWith('MCG')) {
       s = s.replace(/G$/, 'GM');
     }
@@ -198,6 +218,10 @@ export class CatalogImageService {
   public extractCoreBrand(raw: string, manufacturer?: string | null): string {
     if (!raw) return '';
     let c = raw.replace(/\[.*?\]/g, ' '); // remove [COMPANY LTD]
+    // Strip doctor / manufacturer prefix honorifics at the start of product name
+    c = c.replace(/^DR\.?\s+WILLMAR\s+SCHWABE\s+(INDIA\s+)?/gi, ' ');
+    c = c.replace(/^DR\.?\s+MOREPEN\s+/gi, ' ');
+    c = c.replace(/^DR\.?\s+REDDY(?:'S)?\s+/gi, ' ');
     c = c.replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, ' ');
     c = c.replace(/\b\d+(?:\.\d+)?\s*(?:MG|ML|GM|G|MCG|IU|%)\b/gi, ' ');
     const words = c.split(/[^A-Za-z0-9\+\-]+/).filter(w => w.length >= 2 && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
@@ -215,8 +239,15 @@ export class CatalogImageService {
       return '';
     }
 
-    // If first word is an umbrella brand (e.g. BAIDYANATH, DABUR, HIMALAYA), prefer the formulation name in subsequent words
+    // If first word is an umbrella brand (e.g. BAIDYANATH, DABUR, HIMALAYA, FLAMINGO), prefer the formulation name in subsequent words
     if (UMBRELLA_PHARMA_BRANDS.has(words[0].toUpperCase()) && words.length > 1) {
+      if (words[0].toUpperCase() === 'FLAMINGO') {
+        const flamingoDevice = words.slice(1).find(w => /^(ELBOW|KNEE|ANKLE|WRIST|WAIST|LUMBAR|ABDOMINAL|CERVICAL|HEAT|HEATING|CREPE|FLAMICREPE|COLLAR|SLING|BANDAGE|SPLINT|BRACE)$/i.test(w));
+        if (flamingoDevice) {
+          if (/^FLAMICREPE$/i.test(flamingoDevice)) return 'CREPE';
+          return flamingoDevice.toUpperCase();
+        }
+      }
       const formulationWord = words.slice(1).find(w => !GENERIC_CATEGORY_WORDS.has(w.toUpperCase()) && !DOSAGE_FORMS.includes(w.toUpperCase()) && !PACKAGING_CONTAINERS.has(w.toUpperCase()) && !/^\d+$/.test(w));
       if (formulationWord) return formulationWord.toUpperCase();
     }
@@ -230,6 +261,122 @@ export class CatalogImageService {
     return words[0].toUpperCase();
   }
 
+  /**
+   * Smart face prioritization:
+   * Prioritizes front + back combined packaging view with the medicine name clearly visible:
+   * 1. Official 'combo' image from CDN (pre-combined front & back / box & strip with printed text).
+   * 2. If 'combo' is not present, stitch 'front' + 'back' (or 'box-front' + 'front') side-by-side.
+   * 3. If only single angle is available:
+   *    - For solid strips/blisters: 'box-front' -> 'box' -> 'back' -> 'box-back' -> 'front' (must show name on packing)
+   *    - For bottles/tubes/devices: 'front' -> 'box-front' -> 'combo' -> 'box' -> 'back'
+   */
+  public pickBestPackagingFace(
+    medicineName: string,
+    packaging: string | null | undefined,
+    damImages: Array<{ face?: string; url?: string }>,
+    fallbackImage?: string | null,
+    candidateName?: string | null
+  ): BestPackagingFaceResult | null {
+    if (!damImages || damImages.length === 0) {
+      if (fallbackImage) return { url: fallbackImage, face: 'default' };
+      return null;
+    }
+
+    // 1. First Priority: Official combined packaging shot from CDN (shows both views with clear name)
+    const comboImg = damImages.find(img => img.face === 'combo' && img.url);
+    if (comboImg && comboImg.url) {
+      return { url: comboImg.url, face: 'combo' };
+    }
+
+    const frontImg = damImages.find(img => img.face === 'front' && img.url);
+    const backImg = damImages.find(img => img.face === 'back' && img.url);
+    const boxFrontImg = damImages.find(img => (img.face === 'box-front' || img.face === 'box') && img.url);
+
+    // 2. Second Priority: Auto-combine front + back (or box-front + front) into a single composite image
+    // Front shows the product appearance, back / box shows the printed product name and formula!
+    const cleanUrl = (u?: string) => u?.split('?')[0];
+    if (frontImg?.url && backImg?.url && cleanUrl(frontImg.url) !== cleanUrl(backImg.url)) {
+      return {
+        url: frontImg.url,
+        face: 'combo-stitched',
+        stitchSecondaryUrl: backImg.url
+      };
+    }
+    if (boxFrontImg?.url && frontImg?.url && cleanUrl(boxFrontImg.url) !== cleanUrl(frontImg.url)) {
+      return {
+        url: boxFrontImg.url,
+        face: 'combo-stitched',
+        stitchSecondaryUrl: frontImg.url
+      };
+    }
+    if (boxFrontImg?.url && backImg?.url && cleanUrl(boxFrontImg.url) !== cleanUrl(backImg.url)) {
+      return {
+        url: boxFrontImg.url,
+        face: 'combo-stitched',
+        stitchSecondaryUrl: backImg.url
+      };
+    }
+
+    // 3. Third Priority: Single face that best shows the name on the packing
+    const isSolidStrip = /\b(tab|tablet|tablets|cap|capsule|capsules|dt|strip|pills?)\b/i.test(medicineName) ||
+                         /\b(tab|tablet|tablets|cap|capsule|capsules|dt|strip|pills?)\b/i.test(packaging || '') ||
+                         /\b(tab|tablet|tablets|cap|capsule|capsules|dt|strip|pills?)\b/i.test(candidateName || '');
+
+    const preferredFaces = isSolidStrip
+      ? ['box-front', 'box', 'back', 'box-back', 'front', 'default']
+      : ['front', 'box-front', 'box', 'back', 'default'];
+
+    for (const face of preferredFaces) {
+      const found = damImages.find((img) => img.face === face && img.url);
+      if (found && found.url) {
+        return { url: found.url, face };
+      }
+    }
+
+    const anyWithUrl = damImages.find((img) => img.url);
+    if (anyWithUrl && anyWithUrl.url) {
+      return { url: anyWithUrl.url, face: anyWithUrl.face || 'default' };
+    }
+
+    if (fallbackImage) {
+      return { url: fallbackImage, face: 'default' };
+    }
+
+    return null;
+  }
+
+  /**
+   * Stitch two packaging images (e.g. front and back) side-by-side into a single combined image
+   */
+  public async stitchImagesSideBySide(buffer1: Buffer, buffer2: Buffer): Promise<Buffer> {
+    try {
+      const hash1 = crypto.createHash('md5').update(buffer1).digest('hex');
+      const hash2 = crypto.createHash('md5').update(buffer2).digest('hex');
+      if (hash1 === hash2) {
+        return buffer1;
+      }
+
+      const img1 = await Jimp.read(buffer1);
+      const img2 = await Jimp.read(buffer2);
+
+      const targetH = 600;
+      img1.resize({ h: targetH });
+      img2.resize({ h: targetH });
+
+      const gap = 20;
+      const totalW = img1.bitmap.width + img2.bitmap.width + gap;
+
+      // Create white background canvas (0xFFFFFFFF)
+      const combined = new Jimp({ width: totalW, height: targetH, color: 0xFFFFFFFF });
+      combined.composite(img1, 0, 0);
+      combined.composite(img2, img1.bitmap.width + gap, 0);
+
+      return await combined.getBuffer('image/jpeg');
+    } catch (err: any) {
+      console.warn('[CatalogImageService] Error stitching images side-by-side, returning primary buffer:', err.message);
+      return buffer1;
+    }
+  }
 
   /**
    * Multi-Signal AI Confidence Scoring
@@ -308,7 +455,11 @@ export class CatalogImageService {
     // 2. Company Match (15%)
     let companyMatch = false;
     let companyScore = 5; // default neutral
-    const medMfg = (medicine.manufacturer || '').toUpperCase().trim();
+    let medMfg = (medicine.manufacturer || '').toUpperCase().trim();
+    if (!medMfg) {
+      if (/^FLAMINGO\b/i.test(medicine.name)) medMfg = 'FLAMINGO';
+      else if (/^HANSAPLAST\b/i.test(medicine.name)) medMfg = 'HANSAPLAST';
+    }
     const candMfg = (candidate.manufacturer || '').toUpperCase().trim();
 
     const GENERIC_MFG_WORDS = new Set([
@@ -318,11 +469,13 @@ export class CatalogImageService {
       'PRODUCTS', 'AYURVEDA', 'AYURVEDIC', 'CONSUMER', 'ORGANICS', 'HOME', 'ASIA', 'WELLNESS'
     ]);
 
-    if (medMfg && candMfg) {
-      const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
-      const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
+    const cleanMedMfg = medMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
+    const cleanCandMfg = candMfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, '').trim();
 
+    if (medMfg && candMfg) {
       const isKnownAlias =
+        ((cleanMedMfg.includes('B D') || cleanMedMfg.includes('BECTON') || cleanMedMfg === 'BD' || cleanMedMfg.includes('BD GLIDE') || cleanMedMfg.includes('DICKINSON')) &&
+         (cleanCandMfg.includes('B D') || cleanCandMfg.includes('BECTON') || cleanCandMfg === 'BD' || cleanCandMfg.includes('BD GLIDE') || cleanCandMfg.includes('ULTRA-FINE') || cleanCandMfg.includes('DICKINSON'))) ||
         ((cleanMedMfg.includes('PANDG') || cleanMedMfg.includes('P&G') || cleanMedMfg.includes('PROCTER')) && (cleanCandMfg.includes('PANDG') || cleanCandMfg.includes('P&G') || cleanCandMfg.includes('PROCTER') || cleanCandMfg.includes('VICKS') || cleanCandMfg.includes('GILLETTE') || cleanCandMfg.includes('PAMPERS') || cleanCandMfg.includes('HEAD'))) ||
         ((cleanMedMfg.includes('HMD') || cleanMedMfg.includes('HINDUSTAN SYRINGES')) && (cleanCandMfg.includes('HMD') || cleanCandMfg.includes('HINDUSTAN') || cleanCandMfg.includes('DISPOVAN'))) ||
         ((cleanMedMfg.includes('ZANDU') || cleanMedMfg.includes('EMAMI')) && (cleanCandMfg.includes('ZANDU') || cleanCandMfg.includes('EMAMI') || cleanCandMfg.includes('DERMI'))) ||
@@ -351,8 +504,16 @@ export class CatalogImageService {
       companyScore = 15;
     }
 
-    // Generic commodity protection: lone generic descriptors (cotton, castor, bandage) cannot match arbitrary brands
-    if (GENERIC_CATEGORY_WORDS.has(medBrand) && !companyMatch) {
+    // Generic commodity protection: lone generic descriptors (cotton, castor, bandage) cannot match arbitrary brands.
+    // Only unbranded generic commodities can match retail pharmacy surgical labels (PharmEasy, LivEasy, Apollo, Surgical).
+    const isBrandedDeviceOrMfg = /^FLAMINGO\b/i.test(medicine.name) || /^HANSAPLAST\b/i.test(medicine.name) || cleanMedMfg.includes('FLAMINGO') || cleanMedMfg.includes('HANSAPLAST');
+    const isSurgicalCommodity = /\b(cotton|wool|bandage|gauze|crepe)\b/i.test(medicine.name) && !isBrandedDeviceOrMfg;
+    if (isSurgicalCommodity && (cleanCandMfg.includes('PHARMEASY') || cleanCandMfg.includes('LIVEASY') || cleanCandMfg.includes('APOLLO') || cleanCandMfg.includes('SURGICAL'))) {
+      companyScore = 12;
+      companyMatch = true;
+    }
+
+    if (GENERIC_CATEGORY_WORDS.has(medBrand) && !companyMatch && !isSurgicalCommodity) {
       brandMatch = false;
       brandScore = 0;
     }
@@ -378,20 +539,21 @@ export class CatalogImageService {
         const candNum = parseFloat(candStr);
         const ratio = (medNum > 0 && candNum > 0) ? (Math.max(medNum, candNum) / Math.min(medNum, candNum)) : 1;
 
-        if (isMgStrength && ratio > 1.2) {
-          // Explicit drug strength conflict (e.g. 10mg vs 20mg, 5mg vs 10mg) -> strict failure
+        if (ratio > 1.25) {
           strengthConflict = true;
           strengthScore = -40;
-        } else if (ratio >= 4.0) {
-          // Extreme packaging size conflict (e.g. 45ml vs 650ml) -> strict failure
-          strengthConflict = true;
-          strengthScore = -40;
+        } else if (ratio === 1) {
+          strengthMatch = true;
+          strengthScore = 20;
         } else {
-          // Commercial pack size variation on same formulation (e.g. 8g vs 10g, 100g vs 120g promo pack)
-          strengthScore = 8;
+          strengthScore = 0;
         }
       }
     } else if (medStr && !candStr) {
+      strengthScore = 8;
+    } else if (!medStr && candStr) {
+      strengthScore = 8;
+    } else {
       strengthScore = 10;
     }
 
@@ -405,8 +567,34 @@ export class CatalogImageService {
     let dosageFormConflict = false;
     let dosageFormScore = 8; // neutral
 
-    const ACCESSORY_REGEX = /\b(slippers?|shoes?|belt|collar|support|knee\s*cap|anklet|mattress|pillow|chair|cushion|eyeliner|lipstick|kajal|mascara|nail\s*polish)\b/i;
-    if (medForm) {
+    // Device vs Drug distinction (syringes, needles, cotton, bandages, orthopedics must NEVER match pharmaceutical drugs/liquids/vials)
+    const isMedDevice = /\b(syringe|syrange|syr|needle|cannula|catheter|iv set|infusion set|lancet|scalp vein|surgical|dispovan|cotton|wool|bandage|gauze|crepe|swab|dressing|plaster|belt|collar|support|knee\s*cap|anklet|binder|splint|brace|sling)\b/i.test(
+      `${medicine.name} ${medicine.packaging || ''} ${medicine.manufacturer || ''} ${(medicine as any).item_type || ''}`
+    );
+    const isCandDevice = /\b(syringe|syrange|syr|needle|cannula|catheter|iv set|infusion set|lancet|scalp vein|surgical|dispovan|cotton|wool|bandage|gauze|crepe|swab|dressing|plaster|belt|collar|support|knee\s*cap|anklet|binder|splint|brace|sling)\b/i.test(
+      `${candidate.name} ${candidate.imagePath || ''}`
+    );
+
+    if (isMedDevice !== isCandDevice) {
+      dosageFormConflict = true;
+      dosageFormScore = -50;
+    } else if (isMedDevice && isCandDevice) {
+      dosageFormMatch = true;
+      dosageFormScore = 15;
+
+      // Orthopedic sub-type conflict prevention (e.g. heating pad must NOT match elbow support, knee cap must NOT match collar)
+      const ORTHO_TYPES = ['elbow', 'knee', 'ankle', 'wrist', 'lumbar', 'cervical', 'collar', 'heat', 'heating', 'crepe', 'bandage', 'cotton', 'sling', 'splint', 'abdominal'];
+      const medOrtho = ORTHO_TYPES.find(t => new RegExp(`\\b${t}\\b`, 'i').test(medicine.name));
+      const candOrtho = ORTHO_TYPES.find(t => new RegExp(`\\b${t}\\b`, 'i').test(candidate.name));
+      if (medOrtho && candOrtho && medOrtho !== candOrtho) {
+        dosageFormConflict = true;
+        dosageFormScore = -50;
+      }
+    }
+
+    const isOrthopedicSupport = /\b(belt|collar|support|knee\s*cap|anklet|binder|splint|brace|sling|pad|heat)\b/i.test(medicine.name);
+    const ACCESSORY_REGEX = /\b(slippers?|shoes?|mattress|pillow|chair|cushion|eyeliner|lipstick|kajal|mascara|nail\s*polish)\b/i;
+    if (!dosageFormConflict && medForm && !isOrthopedicSupport) {
       if (ACCESSORY_REGEX.test(candidate.name)) {
         dosageFormConflict = true;
         dosageFormScore = -40;
@@ -452,13 +640,20 @@ export class CatalogImageService {
       if (brandMatch) ocrScore = 9;
     }
 
+    // 7. Formulation Modifier Guard (e.g. DX vs LP, D vs Cold, Plus vs Plain, AM vs H)
+    const modifierConflict = hasFormulationModifierConflict(medicine.name, candidate.name || '');
+    let modifierScore = 0;
+    if (modifierConflict) {
+      modifierScore = -50;
+    }
+
     // Aggregate Score
-    let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore;
+    let totalScore = brandScore + companyScore + strengthScore + dosageFormScore + packScore + ocrScore + modifierScore;
 
     // Strict Hard Fail Rules
     let verificationStatus: 'HIGH_CONFIDENCE' | 'PENDING_REVIEW' | 'REJECTED' = 'PENDING_REVIEW';
-    if (!brandMatch || strengthConflict || dosageFormConflict) {
-      totalScore = Math.min(totalScore, 30);
+    if (!brandMatch || strengthConflict || dosageFormConflict || modifierConflict) {
+      totalScore = Math.min(totalScore, 25);
       verificationStatus = 'REJECTED';
     } else if (totalScore >= 80) {
       verificationStatus = 'HIGH_CONFIDENCE';
@@ -474,6 +669,8 @@ export class CatalogImageService {
     const reasons: string[] = [];
     if (brandMatch) reasons.push(`Brand matched ("${medBrand}")`);
     else reasons.push(`Brand mismatch ("${medBrand}" not found)`);
+
+    if (modifierConflict) reasons.push('Formulation modifier conflict (variant mismatch)');
 
     if (strengthConflict) reasons.push(`Strength conflict (${medStr} vs ${candStr})`);
     else if (strengthMatch) reasons.push(`Strength verified (${medStr})`);
@@ -502,7 +699,9 @@ export class CatalogImageService {
         packMatch,
         packScore,
         ocrMatch,
-        ocrScore
+        ocrScore,
+        modifierConflict,
+        modifierScore
       }
     };
   }
@@ -1032,7 +1231,34 @@ export class CatalogImageService {
 
     const coreBrand = this.extractCoreBrand(med.name) || med.name.replace(/\[.*?\]/g, '').trim();
     const strength = this.extractStrength(med.strength || '') || this.extractStrength(med.name);
-    const cleanQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
+    let cleanQuery = strength ? `${coreBrand} ${strength}` : coreBrand;
+
+    const isMedDevice = /\b(syringe|syrange|syr|needle|cannula|catheter|iv set|infusion set|lancet|scalp vein|surgical|dispovan|cotton|wool|bandage|gauze|crepe|swab|dressing|plaster|belt|collar|support|knee\s*cap|anklet|binder|splint|brace|sling)\b/i.test(
+      `${med.name} ${med.category || ''} ${med.item_type || ''}`
+    );
+
+    // Enhance search query for Flamingo and orthopedic items
+    if (/^FLAMINGO\b/i.test(med.name)) {
+      const orthoPart = med.name.match(/\b(ELBOW|KNEE\s*CAP|KNEE|ANKLE\s*BINDER|ANKLE|HEAT\s*BELT|HEATING\s*PAD|HEAT|CREPE\s*BANDAGE|FLAMICREPE|ABDOMINAL\s*BELT|LUMBAR|CERVICAL\s*COLLAR|ARM\s*SLING)\b/i)?.[0];
+      if (orthoPart) {
+        const queryPart = /^FLAMICREPE$/i.test(orthoPart) ? 'Crepe Bandage' : orthoPart;
+        cleanQuery = `Flamingo ${queryPart}`.trim();
+      }
+    } else if (/\bcotton\b/i.test(med.name) && !/\bcotton\b/i.test(cleanQuery)) {
+      // Surgical cotton wool / absorbent cotton rolls
+      cleanQuery = `${cleanQuery} cotton ${strength || ''}`.trim();
+    } else if (isMedDevice) {
+      if (!/\b(syringe|needle|cannula|catheter|lancet)\b/i.test(cleanQuery)) {
+        cleanQuery += ' syringe';
+      }
+      const medMfg = (med.manufacturer || '').toUpperCase();
+      if ((medMfg.includes('B D') || medMfg.includes('BECTON') || medMfg === 'BD') && !cleanQuery.toUpperCase().includes('BD')) {
+        cleanQuery = `BD ${cleanQuery}`;
+      } else if ((medMfg.includes('HMD') || medMfg.includes('HINDUSTAN')) && !cleanQuery.toUpperCase().includes('DISPOVAN') && !cleanQuery.toUpperCase().includes('HMD')) {
+        cleanQuery = `DISPOVAN ${cleanQuery}`;
+      }
+    }
+
     const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
 
     let products: any[] = [];
@@ -1057,28 +1283,38 @@ export class CatalogImageService {
     // Filter candidates that have images and are not blacklisted
     let selectedCandidate: any = null;
     let selectedImageUrl: string | null = null;
+    let selectedFace: string = 'combined';
+    let selectedStitchSecondaryUrl: string | undefined = undefined;
 
     for (const prod of products) {
-      const damImages = prod.damImages || [];
-      const frontImg = damImages.find((img: any) => img.face === 'front' || img.face === 'default') || (prod.image ? { url: prod.image } : null);
-      if (!frontImg || !frontImg.url) continue;
-
-      const candidateUrl = frontImg.url.split('?')[0];
-      if (rejectedUrls.has(candidateUrl)) {
-        continue; // Skip previously rejected URL
-      }
-
-      // Vetting check: verify brand match and no strength conflict before accepting candidate
+      // Vetting check: verify brand match, no strength conflict, no formulation modifier conflict, and no device/dosage conflict
       const matchCheck = this.computeConfidence(med, {
         name: prod.name,
         manufacturer: prod.manufacturer
       });
-      if (matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch) {
+      if (
+        matchCheck.verificationStatus === 'REJECTED' ||
+        matchCheck.signals.strengthConflict ||
+        !matchCheck.signals.brandMatch ||
+        matchCheck.signals.modifierConflict ||
+        matchCheck.signals.dosageFormConflict
+      ) {
         continue;
+      }
+
+      const damImages = prod.damImages || [];
+      const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
+      if (!bestFace || !bestFace.url) continue;
+
+      const candidateUrl = bestFace.url.split('?')[0];
+      if (rejectedUrls.has(candidateUrl)) {
+        continue; // Skip previously rejected URL
       }
 
       selectedCandidate = prod;
       selectedImageUrl = candidateUrl;
+      selectedFace = bestFace.face;
+      selectedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
       break;
     }
 
@@ -1100,12 +1336,47 @@ export class CatalogImageService {
     const uploadsPath = path.join(uploadsDir, filename);
 
     try {
-      const imgRes = await fetch(selectedImageUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        signal: AbortSignal.timeout(10000)
-      });
-      if (!imgRes.ok) return null;
-      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      let buffer: Buffer;
+
+      if (selectedStitchSecondaryUrl) {
+        try {
+          const [res1, res2] = await Promise.all([
+            fetch(selectedImageUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              signal: AbortSignal.timeout(10000)
+            }),
+            fetch(selectedStitchSecondaryUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              signal: AbortSignal.timeout(10000)
+            })
+          ]);
+          if (res1.ok && res2.ok) {
+            const [b1, b2] = [Buffer.from(await res1.arrayBuffer()), Buffer.from(await res2.arrayBuffer())];
+            buffer = await this.stitchImagesSideBySide(b1, b2);
+          } else if (res1.ok) {
+            buffer = Buffer.from(await res1.arrayBuffer());
+          } else if (res2.ok) {
+            buffer = Buffer.from(await res2.arrayBuffer());
+          } else {
+            return null;
+          }
+        } catch (e: any) {
+          console.warn('[CatalogImageService] Error stitching dual packaging images, using primary:', e.message);
+          const fallbackRes = await fetch(selectedImageUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            signal: AbortSignal.timeout(10000)
+          });
+          if (!fallbackRes.ok) return null;
+          buffer = Buffer.from(await fallbackRes.arrayBuffer());
+        }
+      } else {
+        const imgRes = await fetch(selectedImageUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!imgRes.ok) return null;
+        buffer = Buffer.from(await imgRes.arrayBuffer());
+      }
 
       const hash = crypto.createHash('sha256').update(buffer).digest('hex');
       if (rejectedHashes.has(hash)) {
@@ -1124,17 +1395,23 @@ export class CatalogImageService {
 
       const relPath = `/products/${filename}`;
 
+      let imageType = 'combined';
+      if (selectedFace === 'combo-stitched' || selectedFace === 'combo') imageType = 'combined';
+      else if (selectedFace.includes('back')) imageType = 'back';
+      else if (selectedFace.includes('box')) imageType = 'box';
+      else if (selectedFace === 'front') imageType = 'front';
+
       const isActive = matchResult.verificationStatus === 'HIGH_CONFIDENCE' ? 1 : 0;
       if (isActive === 1) {
-        await db.run('UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?', [med.id]);
+        await db.run('UPDATE catalog_images SET is_active = 0, is_primary = 0 WHERE medicine_id = ?', [med.id]);
       }
 
       const insertRes = await db.run(
         `INSERT INTO catalog_images (
            medicine_id, company_name, product_name, image_path, thumbnail_path,
            image_source, source_url, image_hash, confidence_score, matching_method,
-           verification_status, verification_reason, is_active, retry_count
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?)`,
+           verification_status, verification_reason, is_active, retry_count, image_type, is_primary
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_multi_signal', ?, ?, ?, ?, ?, ?)`,
         [
           med.id,
           med.manufacturer || null,
@@ -1148,7 +1425,9 @@ export class CatalogImageService {
           matchResult.verificationStatus,
           matchResult.reason,
           isActive,
-          retryCount
+          retryCount,
+          imageType,
+          isActive
         ]
       );
 
@@ -1892,6 +2171,7 @@ export class CatalogImageService {
         const queries = this.generateAccurateQueries(med.name, med.manufacturer);
         let matchedCandidate: any = null;
         let matchedImageUrl: string | null = null;
+        let matchedStitchSecondaryUrl: string | undefined = undefined;
         let bestScoreResult: MatchScoreResult | null = null;
 
         // Query rejections blacklist
@@ -1914,26 +2194,32 @@ export class CatalogImageService {
             const products = json?.data?.products || [];
 
             for (const prod of products) {
-              const damImages = prod.damImages || [];
-              const frontImg = damImages.find((img: any) => img.face === 'front' || img.face === 'box-front' || img.face === 'default') || (prod.image ? { url: prod.image } : null);
-              if (!frontImg || !frontImg.url) continue;
-
-              const candidateUrl = frontImg.url.split('?')[0];
-              if (rejectedUrls.has(candidateUrl)) continue;
-
               const matchRes = this.computeConfidence(med, {
                 name: prod.name,
                 manufacturer: prod.manufacturer
               });
 
-              // Strictly reject brand mismatches or strength conflicts
-              if (matchRes.verificationStatus === 'REJECTED' || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict) {
+              // Strictly reject brand mismatches, strength conflicts, or formulation modifier conflicts
+              if (
+                matchRes.verificationStatus === 'REJECTED' ||
+                !matchRes.signals.brandMatch ||
+                matchRes.signals.strengthConflict ||
+                matchRes.signals.modifierConflict
+              ) {
                 continue;
               }
+
+              const damImages = prod.damImages || [];
+              const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
+              if (!bestFace || !bestFace.url) continue;
+
+              const candidateUrl = bestFace.url.split('?')[0];
+              if (rejectedUrls.has(candidateUrl)) continue;
 
               if (matchRes.confidenceScore >= 75) {
                 matchedCandidate = prod;
                 matchedImageUrl = candidateUrl;
+                matchedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
                 bestScoreResult = matchRes;
                 break;
               }
@@ -1967,17 +2253,44 @@ export class CatalogImageService {
         const frontendPath = path.join(frontendDir, filename);
         const uploadsPath = path.join(uploadsDir, filename);
 
-        const imgRes = await fetch(matchedImageUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: AbortSignal.timeout(8000)
-        });
-        if (!imgRes.ok) {
-          failed++;
-          results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
-          continue;
+        let buffer: Buffer;
+        if (matchedStitchSecondaryUrl) {
+          try {
+            const [res1, res2] = await Promise.all([
+              fetch(matchedImageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) }),
+              fetch(matchedStitchSecondaryUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) })
+            ]);
+            if (res1.ok && res2.ok) {
+              const [b1, b2] = [Buffer.from(await res1.arrayBuffer()), Buffer.from(await res2.arrayBuffer())];
+              buffer = await this.stitchImagesSideBySide(b1, b2);
+            } else if (res1.ok) {
+              buffer = Buffer.from(await res1.arrayBuffer());
+            } else {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
+              continue;
+            }
+          } catch (_) {
+            const res1 = await fetch(matchedImageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) });
+            if (!res1.ok) {
+              failed++;
+              results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
+              continue;
+            }
+            buffer = Buffer.from(await res1.arrayBuffer());
+          }
+        } else {
+          const imgRes = await fetch(matchedImageUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(8000)
+          });
+          if (!imgRes.ok) {
+            failed++;
+            results.push({ medicine_id: med.id, name: med.name, status: 'DOWNLOAD_FAILED' });
+            continue;
+          }
+          buffer = Buffer.from(await imgRes.arrayBuffer());
         }
-
-        const buffer = Buffer.from(await imgRes.arrayBuffer());
         const hash = crypto.createHash('sha256').update(buffer).digest('hex');
         if (rejectedHashes.has(hash)) {
           failed++;

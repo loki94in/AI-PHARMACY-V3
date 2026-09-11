@@ -1064,6 +1064,9 @@ router.post('/prescription-request', async (req, res) => {
       customer_name,
       customer_phone,
       medicine_name,
+      dosage_form,
+      company_name,
+      pack_size,
       mrp,
       estimated_mrp,
       notes,
@@ -1126,9 +1129,15 @@ router.post('/prescription-request', async (req, res) => {
     const db = await dbManager.getConnection();
     const medRequested = (medicine_name || '').trim() || 'Prescription / Medicine Inquiry';
     const notesText = (notes || '').trim();
+    const structuredMeta: string[] = [];
+    if (dosage_form) structuredMeta.push(`Type: ${dosage_form}`);
+    if (pack_size) structuredMeta.push(`Pack: ${pack_size}`);
+    if (company_name) structuredMeta.push(`Company: ${company_name}`);
+    if (parsedMrp) structuredMeta.push(`Approx MRP: ₹${parsedMrp.toFixed(2)}`);
+
     const finalNotes = [
       notesText,
-      parsedMrp ? `Approx MRP: ₹${parsedMrp.toFixed(2)}` : ''
+      structuredMeta.length > 0 ? `[${structuredMeta.join(' • ')}]` : ''
     ].filter(Boolean).join(' | ') || 'Requested via Website Prescription / Photo Upload';
 
     // Insert order record into special_orders
@@ -1193,7 +1202,19 @@ router.post('/prescription-request', async (req, res) => {
       `📱 *Mobile:* ${cleanPhone}\n`;
 
     if (medRequested && medRequested !== 'Prescription / Medicine Inquiry') {
-      waText += `💊 *Requested Item:* ${medRequested}${parsedMrp ? ` (Approx MRP: ₹${parsedMrp.toFixed(2)})` : ''}\n`;
+      waText += `💊 *Medicine:* ${medRequested}\n`;
+    }
+    if (dosage_form) {
+      waText += `📦 *Type:* ${dosage_form}\n`;
+    }
+    if (pack_size) {
+      waText += `📏 *Pack Size:* ${pack_size}\n`;
+    }
+    if (company_name) {
+      waText += `🏢 *Company:* ${company_name}\n`;
+    }
+    if (parsedMrp) {
+      waText += `💰 *Approx MRP:* ₹${parsedMrp.toFixed(2)}\n`;
     }
     if (notesText) {
       waText += `📝 *Notes:* ${notesText}\n`;

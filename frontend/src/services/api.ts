@@ -1780,10 +1780,15 @@ export const api = {
     }>('/customer-portal/customer/refill-order', data, { headers: data.idempotency_key ? { 'idempotency-key': data.idempotency_key } : undefined }).then(res => res.data),
   changeCustomerPin: (data: { customer_id?: number; phone?: string; current_pin?: string; new_pin: string }) =>
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
+  analyzeImage: (image: string) =>
+    apiClient.post<any>('/ai-camera/analyze', { image }).then(res => res.data),
   submitPrescriptionRequest: (data: {
     customer_name: string;
     customer_phone: string;
     medicine_name?: string;
+    dosage_form?: string;
+    company_name?: string;
+    pack_size?: string;
     mrp?: number;
     notes?: string;
     image?: string;

@@ -2,9 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera, Upload, X, CheckCircle2, AlertCircle, RefreshCw,
   MessageSquare, ExternalLink, ArrowRight, Plus, Trash2, Images,
-  Store as StoreIcon, MapPin, ShieldCheck
+  Store as StoreIcon, MapPin, ShieldCheck, Sparkles, Pill, Check
 } from 'lucide-react';
 import { api } from '../services/api';
+
+const DOSAGE_FORM_OPTIONS = [
+  { key: 'TABLET', label: 'Tablet / Capsule', icon: '💊', sub: 'Solid strips (Dolo, Telma, Pan-D)' },
+  { key: 'SYRUP', label: 'Syrup / Liquid', icon: '🧴', sub: 'Liquid bottles (Cough Syp, Suspension)' },
+  { key: 'CREAM', label: 'Cream / Ointment', icon: '🩹', sub: 'Tubes (Volini, Betadine, Gel)' },
+  { key: 'DROPS', label: 'Eye / Ear Drops', icon: '💧', sub: 'Liquid drops (Ciplox, Refresh)' },
+  { key: 'INJECTION', label: 'Injection / Vial', icon: '💉', sub: 'Insulin, Vials, Syringes' },
+  { key: 'OTHER', label: 'Device / Other', icon: '📦', sub: 'Cotton, Bandage, Knee Cap' }
+];
 
 interface PrescriptionUploadModalProps {
   isOpen: boolean;
@@ -49,11 +58,22 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoItem[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number>(() => activeStore?.id || stores?.[0]?.id || 1);
   const [medicineName, setMedicineName] = useState(prefillMedicineName);
+  const [dosageForm, setDosageForm] = useState<string>('TABLET');
+  const [companyName, setCompanyName] = useState<string>('');
+  const [packSize, setPackSize] = useState<string>('');
   const [estimatedMrp, setEstimatedMrp] = useState('');
   const [patientName, setPatientName] = useState(prefillCustomerName);
   const [phone, setPhone] = useState(prefillCustomerPhone);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isScanningPhoto, setIsScanningPhoto] = useState(false);
+  const [aiDetectedCard, setAiDetectedCard] = useState<{
+    name?: string;
+    dosageForm?: string;
+    company?: string;
+    strength?: string;
+    confidence?: number;
+  } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [successResult, setSuccessResult] = useState<{
@@ -68,7 +88,12 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   useEffect(() => {
     if (isOpen) {
       setMedicineName(prefillMedicineName);
+      setDosageForm('TABLET');
+      setCompanyName('');
+      setPackSize('');
       setEstimatedMrp('');
+      setAiDetectedCard(null);
+      setIsScanningPhoto(false);
       if (prefillCustomerName) setPatientName(prefillCustomerName);
       if (prefillCustomerPhone) setPhone(prefillCustomerPhone);
       if (activeStore?.id) {
@@ -132,8 +157,58 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       return combined;
     });
 
+    // Auto-scan first uploaded photo with AI Camera
+    if (validPhotos.length > 0) {
+      autoScanFirstPhoto(validPhotos[0].file);
+    }
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const autoScanFirstPhoto = async (file: File) => {
+    try {
+      setIsScanningPhoto(true);
+      const b64 = await fileToBase64(file);
+      const res = await api.analyzeImage(b64);
+      if (res && (res.potentialName || res.rawText)) {
+        const detectedName = res.potentialName || '';
+        const detectedForm = res.detectedDosageForm || '';
+        const detectedStr = res.strength || '';
+        const detectedComp = res.company || res.detectedCompany || '';
+
+        setAiDetectedCard({
+          name: detectedName || 'Medicine Strip/Box',
+          dosageForm: detectedForm || 'TABLET',
+          company: detectedComp,
+          strength: detectedStr,
+          confidence: Math.round((res.confidence || 0.88) * 100)
+        });
+
+        if (detectedName) {
+          setMedicineName(detectedName);
+        }
+        if (detectedForm) {
+          const upper = detectedForm.toUpperCase();
+          if (upper.includes('TAB') || upper.includes('CAP')) setDosageForm('TABLET');
+          else if (upper.includes('SYP') || upper.includes('SUSP') || upper.includes('LIQUID')) setDosageForm('SYRUP');
+          else if (upper.includes('CREAM') || upper.includes('OINT') || upper.includes('GEL')) setDosageForm('CREAM');
+          else if (upper.includes('DROP')) setDosageForm('DROPS');
+          else if (upper.includes('INJ') || upper.includes('VIAL')) setDosageForm('INJECTION');
+          else setDosageForm('OTHER');
+        }
+        if (detectedComp) {
+          setCompanyName(detectedComp);
+        }
+        if (detectedStr) {
+          setPackSize(detectedStr);
+        }
+      }
+    } catch (scanErr) {
+      console.warn('[PrescriptionUploadModal] AI auto-scan notification:', scanErr);
+    } finally {
+      setIsScanningPhoto(false);
     }
   };
 
@@ -172,6 +247,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       }
     });
     setSelectedPhotos([]);
+    setAiDetectedCard(null);
+    setIsScanningPhoto(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -225,6 +302,9 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
         customer_name: trimmedName,
         customer_phone: cleanPhone,
         medicine_name: medicineName.trim() || undefined,
+        dosage_form: dosageForm || undefined,
+        company_name: companyName.trim() || undefined,
+        pack_size: packSize.trim() || undefined,
         mrp: (parsedMrp && !isNaN(parsedMrp)) ? parsedMrp : undefined,
         notes: notes.trim() || undefined,
         images: base64Images.length > 0 ? base64Images : undefined,
@@ -531,36 +611,176 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                 />
               </div>
 
-              {/* Medicine Name & Approx MRP */}
+              {/* AI Auto-Detection Card / Scanner */}
+              {isScanningPhoto && (
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2.5 animate-pulse text-xs text-emerald-700 font-semibold">
+                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                  <span>AI Scanning photo label... identifying medicine, type & company...</span>
+                </div>
+              )}
+
+              {aiDetectedCard && !isScanningPhoto && (
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-1.5 text-xs text-text">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold flex items-center gap-1 text-emerald-700">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>AI Auto-Detected from Photo:</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-800 text-[10px] font-bold">
+                      {aiDetectedCard.confidence}% Match
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-xs">
+                    <span className="font-bold text-text bg-bg px-2 py-1 rounded-lg border border-border">
+                      {aiDetectedCard.name || medicineName}
+                    </span>
+                    {aiDetectedCard.dosageForm && (
+                      <span className="text-muted bg-bg px-2 py-1 rounded-lg border border-border">
+                        Type: <strong className="text-text">{aiDetectedCard.dosageForm}</strong>
+                      </span>
+                    )}
+                    {aiDetectedCard.company && (
+                      <span className="text-muted bg-bg px-2 py-1 rounded-lg border border-border">
+                        Company: <strong className="text-text">{aiDetectedCard.company}</strong>
+                      </span>
+                    )}
+                    {aiDetectedCard.strength && (
+                      <span className="text-muted bg-bg px-2 py-1 rounded-lg border border-border">
+                        Pack: <strong className="text-text">{aiDetectedCard.strength}</strong>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted pt-0.5">
+                    Fields below have been auto-filled. You can adjust them anytime.
+                  </p>
+                </div>
+              )}
+
+              {/* Minimal 4-Field Layout (Easy for Anyone With Less Knowledge) */}
+              
+              {/* Field 1: Medicine / Product Name */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="modal-med-name" className="text-xs font-bold text-text flex items-center gap-1">
+                    <span>1. Medicine / Product Name</span>
+                    <span className="text-red-500 font-bold">*</span>
+                  </label>
+                  <span className="text-[11px] text-muted">e.g. Dolo 650, Augmentin, Pan-D</span>
+                </div>
+                <input
+                  id="modal-med-name"
+                  type="text"
+                  value={medicineName}
+                  onChange={e => setMedicineName(e.target.value)}
+                  placeholder="Type name (e.g. Dolo 650, Pan-D, Augmentin 625, Glycomet GP 1)"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs sm:text-sm text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors font-medium"
+                />
+                <p className="text-[10px] text-muted">
+                  💡 Type what is written on your strip, bottle or prescription.
+                </p>
+              </div>
+
+              {/* Field 2: Type / Dosage Form (1-Tap Selection) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-text flex items-center gap-1">
+                    <span>2. Type of Medicine</span>
+                    <span className="text-red-500 font-bold">*</span>
+                  </label>
+                  <span className="text-[11px] text-muted">1-Tap Selection</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {DOSAGE_FORM_OPTIONS.map(opt => {
+                    const isSelected = dosageForm === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setDosageForm(opt.key)}
+                        className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-primary/10 border-primary shadow-xs ring-1 ring-primary/30'
+                            : 'bg-bg border-border hover:border-primary/50 hover:bg-bg3/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-base">{opt.icon}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-primary" />}
+                        </div>
+                        <div className="mt-1">
+                          <div className={`text-xs font-bold ${isSelected ? 'text-primary' : 'text-text'}`}>
+                            {opt.label}
+                          </div>
+                          <div className="text-[9px] text-muted truncate mt-0.5">
+                            {opt.sub}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted">
+                  💡 Tap 💊 Tablet for solid strips, or 🧴 Syrup for liquid bottles.
+                </p>
+              </div>
+
+              {/* Fields 3 & 4: Company & Pack Size (Optional) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Field 3: Company Name */}
                 <div className="space-y-1">
-                  <label htmlFor="modal-med-name" className="text-xs font-bold text-text">
-                    Medicine / Item Name <span className="font-normal text-muted">(Optional if in photo)</span>
+                  <label htmlFor="modal-company-name" className="text-xs font-bold text-text flex items-center justify-between">
+                    <span>3. Company / Brand</span>
+                    <span className="font-normal text-muted text-[11px]">(Optional)</span>
                   </label>
                   <input
-                    id="modal-med-name"
+                    id="modal-company-name"
                     type="text"
-                    value={medicineName}
-                    onChange={e => setMedicineName(e.target.value)}
-                    placeholder="e.g. Benadryl DR Syrup, Glycomet GP 1"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    placeholder="e.g. Cipla, Sun Pharma, Micro Labs"
+                    className="w-full px-3.5 py-2 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
                   />
+                  <p className="text-[10px] text-muted">
+                    💡 Leave blank if you don't know the company.
+                  </p>
                 </div>
+
+                {/* Field 4: Pack Size */}
                 <div className="space-y-1">
-                  <label htmlFor="modal-med-mrp" className="text-xs font-bold text-text">
-                    Approx. MRP (₹) <span className="font-normal text-muted">(Optional)</span>
+                  <label htmlFor="modal-pack-size" className="text-xs font-bold text-text flex items-center justify-between">
+                    <span>4. Pack Size / Packing</span>
+                    <span className="font-normal text-muted text-[11px]">(Optional)</span>
                   </label>
                   <input
-                    id="modal-med-mrp"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={estimatedMrp}
-                    onChange={e => setEstimatedMrp(e.target.value)}
-                    placeholder="e.g. 135"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
+                    id="modal-pack-size"
+                    type="text"
+                    value={packSize}
+                    onChange={e => setPackSize(e.target.value)}
+                    placeholder="e.g. 10 Tablets, 15 Tab, 100ml, 30g"
+                    className="w-full px-3.5 py-2 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
                   />
+                  <p className="text-[10px] text-muted">
+                    💡 Leave blank for standard 1 pack.
+                  </p>
                 </div>
+              </div>
+
+              {/* Optional MRP */}
+              <div className="space-y-1">
+                <label htmlFor="modal-med-mrp" className="text-xs font-bold text-text flex items-center justify-between">
+                  <span>Approx. MRP / Budget (₹)</span>
+                  <span className="font-normal text-muted text-[11px]">(Optional)</span>
+                </label>
+                <input
+                  id="modal-med-mrp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={estimatedMrp}
+                  onChange={e => setEstimatedMrp(e.target.value)}
+                  placeholder="e.g. 135"
+                  className="w-full px-3.5 py-2 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
+                />
               </div>
 
               {/* Patient Details Row */}

@@ -184,7 +184,8 @@ const GENERIC_CATEGORY_WORDS = new Set([
   'gloves', 'mask', 'powder', 'soap', 'cream', 'oil', 'gel', 'shampoo', 'lotion',
   'drops', 'syrup', 'tablet', 'capsule', 'injection', 'hot', 'cold', 'digital',
   'test', 'kit', 'strip', 'blood', 'bp', 'pulse', 'balm', 'diaper', 'sanitary',
-  'pad', 'pads', 'roll', 'wool', 'needle', 'syringe', 'wipes', 'tape', 'paste'
+  'pad', 'pads', 'roll', 'wool', 'needle', 'syringe', 'wipes', 'tape', 'paste',
+  'insulin', 'saline', 'dextrose'
 ]);
 
 // Check if candidate product is a genuine brand match
@@ -217,6 +218,10 @@ function isBrandMatch(query, candidateName) {
 function hasDosageConflict(query, candidateName) {
   const q = query.toLowerCase();
   const c = candidateName.toLowerCase();
+  const isQDevice = /\b(syringe|syrange|syr|needle|cannula|catheter|iv set|infusion set|lancet|scalp vein|surgical|dispovan)\b/.test(q);
+  const isCDevice = /\b(syringe|syrange|syr|needle|cannula|catheter|iv set|infusion set|lancet|scalp vein|surgical|dispovan)\b/.test(c);
+  if (isQDevice !== isCDevice) return true;
+
   const isQSyrup = /\b(syp|syrup|susp|suspension)\b/.test(q);
   const isQTab = /\b(tab|tablet|tablets|dt)\b/.test(q);
   const isQCap = /\b(cap|capsule|capsules)\b/.test(q);
@@ -233,6 +238,36 @@ function hasDosageConflict(query, candidateName) {
   if (isQTab && (isCSyp || isCInj || isCTop)) return true;
   if (isQCap && (isCSyp || isCInj || isCTop)) return true;
   if (isQInj && (isCTab || isCCap || isCSyp)) return true;
+  return false;
+}
+
+const FORMULATION_MODIFIERS = new Set([
+  'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
+  'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
+  'LP', 'CV', 'KT', 'COLD', 'FLU',
+  'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
+  'DT', 'MD', 'SL', 'OD'
+]);
+
+function hasFormulationModifierConflict(name1, name2) {
+  if (!name1 || !name2) return false;
+  const extractMods = (str) => {
+    const clean = str.toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
+    const words = clean.split(/\s+/).filter(Boolean);
+    const found = new Set();
+    for (const w of words) {
+      if (FORMULATION_MODIFIERS.has(w)) found.add(w);
+    }
+    return found;
+  };
+  const m1 = extractMods(name1);
+  const m2 = extractMods(name2);
+  if (m1.size === 0 && m2.size === 0) return false;
+  if (m1.size === 0 && m2.size > 0) return true;
+  if (m2.size === 0 && m1.size > 0) return true;
+  for (const m of m1) {
+    if (!m2.has(m)) return true;
+  }
   return false;
 }
 
@@ -255,12 +290,13 @@ async function fetchImagesForMedicine(query) {
   const prods = data?.data?.products || [];
   if (prods.length === 0) return null;
 
-  // Filter candidates that have images AND genuinely match the brand without dosage conflict
+  // Filter candidates that have images AND genuinely match the brand without dosage or modifier conflict
   const candidatesWithImages = prods.filter(c => {
     const hasImg = (c.damImages && c.damImages.length > 0) || Boolean(c.image);
     if (!hasImg) return false;
     if (!isBrandMatch(query, c.name)) return false;
     if (hasDosageConflict(query, c.name)) return false;
+    if (hasFormulationModifierConflict(query, c.name)) return false;
     return true;
   });
 
