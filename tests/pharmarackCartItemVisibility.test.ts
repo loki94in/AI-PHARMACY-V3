@@ -22,6 +22,8 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => true),
   downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
 }));
 
@@ -136,5 +138,25 @@ describe('Pharmarack Cart Item Visibility & Selective Dispatch Tests', () => {
     expect(Array.isArray(res.body.dates)).toBe(true);
     expect(res.body.dates.length).toBeGreaterThanOrEqual(1);
     expect(res.body.dates).toContain(today);
+  });
+
+  test('4. GET /api/pharmarack/sent-orders/latest-map excludes orders older than 3 days', async () => {
+    const db = await dbManager.getConnection();
+    const fourDaysAgoMs = Date.now() - (4 * 24 * 60 * 60 * 1000);
+    const fourDaysAgoDate = new Date(fourDaysAgoMs).toISOString().split('T')[0];
+
+    await db.run(`
+      INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, placed_at, items_json)
+      VALUES (?, 404, 'Old Distributor 404', ?, ?)
+    `, [
+      fourDaysAgoDate,
+      fourDaysAgoMs,
+      JSON.stringify([{ productCode: 'P-404', productName: 'Old Medicine 500mg', qty: 5 }])
+    ]);
+
+    const res = await request(app).get('/api/pharmarack/sent-orders/latest-map');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.sentMap['404']).toBeUndefined();
   });
 });

@@ -2003,8 +2003,14 @@ router.get('/sent-orders', async (req, res) => {
 router.get('/sent-orders/latest-map', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
+    // Only check past orders placed within the last 3 days (72 hours)
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - THREE_DAYS_MS;
     const rows = await db.all(
-      `SELECT * FROM pharmarack_placed_orders ORDER BY placed_at DESC`
+      `SELECT * FROM pharmarack_placed_orders 
+       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
+       ORDER BY placed_at DESC`,
+      [cutoff]
     );
 
     const sentMap: Record<string, { storeId: number | null; storeName: string; placedAt: number; items: any[] }> = {};
@@ -2022,7 +2028,9 @@ router.get('/sent-orders/latest-map', async (req, res) => {
         productName: i.productName || i.product || i.name || '',
         qty: i.qty || i.quantity || 1,
         placedAt: Number(i.placedAt || i.placed_at || placedAt || 0)
-      }));
+      })).filter((i: any) => i.placedAt >= cutoff);
+
+      if (parsedItems.length === 0) return;
 
       const updateKey = (key: string) => {
         if (!key) return;

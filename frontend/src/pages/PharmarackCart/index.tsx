@@ -608,6 +608,12 @@ export default function PharmarackCart() {
     const placedDate = new Date(placedTimestamp);
     const now = new Date();
 
+    // Check past orders within the last 3 days only (72 hours)
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    if (now.getTime() - placedTimestamp > THREE_DAYS_MS) {
+      return { isPastOrdered: false, placedAt: 0, placedDateStr: '', isToday: false, isYesterday: false };
+    }
+
     const isToday = placedDate.getFullYear() === now.getFullYear() &&
       placedDate.getMonth() === now.getMonth() &&
       placedDate.getDate() === now.getDate();
