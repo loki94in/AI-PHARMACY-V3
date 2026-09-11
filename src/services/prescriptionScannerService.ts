@@ -329,14 +329,19 @@ class PrescriptionScannerService {
         targetStrength = strengthMatches[strengthMatches.length - 1];
       }
 
-      // Brand token extraction
-      const cleanedText = norm
-        .replace(/\b(th\.?|tb\.?|tab\.?|tablet|cap\.?|capsule|inj\.?|syp\.?)\b/gi, ' ')
-        .replace(/\(\d+\)/g, ' ')
+      // Brand token extraction (de-glue numbers & letters e.g. Dolo650 -> Dolo 650)
+      const deGlued = norm
+        .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+        .replace(/(\d)([a-zA-Z])/g, '$1 $2');
+
+      const cleanedText = deGlued
+        .replace(/\b(th\.?|tb\.?|tab\.?|tablet|tablets|cap\.?|capsule|capsules|sus\.?|susp\.?|suspension|syp\.?|syr\.?|syrup|inj\.?|injection|inf\.?|drop|drops?|drp|drps|vati|bhasma|churna|kwath|taila|asav|arishta|ras|guggulu|oint\.?|ointment|gel|cream|lotion)\b/gi, ' ')
+        .replace(/\b(1-0-1|1-1-1|0-1-0|1-0-0|0-0-1|od|bd|tds|qid|hs|sos|stat|po|prn|ac|pc|daily)\b/gi, ' ')
+        .replace(/\(\d+\)|\bx\s*\d+\b/g, ' ')
         .replace(/[^a-zA-Z0-9]/g, ' ')
         .trim();
 
-      const tokens = cleanedText.split(/\s+/).filter(t => t.length >= 2 && !/^(mg|gm|ml|iu|tab|cap)$/i.test(t));
+      const tokens = cleanedText.split(/\s+/).filter(t => t.length >= 2 && !/^(mg|gm|ml|iu|tab|cap|sus|syp)$/i.test(t));
       const brandTokens = tokens.filter(t => !/^\d+k?$/i.test(t));
 
       // Try tokens to find the best database match (avoiding leading noise tokens like 'Ae', 'uN')

@@ -11,6 +11,7 @@ import {
 import { isPlausibleMedicineName } from './intentKeywords.js';
 import { onnxOcrService } from './onnxOcrService.js';
 import { onlineDataEnricher } from './onlineDataEnricher.js';
+import { visualIndexService } from './visualIndexService.js';
 import { dbManager } from '../database/connection.js';
 import fs from 'fs';
 import path from 'path';
@@ -205,10 +206,12 @@ class AICameraService {
     // English function / filler words
     'the','of','is','a','an','and','or','for','in','on','at','to','by','with',
     'be','are','was','not','this','that','from','as','it','its',
-    // Pharma label noise
-    'tab','tablet','tablets','cap','capsule','capsules','syp','syrup',
-    'inj','injection','drops','cream','gel','ointment','lotion','powder',
-    'spray','inhaler','sachet','solution','suspension',
+    // Pharma label noise & dosage forms
+    'tab','tabs','tb','th','tablet','tablets','cap','caps','capsule','capsules',
+    'syp','syr','syrup','sus','susp','suspension','inj','injection','inf','infusion',
+    'drops','drop','drp','drps','cream','crm','gel','ointment','oint','lotion','powder',
+    'spray','inhaler','sachet','solution','vati','bhasma','churna','kwath','taila',
+    'asav','arishta','ras','guggulu','avaleha','respules','rotacap','rotacaps',
     'mg','ml','mcg','g','iu','gm','kg','mm','cm',
     'mrp','mfg','exp','batch','lot','no','nos','each','qty',
     'manufactured','marketed','distributed','by','pvt','ltd','inc',
@@ -230,11 +233,37 @@ class AICameraService {
   ]);
 
   /**
+   * Checks if an OCR line is a chemical composition declaration, pharmacopoeia reference,
+   * regulatory warning, storage direction, or batch/manufacturing line.
+   * Such lines must NEVER be used as the brand name search query.
+   */
+  public isPackagingOrCompositionLine(line: string): boolean {
+    const l = line.toLowerCase();
+    // 1. Pharmacopoeia standards & chemical salt markers (I.P., B.P., U.S.P.)
+    if (/\b(i\.?p\.?|b\.?p\.?|u\.?s\.?p\.?|1\.?p\.?)\b/i.test(l)) return true;
+    
+    // 2. Composition declarations & chemical formulations
+    if (/^(each\s+|composition|contains|active\s+ingredient|contents?|formulation)/i.test(l)) return true;
+    if (/\b(equivalent\s*to|anhydrous|trihydrate|hydrochloride|hcl|maleate|succinate|potassium|sodium|fumarate|mesylate|sulphate|sulfate|acetate|phosphate|nitrate|citrate|lactate|tartrate)\b/i.test(l)) return true;
+    
+    // 3. Regulatory & Warning text
+    if (/\b(schedule\s+[a-z]|prescription\s+drug|warning|caution|for\s+retail|not\s+to\s+be\s+sold|for\s+external\s+use|for\s+oral\s+use|keep\s+out\s+of\s+reach|children)\b/i.test(l)) return true;
+    
+    // 4. Storage & Directions
+    if (/\b(store\s+in|cool\s*dry|protect\s+from|temperature|exceeding|as\s+directed\s+by|physician|dosage)\b/i.test(l)) return true;
+    
+    // 5. Manufacturing & Batch details
+    if (/\b(mfg\.?\s*lic|batch\s*no|b\.?\s*no|exp\.?\s*date|m\.?r\.?p|inclusive\s+of|marketed\s+by|manufactured\s+by|mkt\.?\s*by|mfd\.?\s*by)\b/i.test(l)) return true;
+
+    return false;
+  }
+
+  /**
    * Returns candidate search tokens from an OCR text line by:
    * 1. Splitting into words
    * 2. Stripping leading/trailing punctuation and non-alphanumeric noise (e.g. 3%% -> 3, (baclof) -> baclof)
-   * 3. Removing stop words, single-char tokens, pure-numeric tokens, and pharmacopoeia markers
-   * Only the remaining "uncertain" / unknown words are worth fuzzy-matching.
+   * 3. Removing stop words, single-char tokens, pure-numeric tokens, pharmacopoeia markers, and active chemical ingredients (KNOWN_APIS)
+   * Only the remaining "uncertain" / brand words are worth fuzzy-matching.
    */
   private extractCandidateTokens(line: string): string[] {
     return line
@@ -244,6 +273,7 @@ class AICameraService {
         if (w.length < 3) return false;
         if (this.STOP_WORDS.has(w)) return false;
         if (this.KNOWN_COMPANIES.has(w)) return false; // company name is not a product name
+        if (this.KNOWN_APIS.has(w)) return false;     // active pharmaceutical ingredient (chemical salt) is NOT a brand name!
         if (/^\d+[%a-z]*$/i.test(w)) return false;
         if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
         // filter pure company alias singletons (e.g. cipla, sun) even if not in KNOWN_COMPANIES due to casing
@@ -466,84 +496,100 @@ class AICameraService {
       }
     }
 
-    // --- Step 1: Skip fuzzy scan if a known API/composition is already present ---
-    // If the label already shows a composition like "Paracetamol 500mg", the API
-    // text itself identifies the medicine — no need to run the expensive fuzzy scan.
+    // Visual pre-check against the 11,661 verified catalog images (pHash Hamming <= 10)
+    let visualHitName: string | null = null;
+    try {
+      const queryPhash = await visualIndexService.computePhashFromBuffer(processedBuffer);
+      if (queryPhash) {
+        const visualHits = await visualIndexService.searchByPhash(queryPhash, 1, 10);
+        if (visualHits.length > 0) {
+          visualHitName = visualHits[0].product_name;
+          console.log(`[AiCamera] Direct visual match found in verified gallery: "${visualHitName}" (Hamming distance: ${visualHits[0].distance})`);
+        }
+      }
+    } catch (visErr) {
+      console.warn('[AiCamera] Visual index pre-check failed (non-blocking):', visErr);
+    }
+
+    // --- Step 1: Detect known API/composition for medical intelligence (NOT as the search query!) ---
     let matches: string[] = [];
     const detectedApiText = await this.detectKnownApi(localOcrResult.text);
     if (detectedApiText) {
-      console.log(`[AiCamera] Known API detected in OCR ("${detectedApiText}") — skipping fuzzy scan.`);
-      // Use the detected API text directly as the best match candidate
-      matches = [detectedApiText];
-    } else {
-      // --- Step 2: Fuzzy match — only on "uncertain" candidate tokens, not stop words ---
-      // Split text into lines, strip stop words from each line, then try the
-      // cleaned candidate line (not the full OCR blob) against the DB.
-      try {
-        await this.loadDatabaseIgnoreList();
-        
-        await productNameFilterService.initialize();
+      console.log(`[AiCamera] Active ingredient detected in OCR ("${detectedApiText}") — saved as composition metadata.`);
+    }
 
-        // Filter lines down to only those containing actual candidate (brand name) tokens
-        // Also exclude promotional banner lines (e.g. "FREE 50g HONEY", "BUY 1 GET 1", "SPECIAL OFFER")
-        const candidateLines = localOcrResult.text
-          .split('\n')
-          .map(l => l.trim())
-          .filter(l => l.length > 2 && l.length < 100)
-          .filter(l => !/\b(free\b|buy\s+\d+\s+get|special\s+offer|promo\s+pack|extra\s+\d+|save\s+rs)/i.test(l))
-          .map(line => ({ original: line, tokens: this.extractCandidateTokens(line) }))
-          .filter(item => item.tokens.length > 0);
+    if (visualHitName) {
+      // Visual match directly provides the unique verified brand name from catalog!
+      matches.push(visualHitName);
+    }
 
-        const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
-        let bestLineMatches: string[] = [];
-        let bestLineScore = 0;
+    // --- Step 2: Fuzzy match — only on brand candidate tokens, NOT chemical salts or packaging noise ---
+    // Split text into lines, strip stop words, composition text & packaging noise from each line, then try against DB.
+    try {
+      await this.loadDatabaseIgnoreList();
+      
+      await productNameFilterService.initialize();
 
-        for (const item of candidateLines) {
-          const cleanedLine = item.tokens.join(' ');
-          // Try the full cleaned line first (best for multi-word names)
-          const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
-            minConfidenceThreshold: 0.65,
-            dosageForm: detectedDosageForm || undefined,
-            rawOcrText: localOcrResult.text
-          });
+      // Filter lines down to only those containing actual candidate (brand name) tokens.
+      // Exclude composition lines, pharmacopoeia lines, storage/warnings, and promo lines.
+      const candidateLines = localOcrResult.text
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 2 && l.length < 100)
+        .filter(l => !/\b(free\b|buy\s+\d+\s+get|special\s+offer|promo\s+pack|extra\s+\d+|save\s+rs)/i.test(l))
+        .filter(l => !this.isPackagingOrCompositionLine(l))
+        .map(line => ({ original: line, tokens: this.extractCandidateTokens(line) }))
+        .filter(item => item.tokens.length > 0);
 
-          const lineScore = filterResult.topScore ?? 0;
-          if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
-            bestLineScore = lineScore;
-            bestLineMatches = filterResult.matches;
-            if (bestLineScore >= 0.88) {
-              break;
-            }
+      const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
+      let bestLineMatches: string[] = [];
+      let bestLineScore = 0;
+
+      for (const item of candidateLines) {
+        const cleanedLine = item.tokens.join(' ');
+        // Try the full cleaned line first (best for multi-word names)
+        const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
+          minConfidenceThreshold: 0.65,
+          dosageForm: detectedDosageForm || undefined,
+          rawOcrText: localOcrResult.text
+        });
+
+        const lineScore = filterResult.topScore ?? 0;
+        if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
+          bestLineScore = lineScore;
+          bestLineMatches = filterResult.matches;
+          if (bestLineScore >= 0.88) {
+            break;
           }
         }
-
-        if (bestLineMatches.length > 0) {
-          matches = bestLineMatches;
-        } else {
-          // If the line-level query found nothing, try individual uncertain tokens
-          // (handles cases where only one word in the line is the product name)
-          for (const item of candidateLines) {
-            for (const token of item.tokens) {
-              if (token.length < 4) continue; // skip very short tokens
-              const tokenResult = await productNameFilterService.filterProductNames(token, {
-                minConfidenceThreshold: 0.7,
-                dosageForm: detectedDosageForm || undefined,
-                rawOcrText: localOcrResult.text
-              });
-              const tokenScore = tokenResult.topScore ?? 0;
-              if (tokenResult.matches.length > 0 && tokenScore > bestLineScore) {
-                bestLineScore = tokenScore;
-                bestLineMatches = tokenResult.matches;
-                if (bestLineScore >= 0.88) break;
-              }
-            }
-            if (bestLineMatches.length > 0) break;
-          }
-          matches = bestLineMatches;
-        }
-      } catch (err: any) {
-        console.error('[AiCamera] Fuzzy match failed:', err);
       }
+
+      if (bestLineMatches.length > 0) {
+        if (!visualHitName) matches = bestLineMatches;
+      } else if (!visualHitName) {
+        // If the line-level query found nothing, try individual uncertain tokens
+        // (handles cases where only one word in the line is the product name)
+        for (const item of candidateLines) {
+          for (const token of item.tokens) {
+            if (token.length < 4) continue; // skip very short tokens
+            const tokenResult = await productNameFilterService.filterProductNames(token, {
+              minConfidenceThreshold: 0.7,
+              dosageForm: detectedDosageForm || undefined,
+              rawOcrText: localOcrResult.text
+            });
+            const tokenScore = tokenResult.topScore ?? 0;
+            if (tokenResult.matches.length > 0 && tokenScore > bestLineScore) {
+              bestLineScore = tokenScore;
+              bestLineMatches = tokenResult.matches;
+              if (bestLineScore >= 0.88) break;
+            }
+          }
+          if (bestLineMatches.length > 0) break;
+        }
+        matches = bestLineMatches;
+      }
+    } catch (err: any) {
+      console.error('[AiCamera] Fuzzy match failed:', err);
     }
 
     // 3. Save unrecognized images for pharmacist audit
@@ -574,6 +620,7 @@ class AICameraService {
           return { line, joined: toks.join(' ') };
         })
         .filter(c => c.joined.length > 0 && isPlausibleMedicineName(c.joined))
+        .filter(c => !this.isPackagingOrCompositionLine(c.line))
         .filter(c => !/\b(free\b|offer\b|bogo|combo|promo|extra\s+\d+|save\s+rs|special\s+offer)/i.test(c.line));
       if (cands.length > 0) {
         // Score each candidate line. A real brand name is usually a single
@@ -653,15 +700,18 @@ class AICameraService {
       }
     }
 
-    const rawName = matches.length > 0 ? matches[0] : brandName;
-    // Resolve the API/brand fragment to the canonical generic tablet name so the
-    // scan carries the proper medicine name (e.g. "ithromycin" → "Azithromycin"),
-    // not just the raw OCR token.
+    const rawName = visualHitName || (matches.length > 0 ? matches[0] : brandName);
+    // Resolve chemical API/salt for composition intelligence while keeping potentialName as the UNIQUE BRAND NAME
     await this.ensureApiMap();
     const resolvedGeneric = rawName ? this.resolveGenericName(rawName) : null;
-    finalInfo.apiName = rawName || undefined;
-    finalInfo.genericName = resolvedGeneric || undefined;
-    finalInfo.potentialName = resolvedGeneric || rawName;
+    if (detectedApiText) {
+      finalInfo.composition = detectedApiText;
+    }
+    finalInfo.apiName = detectedApiText || resolvedGeneric || undefined;
+    finalInfo.genericName = resolvedGeneric || detectedApiText || undefined;
+    finalInfo.brandName = rawName;
+    // potentialName MUST BE THE UNIQUE BRAND NAME for Pharmarack and Inventory search!
+    finalInfo.potentialName = rawName;
 
     if (detectedDrugStrength.strength) {
       finalInfo.strength = detectedDrugStrength.strength;
