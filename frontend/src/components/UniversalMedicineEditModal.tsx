@@ -2,7 +2,7 @@ import React, { useState, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   X, Save, RefreshCw, AlertTriangle, Pill, Barcode, Tag, Database, Eye, Shield, 
-  Percent, Settings, Trash2, History
+  Percent, Settings, Trash2, History, RotateCcw
 } from 'lucide-react';
 import { api, type HistoryPrefillResult } from '../services/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -11,7 +11,7 @@ import { toastEvent } from '../services/events';
 import { parsePackSizeFromPackaging } from '../utils/packagingMatcher';
 import { useModalEscape } from '../services/keyboardShortcuts';
 
-const splitMedicineName = (name: string, packaging: string) => {
+const splitMedicineName = (name: string, packaging: string, fallbackType: string = 'TAB') => {
   const trimmedName = name.trim();
   const trimmedPkg = packaging.trim();
 
@@ -19,7 +19,7 @@ const splitMedicineName = (name: string, packaging: string) => {
   if (trimmedPkg && trimmedName.toLowerCase().endsWith(trimmedPkg.toLowerCase())) {
     nameWithoutPkg = trimmedName.substring(0, trimmedName.toLowerCase().lastIndexOf(trimmedPkg.toLowerCase())).trim();
   } else {
-    const packPatternRegex = /\b(\d+(?:x\d+)?)\s*([a-zA-Z'â€™]+)?\s*$/i;
+    const packPatternRegex = /\b(\d+(?:x\d+)?)\s*([a-zA-Z']+)?\s*$/i;
     const match = trimmedName.match(packPatternRegex);
     if (match) {
       nameWithoutPkg = trimmedName.substring(0, trimmedName.lastIndexOf(match[0])).trim();
@@ -27,7 +27,7 @@ const splitMedicineName = (name: string, packaging: string) => {
   }
 
   const commonTypes = ['TAB', 'CAP', 'STRIP', 'SUSPENSION', 'BOTTLE', 'VIAL', 'AMP', 'GEL', 'CREAM', 'INJ', 'OINT', 'SYP', 'SUSP', 'LIQ', 'DROP', 'DROPS', 'RESPULE', 'SACHET'];
-  let detectedType = 'TAB';
+  let detectedType = fallbackType;
   let baseName = nameWithoutPkg;
 
   for (const type of commonTypes) {
@@ -117,6 +117,123 @@ const ITEM_TYPE_PACKAGING_DEFAULTS: Record<string, ItemTypeDefaults> = {
     placeholder: 'e.g. 1 PIECE, 1 BOX, 1 PACK',
   },
 };
+
+export function detectDosageFormAndPack(
+  name: string, 
+  packaging: string, 
+  existingType?: string | null, 
+  existingPackSize?: number | string | null
+): {
+  item_type: string;
+  packType: string;
+  pack_unit: string;
+  pack_size: number;
+  allow_loose_sale: number;
+} {
+  const combined = `${name || ''} ${packaging || ''}`.toUpperCase();
+
+  // If explicit existingType is provided and is not the generic 'TABLET' fallback:
+  if (existingType && existingType !== 'TABLET' && ITEM_TYPE_PACKAGING_DEFAULTS[existingType.toUpperCase()]) {
+    const normType = existingType.toUpperCase();
+    const defaults = ITEM_TYPE_PACKAGING_DEFAULTS[normType];
+    const size = Number(existingPackSize) > 0 ? Number(existingPackSize) : (parsePackSizeFromPackaging(packaging) || defaults.pack_size);
+    return {
+      item_type: normType,
+      packType: defaults.packType,
+      pack_unit: defaults.pack_unit,
+      pack_size: size,
+      allow_loose_sale: defaults.allow_loose_sale
+    };
+  }
+
+  // 1. Detect SYRUP / SUSPENSION / LIQUID / DX
+  if (/\b(ML|LTR|LITER|LITRE|SYRUP|SYP|SUSP|SUSPENSION|LIQUID|LIQ|ELIXIR|EXPECTORANT|TONIC)\b/i.test(combined) || /\bDX\b/i.test(name || '')) {
+    return {
+      item_type: 'SYRUP',
+      packType: 'SYP',
+      pack_unit: 'BOTTLE',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // 2. Detect INJECTION / INFUSION
+  if (/\b(INJ|INJECTION|VIAL|AMP|AMPOULE|INFUSION|IV\s+FLUID)\b/i.test(combined)) {
+    return {
+      item_type: 'INJECTION',
+      packType: 'INJ',
+      pack_unit: 'VIAL',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // 3. Detect CREAM / OINTMENT / GEL
+  if (/\b(CREAM|OINT|OINTMENT|GEL|LOTION|TUBE|EMULSION|LINIMENT)\b/i.test(combined)) {
+    return {
+      item_type: 'CREAM',
+      packType: 'CREAM',
+      pack_unit: 'TUBE',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // 4. Detect DROPS
+  if (/\b(DROP|DROPS|EYE\s+DROP|EAR\s+DROP|NASAL)\b/i.test(combined)) {
+    return {
+      item_type: 'DROPS',
+      packType: 'DROP',
+      pack_unit: 'BOTTLE',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // 5. Detect CAPSULE
+  if (/\b(CAP|CAPS|CAPSULE|CAPSULES)\b/i.test(combined)) {
+    const size = Number(existingPackSize) > 0 ? Number(existingPackSize) : (parsePackSizeFromPackaging(packaging) || 10);
+    return {
+      item_type: 'CAPSULE',
+      packType: 'CAP',
+      pack_unit: 'CAP',
+      pack_size: size,
+      allow_loose_sale: 1
+    };
+  }
+
+  // 6. Detect POWDER / SACHET
+  if (/\b(SACHET|POWDER|GRANULES)\b/i.test(combined)) {
+    return {
+      item_type: 'POWDER',
+      packType: 'SACHET',
+      pack_unit: 'SACHET',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // 7. Detect RESPIRATORY / INHALER
+  if (/\b(RESPULE|RESPULES|INHALER|ROTACAP|ROTACAPS|TRANSCAP)\b/i.test(combined)) {
+    return {
+      item_type: 'DEVICE',
+      packType: 'RESPULE',
+      pack_unit: 'RESPULE',
+      pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : 1,
+      allow_loose_sale: 0
+    };
+  }
+
+  // Default to TABLET
+  const parsedSize = parsePackSizeFromPackaging(packaging) || 10;
+  return {
+    item_type: 'TABLET',
+    packType: 'TAB',
+    pack_unit: 'TAB',
+    pack_size: Number(existingPackSize) > 0 ? Number(existingPackSize) : parsedSize,
+    allow_loose_sale: 1
+  };
+}
 
 const compileMedicineName = (base: string, suffix: string, packaging: string): string => {
   const b = (base || '').trim();
@@ -304,6 +421,7 @@ export interface UniversalMedicineEditModalProps {
     hsn_code?: string;
     cgst_per?: number;
     sgst_per?: number;
+    igst_per?: number;
   } | null;
   onClose: () => void;
   onSave?: (savedMedicine?: LocalSavedMedicine) => void;
@@ -334,21 +452,26 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
   const [prefillDismissed, setPrefillDismissed] = useState(false);
 
   const [form, setForm] = useState<LocalUniversalMedicineForm>(() => {
-    const nameVal = initialData?.name || '';
-    const initialType = (ocrData?.dosageForm || initialData?.item_type || 'TABLET').toUpperCase();
-    const typeDefault = ITEM_TYPE_PACKAGING_DEFAULTS[initialType] || ITEM_TYPE_PACKAGING_DEFAULTS['TABLET'];
-    const packagingVal = initialData?.packaging || (isCreateMode ? typeDefault.packaging : '');
+    const nameVal = ocrData?.potentialName || initialData?.name || '';
+    const packagingVal = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
+    const detected = detectDosageFormAndPack(
+      nameVal,
+      packagingVal,
+      ocrData?.dosageForm || initialData?.item_type,
+      initialData?.pack_size
+    );
+    const typeDefault = ITEM_TYPE_PACKAGING_DEFAULTS[detected.item_type] || ITEM_TYPE_PACKAGING_DEFAULTS['TABLET'];
     const mrpVal = ocrData?.mrp ?? initialData?.mrp ?? '';
     const rateVal = ocrData?.rate ?? initialData?.rate ?? '';
     const sellPriceVal = ocrData?.sell_price ?? initialData?.sell_price ?? (mrpVal !== '' ? mrpVal : '');
 
     return {
-      name: ocrData?.potentialName || nameVal,
-      item_type: ocrData?.dosageForm || initialData?.item_type || 'TABLET',
+      name: nameVal,
+      item_type: detected.item_type,
       category: initialData?.category || 'Allopathy',
-      pack_unit: initialData?.pack_unit || typeDefault.pack_unit,
-      packaging: ocrData?.packaging || packagingVal,
-      pack_size: initialData?.pack_size ?? (parsePackSizeFromPackaging(ocrData?.packaging || packagingVal) || typeDefault.pack_size),
+      pack_unit: initialData?.pack_unit || detected.pack_unit,
+      packaging: packagingVal || typeDefault.packaging,
+      pack_size: detected.pack_size,
       therapeutic: initialData?.therapeutic || '',
       sub_therapeutic: initialData?.sub_therapeutic || '',
       schedule_type: initialData?.schedule_type || 'None',
@@ -361,7 +484,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       hsn_code: ocrData?.hsn_code || initialData?.hsn_code || '',
       cgst_per: ocrData?.cgst_per ?? initialData?.cgst_per ?? 6,
       sgst_per: ocrData?.sgst_per ?? initialData?.sgst_per ?? 6,
-      igst_per: initialData?.igst_per ?? 12,
+      igst_per: ocrData?.igst_per ?? initialData?.igst_per ?? 12,
       api_reference: initialData?.api_reference || '',
       mrp: mrpVal,
       rate: rateVal,
@@ -370,8 +493,8 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       reorder_level: initialData?.reorder_level ?? 10,
       max_stock_level: initialData?.max_stock_level ?? 500,
       rack_location: initialData?.rack_location || initialData?.rack || '',
-      is_loose: !!initialData?.is_loose,
-      allow_loose_sale: initialData?.allow_loose_sale !== undefined ? (initialData.allow_loose_sale ? 1 : 0) : 1,
+      is_loose: detected.allow_loose_sale === 1,
+      allow_loose_sale: detected.allow_loose_sale,
       disable_auto_barcode: !!initialData?.disable_auto_barcode,
       tb_medicine: !!initialData?.tb_medicine,
     };
@@ -379,6 +502,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
 
   const [inventoryId, setInventoryId] = useState<number | null>(null);
   const [totalStock, setTotalStock] = useState<number>(initialData?.quantity || 0);
+  const [masterRecord, setMasterRecord] = useState<any>(() => initialData ? { ...initialData } : null);
   const [mfgSuggestions, setMfgSuggestions] = useState<string[]>([]);
   const [showMfgSuggestions, setShowMfgSuggestions] = useState(false);
   const [mrkSuggestions, setMrkSuggestions] = useState<string[]>([]);
@@ -387,12 +511,14 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
   const [baseName, setBaseName] = useState(() => {
     const rawInitName = ocrData?.potentialName || initialData?.name || '';
     const rawInitPkg = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
-    return splitMedicineName(rawInitName, rawInitPkg).baseName;
+    const detected = detectDosageFormAndPack(rawInitName, rawInitPkg, ocrData?.dosageForm || initialData?.item_type, initialData?.pack_size);
+    return splitMedicineName(rawInitName, rawInitPkg, detected.packType).baseName;
   });
   const [packType, setPackType] = useState(() => {
     const rawInitName = ocrData?.potentialName || initialData?.name || '';
     const rawInitPkg = ocrData?.packaging || initialData?.packaging || (isCreateMode ? '10 TAB' : '');
-    return splitMedicineName(rawInitName, rawInitPkg).packType;
+    const detected = detectDosageFormAndPack(rawInitName, rawInitPkg, ocrData?.dosageForm || initialData?.item_type, initialData?.pack_size);
+    return splitMedicineName(rawInitName, rawInitPkg, detected.packType).packType;
   });
   const [isManualName, setIsManualName] = useState(false);
 
@@ -448,12 +574,19 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       setLoading(true);
     }
     api.getQuickEditMedicine(medicineId)
-      .then((data: LocalQuickEditResponse) => {
-        if (data && data.medicine) {
+      .then((data: any) => {
+        if (data?.medicine) {
           const med = data.medicine;
+          setMasterRecord(med);
           const nameVal = med.name || '';
           const packagingVal = med.packaging || '';
-          const parsed = splitMedicineName(nameVal, packagingVal);
+          const detected = detectDosageFormAndPack(
+            nameVal, 
+            packagingVal, 
+            ocrData?.dosageForm || med.item_type, 
+            med.pack_size
+          );
+          const parsed = splitMedicineName(nameVal, packagingVal, detected.packType);
           setBaseName(parsed.baseName);
           setPackType(parsed.packType);
           
@@ -465,13 +598,17 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
             } catch (_) {}
           }
 
-          const initialForm = {
+          const allowLoose = med.allow_loose_sale !== undefined 
+            ? (med.allow_loose_sale ? 1 : 0) 
+            : detected.allow_loose_sale;
+
+          const initialForm: LocalUniversalMedicineForm = {
             name: ocrData?.potentialName || nameVal,
-            item_type: ocrData?.dosageForm || med.item_type || 'TABLET',
+            item_type: detected.item_type,
             category: med.category || 'Allopathy',
-            pack_unit: med.pack_unit || 'TAB',
+            pack_unit: med.pack_unit || detected.pack_unit,
             packaging: ocrData?.packaging || packagingVal,
-            pack_size: med.pack_size ?? (parsePackSizeFromPackaging(packagingVal) || 1),
+            pack_size: detected.pack_size,
             therapeutic: med.therapeutic || '',
             sub_therapeutic: med.sub_therapeutic || '',
             schedule_type: med.schedule_type || 'None',
@@ -493,8 +630,8 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
             reorder_level: data.inventory?.reorder_level ?? 10,
             max_stock_level: med.max_stock_level ?? 500,
             rack_location: data.inventory?.rack_location || med.rack || '',
-            is_loose: med.allow_loose_sale !== undefined ? !!med.allow_loose_sale : isLooseVal,
-            allow_loose_sale: med.allow_loose_sale !== undefined ? (med.allow_loose_sale ? 1 : 0) : 1,
+            is_loose: allowLoose === 1,
+            allow_loose_sale: allowLoose,
             disable_auto_barcode: !!med.disable_auto_barcode,
             tb_medicine: !!med.tb_medicine,
           };
@@ -516,6 +653,46 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once per medicine; initialData/ocrData would restart mid-edit
   }, [medicineId, isCreateMode]);
+
+  const handleResetToMaster = () => {
+    if (!masterRecord) return;
+    const nameVal = masterRecord.name || '';
+    const packagingVal = masterRecord.packaging || '';
+    const detected = detectDosageFormAndPack(nameVal, packagingVal, masterRecord.item_type, masterRecord.pack_size);
+    const parsed = splitMedicineName(nameVal, packagingVal, detected.packType);
+    setBaseName(parsed.baseName);
+    setPackType(parsed.packType);
+    setIsManualName(false);
+    setForm(prev => ({
+      ...prev,
+      name: nameVal,
+      item_type: detected.item_type,
+      category: masterRecord.category || 'Allopathy',
+      pack_unit: masterRecord.pack_unit || detected.pack_unit,
+      packaging: packagingVal,
+      pack_size: detected.pack_size,
+      therapeutic: masterRecord.therapeutic || '',
+      sub_therapeutic: masterRecord.sub_therapeutic || '',
+      schedule_type: masterRecord.schedule_type || 'None',
+      generic_name: masterRecord.generic_name || '',
+      manufacturer: masterRecord.manufacturer || '',
+      marketed_by: masterRecord.marketed_by || '',
+      item_code: masterRecord.item_code || '',
+      short_code: masterRecord.short_code || '',
+      ucode: masterRecord.ucode || '',
+      hsn_code: masterRecord.hsn_code || '',
+      cgst_per: masterRecord.cgst_per ?? 6,
+      sgst_per: masterRecord.sgst_per ?? 6,
+      igst_per: masterRecord.igst_per ?? 12,
+      mrp: masterRecord.mrp || 0,
+      rate: masterRecord.rate || 0,
+      sell_price: masterRecord.sell_price !== null && masterRecord.sell_price !== undefined ? masterRecord.sell_price : '',
+      allow_loose_sale: masterRecord.allow_loose_sale !== undefined ? (masterRecord.allow_loose_sale ? 1 : 0) : detected.allow_loose_sale,
+      is_loose: detected.allow_loose_sale === 1,
+      rack_location: masterRecord.rack || prev.rack_location || '',
+    }));
+    toastEvent.trigger('Reset form to original Master Database values', 'info');
+  };
 
   // Universal Escape key dismissal
   useModalEscape(true, onClose);
@@ -727,7 +904,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
               <p className="text-xs text-muted mt-0.5">
                 {isCreateMode 
                   ? 'Form-Aware Packaging, Tax & Regulatory Compliance Master Profile'
-                  : `Medicine ID #${medicineId} â€¢ Form-Aware Packaging & Regulatory Compliance`}
+                  : `Medicine ID #${medicineId} • Form-Aware Packaging & Regulatory Compliance`}
               </p>
             </div>
           </div>
@@ -745,7 +922,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-2">
                 <Eye size={14} className="text-emerald-400" />
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400">Live Preview â€” Compiled Medicine Name</span>
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400">Live Preview — Compiled Medicine Name</span>
               </div>
               {isManualName ? (
                 <button
@@ -753,7 +930,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                   onClick={() => setIsManualName(false)}
                   className="text-[10px] text-amber-400 hover:underline flex items-center gap-1 font-bold"
                 >
-                  âœ Manual Override (Click to Re-sync)
+                  ✏️ Manual Override (Click to Re-sync)
                 </button>
               ) : (
                 <span className="text-[10px] text-emerald-400/80 font-medium">Auto-sync active</span>
@@ -762,6 +939,62 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
             <p className="text-lg font-black text-text tracking-tight break-words">
               {form.name || <span className="text-muted italic font-normal text-sm">Enter base name...</span>}
             </p>
+
+            {/* Master Database Record Transparency Reference Bar */}
+            {!isCreateMode && (masterRecord || initialData) && (
+              <div className="mt-2.5 pt-2.5 border-t border-glass-border/60 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1 text-[10px] font-extrabold text-muted uppercase tracking-wider mr-1">
+                    <Database size={12} className="text-primary" />
+                    <span>Master DB Record:</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-bg3 border border-glass-border text-text font-bold text-[11px]" title="Exact raw title stored in Master Database table">
+                    "{masterRecord?.name || initialData?.name || form.name}"
+                  </span>
+                  {(masterRecord?.packaging || initialData?.packaging) && (
+                    <span className="px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-400 font-mono font-bold text-[11px]" title="Raw packaging string in Master Database">
+                      📦 DB Pkg: {masterRecord?.packaging || initialData?.packaging}
+                    </span>
+                  )}
+                  <span className={`px-2 py-0.5 rounded-md border font-bold text-[11px] ${
+                    ['SYRUP', 'CREAM', 'INJECTION', 'DROPS'].includes(form.item_type)
+                      ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                      : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  }`} title="Form resolved from medicine name and packaging">
+                    🧪 Form: {form.item_type} ({form.pack_unit || 'UNIT'})
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono font-bold text-[11px]" title="Standard pack size">
+                    🔢 Pack: {form.pack_size || 1} {form.pack_unit || 'UNIT'}
+                  </span>
+                  {(masterRecord?.manufacturer || form.manufacturer) && (
+                    <span className="px-2 py-0.5 rounded-md bg-bg3 border border-glass-border text-muted text-[11px]" title="Manufacturer">
+                      🏭 {(masterRecord?.manufacturer || form.manufacturer).slice(0, 26)}
+                    </span>
+                  )}
+                  {(masterRecord?.generic_name || form.generic_name) && (
+                    <span className="px-2 py-0.5 rounded-md bg-bg3 border border-glass-border text-muted font-medium text-[11px] max-w-xs truncate" title={masterRecord?.generic_name || form.generic_name}>
+                      💊 {(masterRecord?.generic_name || form.generic_name).slice(0, 30)}
+                    </span>
+                  )}
+                  {totalStock > 0 && (
+                    <span className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/30 text-blue-400 font-bold text-[11px]" title="Total stock units in inventory">
+                      📊 In Stock: {totalStock}
+                    </span>
+                  )}
+                </div>
+
+                {masterRecord && (
+                  <button
+                    type="button"
+                    onClick={handleResetToMaster}
+                    className="text-[10px] text-muted hover:text-text hover:underline flex items-center gap-1 shrink-0 font-medium"
+                    title="Restore all fields to the original Master Database values"
+                  >
+                    <RotateCcw size={10} /> Reset to Master
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -817,7 +1050,14 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Base Name & Strength *</label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-muted">Base Name & Strength *</label>
+                        {masterRecord?.name && masterRecord.name !== baseName && (
+                          <span className="text-[10px] text-muted italic" title="Original name in database">
+                            DB: "{masterRecord.name}"
+                          </span>
+                        )}
+                      </div>
                       <input 
                         type="text" 
                         required 
@@ -829,7 +1069,14 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Item Type / Dosage Form</label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-semibold text-muted">Item Type / Dosage Form</label>
+                        {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type) && (
+                          <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
+                            Liquid / Non-Solid Unit
+                          </span>
+                        )}
+                      </div>
                       <select 
                         name="item_type" 
                         value={form.item_type || 'TABLET'} 
@@ -890,16 +1137,54 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                       <label className="block text-xs font-semibold text-muted mb-1.5">Custom Packaging Description</label>
                       <input 
                         type="text" 
-                        name="packaging"
+                        name="packaging" 
                         value={form.packaging || ''} 
                         onChange={(e) => {
                           const val = e.target.value;
                           const autoParsedSize = parsePackSizeFromPackaging(val);
+                          const isLikelyLiquid = /\b(ML|LTR|LITER|LITRE|SYRUP|SYP|SUSP|SUSPENSION|LIQUID|LIQ|ELIXIR|EXPECTORANT|TONIC)\b/i.test(val);
+                          const isLikelyTube = /\b(CREAM|OINT|OINTMENT|GEL|LOTION|TUBE)\b/i.test(val);
+                          const isLikelyInj = /\b(INJ|INJECTION|VIAL|AMP|AMPOULE)\b/i.test(val);
+                          const isLikelyDrops = /\b(DROP|DROPS|EYE\s+DROP|EAR\s+DROP)\b/i.test(val);
+
                           setForm(prev => {
+                            let nextPackSize = prev.pack_size;
+                            let nextItemType = prev.item_type;
+                            let nextPackUnit = prev.pack_unit;
+                            let nextAllowLoose = prev.allow_loose_sale;
+
+                            if (autoParsedSize) {
+                              nextPackSize = autoParsedSize;
+                            } else if (isLikelyLiquid || isLikelyTube || isLikelyInj || isLikelyDrops) {
+                              nextPackSize = 1;
+                              nextAllowLoose = 0;
+                              if (isLikelyLiquid && prev.item_type === 'TABLET') {
+                                nextItemType = 'SYRUP';
+                                nextPackUnit = 'BOTTLE';
+                                setPackType('SYP');
+                              } else if (isLikelyTube && prev.item_type === 'TABLET') {
+                                nextItemType = 'CREAM';
+                                nextPackUnit = 'TUBE';
+                                setPackType('CREAM');
+                              } else if (isLikelyInj && prev.item_type === 'TABLET') {
+                                nextItemType = 'INJECTION';
+                                nextPackUnit = 'VIAL';
+                                setPackType('INJ');
+                              } else if (isLikelyDrops && prev.item_type === 'TABLET') {
+                                nextItemType = 'DROPS';
+                                nextPackUnit = 'BOTTLE';
+                                setPackType('DROP');
+                              }
+                            }
+
                             const updated = {
                               ...prev,
                               packaging: val,
-                              ...(autoParsedSize ? { pack_size: autoParsedSize } : {})
+                              pack_size: nextPackSize,
+                              item_type: nextItemType,
+                              pack_unit: nextPackUnit,
+                              allow_loose_sale: nextAllowLoose,
+                              is_loose: nextAllowLoose === 1,
                             };
                             if (!isManualName) {
                               updated.name = compileMedicineName(baseName, packType, val);
@@ -913,25 +1198,46 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-muted mb-1.5">Units Per Strip / Pack Size (Calculation Standard) *</label>
+                      <label className="block text-xs font-semibold text-muted mb-1.5">
+                        {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type)
+                          ? 'Units Per Pack (1 for Bottle / Tube / Vial) *'
+                          : 'Units Per Strip / Pack Size (Calculation Standard) *'}
+                      </label>
                       <input 
                         type="number" 
                         name="pack_size" 
-                        min={1}
+                        min={1} 
                         value={form.pack_size !== undefined && form.pack_size !== null ? form.pack_size : ''} 
-                        onChange={handleChange}
-                        placeholder="e.g. 10"
-                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-mono font-bold focus:border-primary focus:outline-none"
+                        onChange={handleChange} 
+                        placeholder={['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type) ? '1' : 'e.g. 10'} 
+                        className="w-full px-4 py-2.5 bg-bg3 border border-glass-border rounded-xl text-sm text-text font-mono font-bold focus:border-primary focus:outline-none" 
                       />
+                      <p className="text-[10px] text-muted mt-1">
+                        {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type)
+                          ? 'Bottles, syrups, tubes, and vials are counted as 1 unit per pack.'
+                          : 'Tablets/capsules per strip. Used to calculate loose unit rate in POS.'}
+                      </p>
                     </div>
                   </div>
 
                   <div className="p-4 rounded-xl bg-bg3 border border-glass-border flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="text-lg">{form.allow_loose_sale !== undefined ? (form.allow_loose_sale ? '🔓' : '🔒') : (form.is_loose ? '🔓' : '🔒')}</span>
+                      <span className="text-lg">
+                        {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type)
+                          ? '🔒'
+                          : (form.allow_loose_sale !== undefined ? (form.allow_loose_sale ? '🔓' : '🔒') : (form.is_loose ? '🔓' : '🔒'))}
+                      </span>
                       <div>
-                        <p className="text-xs font-bold text-text">Allow Loose Unit Sales (Fractional Strips)</p>
-                        <p className="text-[11px] text-muted">Pharmacists can break strips to sell individual loose tablets in POS.</p>
+                        <p className="text-xs font-bold text-text">
+                          {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type)
+                            ? `Single Sealed Pack Only (${form.item_type.toLowerCase()}s sold as whole units)`
+                            : 'Allow Loose Unit Sales (Fractional Strips)'}
+                        </p>
+                        <p className="text-[11px] text-muted">
+                          {['SYRUP', 'CREAM', 'INJECTION', 'DROPS', 'DEVICE', 'POWDER'].includes(form.item_type)
+                            ? 'Bottles, syrups, tubes, and drops are dispensed as whole sealed units in POS.'
+                            : 'Pharmacists can break strips to sell individual loose tablets/capsules in POS.'}
+                        </p>
                       </div>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -1191,7 +1497,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                     <h4 className="text-xs font-bold uppercase text-muted tracking-wider">Pricing & Sell Price (Special Rates)</h4>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
-                        <label className="block text-xs font-semibold text-muted mb-1.5">Cost Price / Rate (â‚¹)</label>
+                        <label className="block text-xs font-semibold text-muted mb-1.5">Cost Price / Rate (₹)</label>
                         <input 
                           type="number" 
                           step="0.01"
@@ -1203,7 +1509,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-muted mb-1.5">MRP (â‚¹)</label>
+                        <label className="block text-xs font-semibold text-muted mb-1.5">MRP (₹)</label>
                         <input 
                           type="number" 
                           step="0.01"
@@ -1215,7 +1521,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                       </div>
 
                       <div>
-                        <label className="block text-xs font-semibold text-muted mb-1.5">Sell Price / Special Rate (â‚¹)</label>
+                        <label className="block text-xs font-semibold text-muted mb-1.5">Sell Price / Special Rate (₹)</label>
                         <input 
                           type="number" 
                           step="0.01"
@@ -1286,7 +1592,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
                           <p className="text-[11px] text-muted">POS Billing Effect:</p>
                           <p className="text-xs font-semibold text-text">
                             {(form.mrp as number) > 0 && form.sell_price !== '' && Number(form.sell_price) > 0 && Number(form.sell_price) < (form.mrp as number)
-                              ? `POS auto-applies ${((((form.mrp as number) - Number(form.sell_price)) / (form.mrp as number)) * 100).toFixed(1)}% discount (à¤¹${Number(form.sell_price).toFixed(2)} instead of à¤¹${Number(form.mrp).toFixed(2)})`
+                              ? `POS auto-applies ${((((form.mrp as number) - Number(form.sell_price)) / (form.mrp as number)) * 100).toFixed(1)}% discount (₹${Number(form.sell_price).toFixed(2)} instead of ₹${Number(form.mrp).toFixed(2)})`
                               : 'No special discount active. POS defaults to full MRP.'}
                           </p>
                         </div>
@@ -1515,7 +1821,7 @@ const UniversalMedicineEditModalInner: React.FC<UniversalMedicineEditModalProps>
               </div>
               <div>
                 <h4 className="font-bold text-text text-base">Permanently Delete Medicine?</h4>
-                <p className="text-xs text-muted">ID #{medicineId} â€¢ {form.name}</p>
+                <p className="text-xs text-muted">ID #{medicineId} • {form.name}</p>
               </div>
             </div>
             <p className="text-xs text-muted leading-relaxed">

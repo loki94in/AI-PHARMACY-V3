@@ -582,10 +582,19 @@ router.get('/catalog-search', async (req, res) => {
       // Purchases page's module-cache pre-hydration (instant local list before
       // the first debounced query lands).
       const defaultRows = await db.all(
-        `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+        `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+                COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+                last_purchase_ptr, last_distributor_name, last_purchase_date,
+                lowest_purchase_ptr, lowest_distributor_name
          FROM medicines
          ORDER BY name ASC LIMIT 150`
       );
+      for (const r of defaultRows) {
+        if ((!r.rate || Number(r.rate) <= 0) && Number(r.last_purchase_ptr) > 0) {
+          r.rate = r.last_purchase_ptr;
+        }
+        r.pharmarack_distributor = r.last_distributor_name || r.pharmarack_distributor;
+      }
       return res.json(defaultRows);
     }
 
@@ -595,8 +604,12 @@ router.get('/catalog-search', async (req, res) => {
     const seenIds = new Set<number>();
 
     // Pass 1: Direct Index Range Scan on medicines name (uses idx_medicines_name_nocase in <5ms)
+    // Pre-aggregated stock and rate metrics are stored directly on the row, requiring ZERO secondary joins.
     const prefixRows = await db.all(
-      `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+      `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+              COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+              last_purchase_ptr, last_distributor_name, last_purchase_date,
+              lowest_purchase_ptr, lowest_distributor_name
        FROM medicines
        WHERE name LIKE ? COLLATE NOCASE
        ORDER BY name ASC LIMIT 40`,
@@ -613,7 +626,10 @@ router.get('/catalog-search', async (req, res) => {
     // Pass 1b: Prefix match on aliases
     if (rows.length < 30) {
       const aliasRows = await db.all(
-        `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name
+        `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
+                COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
+                m.last_purchase_ptr, m.last_distributor_name, m.last_purchase_date,
+                m.lowest_purchase_ptr, m.lowest_distributor_name
          FROM medicine_aliases a
          JOIN medicines m ON a.medicine_id = m.id
          WHERE a.alias_name LIKE ? COLLATE NOCASE
@@ -640,7 +656,10 @@ router.get('/catalog-search', async (req, res) => {
             ftsQuery = tokens.map(t => `${t}*`).join(' AND ');
           }
           const ftsRows = await db.all(
-            `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name
+            `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
+                    COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
+                    m.last_purchase_ptr, m.last_distributor_name, m.last_purchase_date,
+                    m.lowest_purchase_ptr, m.lowest_distributor_name
              FROM medicines_fts f
              JOIN medicines m ON f.rowid = m.id
              WHERE medicines_fts MATCH ?
@@ -658,7 +677,10 @@ router.get('/catalog-search', async (req, res) => {
         // Fallback to indexed prefix or limited like if FTS5 is not ready
         const fallbackLike = qTokens.length > 1 ? `%${qTokens.join('%')}%` : `%${q}%`;
         const fallbackRows = await db.all(
-          `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+          `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+                  COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+                  last_purchase_ptr, last_distributor_name, last_purchase_date,
+                  lowest_purchase_ptr, lowest_distributor_name
            FROM medicines
            WHERE name LIKE ?
            ORDER BY name ASC LIMIT 30`,
@@ -677,7 +699,10 @@ router.get('/catalog-search', async (req, res) => {
         const isNumeric = /^\d+(\.\d+)?$/.test(q);
         if (isNumeric) {
           const numRows = await db.all(
-            `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+            `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+                    COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+                    last_purchase_ptr, last_distributor_name, last_purchase_date,
+                    lowest_purchase_ptr, lowest_distributor_name
              FROM medicines
              WHERE mrp = ? OR name LIKE ? OR strength LIKE ?
              ORDER BY name ASC LIMIT 20`,
@@ -694,7 +719,10 @@ router.get('/catalog-search', async (req, res) => {
           if (letters.length >= 2 && letters.length <= 4) {
             const pattern = letters.map(l => `${l}%`).join(' ');
             const acrRows = await db.all(
-              `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name
+              `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+                      COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+                      last_purchase_ptr, last_distributor_name, last_purchase_date,
+                      lowest_purchase_ptr, lowest_distributor_name
                FROM medicines
                WHERE name LIKE ?
                ORDER BY name ASC LIMIT 20`,
@@ -712,48 +740,14 @@ router.get('/catalog-search', async (req, res) => {
     }
 
     if (rows.length > 0) {
-      const idsArr = Array.from(seenIds);
-      const placeholders = idsArr.map(() => '?').join(',');
-
-      // 1. Live stock quantities
-      const stockRows = await db.all(
-        `SELECT medicine_id, COALESCE(SUM(quantity), 0) as stock_qty, COALESCE(SUM(loose_quantity), 0) as loose_qty
-         FROM inventory_master
-         WHERE medicine_id IN (${placeholders})
-         GROUP BY medicine_id`,
-        idsArr
-      ).catch(() => []);
-      const stockMap = new Map<number, { stock_qty: number; loose_qty: number }>();
-      for (const s of stockRows) {
-        stockMap.set(s.medicine_id, { stock_qty: s.stock_qty, loose_qty: s.loose_qty });
-      }
-
-      // 2. Pre-bundled purchase metrics (instant rate & distributor hydration)
-      const metricsRows = await db.all(
-        `SELECT medicine_id, last_purchase_ptr, last_distributor_id, last_distributor_name, last_purchase_date
-         FROM medicine_sales_metrics
-         WHERE medicine_id IN (${placeholders})`,
-        idsArr
-      ).catch(() => []);
-      const metricsMap = new Map<number, any>();
-      for (const m of metricsRows) {
-        metricsMap.set(m.medicine_id, m);
-      }
-
+      // Hydrate rates and distributor fields directly from pre-aggregated row
       for (const r of rows) {
-        const s = stockMap.get(r.id);
-        r.stock_qty = s ? s.stock_qty : 0;
-        r.loose_qty = s ? s.loose_qty : 0;
-
-        const m = metricsMap.get(r.id);
-        if (m) {
-          if ((!r.rate || Number(r.rate) <= 0) && Number(m.last_purchase_ptr) > 0) {
-            r.rate = m.last_purchase_ptr;
-          }
-          r.pharmarack_distributor = m.last_distributor_name || r.pharmarack_distributor;
-          r.last_distributor_name = m.last_distributor_name;
-          r.last_purchase_date = m.last_purchase_date;
+        r.stock_qty = Number(r.stock_qty) || 0;
+        r.loose_qty = Number(r.loose_qty) || 0;
+        if ((!r.rate || Number(r.rate) <= 0) && Number(r.last_purchase_ptr) > 0) {
+          r.rate = r.last_purchase_ptr;
         }
+        r.pharmarack_distributor = r.last_distributor_name || r.pharmarack_distributor;
       }
 
       // Purchases-dropdown contract (owner request): ONE row per medicine NAME.

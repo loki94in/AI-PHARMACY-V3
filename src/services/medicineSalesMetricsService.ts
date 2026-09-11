@@ -81,6 +81,31 @@ export async function applyPurchaseDelta(
        updated_at = excluded.updated_at`,
     [medicineId, purchasedQty || 0, ptr || 0, distributorId || null, distributorName || null]
   );
+
+  const numericPtr = Number(ptr) || 0;
+  await db.run(
+    `UPDATE medicines SET
+       last_purchase_date = DATETIME('now'),
+       last_purchase_ptr = CASE WHEN ? > 0 THEN ? ELSE last_purchase_ptr END,
+       last_distributor_name = COALESCE(?, last_distributor_name),
+       lowest_purchase_ptr = CASE 
+         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
+         THEN ? 
+         ELSE lowest_purchase_ptr 
+       END,
+       lowest_distributor_name = CASE 
+         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
+         THEN COALESCE(?, lowest_distributor_name) 
+         ELSE lowest_distributor_name 
+       END
+     WHERE id = ?`,
+    [
+      numericPtr, numericPtr, distributorName || null,
+      numericPtr, numericPtr, numericPtr,
+      numericPtr, numericPtr, distributorName || null,
+      medicineId
+    ]
+  ).catch(() => {});
 }
 
 export async function getReorderWindowMonths(dbInstance?: any): Promise<number> {

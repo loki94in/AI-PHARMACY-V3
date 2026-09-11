@@ -64,6 +64,8 @@ interface Medicine {
   loose_qty?: number;
   pharmarack_rate?: number;
   pharmarack_distributor?: string;
+  lowest_purchase_ptr?: number;
+  lowest_distributor_name?: string;
 }
 
 interface BillItem {
@@ -174,6 +176,8 @@ interface CatalogSearchRow {
   loose_qty?: number;
   pharmarack_rate?: number | null;
   pharmarack_distributor?: string | null;
+  lowest_purchase_ptr?: number | null;
+  lowest_distributor_name?: string | null;
 }
 
 interface UniversalEditSeed {
@@ -1747,10 +1751,8 @@ const Purchases: React.FC = () => {
 
     // ONE source (owner contract): the master database via
     // GET /inventory/catalog-search — no separate local inventory-filter list.
-    // Live stock numbers ride the backend's own enrichment, so availability
-    // chips still render per row. Backend is localhost + indexed (~25ms), so
-    // the debounce is the dominant latency: 150 ms keeps first-paint at
-    // POS-like speed while the instant layers cover every revisit.
+    // Live stock and purchase rates are pre-aggregated on the medicine row (<5ms query).
+    // Debounce is kept short (60ms) for snappy, instant Master-Database-like typing response.
     const seq = ++searchSeqRef.current;
     if (instantPreview.length === 0) {
       setSearchResults([]);
@@ -1781,7 +1783,7 @@ const Purchases: React.FC = () => {
           setSearchSearching(false);
         }
       }
-    }, 150);
+    }, 60);
   };
 
   useEffect(() => {
@@ -3920,6 +3922,14 @@ const Purchases: React.FC = () => {
                                              ⚡ Pharmarack Rate: ₹{(medicine.pharmarack_rate)} ({medicine.pharmarack_distributor || 'Mapped Distributor'})
                                            </span>
                                          )}
+                                         {(medicine.lowest_purchase_ptr && Number(medicine.lowest_purchase_ptr) > 0) && (
+                                            <span 
+                                              className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                                              title={`Lowest past purchase rate from ${medicine.lowest_distributor_name || 'distributor'}`}
+                                            >
+                                              🏷️ Best: ₹{medicine.lowest_purchase_ptr} ({medicine.lowest_distributor_name || 'Best Dist'})
+                                            </span>
+                                          )}
                                       </div>
                                       <div className="text-xs text-muted mt-0.5">
                                         {medicine.manufacturer && <span>{medicine.manufacturer}</span>}

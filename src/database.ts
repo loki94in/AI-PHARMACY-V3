@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 57;
+const CURRENT_SCHEMA_VERSION = 58;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -168,6 +168,140 @@ export async function ensureMedicinesFts(db: any): Promise<'ok' | 'repaired' | '
   await db.exec(FTS_TRIGGER_SQL);
   await backfillFts(db, true);
   return state === 'broken' ? 'repaired' : 'ok';
+}
+
+/**
+ * Schema v58: Real-Time Medicine Search Summary & Live Stock / Rate Triggers
+ * Pre-calculates stock, last purchase rate/distributor, and lowest purchase rate
+ * directly on medicines rows so search runs in 1 single index scan (<5ms).
+ */
+export async function ensureMedicineSearchSummaryTriggers(db: any): Promise<void> {
+  try {
+    const medCols = await db.all('PRAGMA table_info(medicines)');
+    const medNames = new Set(medCols.map((c: any) => c.name));
+    if (medCols.length > 0) {
+      if (!medNames.has('total_stock')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN total_stock REAL DEFAULT 0');
+      }
+      if (!medNames.has('total_loose_stock')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN total_loose_stock REAL DEFAULT 0');
+      }
+      if (!medNames.has('last_purchase_ptr')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN last_purchase_ptr REAL DEFAULT 0');
+      }
+      if (!medNames.has('last_distributor_name')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN last_distributor_name TEXT');
+      }
+      if (!medNames.has('last_purchase_date')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN last_purchase_date TEXT');
+      }
+      if (!medNames.has('lowest_purchase_ptr')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN lowest_purchase_ptr REAL DEFAULT 0');
+      }
+      if (!medNames.has('lowest_distributor_name')) {
+        await db.run('ALTER TABLE medicines ADD COLUMN lowest_distributor_name TEXT');
+      }
+    }
+
+    // Real-time triggers on inventory_master to maintain total_stock and total_loose_stock
+    await db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_inventory_stock_ins
+      AFTER INSERT ON inventory_master
+      WHEN NEW.medicine_id IS NOT NULL
+      BEGIN
+        UPDATE medicines
+        SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = NEW.medicine_id),
+            total_loose_stock = (SELECT COALESCE(SUM(loose_quantity), 0) FROM inventory_master WHERE medicine_id = NEW.medicine_id)
+        WHERE id = NEW.medicine_id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_inventory_stock_upd
+      AFTER UPDATE OF quantity, loose_quantity, medicine_id ON inventory_master
+      BEGIN
+        UPDATE medicines
+        SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = NEW.medicine_id),
+            total_loose_stock = (SELECT COALESCE(SUM(loose_quantity), 0) FROM inventory_master WHERE medicine_id = NEW.medicine_id)
+        WHERE id = NEW.medicine_id;
+
+        UPDATE medicines
+        SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = OLD.medicine_id),
+            total_loose_stock = (SELECT COALESCE(SUM(loose_quantity), 0) FROM inventory_master WHERE medicine_id = OLD.medicine_id)
+        WHERE id = OLD.medicine_id AND OLD.medicine_id != NEW.medicine_id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_inventory_stock_del
+      AFTER DELETE ON inventory_master
+      WHEN OLD.medicine_id IS NOT NULL
+      BEGIN
+        UPDATE medicines
+        SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = OLD.medicine_id),
+            total_loose_stock = (SELECT COALESCE(SUM(loose_quantity), 0) FROM inventory_master WHERE medicine_id = OLD.medicine_id)
+        WHERE id = OLD.medicine_id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_purchase_items_rate_ins
+      AFTER INSERT ON purchase_items
+      WHEN NEW.cost_price > 0 AND NEW.medicine_id IS NOT NULL
+      BEGIN
+        UPDATE medicines
+        SET last_purchase_ptr = NEW.cost_price,
+            last_distributor_name = (
+              SELECT d.name FROM purchases p 
+              LEFT JOIN distributors d ON p.distributor_id = d.id 
+              WHERE p.id = NEW.purchase_id
+            ),
+            last_purchase_date = (
+              SELECT p.date FROM purchases p WHERE p.id = NEW.purchase_id
+            ),
+            lowest_purchase_ptr = CASE 
+              WHEN lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR NEW.cost_price < lowest_purchase_ptr 
+              THEN NEW.cost_price 
+              ELSE lowest_purchase_ptr 
+            END,
+            lowest_distributor_name = CASE 
+              WHEN lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR NEW.cost_price < lowest_purchase_ptr 
+              THEN (
+                SELECT d.name FROM purchases p 
+                LEFT JOIN distributors d ON p.distributor_id = d.id 
+                WHERE p.id = NEW.purchase_id
+              )
+              ELSE lowest_distributor_name 
+            END
+        WHERE id = NEW.medicine_id;
+      END;
+    `);
+
+    // One-time fast backfill if inventory exists but medicines summary is unpopulated
+    const needsStockBackfill = await db.get(
+      "SELECT 1 FROM inventory_master WHERE quantity > 0 LIMIT 1"
+    );
+    const stockPopulated = await db.get(
+      "SELECT 1 FROM medicines WHERE total_stock > 0 LIMIT 1"
+    );
+    if (needsStockBackfill && !stockPopulated) {
+      await db.run(`
+        UPDATE medicines 
+        SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = medicines.id),
+            total_loose_stock = (SELECT COALESCE(SUM(loose_quantity), 0) FROM inventory_master WHERE medicine_id = medicines.id)
+        WHERE id IN (SELECT DISTINCT medicine_id FROM inventory_master);
+      `);
+    }
+
+    // One-time fast backfill of last purchase rates from medicine_sales_metrics if available
+    const msmExists = await db.get("SELECT 1 FROM medicine_sales_metrics WHERE last_purchase_ptr > 0 LIMIT 1");
+    const msmPopulated = await db.get("SELECT 1 FROM medicines WHERE last_purchase_ptr > 0 LIMIT 1");
+    if (msmExists && !msmPopulated) {
+      await db.run(`
+        UPDATE medicines
+        SET last_purchase_ptr = (SELECT msm.last_purchase_ptr FROM medicine_sales_metrics msm WHERE msm.medicine_id = medicines.id),
+            last_distributor_name = (SELECT msm.last_distributor_name FROM medicine_sales_metrics msm WHERE msm.medicine_id = medicines.id),
+            last_purchase_date = (SELECT msm.last_purchase_date FROM medicine_sales_metrics msm WHERE msm.medicine_id = medicines.id)
+        WHERE id IN (SELECT medicine_id FROM medicine_sales_metrics WHERE last_purchase_ptr > 0);
+      `);
+    }
+  } catch (err: any) {
+    console.warn('[Database] ensureMedicineSearchSummaryTriggers warning:', err.message);
+  }
 }
 
 /**
@@ -947,6 +1081,7 @@ export async function ensureSchema(dbPath: string) {
 
       await ensureOrderTimingSchema(db);
       await ensureMedicinesFts(db);
+      await ensureMedicineSearchSummaryTriggers(db);
       return;
     }
   } catch (_) {
@@ -1133,7 +1268,14 @@ export async function ensureSchema(dbPath: string) {
       source TEXT DEFAULT 'manual',
       possible_duplicate_of INTEGER DEFAULT NULL,
       sell_price REAL DEFAULT NULL,
-      allow_loose_sale INTEGER DEFAULT 1
+      allow_loose_sale INTEGER DEFAULT 1,
+      total_stock REAL DEFAULT 0,
+      total_loose_stock REAL DEFAULT 0,
+      last_purchase_ptr REAL DEFAULT 0,
+      last_distributor_name TEXT,
+      last_purchase_date TEXT,
+      lowest_purchase_ptr REAL DEFAULT 0,
+      lowest_distributor_name TEXT
     );
     CREATE TABLE IF NOT EXISTS catalog_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3746,6 +3888,9 @@ export async function ensureSchema(dbPath: string) {
 
   // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
   await ensureMultiPharmacyAndSnapshotSchema(db);
+
+  // Schema v58: Real-Time Medicine Search Summary & Live Stock / Rate Triggers
+  await ensureMedicineSearchSummaryTriggers(db);
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
