@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-11T19:38:53.878Z",
+  "last_updated": "2026-09-11T19:47:03.105Z",
   "products": {
     "880": {
       "status": "success",
@@ -664,6 +664,1222 @@
     "30469": {
       "status": "not_found",
       "checked_at": "2026-09-11T19:38:53.878Z"
+    },
+    "30665": {
+      "status": "success",
+      "product_name": "Zycafy Shampoo Bottle Of 150Ml",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:39:02.018Z"
+    },
+    "30754": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:04.158Z"
+    },
+    "30775": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:05.854Z"
+    },
+    "30850": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:07.728Z"
+    },
+    "30901": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:08.923Z"
+    },
+    "30945": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:10.070Z"
+    },
+    "31014": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:11.844Z"
+    },
+    "31061": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:14.748Z"
+    },
+    "31084": {
+      "status": "success",
+      "product_name": "Bilovas 40Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:39:19.517Z"
+    },
+    "31115": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:21.791Z"
+    },
+    "31116": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:23.454Z"
+    },
+    "31124": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:25.095Z"
+    },
+    "31136": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:26.185Z"
+    },
+    "31252": {
+      "status": "success",
+      "product_name": "Zymurine Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:39:35.094Z"
+    },
+    "31260": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:36.517Z"
+    },
+    "31288": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:38.422Z"
+    },
+    "31321": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:40.211Z"
+    },
+    "31363": {
+      "status": "success",
+      "product_name": "Everfresh 0.2% Bottle Of 100Ml Mouthwash",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:39:46.441Z"
+    },
+    "31369": {
+      "status": "success",
+      "product_name": "Latina Rt Bottle Of 2.5Ml Eye Drops",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:39:51.028Z"
+    },
+    "31438": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:52.947Z"
+    },
+    "31555": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:54.755Z"
+    },
+    "31592": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:56.345Z"
+    },
+    "31627": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:58.007Z"
+    },
+    "31640": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:39:59.140Z"
+    },
+    "31674": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:00.961Z"
+    },
+    "31683": {
+      "status": "success",
+      "product_name": "Rechamp Gold Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:40:07.221Z"
+    },
+    "31755": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:09.005Z"
+    },
+    "31928": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:11.437Z"
+    },
+    "31961": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:12.554Z"
+    },
+    "31974": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:14.806Z"
+    },
+    "32066": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:16.381Z"
+    },
+    "32226": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:18.333Z"
+    },
+    "32479": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:20.897Z"
+    },
+    "32604": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:22.479Z"
+    },
+    "32620": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:24.895Z"
+    },
+    "32687": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:25.979Z"
+    },
+    "32699": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:27.773Z"
+    },
+    "32807": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:29.767Z"
+    },
+    "32840": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:31.288Z"
+    },
+    "32845": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:31.846Z"
+    },
+    "32846": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:33.455Z"
+    },
+    "32862": {
+      "status": "success",
+      "product_name": "Paternia Xt Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:40:41.522Z"
+    },
+    "32913": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:43.451Z"
+    },
+    "32924": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:44.923Z"
+    },
+    "33026": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:46.505Z"
+    },
+    "33029": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:48.288Z"
+    },
+    "33069": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:50.293Z"
+    },
+    "33075": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:51.895Z"
+    },
+    "33208": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:53.825Z"
+    },
+    "33225": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:54.843Z"
+    },
+    "33334": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:56.567Z"
+    },
+    "33357": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:58.251Z"
+    },
+    "33396": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:40:59.381Z"
+    },
+    "33429": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:00.919Z"
+    },
+    "33661": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:02.351Z"
+    },
+    "33718": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:03.378Z"
+    },
+    "33723": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:05.082Z"
+    },
+    "33727": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:06.546Z"
+    },
+    "33742": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:08.143Z"
+    },
+    "33752": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:09.577Z"
+    },
+    "33814": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:10.699Z"
+    },
+    "33869": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:12.369Z"
+    },
+    "33942": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:13.621Z"
+    },
+    "34019": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:14.342Z"
+    },
+    "34039": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:14.972Z"
+    },
+    "34042": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:15.586Z"
+    },
+    "34154": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:16.211Z"
+    },
+    "34314": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:16.775Z"
+    },
+    "34332": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:17.394Z"
+    },
+    "34342": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:18.016Z"
+    },
+    "34388": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:18.588Z"
+    },
+    "34409": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:19.217Z"
+    },
+    "34429": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:19.830Z"
+    },
+    "34463": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:20.456Z"
+    },
+    "34527": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:21.085Z"
+    },
+    "34632": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:21.759Z"
+    },
+    "34660": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:22.322Z"
+    },
+    "34726": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:22.893Z"
+    },
+    "34742": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:24.442Z"
+    },
+    "34748": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:26.248Z"
+    },
+    "34791": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:27.812Z"
+    },
+    "34811": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:28.845Z"
+    },
+    "34936": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:30.698Z"
+    },
+    "34999": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:32.536Z"
+    },
+    "35056": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:33.580Z"
+    },
+    "35094": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:35.378Z"
+    },
+    "35119": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:36.587Z"
+    },
+    "35123": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:38.305Z"
+    },
+    "35312": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:39.298Z"
+    },
+    "35373": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:40.354Z"
+    },
+    "35391": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:41.638Z"
+    },
+    "35410": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:43.442Z"
+    },
+    "35459": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:44.968Z"
+    },
+    "35607": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:46.976Z"
+    },
+    "35617": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:48.645Z"
+    },
+    "35679": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:50.106Z"
+    },
+    "35691": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:51.621Z"
+    },
+    "35692": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:52.857Z"
+    },
+    "35743": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:41:54.046Z"
+    },
+    "35752": {
+      "status": "success",
+      "product_name": "Litearm Lotion 30Gm",
+      "angles_saved": 2,
+      "primary_face": "box-side",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:41:59.613Z"
+    },
+    "35937": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:01.286Z"
+    },
+    "35972": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:02.722Z"
+    },
+    "35986": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:03.814Z"
+    },
+    "36016": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:05.456Z"
+    },
+    "36027": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:06.473Z"
+    },
+    "36091": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:07.614Z"
+    },
+    "36180": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:09.098Z"
+    },
+    "36376": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:10.350Z"
+    },
+    "36415": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:11.876Z"
+    },
+    "36436": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:13.189Z"
+    },
+    "36463": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:13.904Z"
+    },
+    "36496": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:14.461Z"
+    },
+    "36562": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:15.092Z"
+    },
+    "36563": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:15.656Z"
+    },
+    "36641": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:16.252Z"
+    },
+    "36740": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:16.905Z"
+    },
+    "36742": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:17.537Z"
+    },
+    "36822": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:18.154Z"
+    },
+    "36836": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:18.771Z"
+    },
+    "36890": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:19.395Z"
+    },
+    "37078": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:20.016Z"
+    },
+    "37140": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:20.574Z"
+    },
+    "37225": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:21.142Z"
+    },
+    "37227": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:21.767Z"
+    },
+    "37252": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:22.325Z"
+    },
+    "37324": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:22.884Z"
+    },
+    "37361": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:23.943Z"
+    },
+    "37420": {
+      "status": "success",
+      "product_name": "Bonmax Pth Autopen Cartridge Of 3Ml Injection",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:42:26.978Z"
+    },
+    "37443": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:28.656Z"
+    },
+    "37819": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:30.231Z"
+    },
+    "37904": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:31.944Z"
+    },
+    "37994": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:33.148Z"
+    },
+    "38018": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:35.093Z"
+    },
+    "38122": {
+      "status": "success",
+      "product_name": "Zyaqua Bottle Of 10Ml Eye Drops",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:42:40.678Z"
+    },
+    "38210": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:42.476Z"
+    },
+    "38216": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:43.721Z"
+    },
+    "38226": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:44.992Z"
+    },
+    "38233": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:46.466Z"
+    },
+    "38269": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:48.144Z"
+    },
+    "38298": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:49.693Z"
+    },
+    "38327": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:51.298Z"
+    },
+    "38349": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:53.296Z"
+    },
+    "38407": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:55.142Z"
+    },
+    "38481": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:56.980Z"
+    },
+    "38659": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:42:58.557Z"
+    },
+    "38913": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:00.726Z"
+    },
+    "38955": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:01.857Z"
+    },
+    "38993": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:02.868Z"
+    },
+    "39084": {
+      "status": "success",
+      "product_name": "Grd | Whey Protein Vanilla | Sugar Free | Jar 200 Gm Oral Powder",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:43:11.363Z"
+    },
+    "39091": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:13.342Z"
+    },
+    "39093": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:14.997Z"
+    },
+    "39118": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:16.501Z"
+    },
+    "39192": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:17.540Z"
+    },
+    "39218": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:18.789Z"
+    },
+    "39289": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:20.308Z"
+    },
+    "39304": {
+      "status": "success",
+      "product_name": "Saliac Foaming Face Wash | Salicylic Acid | 60 Ml",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:43:24.564Z"
+    },
+    "39407": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:25.811Z"
+    },
+    "39509": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:27.017Z"
+    },
+    "39538": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:28.566Z"
+    },
+    "39624": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:30.447Z"
+    },
+    "39762": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:31.623Z"
+    },
+    "39774": {
+      "status": "success",
+      "product_name": "Aldonil 50Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:43:37.779Z"
+    },
+    "39873": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:39.605Z"
+    },
+    "39885": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:40.945Z"
+    },
+    "39939": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:42.539Z"
+    },
+    "39987": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:43.693Z"
+    },
+    "40067": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:45.515Z"
+    },
+    "40080": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:48.085Z"
+    },
+    "40088": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:49.241Z"
+    },
+    "40119": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:51.173Z"
+    },
+    "40142": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:53.022Z"
+    },
+    "40190": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:54.163Z"
+    },
+    "40207": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:43:55.442Z"
+    },
+    "40288": {
+      "status": "success",
+      "product_name": "Grd Vanilla Whey Protein Tin Of 200 G",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:43:59.913Z"
+    },
+    "40331": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:01.489Z"
+    },
+    "40343": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:03.011Z"
+    },
+    "40379": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:04.481Z"
+    },
+    "40421": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:06.146Z"
+    },
+    "40776": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:07.764Z"
+    },
+    "40794": {
+      "status": "success",
+      "product_name": "Femovan Strip Of 21 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:44:13.134Z"
+    },
+    "40848": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:14.295Z"
+    },
+    "40892": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:15.803Z"
+    },
+    "40900": {
+      "status": "success",
+      "product_name": "Itchcam Bottle Of 60Ml Lotion",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:44:19.599Z"
+    },
+    "40924": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:20.668Z"
+    },
+    "41092": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:22.152Z"
+    },
+    "41095": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:23.722Z"
+    },
+    "41116": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:25.640Z"
+    },
+    "41140": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:26.956Z"
+    },
+    "41147": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:28.432Z"
+    },
+    "41171": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:29.647Z"
+    },
+    "41248": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:30.882Z"
+    },
+    "41270": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:32.328Z"
+    },
+    "41273": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:34.298Z"
+    },
+    "41300": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:35.776Z"
+    },
+    "41323": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:37.595Z"
+    },
+    "41351": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:38.592Z"
+    },
+    "41360": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:40.207Z"
+    },
+    "41374": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:41.020Z"
+    },
+    "41391": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:41.941Z"
+    },
+    "41423": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:43.326Z"
+    },
+    "41491": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:44.745Z"
+    },
+    "41507": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:45.728Z"
+    },
+    "41523": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:47.124Z"
+    },
+    "41529": {
+      "status": "success",
+      "product_name": "Grd Smart | Whey Protein | Vanilla| Jar 200 Gm Oral Powder",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:44:53.826Z"
+    },
+    "41585": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:55.802Z"
+    },
+    "41629": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:44:56.744Z"
+    },
+    "41674": {
+      "status": "success",
+      "product_name": "New Alene Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:45:04.169Z"
+    },
+    "41771": {
+      "status": "success",
+      "product_name": "Adalene Nano Tube Of 15Gm Gel",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:45:11.820Z"
+    },
+    "41800": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:13.015Z"
+    },
+    "41818": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:14.771Z"
+    },
+    "41866": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:15.909Z"
+    },
+    "41895": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:16.942Z"
+    },
+    "41945": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:19.416Z"
+    },
+    "41951": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:21.103Z"
+    },
+    "41987": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:23.233Z"
+    },
+    "42028": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:24.675Z"
+    },
+    "42133": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:25.967Z"
+    },
+    "42172": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:27.529Z"
+    },
+    "42224": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:29.445Z"
+    },
+    "42257": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:30.448Z"
+    },
+    "42363": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:32.131Z"
+    },
+    "42370": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:33.785Z"
+    },
+    "42431": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:35.307Z"
+    },
+    "42490": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:36.969Z"
+    },
+    "42530": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:38.617Z"
+    },
+    "42553": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:40.580Z"
+    },
+    "42592": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:42.136Z"
+    },
+    "42725": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:44.085Z"
+    },
+    "42787": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:45.451Z"
+    },
+    "42825": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:47.027Z"
+    },
+    "42843": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:48.857Z"
+    },
+    "42879": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:50.489Z"
+    },
+    "42957": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:52.213Z"
+    },
+    "42958": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:55.355Z"
+    },
+    "43018": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:56.450Z"
+    },
+    "43066": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:58.001Z"
+    },
+    "43077": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:45:59.893Z"
+    },
+    "43219": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:01.427Z"
+    },
+    "43231": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:04.332Z"
+    },
+    "43233": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:05.915Z"
+    },
+    "43293": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:07.644Z"
+    },
+    "43372": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:09.393Z"
+    },
+    "43421": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:11.005Z"
+    },
+    "43497": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:11.578Z"
+    },
+    "43588": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:12.153Z"
+    },
+    "43650": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:12.730Z"
+    },
+    "43687": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:13.318Z"
+    },
+    "43692": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:14.032Z"
+    },
+    "43758": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:14.664Z"
+    },
+    "43773": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:15.240Z"
+    },
+    "43810": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:15.858Z"
+    },
+    "43817": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:16.473Z"
+    },
+    "43839": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:17.033Z"
+    },
+    "43875": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:17.610Z"
+    },
+    "43882": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:18.226Z"
+    },
+    "43884": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:18.844Z"
+    },
+    "43952": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:19.463Z"
+    },
+    "43974": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:20.078Z"
+    },
+    "43986": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:20.706Z"
+    },
+    "44044": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:21.268Z"
+    },
+    "44049": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:21.836Z"
+    },
+    "44070": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:22.464Z"
+    },
+    "44135": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:23.084Z"
+    },
+    "44168": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:23.696Z"
+    },
+    "44213": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:24.310Z"
+    },
+    "44253": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:24.948Z"
+    },
+    "44365": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:25.576Z"
+    },
+    "44404": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:26.147Z"
+    },
+    "44467": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:28.097Z"
+    },
+    "44589": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:29.639Z"
+    },
+    "44785": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:31.158Z"
+    },
+    "44801": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:32.794Z"
+    },
+    "45005": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:34.800Z"
+    },
+    "45142": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:36.198Z"
+    },
+    "45304": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:37.943Z"
+    },
+    "45455": {
+      "status": "success",
+      "product_name": "Aldonil Plus Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:46:45.401Z"
+    },
+    "45552": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:47.367Z"
+    },
+    "45635": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:49.139Z"
+    },
+    "45733": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:50.641Z"
+    },
+    "45777": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:52.449Z"
+    },
+    "45922": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:46:54.195Z"
+    },
+    "45933": {
+      "status": "success",
+      "product_name": "Clop S Bottle Of 20Ml Nano Lotion",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:47:01.524Z"
+    },
+    "45956": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:47:03.105Z"
     },
     "57085": {
       "status": "not_found",
