@@ -50,7 +50,9 @@ import {
   CreditCard,
   Calendar,
   ShoppingCart,
-  Layers
+  Layers,
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -1686,6 +1688,14 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
   const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+  const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [savingGemini, setSavingGemini] = useState(false);
+  const [geminiStatus, setGeminiStatus] = useState<{ type: 'success' | 'error' | 'idle'; message?: string }>({
+    type: rawSettings.gemini_api_key ? 'success' : 'idle',
+    message: rawSettings.gemini_api_key ? 'API Key saved and active in settings' : undefined
+  });
 
   // 3-UPI QR Code System & Delivery Feature Flag (§13, §15)
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
@@ -1771,7 +1781,58 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+    setGeminiApiKey(rawSettings.gemini_api_key || '');
     toastEvent.trigger('Integration credentials reset to saved parameters', 'info');
+  };
+
+  const handleSaveGeminiKeyOnly = async () => {
+    if (!geminiApiKey || geminiApiKey.trim() === '') {
+      toastEvent.trigger('Please enter a Gemini API Key to save', 'error');
+      return;
+    }
+    setSavingGemini(true);
+    try {
+      await apiClient.post('/settings/save-single', { key: 'gemini_api_key', value: geminiApiKey.trim() });
+      toastEvent.trigger('Google Gemini API Key saved to database!', 'success');
+      setGeminiStatus({ type: 'success', message: 'API Key successfully saved and active' });
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Save failed';
+      toastEvent.trigger('Failed to save API Key: ' + msg, 'error');
+      setGeminiStatus({ type: 'error', message: 'Save error: ' + msg });
+    } finally {
+      setSavingGemini(false);
+    }
+  };
+
+  const handleTestGeminiKey = async () => {
+    if (!geminiApiKey || geminiApiKey.trim() === '') {
+      toastEvent.trigger('Please enter a Gemini API Key to test', 'error');
+      return;
+    }
+    setTestingGemini(true);
+    setGeminiStatus({ type: 'idle' });
+    try {
+      const res = await apiClient.post('/settings/test-gemini-key', { apiKey: geminiApiKey.trim() });
+      if (res.data?.success) {
+        // Auto-save key to database when verified
+        await apiClient.post('/settings/save-single', { key: 'gemini_api_key', value: geminiApiKey.trim() });
+        refetchSettings();
+        const msg = res.data.message || 'Google Gemini API key verified and connected successfully!';
+        toastEvent.trigger(msg, 'success');
+        setGeminiStatus({ type: 'success', message: msg });
+      } else {
+        const errMsg = res.data?.error || 'Google rejected the API key';
+        toastEvent.trigger(errMsg, 'error');
+        setGeminiStatus({ type: 'error', message: errMsg });
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Connection test failed';
+      toastEvent.trigger('Gemini API Key error: ' + msg, 'error');
+      setGeminiStatus({ type: 'error', message: msg });
+    } finally {
+      setTestingGemini(false);
+    }
   };
 
   const handleSaveIntegrations = async (e: React.FormEvent) => {
@@ -1794,7 +1855,8 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
         pharmarack_mode: 'Live',
         pharmarack_reorder_window_months: reorderWindowMonths,
         whatsapp_idle_sleep_min: waIdleSleepMin,
-        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false'
+        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false',
+        gemini_api_key: geminiApiKey
       };
 
       await apiClient.post('/settings/save', payload);
@@ -2195,6 +2257,114 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
               {combinePharmarackSearch ? 'Enabled' : 'Disabled'}
             </label>
           </div>
+        </div>
+      </div>
+
+      {/* Google Gemini AI Vision Credentials */}
+      <div className="space-y-4 pt-4 border-t border-border">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <Sparkles size={16} /> Google Gemini AI Vision (Prescription &amp; Purchase OCR)
+          </h2>
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-sky hover:underline font-semibold"
+          >
+            <span>Get Free Key (Google AI Studio)</span>
+            <ExternalLink size={12} />
+          </a>
+        </div>
+
+        <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary mt-0.5">
+              <Sparkles size={18} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold text-text">Cloud Vision AI Assistant</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky/10 text-sky border border-sky/20">
+                  1,500 Scans/Day Free
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  No Credit Card Required
+                </span>
+              </div>
+              <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                Empowers automatic cloud fallback for illegible cursive doctor handwriting and complex purchase invoice line items.
+                Your app runs the <strong>Local Offline Scanner first</strong> (3.6s, ₹0 cost), and seamlessly calls Gemini whenever an API key is configured.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end pt-1">
+            <div className="sm:col-span-8">
+              <label className="block text-xs font-semibold text-text mb-1">
+                Google Gemini API Key
+              </label>
+              <div className="relative">
+                <input
+                  type={showGeminiKey ? 'text' : 'password'}
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                  placeholder="AIzaSy..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGeminiKey(!showGeminiKey)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
+                  title={showGeminiKey ? 'Hide key' : 'Show key'}
+                >
+                  <Eye size={14} />
+                </button>
+              </div>
+            </div>
+
+            <div className="sm:col-span-2">
+              <button
+                type="button"
+                onClick={handleSaveGeminiKeyOnly}
+                disabled={savingGemini || !geminiApiKey}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Save API key directly to database"
+              >
+                {savingGemini ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>{savingGemini ? 'Saving...' : 'Save Key'}</span>
+              </button>
+            </div>
+
+            <div className="sm:col-span-2">
+              <button
+                type="button"
+                onClick={handleTestGeminiKey}
+                disabled={testingGemini || !geminiApiKey}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Verify API key with Google AI Studio and auto-save"
+              >
+                <RefreshCw size={14} className={testingGemini ? 'animate-spin' : ''} />
+                <span>{testingGemini ? 'Testing...' : 'Test & Verify'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Live Status Feedback Banner */}
+          {geminiStatus.type !== 'idle' && (
+            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 transition-all ${
+              geminiStatus.type === 'success'
+                ? 'bg-primary/10 border-primary/20 text-primary'
+                : 'bg-bg3 border-border text-text'
+            }`}>
+              {geminiStatus.type === 'success' ? (
+                <CheckCircle2 size={16} className="text-primary shrink-0" />
+              ) : (
+                <AlertTriangle size={16} className="text-muted shrink-0" />
+              )}
+              <span className="font-semibold">{geminiStatus.message}</span>
+            </div>
+          )}
         </div>
       </div>
 

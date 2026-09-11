@@ -1,5 +1,5 @@
 // AI Camera Service for OCR processing using Tesseract.js (offline capable)
-import { createWorker } from 'tesseract.js';
+import { createWorker, PSM } from 'tesseract.js';
 import { Jimp } from 'jimp';
 import {
   productNameFilterService,
@@ -42,6 +42,14 @@ class AICameraService {
   private async preprocess(buffer: Buffer): Promise<Buffer> {
     try {
       const image = await Jimp.read(buffer);
+      const maxDim = 1400;
+      if (image.bitmap.width > maxDim || image.bitmap.height > maxDim) {
+        if (image.bitmap.width > image.bitmap.height) {
+          image.resize({ w: maxDim });
+        } else {
+          image.resize({ h: maxDim });
+        }
+      }
       image.greyscale().contrast(0.2);
       return await image.getBuffer('image/jpeg');
     } catch (err) {
@@ -168,11 +176,11 @@ class AICameraService {
         gzip: false             // Use uncompressed local traineddata file
       });
       await this.worker.setParameters({
-        tessedit_pageseg_mode: 11, // Sparse text. Find as much text as possible in no particular order.
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT, // Sparse text. Find as much text as possible in no particular order.
         preserve_interword_spaces: '1',
 
         // Medicine label specific optimizations for offline OCR
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-/:, ₹mgμ%', // Expected medicine label chars including Rupee symbol
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-/:, ()+₹mgμ%', // Expected medicine label chars including Rupee symbol
         user_defined_dictionary: './data/medicine_dict.txt', // Custom medicine dictionary
         user_patterns_file: './data/medicine_patterns.txt',  // Patterns like "\\d+mg", "\\d+ tablet"
       });

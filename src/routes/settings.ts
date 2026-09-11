@@ -56,6 +56,9 @@ router.get('/', async (_req, res) => {
     if (!settingsObj['google_client_secret'] && process.env.GOOGLE_CLIENT_SECRET) {
       settingsObj['google_client_secret'] = process.env.GOOGLE_CLIENT_SECRET;
     }
+    if (!settingsObj['gemini_api_key'] && process.env.GEMINI_API_KEY) {
+      settingsObj['gemini_api_key'] = process.env.GEMINI_API_KEY;
+    }
     if (!settingsObj['require_doctor_on_bill']) {
       settingsObj['require_doctor_on_bill'] = 'true';
     }
@@ -70,6 +73,29 @@ router.get('/', async (_req, res) => {
 // Telegram bot real connection status (polling active vs merely enabled)
 router.get('/telegram-status', async (_req, res) => {
   res.json({ isReady: telegramBotService.isReady() });
+});
+
+// Test Gemini API key validation
+router.post('/test-gemini-key', async (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
+    return res.status(400).json({ success: false, error: 'API key is required' });
+  }
+  try {
+    const key = apiKey.trim();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
+    const testRes = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (testRes.ok) {
+      const data = await testRes.json();
+      return res.json({ success: true, message: 'Google Gemini API key verified successfully! Models active: ' + (data.models?.length || 'ready') });
+    } else {
+      const errBody = await testRes.json().catch(() => ({}));
+      const msg = errBody?.error?.message || `Google returned status ${testRes.status}`;
+      return res.status(400).json({ success: false, error: msg });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message || 'Connection to Google AI Studio failed' });
+  }
 });
 
 // Update or create a setting
@@ -137,6 +163,10 @@ router.post('/save-single', async (req, res) => {
     }
     await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [key, saveValue]);
 
+    if (key === 'gemini_api_key') {
+      process.env.GEMINI_API_KEY = String(saveValue || '').trim();
+    }
+
     if (key === 'pharmarack_reorder_window_months') {
       const windowMonths = [2, 4, 6, 8].includes(parseInt(saveValue, 10)) ? parseInt(saveValue, 10) : 2;
       reconcileAllMedicineSalesMetrics(db, windowMonths).catch((err) => {
@@ -199,7 +229,8 @@ router.post('/save', async (req, res) => {
         'wa_business_access_token',
         'gmail_pass',
         'gmail_oauth_refresh_token',
-        'telegram_token'
+        'telegram_token',
+        'gemini_api_key'
       ];
 
       const entries = Object.entries(payload);
@@ -227,6 +258,9 @@ router.post('/save', async (req, res) => {
             finalVal = hashPassword(String(finalVal));
           }
           await upsertStmt.run([k, finalVal]);
+          if (k === 'gemini_api_key' && finalVal) {
+            process.env.GEMINI_API_KEY = String(finalVal).trim();
+          }
         }
 
         // Synchronize store name aliases if any store name key was provided

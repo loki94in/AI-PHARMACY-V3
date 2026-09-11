@@ -284,14 +284,14 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
 
 import { activityTracker } from '../utils/activityTracker.js';
 
-type PharmarackSearchOutcome =
+export type PharmarackSearchOutcome =
   | { status: 'ok'; items: any[] }
   | { status: 'need_login' }
   | { status: 'connection_error' };
 
 // Shared search core — used by both the request path and background stale
 // revalidation. Caching behavior is unchanged: only non-empty results stored.
-async function performPharmarackSearch(qRaw: string, storeId: number | null, isMapped: boolean): Promise<PharmarackSearchOutcome> {
+export async function performPharmarackSearch(qRaw: string, storeId: number | null, isMapped: boolean): Promise<PharmarackSearchOutcome> {
   const hasStoreFilter = storeId !== null && !isNaN(storeId);
   let settings: Record<string, string> = {};
   try {

@@ -62,7 +62,16 @@ export class InvoiceVisionService {
     fs.writeFileSync(savedPath, buffer);
     const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
 
-    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    let geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!geminiKey || geminiKey.trim() === '') {
+      try {
+        const db = await dbManager.getConnection();
+        const row = await db.get<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_api_key'");
+        if (row?.value && row.value.trim() !== '') {
+          geminiKey = row.value.trim();
+        }
+      } catch {}
+    }
 
     let parsedResult: Partial<ParsedPurchaseInvoice> | null = null;
     let engineUsed: 'gemini_vision' | 'local_ocr' = 'local_ocr';

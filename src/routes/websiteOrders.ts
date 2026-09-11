@@ -11,6 +11,7 @@ import { getStoreMedicalName, getStorePhone, getStoreGoogleMapsUrl } from '../se
 import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
+import { processPrescriptionAndNotifyPharmacy } from '../services/prescriptionIntelService.js';
 
 const router = express.Router();
 
@@ -1102,6 +1103,7 @@ router.post('/prescription-request', async (req, res) => {
     }
 
     const savedUrls: string[] = [];
+    const savedFilePaths: string[] = [];
     if (imageList.length > 0) {
       const uploadsDir = path.resolve(getAppDataDir(), 'uploads', 'prescriptions');
       if (!fs.existsSync(uploadsDir)) {
@@ -1115,6 +1117,7 @@ router.post('/prescription-request', async (req, res) => {
         const fullPath = path.join(uploadsDir, safeName);
         fs.writeFileSync(fullPath, buffer);
         savedUrls.push(`/uploads/prescriptions/${safeName}`);
+        savedFilePaths.push(fullPath);
       }
     }
 
@@ -1158,7 +1161,7 @@ router.post('/prescription-request', async (req, res) => {
       ]
     );
 
-    const orderId = result.lastID;
+    const orderId = Number(result.lastID) || 0;
 
     // Log tracking event
     await db.run(
@@ -1238,9 +1241,25 @@ router.post('/prescription-request', async (req, res) => {
     // Broadcast update so pharmacy counter staff sees it live in Website Orders & Header
     broadcastOrdersChanged();
 
+    // Autonomous Background Task: Extract medicines via OCR/Gemini, cross-check Local Inventory & Pharmarack,
+    // and send structured intelligence report directly to Pharmacy WhatsApp (no customer action needed!)
+    void processPrescriptionAndNotifyPharmacy({
+      orderId,
+      customerName: cleanName,
+      customerPhone: cleanPhone,
+      imagePaths: savedFilePaths,
+      manualMedicineName: medRequested,
+      targetStoreId,
+      host,
+      protocol,
+      savedUrls
+    }).catch(intelErr => {
+      console.error(`[WebsiteOrdersRoute] Autonomous prescription intel failed for #${orderId}:`, intelErr);
+    });
+
     res.status(201).json({
       success: true,
-      message: 'Prescription request submitted successfully',
+      message: 'Prescription request submitted successfully directly to pharmacy counter',
       order_id: orderId,
       prescription_url: prescriptionUrl,
       prescription_urls: savedUrls,

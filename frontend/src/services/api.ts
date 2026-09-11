@@ -1782,6 +1782,8 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; pin: string }>('/customer-portal/auth/change-pin', data).then(res => res.data),
   analyzeImage: (image: string) =>
     apiClient.post<any>('/ai-camera/analyze', { image }).then(res => res.data),
+  scanPrescription: (image: string) =>
+    apiClient.post<any>('/ai-camera/scan-prescription', { image }).then(res => res.data),
   submitPrescriptionRequest: (data: {
     customer_name: string;
     customer_phone: string;

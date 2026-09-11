@@ -171,8 +171,46 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     try {
       setIsScanningPhoto(true);
       const b64 = await fileToBase64(file);
-      const res = await api.analyzeImage(b64);
-      if (res && (res.potentialName || res.rawText)) {
+      // Try fast offline prescription scanner first, fallback to analyzeImage
+      let res: any;
+      try {
+        res = await api.scanPrescription(b64);
+      } catch {
+        res = await api.analyzeImage(b64);
+      }
+
+      if (res?.items && res.items.length > 0) {
+        const first = res.items[0];
+        const topMatch = first.matchedMedicines?.[0];
+        const detectedName = topMatch?.name || first.brandName || '';
+        const detectedForm = first.dosageForm || 'TABLET';
+        const detectedStr = first.strength || '';
+        const detectedComp = topMatch?.manufacturer || '';
+
+        setAiDetectedCard({
+          name: detectedName || first.brandName || 'Prescription Medicines',
+          dosageForm: detectedForm,
+          company: detectedComp,
+          strength: detectedStr,
+          confidence: 95
+        });
+
+        if (detectedName) {
+          setMedicineName(detectedName);
+        }
+        setDosageForm(detectedForm === 'CAPSULE' ? 'TABLET' : detectedForm);
+        if (detectedComp) setCompanyName(detectedComp);
+        if (detectedStr) setPackSize(detectedStr);
+
+        // Prepend notes with all detected medicines and doctor if multiple items found
+        if (res.items.length > 1) {
+          const summary = `Detected Prescribed Medicines:\n` + res.items.map((it: any, idx: number) => {
+            const m = it.matchedMedicines?.[0];
+            return `${idx + 1}. ${m?.name || it.brandName} (${it.dosageForm}) - Qty: ${it.prescribedQuantity}`;
+          }).join('\n');
+          setNotes(prev => prev ? `${prev}\n\n${summary}` : summary);
+        }
+      } else if (res && (res.potentialName || res.rawText)) {
         const detectedName = res.potentialName || '';
         const detectedForm = res.detectedDosageForm || '';
         const detectedStr = res.strength || '';
@@ -321,12 +359,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
           photo_count: selectedPhotos.length
         });
 
-        // Automatically open WhatsApp redirect in a new tab
-        if (res.whatsapp_url) {
-          try {
-            window.open(res.whatsapp_url, '_blank');
-          } catch (_) {}
-        }
+        // No automatic redirect to WhatsApp — customer stays 100% on the web app!
+        // The backend autonomously analyzes the prescription and notifies the pharmacy counter.
       } else {
         setErrorMessage(res.message || 'Failed to submit request. Please try again.');
       }
@@ -408,24 +442,27 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
 
               {/* Action Buttons */}
               <div className="space-y-2.5 pt-2">
-                <a
-                  href={successResult.whatsapp_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Open WhatsApp Chat Directly</span>
-                  <ExternalLink className="w-3.5 h-3.5 ml-1" />
-                </a>
-
                 <button
                   type="button"
                   onClick={onClose}
-                  className="w-full py-2.5 bg-bg border border-border rounded-xl text-xs font-semibold text-text hover:bg-bg3 transition-colors cursor-pointer"
+                  className="w-full py-3 bg-primary hover:bg-primary/90 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  Done
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Done (Return to Store)</span>
                 </button>
+
+                {successResult.whatsapp_url && (
+                  <a
+                    href={successResult.whatsapp_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2 bg-transparent text-muted hover:text-text font-medium text-[11px] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Need to message pharmacy directly on WhatsApp? (Optional)</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5 opacity-70" />
+                  </a>
+                )}
               </div>
             </div>
           ) : (

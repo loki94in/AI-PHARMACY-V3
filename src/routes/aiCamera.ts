@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { aiCameraService } from '../services/aiCameraService.js';
+import { prescriptionScannerService } from '../services/prescriptionScannerService.js';
 import { productNameFilterService } from '../services/productNameFilterService.js';
 import { getAppDataDir } from '../config/index.js';
 
@@ -158,6 +159,21 @@ router.post('/analyze', async (req, res) => {
   } catch (error: any) {
     console.error('OCR Camera scan processing failed:', error);
     res.status(500).json({ error: `OCR Camera scan processing failed: ${error.message}` });
+  }
+});
+
+// 100% offline prescription scan (zero cloud APIs, <5 minute guaranteed timeout)
+router.post('/scan-prescription', async (req, res) => {
+  const { image } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'Image data is required' });
+  }
+  try {
+    const result = await prescriptionScannerService.scanPrescription(image);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Offline prescription scan failed:', error);
+    res.status(500).json({ error: `Prescription scan failed: ${error.message}` });
   }
 });
 
