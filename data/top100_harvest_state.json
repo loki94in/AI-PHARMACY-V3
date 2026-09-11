@@ -1,0 +1,309 @@
+{
+  "last_updated": "2026-09-11T19:35:22.520Z",
+  "products": {
+    "880": {
+      "status": "success",
+      "product_name": "Happy Tizer Syrup 200 Ml",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:33:09.427Z"
+    },
+    "882": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:10.525Z"
+    },
+    "908": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:21:27.976Z"
+    },
+    "1090": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:12.229Z"
+    },
+    "1237": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:13.844Z"
+    },
+    "1293": {
+      "status": "success",
+      "product_name": "Vaxiflu 4 Toddler Pre Filled Syringe Of 0.25Ml Vaccine",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 30,
+      "updated_at": "2026-09-11T19:33:17.687Z"
+    },
+    "1416": {
+      "status": "success",
+      "product_name": "Harvest Ps Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:20:49.366Z"
+    },
+    "1460": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:22:21.491Z"
+    },
+    "1992": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:18.703Z"
+    },
+    "2480": {
+      "status": "success",
+      "product_name": "Aceflam Mr Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:20:55.771Z"
+    },
+    "2699": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:20.711Z"
+    },
+    "3187": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:20:57.881Z"
+    },
+    "3642": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:20:59.761Z"
+    },
+    "3764": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:22.499Z"
+    },
+    "3794": {
+      "status": "success",
+      "product_name": "Xylocaine 5% Tube Of 50Gm Ointment",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:33:25.804Z"
+    },
+    "4032": {
+      "status": "success",
+      "product_name": "Rechamp Gold Plus Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:33:31.293Z"
+    },
+    "4631": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:33.302Z"
+    },
+    "4761": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:35.218Z"
+    },
+    "5138": {
+      "status": "success",
+      "product_name": "Vaxiflu 2025-2026 Pre Filled Syringe Of 0.5Ml Vaccine",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:33:39.886Z"
+    },
+    "6089": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:41.662Z"
+    },
+    "6758": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:43.572Z"
+    },
+    "7453": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:45.402Z"
+    },
+    "7883": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:47.379Z"
+    },
+    "7901": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:48.616Z"
+    },
+    "8040": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:51.308Z"
+    },
+    "8325": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:52.948Z"
+    },
+    "8354": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:53.948Z"
+    },
+    "8665": {
+      "status": "success",
+      "product_name": "Clop 0.05% Tube Of 10Gm Cream",
+      "angles_saved": 4,
+      "primary_face": "box-side",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:33:58.614Z"
+    },
+    "8920": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:33:59.943Z"
+    },
+    "9167": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:01.730Z"
+    },
+    "9181": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:04.998Z"
+    },
+    "9543": {
+      "status": "success",
+      "product_name": "Xylocaine 2% Jelly 50Gm",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:34:09.374Z"
+    },
+    "9866": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:12.038Z"
+    },
+    "9990": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:13.620Z"
+    },
+    "10032": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:15.562Z"
+    },
+    "10354": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:17.393Z"
+    },
+    "10602": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:19.672Z"
+    },
+    "10610": {
+      "status": "success",
+      "product_name": "Cadbios Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:34:25.396Z"
+    },
+    "10720": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:26.543Z"
+    },
+    "11035": {
+      "status": "success",
+      "product_name": "Clop S Tube Of 20Gm Ointment",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:34:31.724Z"
+    },
+    "11741": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:33.604Z"
+    },
+    "12007": {
+      "status": "success",
+      "product_name": "Myonext Plus Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:34:39.743Z"
+    },
+    "12263": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:41.099Z"
+    },
+    "12557": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:42.179Z"
+    },
+    "12739": {
+      "status": "success",
+      "product_name": "Vaxiflu 2026 Pre Filled Syringe Of 0.5Ml Vaccine",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:34:46.539Z"
+    },
+    "12821": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:48.412Z"
+    },
+    "12831": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:50.198Z"
+    },
+    "12877": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:51.838Z"
+    },
+    "13003": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:34:53.808Z"
+    },
+    "13788": {
+      "status": "success",
+      "product_name": "Nexiron Lp Plus Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 45,
+      "updated_at": "2026-09-11T19:35:08.335Z"
+    },
+    "13885": {
+      "status": "success",
+      "product_name": "Cuticolor Hair Coloring Cream | 2.0 Black | Ammonia & Ppd Free | 60 Gm",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 60,
+      "updated_at": "2026-09-11T19:35:12.828Z"
+    },
+    "14026": {
+      "status": "success",
+      "product_name": "Cadbios Forte Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "updated_at": "2026-09-11T19:35:20.413Z"
+    },
+    "14137": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:35:22.520Z"
+    },
+    "57085": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:16:27.167Z"
+    },
+    "80139": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:16:28.536Z"
+    },
+    "87564": {
+      "status": "success",
+      "product_name": "Dolo 650Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:20:06.835Z"
+    },
+    "99305": {
+      "status": "not_found",
+      "checked_at": "2026-09-11T19:16:29.824Z"
+    },
+    "278925": {
+      "status": "success",
+      "product_name": "Ciplox 500Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "updated_at": "2026-09-11T19:21:49.628Z"
+    }
+  }
+}

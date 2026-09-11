@@ -431,6 +431,36 @@ class AICameraService {
     return null;
   }
 
+  /**
+   * Fast raw OCR text extraction without heavy full-database fuzzy matching.
+   * Ideal for verifying packaging image faces to determine where brand/composition text is clearest.
+   */
+  async extractRawText(imageData: string | Buffer): Promise<string> {
+    let buffer: Buffer;
+    if (typeof imageData === 'string') {
+      if (imageData.startsWith('data:')) {
+        const base64Data = imageData.split(',')[1];
+        buffer = Buffer.from(base64Data, 'base64');
+      } else {
+        buffer = Buffer.from(imageData, 'base64');
+      }
+    } else {
+      buffer = imageData;
+    }
+
+    const processedBuffer = await this.preprocess(buffer);
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    try {
+      const { data } = await this.worker.recognize(processedBuffer);
+      return data?.text || '';
+    } catch (err) {
+      console.warn('[AiCamera] Fast OCR extract failed:', err);
+      return '';
+    }
+  }
+
   async processImage(imageData: string | Buffer, skipEnrichment: boolean = false): Promise<any> {
     let buffer: Buffer;
     if (typeof imageData === 'string') {
@@ -783,15 +813,17 @@ class AICameraService {
     const detectedForm = this.detectDosageForm(localOcrResult.text);
     if (detectedForm) finalInfo.dosageForm = detectedForm;
 
-    // Query scispaCy sidecar if enabled
-    try {
-      const { queryScispacy } = await import('./scispacyClient.js');
-      const nlpData = await queryScispacy(localOcrResult.text);
-      if (nlpData) {
-        finalInfo.nlp = nlpData;
+    // Query scispaCy sidecar if enabled and not skipped
+    if (!skipEnrichment) {
+      try {
+        const { queryScispacy } = await import('./scispacyClient.js');
+        const nlpData = await queryScispacy(localOcrResult.text);
+        if (nlpData) {
+          finalInfo.nlp = nlpData;
+        }
+      } catch (nlpErr) {
+        console.warn('[AiCamera] scispaCy query failed:', nlpErr);
       }
-    } catch (nlpErr) {
-      console.warn('[AiCamera] scispaCy query failed:', nlpErr);
     }
 
     const ocrResult = {
