@@ -1784,6 +1784,7 @@ export const api = {
     customer_name: string;
     customer_phone: string;
     medicine_name?: string;
+    mrp?: number;
     notes?: string;
     image?: string;
     images?: string[];

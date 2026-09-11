@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera, Upload, X, CheckCircle2, AlertCircle, RefreshCw,
   MessageSquare, ExternalLink, ArrowRight, Plus, Trash2, Images,
-  Store as StoreIcon, MapPin
+  Store as StoreIcon, MapPin, ShieldCheck
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -49,6 +49,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   const [selectedPhotos, setSelectedPhotos] = useState<PhotoItem[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<number>(() => activeStore?.id || stores?.[0]?.id || 1);
   const [medicineName, setMedicineName] = useState(prefillMedicineName);
+  const [estimatedMrp, setEstimatedMrp] = useState('');
   const [patientName, setPatientName] = useState(prefillCustomerName);
   const [phone, setPhone] = useState(prefillCustomerPhone);
   const [notes, setNotes] = useState('');
@@ -67,6 +68,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   useEffect(() => {
     if (isOpen) {
       setMedicineName(prefillMedicineName);
+      setEstimatedMrp('');
       if (prefillCustomerName) setPatientName(prefillCustomerName);
       if (prefillCustomerPhone) setPhone(prefillCustomerPhone);
       if (activeStore?.id) {
@@ -218,10 +220,12 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       const currentStore = stores?.find(s => s.id === selectedStoreId) || activeStore || stores?.[0];
       const targetStoreId = currentStore?.id || selectedStoreId || 1;
 
+      const parsedMrp = estimatedMrp ? parseFloat(estimatedMrp) : undefined;
       const res = await api.submitPrescriptionRequest({
         customer_name: trimmedName,
         customer_phone: cleanPhone,
         medicine_name: medicineName.trim() || undefined,
+        mrp: (parsedMrp && !isNaN(parsedMrp)) ? parsedMrp : undefined,
         notes: notes.trim() || undefined,
         images: base64Images.length > 0 ? base64Images : undefined,
         image: base64Images.length === 1 ? base64Images[0] : undefined,
@@ -277,7 +281,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                 Upload Prescriptions / Medicine Photos
               </h2>
               <p className="text-xs text-muted">
-                Direct WhatsApp redirect to {currentStore?.name || activeStore?.name || 'Pharmacy Counter'}
+                Submitted directly to {currentStore?.name || activeStore?.name || 'Pharmacy Counter'}
               </p>
             </div>
           </div>
@@ -301,24 +305,24 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
               </div>
 
               <div className="space-y-1.5">
-                <h3 className="text-xl font-bold text-text">Prescription Request Sent!</h3>
+                <h3 className="text-xl font-bold text-text">Request Received in App!</h3>
                 <p className="text-xs text-muted max-w-sm mx-auto">
-                  Your inquiry with <strong className="text-text">{successResult.photo_count} {successResult.photo_count === 1 ? 'photo' : 'photos'}</strong> has been registered as <strong className="text-text">Order #{successResult.order_id}</strong> in our pharmacy system.
+                  Your inquiry with <strong className="text-text">{successResult.photo_count > 0 ? `${successResult.photo_count} ${successResult.photo_count === 1 ? 'photo' : 'photos'}` : 'medicine details'}</strong> has been registered as <strong className="text-text">Order #{successResult.order_id}</strong> in our pharmacy system.
                 </p>
               </div>
 
-              {/* Pharmacy WhatsApp Info Card */}
+              {/* Pharmacy Received Info Card */}
               <div className="bg-bg p-4 rounded-2xl border border-border text-left space-y-2">
                 <div className="flex items-center justify-between text-xs text-muted pb-2 border-b border-border">
-                  <span>Pharmacy Counter</span>
+                  <span>Pharmacy Branch</span>
                   <span className="font-semibold text-text">{successResult.pharmacy_name}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted pb-2 border-b border-border">
-                  <span>Store WhatsApp</span>
-                  <span className="font-mono font-bold text-emerald-600">+{successResult.pharmacy_phone}</span>
+                  <span>Pharmacy WhatsApp</span>
+                  <span className="font-mono font-bold text-primary">+{successResult.pharmacy_phone}</span>
                 </div>
                 <p className="text-[11px] text-muted pt-1">
-                  Our counter pharmacist will inspect your uploaded photos, verify counter stock batches, and send you the exact price estimate with a UPI payment QR code on WhatsApp.
+                  Our counter pharmacist is reviewing your medicine request, verifying stock batches, and will send you the exact price estimate with a UPI payment QR code directly on WhatsApp.
                 </p>
               </div>
 
@@ -356,7 +360,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-muted uppercase tracking-wider block">
-                        Directing WhatsApp To Registered Pharmacy
+                        Receiving Pharmacy Branch
                       </span>
                       <span className="text-xs font-bold text-text">
                         {currentStore?.name || 'Selected Pharmacy Branch'}
@@ -527,19 +531,36 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                 />
               </div>
 
-              {/* Medicine Name (Pre-filled if searching) */}
-              <div className="space-y-1">
-                <label htmlFor="modal-med-name" className="text-xs font-bold text-text">
-                  Medicine / Item Name <span className="font-normal text-muted">(Optional if in photo)</span>
-                </label>
-                <input
-                  id="modal-med-name"
-                  type="text"
-                  value={medicineName}
-                  onChange={e => setMedicineName(e.target.value)}
-                  placeholder="e.g. Glycomet GP 1, Augmentin 625, etc."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
-                />
+              {/* Medicine Name & Approx MRP */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="modal-med-name" className="text-xs font-bold text-text">
+                    Medicine / Item Name <span className="font-normal text-muted">(Optional if in photo)</span>
+                  </label>
+                  <input
+                    id="modal-med-name"
+                    type="text"
+                    value={medicineName}
+                    onChange={e => setMedicineName(e.target.value)}
+                    placeholder="e.g. Benadryl DR Syrup, Glycomet GP 1"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="modal-med-mrp" className="text-xs font-bold text-text">
+                    Approx. MRP (₹) <span className="font-normal text-muted">(Optional)</span>
+                  </label>
+                  <input
+                    id="modal-med-mrp"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={estimatedMrp}
+                    onChange={e => setEstimatedMrp(e.target.value)}
+                    placeholder="e.g. 135"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-bg border border-border text-xs text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary transition-colors"
+                  />
+                </div>
               </div>
 
               {/* Patient Details Row */}
@@ -591,14 +612,25 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                 />
               </div>
 
-              {/* Pharmacy WhatsApp Target Info Box */}
-              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-2.5 text-xs text-emerald-700">
-                <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <span className="font-bold block">Connected to Pharmacy WhatsApp Counter</span>
-                  <span className="text-[11px] text-emerald-600/90 leading-relaxed block">
-                    Your request will redirect directly to <strong className="underline">{pharmacyContact}</strong> (configured in App Settings). Our counter pharmacist will review your photos and reply with the estimate.
-                  </span>
+              {/* Process Flow Info Box: When Request is Received in the App */}
+              <div className="p-3.5 rounded-2xl bg-bg border border-border space-y-2 text-xs">
+                <div className="flex items-center gap-2 text-text font-bold">
+                  <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+                  <span>When Your Request is Received in the App:</span>
+                </div>
+                <div className="space-y-1.5 text-[11px] text-muted pl-6">
+                  <p className="flex items-start gap-1.5">
+                    <span className="font-bold text-primary shrink-0">1.</span>
+                    <span>Our counter pharmacist verifies local inventory batches or queries mapped distributor stock.</span>
+                  </p>
+                  <p className="flex items-start gap-1.5">
+                    <span className="font-bold text-primary shrink-0">2.</span>
+                    <span>We finalize your exact price and send a secure UPI Payment QR code to your WhatsApp.</span>
+                  </p>
+                  <p className="flex items-start gap-1.5">
+                    <span className="font-bold text-primary shrink-0">3.</span>
+                    <span>Your order remains <strong className="text-text">Pending</strong> until payment is verified, then is confirmed and packed immediately.</span>
+                  </p>
                 </div>
               </div>
 
@@ -623,19 +655,17 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="flex-2 py-2.5 bg-primary hover:opacity-95 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Sending {selectedPhotos.length > 1 ? `${selectedPhotos.length} Photos` : 'Photo'}...</span>
+                      <span>Submitting Request...</span>
                     </>
                   ) : (
                     <>
-                      <MessageSquare className="w-4 h-4" />
-                      <span>
-                        Send {selectedPhotos.length > 1 ? `${selectedPhotos.length} Photos` : ''} to WhatsApp
-                      </span>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Submit Request to Pharmacy</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}

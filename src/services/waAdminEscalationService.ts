@@ -366,10 +366,15 @@ ${customerBlock}
  ⭐ *Match Confidence*: ${Math.round(payload.confidence)}%
 ✅ *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(', ')}${relatedBlock}${contextBlock}`;
       } else {
-        const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 3);
-        const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 5);
+        const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
+        const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
         const distLines = [...mappedTop, ...nonMappedTop]
-          .map((p: any, i: number) => `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'} | ${p.distributor || p.storeName || 'Unknown'}`)
+          .map((p: any, i: number) => {
+            const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+            const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
+            const avail = p.availability ? ` | Stock: ${p.availability}` : '';
+            return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail} | ${p.distributor || p.storeName || 'Unknown'}`;
+          })
           .join('\n');
         messageText = `⚠️ *Medicine Registered in DB but NOT in Physical Stock*
 
@@ -391,12 +396,15 @@ ${distLines ? `\n🚚 *Distributor options*:\n${distLines}\n` : ''}${relatedBloc
         const pkg = p.packaging || p.package || '-';
         const mrp = p.mrp ?? p.MRP ?? '-';
         const dist = p.distributor || p.storeName || 'Unknown';
+        const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+        const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
+        const avail = p.availability ? ` | Stock: ${p.availability}` : '';
         const scoreStr = typeof p.score === 'number' ? ` | ${Math.round(p.score * 100)}%` : '';
-        return `${idx}. ${name}${company ? ` | ${company}` : ''} | ${pkg} | MRP ₹${mrp} | ${dist}${scoreStr}`;
+        return `${idx}. ${name}${company ? ` | ${company}` : ''} | ${pkg} | MRP ₹${mrp}${ptrStr}${avail} | ${dist}${scoreStr}`;
       };
 
-      const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 3);
-      const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 5);
+      const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
+      const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
       const sections: string[] = [];
       let idx = 1;
       if (mappedTop.length > 0) {

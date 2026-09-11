@@ -1064,6 +1064,8 @@ router.post('/prescription-request', async (req, res) => {
       customer_name,
       customer_phone,
       medicine_name,
+      mrp,
+      estimated_mrp,
       notes,
       image,
       images,
@@ -1081,6 +1083,12 @@ router.post('/prescription-request', async (req, res) => {
 
     const cleanName = formatCustomerName(customer_name);
     const targetStoreId = parseInt(String(store_id), 10) || 1;
+
+    const parsedMrp = (mrp !== undefined && mrp !== null && !isNaN(parseFloat(String(mrp))))
+      ? parseFloat(String(mrp))
+      : ((estimated_mrp !== undefined && estimated_mrp !== null && !isNaN(parseFloat(String(estimated_mrp))))
+        ? parseFloat(String(estimated_mrp))
+        : null);
 
     // Collect all base64 image strings (supports both single `image` and array `images`)
     let imageList: string[] = [];
@@ -1118,21 +1126,26 @@ router.post('/prescription-request', async (req, res) => {
     const db = await dbManager.getConnection();
     const medRequested = (medicine_name || '').trim() || 'Prescription / Medicine Inquiry';
     const notesText = (notes || '').trim();
+    const finalNotes = [
+      notesText,
+      parsedMrp ? `Approx MRP: ₹${parsedMrp.toFixed(2)}` : ''
+    ].filter(Boolean).join(' | ') || 'Requested via Website Prescription / Photo Upload';
 
     // Insert order record into special_orders
     const result = await db.run(
       `INSERT INTO special_orders (
         store_id, requester, phone, medicine_name, product, qty, notes,
         status, customer_order_source, source, prescription_url, total_amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         targetStoreId,
         cleanName,
         cleanPhone,
         medRequested,
         medRequested,
-        notesText || 'Requested via Website Prescription / Photo Upload',
-        prescriptionUrl || null
+        finalNotes,
+        prescriptionUrl || null,
+        parsedMrp || 0
       ]
     );
 
@@ -1180,7 +1193,7 @@ router.post('/prescription-request', async (req, res) => {
       `📱 *Mobile:* ${cleanPhone}\n`;
 
     if (medRequested && medRequested !== 'Prescription / Medicine Inquiry') {
-      waText += `💊 *Requested Item:* ${medRequested}\n`;
+      waText += `💊 *Requested Item:* ${medRequested}${parsedMrp ? ` (Approx MRP: ₹${parsedMrp.toFixed(2)})` : ''}\n`;
     }
     if (notesText) {
       waText += `📝 *Notes:* ${notesText}\n`;
