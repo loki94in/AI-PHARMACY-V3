@@ -378,7 +378,7 @@ router.post('/save', async (req, res) => {
         console.error('[Settings] Trigger scheduler reload error:', tsErr);
       }
 
-      if (payload['email_retention_limit'] !== undefined) {
+      if (payload['email_retention_limit'] !== undefined || payload['email_retention_days'] !== undefined) {
         try {
           const db = await dbManager.getConnection();
           const { emailService } = await import('../services/emailService.js');

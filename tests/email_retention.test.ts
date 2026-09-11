@@ -4,7 +4,7 @@ import os from 'os';
 import { ensureSchema } from '../src/database.js';
 import { dbManager } from '../src/database/connection.js';
 import { emailService } from '../src/services/emailService.js';
-import { getEmailRetentionLimit } from '../src/services/storeSettingsService.js';
+import { getEmailRetentionLimit, getEmailRetentionDays } from '../src/services/storeSettingsService.js';
 
 describe('Email Retention & Automatic Pruning', () => {
   let tmpDir: string;
@@ -135,4 +135,89 @@ describe('Email Retention & Automatic Pruning', () => {
     const remaining = await db.get('SELECT COUNT(*) as cnt FROM emails');
     expect(remaining.cnt).toBe(5);
   });
+
+  test('default retention days is 14', async () => {
+    const db = await dbManager.getConnection();
+    const days = await getEmailRetentionDays(db);
+    expect(days).toBe(14);
+  });
+
+  test('prunes emails older than 14 days even if is_saved = 1 and unlinks disk files', async () => {
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM app_settings WHERE key = \'email_retention_days\'');
+    await db.run('DELETE FROM email_attachments');
+    await db.run('DELETE FROM emails');
+
+    const now = Date.now();
+    const sixteenDaysAgo = new Date(now - 16 * 24 * 60 * 60 * 1000).toISOString();
+    const twentyDaysAgo = new Date(now - 20 * 24 * 60 * 60 * 1000).toISOString();
+    const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const oneDayAgo = new Date(now - 1 * 24 * 60 * 60 * 1000).toISOString();
+
+    // 1. Email older than 14 days (16 days old, is_saved = 1)
+    await db.run(
+      `INSERT INTO emails (uid, subject, from_addr, date, is_saved) VALUES (?, ?, ?, ?, 1)`,
+      [101, 'Old Saved Bill 101', 'distributor@test.com', sixteenDaysAgo]
+    );
+    const oldFile1 = path.join(uploadsDir, 'att-101.pdf');
+    fs.writeFileSync(oldFile1, 'old invoice content');
+    await db.run(
+      `INSERT INTO email_attachments (uid, filename, local_path) VALUES (?, ?, ?)`,
+      [101, 'att-101.pdf', oldFile1]
+    );
+
+    // 2. Email older than 14 days (20 days old, is_saved = 0)
+    await db.run(
+      `INSERT INTO emails (uid, subject, from_addr, date, is_saved) VALUES (?, ?, ?, ?, 0)`,
+      [102, 'Old Unsaved Email 102', 'promo@test.com', twentyDaysAgo]
+    );
+    const oldFile2 = path.join(uploadsDir, 'att-102.pdf');
+    fs.writeFileSync(oldFile2, 'old promo content');
+    await db.run(
+      `INSERT INTO email_attachments (uid, filename, local_path) VALUES (?, ?, ?)`,
+      [102, 'att-102.pdf', oldFile2]
+    );
+
+    // 3. Recent Saved email (3 days old, is_saved = 1) -> must be KEPT
+    await db.run(
+      `INSERT INTO emails (uid, subject, from_addr, date, is_saved) VALUES (?, ?, ?, ?, 1)`,
+      [103, 'Recent Saved Bill 103', 'distributor@test.com', threeDaysAgo]
+    );
+    const recentFile1 = path.join(uploadsDir, 'att-103.pdf');
+    fs.writeFileSync(recentFile1, 'recent saved content');
+    await db.run(
+      `INSERT INTO email_attachments (uid, filename, local_path) VALUES (?, ?, ?)`,
+      [103, 'att-103.pdf', recentFile1]
+    );
+
+    // 4. Recent Unsaved email (1 day old, is_saved = 0) -> must be KEPT
+    await db.run(
+      `INSERT INTO emails (uid, subject, from_addr, date, is_saved) VALUES (?, ?, ?, ?, 0)`,
+      [104, 'Recent Normal Email 104', 'info@test.com', oneDayAgo]
+    );
+
+    // Run pruning
+    const result = await emailService.pruneOldEmails(db);
+    expect(result.deletedCount).toBe(2); // UIDs 101 and 102 deleted!
+
+    // Files on disk for 101 and 102 must be unlinked
+    expect(fs.existsSync(oldFile1)).toBe(false);
+    expect(fs.existsSync(oldFile2)).toBe(false);
+
+    // Recent file 103 must still exist
+    expect(fs.existsSync(recentFile1)).toBe(true);
+
+    // UIDs 101 and 102 removed from DB
+    const deleted101 = await db.get('SELECT uid FROM emails WHERE uid = 101');
+    const deleted102 = await db.get('SELECT uid FROM emails WHERE uid = 102');
+    expect(deleted101).toBeUndefined();
+    expect(deleted102).toBeUndefined();
+
+    // UIDs 103 and 104 preserved
+    const kept103 = await db.get('SELECT uid FROM emails WHERE uid = 103');
+    const kept104 = await db.get('SELECT uid FROM emails WHERE uid = 104');
+    expect(kept103).toBeDefined();
+    expect(kept104).toBeDefined();
+  });
 });
+

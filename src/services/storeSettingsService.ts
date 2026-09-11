@@ -269,6 +269,24 @@ export async function getEmailRetentionLimit(dbInstance?: any): Promise<number> 
 }
 
 /**
+ * Resolves the configured email retention days from app_settings (default: 14 days).
+ * All emails (including saved/processed ones) older than this limit are auto-pruned.
+ */
+export async function getEmailRetentionDays(dbInstance?: any): Promise<number> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'email_retention_days'");
+    if (row && row.value && !isNaN(parseInt(row.value, 10))) {
+      const val = parseInt(row.value, 10);
+      if (val > 0) return val;
+    }
+  } catch (err) {
+    console.warn('[StoreSettings] Error resolving email retention days:', err);
+  }
+  return 14;
+}
+
+/**
  * Resolves the configured Google Maps store location / directions link from app_settings.
  */
 export async function getStoreGoogleMapsUrl(dbInstance?: any): Promise<string> {

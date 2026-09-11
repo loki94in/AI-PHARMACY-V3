@@ -16,7 +16,7 @@ import * as XLSX from 'xlsx';
 import { eventService } from './eventService.js';
 import { aiCameraService } from './aiCameraService.js';
 import { extractCleanEmail } from '../utils/emailSanitizer.js';
-import { getEmailRetentionLimit, getStorePhone, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
+import { getEmailRetentionLimit, getEmailRetentionDays, getStorePhone, getInvoiceWhatsAppRecipients } from './storeSettingsService.js';
 import { config, getAppDataDir } from '../config/index.js';
 import { medicineService } from './medicineService.js';
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
@@ -3171,30 +3171,47 @@ export class EmailService {
   }
 
   /**
-   * Automatically prunes old emails beyond the configured retention limit (default: 15).
-   * Exempts emails with is_saved = 1.
-   * Physically deletes unimported attachment files from disk.
+   * Automatically prunes old emails:
+   * 1. Emails older than retention days (default: 14 days) are pruned unconditionally (including is_saved = 1).
+   * 2. Non-saved emails within the retention window beyond the count limit (default: 15) are pruned.
+   * Physically deletes unimported attachment files from disk and removes database records.
    */
   public async pruneOldEmails(dbInstance?: any): Promise<{ deletedCount: number }> {
     try {
       await ensureSchema(getDbPath());
       const db = dbInstance || (await dbManager.getConnection());
       const limit = await getEmailRetentionLimit(db);
+      const retentionDays = await getEmailRetentionDays(db);
 
-      // Fetch non-saved email UIDs ordered by date/synced_at descending (latest first)
+      const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+
+      // 1. UIDs of ALL emails older than retentionDays (including saved/processed)
+      const expiredEmails = await db.all(
+        `SELECT uid FROM emails 
+         WHERE datetime(COALESCE(date, synced_at)) < datetime(?)`,
+        [cutoffDate]
+      );
+      const expiredUids: number[] = (expiredEmails || []).map((e: any) => e.uid);
+
+      // 2. Non-saved emails within the retention window (ordered latest first)
       const nonSavedEmails = await db.all(
         `SELECT uid FROM emails 
          WHERE (is_saved IS NULL OR is_saved = 0)
-         ORDER BY datetime(COALESCE(date, synced_at)) DESC, uid DESC`
+           AND datetime(COALESCE(date, synced_at)) >= datetime(?)
+         ORDER BY datetime(COALESCE(date, synced_at)) DESC, uid DESC`,
+        [cutoffDate]
       );
 
-      if (nonSavedEmails.length <= limit) {
+      const countPruneUids: number[] = (nonSavedEmails || []).length > limit
+        ? nonSavedEmails.slice(limit).map((e: any) => e.uid)
+        : [];
+
+      // Combine unique UIDs to delete
+      const uidsToDelete = Array.from(new Set([...expiredUids, ...countPruneUids]));
+
+      if (uidsToDelete.length === 0) {
         return { deletedCount: 0 };
       }
-
-      // Emails beyond the limit (oldest ones) to delete
-      const emailsToDelete = nonSavedEmails.slice(limit);
-      const uidsToDelete = emailsToDelete.map((e: any) => e.uid);
 
       let deletedCount = 0;
       const uploadsDir = process.env.UPLOADS_DIR || path.join(getAppDataDir(), 'uploads');
@@ -3218,16 +3235,16 @@ export class EmailService {
           }
         }
 
-
         // Delete records
         await db.run('DELETE FROM email_attachments WHERE uid = ?', [uid]);
         await db.run('DELETE FROM processed_emails WHERE uid = ?', [uid]);
+        await db.run('DELETE FROM email_order_reviews WHERE email_uid = ?', [uid]);
         await db.run('DELETE FROM emails WHERE uid = ?', [uid]);
         deletedCount++;
       }
 
       if (deletedCount > 0) {
-        console.log(`[EmailPruner] Cleaned up ${deletedCount} old email(s). Retained latest ${limit} non-saved emails.`);
+        console.log(`[EmailPruner] Cleaned up ${deletedCount} old email(s). (Pruned emails older than ${retentionDays} days, retained latest ${limit} non-saved emails within window).`);
       }
 
       return { deletedCount };
