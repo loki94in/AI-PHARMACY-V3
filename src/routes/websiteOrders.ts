@@ -12,6 +12,7 @@ import { paymentQrService } from '../services/paymentQrService.js';
 import { formatProductCode, normalizeProductName, getThreeWordPrefix } from '../utils/productNormalizer.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { processPrescriptionAndNotifyPharmacy } from '../services/prescriptionIntelService.js';
+import { imageCompressionService } from '../services/imageCompressionService.js';
 
 const router = express.Router();
 
@@ -1115,7 +1116,7 @@ router.post('/prescription-request', async (req, res) => {
         const buffer = Buffer.from(base64Str, 'base64');
         const safeName = `Rx_Web_${Date.now()}_${i + 1}_${Math.random().toString(36).substring(2, 7)}.jpg`;
         const fullPath = path.join(uploadsDir, safeName);
-        fs.writeFileSync(fullPath, buffer);
+        await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
         savedUrls.push(`/uploads/prescriptions/${safeName}`);
         savedFilePaths.push(fullPath);
       }

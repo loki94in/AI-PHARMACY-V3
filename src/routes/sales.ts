@@ -21,6 +21,7 @@ import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderName
 import { returnWindowService } from '../services/returnWindowService.js';
 import { tenantAuthMiddleware } from '../middleware/tenantAuth.js';
 import { resolveStoreId, storeContextService } from '../services/storeContextService.js';
+import { imageCompressionService } from '../services/imageCompressionService.js';
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
@@ -3519,7 +3520,7 @@ router.post('/prescription/upload', async (req, res) => {
     const buffer = Buffer.from(base64Str, 'base64');
     const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
     const fullPath = path.join(uploadsDir, safeName);
-    fs.writeFileSync(fullPath, buffer);
+    await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
 
     const relativeUrl = `/uploads/prescriptions/${safeName}`;
     res.json({ success: true, image_path: relativeUrl });

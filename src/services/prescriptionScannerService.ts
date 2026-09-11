@@ -76,17 +76,22 @@ class PrescriptionScannerService {
    */
   public async preprocessImage(buffer: Buffer): Promise<Buffer> {
     const img = await Jimp.read(buffer);
-    const maxDim = 1400;
+    let width = img.bitmap.width;
+    let height = img.bitmap.height;
+    const maxDim = 1200;
 
-    if (img.bitmap.width > maxDim || img.bitmap.height > maxDim) {
-      if (img.bitmap.width > img.bitmap.height) {
-        img.resize({ w: maxDim });
+    if (width > maxDim || height > maxDim) {
+      if (width > height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
       } else {
-        img.resize({ h: maxDim });
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
       }
+      img.resize({ w: width, h: height });
     }
 
-    img.greyscale().contrast(0.3);
+    img.greyscale().contrast(0.25);
     return await img.getBuffer('image/jpeg');
   }
 

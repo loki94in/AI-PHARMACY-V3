@@ -5,6 +5,7 @@ import {
   Store as StoreIcon, MapPin, ShieldCheck, Sparkles, Pill, Check
 } from 'lucide-react';
 import { api } from '../services/api';
+import { optimizeImageForUpload } from '../utils/imageOptimizer';
 
 const DOSAGE_FORM_OPTIONS = [
   { key: 'TABLET', label: 'Tablet / Capsule', icon: '💊', sub: 'Solid strips (Dolo, Telma, Pan-D)' },
@@ -42,6 +43,8 @@ interface PhotoItem {
   preview: string;
   name: string;
   sizeKb: number;
+  base64?: string;
+  originalSizeKb?: number;
 }
 
 export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = ({
@@ -119,9 +122,9 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
 
   if (!isOpen) return null;
 
-  const handleFilesSelect = (files: FileList | File[]) => {
+  const handleFilesSelect = async (files: FileList | File[]) => {
     const validPhotos: PhotoItem[] = [];
-    const maxFileSize = 15 * 1024 * 1024; // 15MB per photo
+    const maxFileSize = 25 * 1024 * 1024; // Allow up to 25MB raw phone photos since we compress them client-side
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -129,21 +132,35 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
         continue;
       }
       if (file.size > maxFileSize) {
-        setErrorMessage(`File "${file.name}" exceeds 15MB limit and was skipped.`);
+        setErrorMessage(`File "${file.name}" exceeds 25MB limit and was skipped.`);
         continue;
       }
 
-      validPhotos.push({
-        id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`,
-        file,
-        preview: URL.createObjectURL(file),
-        name: file.name,
-        sizeKb: Math.round(file.size / 1024)
-      });
+      try {
+        const opt = await optimizeImageForUpload(file, 1400, 0.82);
+        validPhotos.push({
+          id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`,
+          file,
+          preview: opt.base64,
+          base64: opt.base64,
+          name: file.name,
+          sizeKb: opt.sizeKb,
+          originalSizeKb: opt.originalSizeKb
+        });
+      } catch (optErr) {
+        validPhotos.push({
+          id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`,
+          file,
+          preview: URL.createObjectURL(file),
+          name: file.name,
+          sizeKb: Math.round(file.size / 1024),
+          originalSizeKb: Math.round(file.size / 1024)
+        });
+      }
     }
 
     if (validPhotos.length === 0 && files.length > 0) {
-      setErrorMessage('Please select valid image files (JPG, PNG, WEBP) under 15MB each.');
+      setErrorMessage('Please select valid image files (JPG, PNG, WEBP).');
       return;
     }
 
@@ -157,9 +174,9 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       return combined;
     });
 
-    // Auto-scan first uploaded photo with AI Camera
+    // Auto-scan first uploaded photo with AI Camera using pre-compressed base64
     if (validPhotos.length > 0) {
-      autoScanFirstPhoto(validPhotos[0].file);
+      autoScanFirstPhoto(validPhotos[0]);
     }
 
     if (fileInputRef.current) {
@@ -167,10 +184,10 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     }
   };
 
-  const autoScanFirstPhoto = async (file: File) => {
+  const autoScanFirstPhoto = async (photoItem: PhotoItem) => {
     try {
       setIsScanningPhoto(true);
-      const b64 = await fileToBase64(file);
+      const b64 = photoItem.base64 || await fileToBase64(photoItem.file);
       // Try fast offline prescription scanner first, fallback to analyzeImage
       let res: any;
       try {
@@ -326,10 +343,12 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     setIsSubmitting(true);
 
     try {
-      // Convert all selected photos to base64
+      // Convert all selected photos to base64 using pre-optimized payload
       let base64Images: string[] = [];
       if (selectedPhotos.length > 0) {
-        base64Images = await Promise.all(selectedPhotos.map(p => fileToBase64(p.file)));
+        base64Images = await Promise.all(
+          selectedPhotos.map(p => (p.base64 ? Promise.resolve(p.base64) : fileToBase64(p.file)))
+        );
       }
 
       const currentStore = stores?.find(s => s.id === selectedStoreId) || activeStore || stores?.[0];
@@ -578,7 +597,9 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                             <span className="truncate max-w-[90px]" title={photo.name}>
                               {photo.name}
                             </span>
-                            <span>{photo.sizeKb} KB</span>
+                            <span className="font-mono text-emerald-600 font-medium" title={photo.originalSizeKb ? `Optimized from ${photo.originalSizeKb} KB` : undefined}>
+                              {photo.sizeKb} KB
+                            </span>
                           </div>
                         </div>
                       ))}

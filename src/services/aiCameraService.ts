@@ -43,15 +43,21 @@ class AICameraService {
   private async preprocess(buffer: Buffer): Promise<Buffer> {
     try {
       const image = await Jimp.read(buffer);
-      const maxDim = 1400;
-      if (image.bitmap.width > maxDim || image.bitmap.height > maxDim) {
-        if (image.bitmap.width > image.bitmap.height) {
-          image.resize({ w: maxDim });
+      let width = image.bitmap.width;
+      let height = image.bitmap.height;
+      const maxDim = 1200;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
         } else {
-          image.resize({ h: maxDim });
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
         }
+        image.resize({ w: width, h: height });
       }
-      image.greyscale().contrast(0.2);
+      image.greyscale().contrast(0.25);
       return await image.getBuffer('image/jpeg');
     } catch (err) {
       console.error('Preprocessing failed, using original:', err);
@@ -567,11 +573,14 @@ class AICameraService {
       if (bestLineMatches.length > 0) {
         if (!visualHitName) matches = bestLineMatches;
       } else if (!visualHitName) {
-        // If the line-level query found nothing, try individual uncertain tokens
-        // (handles cases where only one word in the line is the product name)
+        // If the line-level query found nothing, try top individual uncertain tokens
+        // Guard with max 3 token lookups to prevent CPU freezes on 286k medicine fuzzy scans
+        let tokenChecks = 0;
         for (const item of candidateLines) {
           for (const token of item.tokens) {
-            if (token.length < 4) continue; // skip very short tokens
+            if (token.length < 5) continue; // skip very short or common noise tokens
+            if (tokenChecks >= 3) break;
+            tokenChecks++;
             const tokenResult = await productNameFilterService.filterProductNames(token, {
               minConfidenceThreshold: 0.7,
               dosageForm: detectedDosageForm || undefined,
@@ -584,7 +593,7 @@ class AICameraService {
               if (bestLineScore >= 0.88) break;
             }
           }
-          if (bestLineMatches.length > 0) break;
+          if (bestLineMatches.length > 0 || tokenChecks >= 3) break;
         }
         matches = bestLineMatches;
       }
@@ -837,8 +846,17 @@ class AICameraService {
 
     try {
       const image = await Jimp.read(buffer);
-      if (image.width > 800) {
-        image.resize({ w: 800 });
+      let width = image.bitmap.width;
+      let height = image.bitmap.height;
+      if (width > 800 || height > 800) {
+        if (width > height) {
+          height = Math.round((height * 800) / width);
+          width = 800;
+        } else {
+          width = Math.round((width * 800) / height);
+          height = 800;
+        }
+        image.resize({ w: width, h: height });
       }
       const compressedBuffer = await image.getBuffer('image/jpeg');
       await fs.promises.writeFile(absoluteImagePath, compressedBuffer);
