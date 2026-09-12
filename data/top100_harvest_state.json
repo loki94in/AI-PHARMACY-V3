@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T00:33:50.551Z",
+  "last_updated": "2026-09-12T01:41:59.238Z",
   "products": {
     "880": {
       "status": "success",
@@ -34,12 +34,10 @@
       "updated_at": "2026-09-11T19:33:17.687Z"
     },
     "1416": {
-      "status": "success",
-      "product_name": "Harvest Ps Strip Of 10 Tablets",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 45,
-      "updated_at": "2026-09-11T19:20:49.366Z"
+      "status": "gemini_rejected",
+      "reason": "The brand name 'HARVEST PS' is not visible on the packaging in this image; only a nutritional/amino acid composition table is shown.",
+      "printed": "",
+      "checked_at": "2026-09-12T01:29:44.003Z"
     },
     "1460": {
       "status": "not_found",
@@ -142,12 +140,9 @@
       "checked_at": "2026-09-11T20:10:25.455Z"
     },
     "8665": {
-      "status": "success",
-      "product_name": "Clop 0.05% Tube Of 10Gm Cream",
-      "angles_saved": 4,
-      "primary_face": "box-side",
-      "primary_confidence": 60,
-      "updated_at": "2026-09-11T19:33:58.614Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:35:10.159Z"
     },
     "8920": {
       "status": "not_found",
@@ -202,12 +197,9 @@
       "checked_at": "2026-09-11T20:10:49.148Z"
     },
     "11035": {
-      "status": "success",
-      "product_name": "Clop S Tube Of 20Gm Ointment",
-      "angles_saved": 4,
-      "primary_face": "combo",
-      "primary_confidence": 95,
-      "updated_at": "2026-09-11T19:34:31.724Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:35:39.251Z"
     },
     "11741": {
       "status": "not_found",
@@ -230,12 +222,9 @@
       "checked_at": "2026-09-11T20:10:51.403Z"
     },
     "12739": {
-      "status": "success",
-      "product_name": "Vaxiflu 2026 Pre Filled Syringe Of 0.5Ml Vaccine",
-      "angles_saved": 1,
-      "primary_face": "side",
-      "primary_confidence": 60,
-      "updated_at": "2026-09-11T19:34:46.539Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:35:50.859Z"
     },
     "12821": {
       "status": "not_found",
@@ -254,12 +243,9 @@
       "checked_at": "2026-09-11T20:10:54.410Z"
     },
     "13788": {
-      "status": "success",
-      "product_name": "Nexiron Lp Plus Strip Of 10 Tablets",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 45,
-      "updated_at": "2026-09-11T19:35:08.335Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:36:08.400Z"
     },
     "13885": {
       "status": "success",
@@ -700,12 +686,9 @@
       "checked_at": "2026-09-11T20:13:27.455Z"
     },
     "30665": {
-      "status": "success",
-      "product_name": "Zycafy Shampoo Bottle Of 150Ml",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "updated_at": "2026-09-11T19:39:02.018Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:39:15.141Z"
     },
     "30754": {
       "status": "not_found",
@@ -1410,12 +1393,9 @@
       "checked_at": "2026-09-11T20:22:33.751Z"
     },
     "37420": {
-      "status": "success",
-      "product_name": "Bonmax Pth Autopen Cartridge Of 3Ml Injection",
-      "angles_saved": 1,
-      "primary_face": "box-front",
-      "primary_confidence": 45,
-      "updated_at": "2026-09-11T19:42:26.978Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:40:18.263Z"
     },
     "37443": {
       "status": "not_found",
@@ -2259,12 +2239,9 @@
       "checked_at": "2026-09-11T20:33:33.705Z"
     },
     "45933": {
-      "status": "success",
-      "product_name": "Clop S Bottle Of 20Ml Nano Lotion",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "updated_at": "2026-09-11T19:47:01.524Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched medicine packaging",
+      "checked_at": "2026-09-12T01:41:54.302Z"
     },
     "45956": {
       "status": "success",
@@ -21348,6 +21325,1971 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T00:33:50.551Z"
+    },
+    "230213": {
+      "status": "success",
+      "product_name": "Cadofer Xt Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:34:07.832Z"
+    },
+    "230262": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:09.648Z"
+    },
+    "230343": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:11.808Z"
+    },
+    "230344": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:13.316Z"
+    },
+    "230352": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:16.537Z"
+    },
+    "230444": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:18.322Z"
+    },
+    "230454": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:20.354Z"
+    },
+    "230469": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:21.716Z"
+    },
+    "230473": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:25.034Z"
+    },
+    "230487": {
+      "status": "success",
+      "product_name": "Pantodac L Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:34:34.145Z"
+    },
+    "230490": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:35.568Z"
+    },
+    "230610": {
+      "status": "success",
+      "product_name": "Sugamet Mc 500Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:34:48.301Z"
+    },
+    "230615": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:34:52.378Z"
+    },
+    "230743": {
+      "status": "success",
+      "product_name": "Ocid D Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:35:03.607Z"
+    },
+    "230745": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:06.180Z"
+    },
+    "230815": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:07.470Z"
+    },
+    "230821": {
+      "status": "success",
+      "product_name": "Caviera Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:35:17.475Z"
+    },
+    "230864": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:20.671Z"
+    },
+    "230899": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:22.802Z"
+    },
+    "230950": {
+      "status": "success",
+      "product_name": "Ocid L Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:35:31.946Z"
+    },
+    "231047": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:35.176Z"
+    },
+    "231337": {
+      "status": "success",
+      "product_name": "Klotfree 75Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:35:43.528Z"
+    },
+    "231359": {
+      "status": "success",
+      "product_name": "Epsolin 50Mg Ampoule Of 2 Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:35:55.788Z"
+    },
+    "231429": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:35:58.966Z"
+    },
+    "231433": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:01.056Z"
+    },
+    "231516": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:02.172Z"
+    },
+    "231527": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:04.080Z"
+    },
+    "231555": {
+      "status": "success",
+      "product_name": "Nebula H Tablet",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:36:12.968Z"
+    },
+    "231573": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:16.142Z"
+    },
+    "231604": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:19.880Z"
+    },
+    "231660": {
+      "status": "success",
+      "product_name": "New Neurotrat Lm Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:36:26.890Z"
+    },
+    "231671": {
+      "status": "success",
+      "product_name": "Metharmed 0.2 Mg Injection 1 Ml",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:36:34.345Z"
+    },
+    "231674": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:36.162Z"
+    },
+    "231679": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:37.726Z"
+    },
+    "231680": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:39.316Z"
+    },
+    "231699": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:41.710Z"
+    },
+    "231717": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:44.946Z"
+    },
+    "231756": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:46.632Z"
+    },
+    "231764": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:48.782Z"
+    },
+    "231796": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:36:51.604Z"
+    },
+    "231805": {
+      "status": "success",
+      "product_name": "New Neurotrat Lm Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:36:59.835Z"
+    },
+    "231821": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:02.027Z"
+    },
+    "231847": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:04.955Z"
+    },
+    "231880": {
+      "status": "success",
+      "product_name": "Penegra Pah Strip Of 15 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:37:27.200Z"
+    },
+    "231983": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:28.850Z"
+    },
+    "232003": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:30.380Z"
+    },
+    "232057": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:32.746Z"
+    },
+    "232059": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:34.951Z"
+    },
+    "232066": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:38.414Z"
+    },
+    "232163": {
+      "status": "success",
+      "product_name": "Aten 25Mg Strip Of 14 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:37:47.497Z"
+    },
+    "232173": {
+      "status": "success",
+      "product_name": "Epsolin 100Mg Bottle Of 100 Tablets",
+      "angles_saved": 2,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:37:54.333Z"
+    },
+    "232204": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:56.506Z"
+    },
+    "232211": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:37:58.512Z"
+    },
+    "232235": {
+      "status": "success",
+      "product_name": "Ocid D Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:38:09.166Z"
+    },
+    "232277": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:10.794Z"
+    },
+    "232330": {
+      "status": "success",
+      "product_name": "Zyrop 2000Iu Vial Of 1Ml Injection",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:38:17.519Z"
+    },
+    "232390": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:19.003Z"
+    },
+    "232414": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:21.860Z"
+    },
+    "232418": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:24.126Z"
+    },
+    "232506": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:25.620Z"
+    },
+    "232529": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:27.730Z"
+    },
+    "232583": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:30.992Z"
+    },
+    "232598": {
+      "status": "success",
+      "product_name": "Salazar Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:38:39.575Z"
+    },
+    "232606": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:42.070Z"
+    },
+    "232610": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:44.006Z"
+    },
+    "232763": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:47.380Z"
+    },
+    "232782": {
+      "status": "success",
+      "product_name": "Metbetic Gl 2Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:38:56.599Z"
+    },
+    "232791": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:38:58.124Z"
+    },
+    "232796": {
+      "status": "success",
+      "product_name": "Tiomist 9Mcg Box Of 120Md Metered Dose Inhaler",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:39:10.323Z"
+    },
+    "232816": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:12.531Z"
+    },
+    "232845": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:13.923Z"
+    },
+    "232941": {
+      "status": "success",
+      "product_name": "Femistra 1Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "box-back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:39:21.333Z"
+    },
+    "232993": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:23.889Z"
+    },
+    "233068": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:26.645Z"
+    },
+    "233088": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:30.660Z"
+    },
+    "233108": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:32.665Z"
+    },
+    "233130": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:34.372Z"
+    },
+    "233326": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:36.772Z"
+    },
+    "233328": {
+      "status": "success",
+      "product_name": "Gerbisa 10Mg Strip Of 5 Suppositories",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:39:49.003Z"
+    },
+    "233443": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:52.200Z"
+    },
+    "233519": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:39:53.787Z"
+    },
+    "233630": {
+      "status": "success",
+      "product_name": "Jonac Aq 75Mg Ampoule Of 1Ml Injection",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:40:01.012Z"
+    },
+    "233662": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:03.352Z"
+    },
+    "233674": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:05.474Z"
+    },
+    "233710": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:07.100Z"
+    },
+    "233716": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:10.030Z"
+    },
+    "233819": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:11.836Z"
+    },
+    "233895": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:16.662Z"
+    },
+    "233961": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:18.512Z"
+    },
+    "233964": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:21.006Z"
+    },
+    "233966": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:23.040Z"
+    },
+    "234038": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:25.236Z"
+    },
+    "234073": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:29.336Z"
+    },
+    "234085": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:31.656Z"
+    },
+    "234188": {
+      "status": "success",
+      "product_name": "Recovorin 50Mg Injection",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:40:40.561Z"
+    },
+    "234272": {
+      "status": "success",
+      "product_name": "Nodon H Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:40:51.366Z"
+    },
+    "234275": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:52.960Z"
+    },
+    "234380": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:55.238Z"
+    },
+    "234504": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:40:57.472Z"
+    },
+    "234605": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:01.402Z"
+    },
+    "234655": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:02.826Z"
+    },
+    "234684": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:06.285Z"
+    },
+    "234779": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:06.924Z"
+    },
+    "234786": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:07.621Z"
+    },
+    "234802": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:08.196Z"
+    },
+    "234804": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:08.899Z"
+    },
+    "234847": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:09.710Z"
+    },
+    "234869": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:10.340Z"
+    },
+    "234932": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:10.990Z"
+    },
+    "234936": {
+      "status": "success",
+      "product_name": "Caroza 500Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:41:18.286Z"
+    },
+    "235005": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:20.396Z"
+    },
+    "235071": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:23.359Z"
+    },
+    "235080": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:24.885Z"
+    },
+    "235081": {
+      "status": "success",
+      "product_name": "Levoday 500 Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:41:34.885Z"
+    },
+    "235127": {
+      "status": "success",
+      "product_name": "Haem Up Gems Bottle Of 30 Capsules",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:41:42.181Z"
+    },
+    "235134": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:43.946Z"
+    },
+    "235148": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:47.588Z"
+    },
+    "235178": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:49.876Z"
+    },
+    "235192": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:51.368Z"
+    },
+    "235257": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:53.002Z"
+    },
+    "235278": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:41:56.862Z"
+    },
+    "235297": {
+      "status": "success",
+      "product_name": "Sustameto Am Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:42:08.332Z"
+    },
+    "235319": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:09.902Z"
+    },
+    "235325": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:12.792Z"
+    },
+    "235380": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:15.373Z"
+    },
+    "235391": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:17.746Z"
+    },
+    "235401": {
+      "status": "success",
+      "product_name": "The Skin Story Sulphate Free Keratin Biotin Shampoo For Dry Damaged Hair 250 Ml",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:42:29.095Z"
+    },
+    "235418": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:32.776Z"
+    },
+    "235444": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:36.206Z"
+    },
+    "235450": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:40.800Z"
+    },
+    "235453": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:43.006Z"
+    },
+    "235467": {
+      "status": "success",
+      "product_name": "Formonide 0.5Mg 2Ml Packet Of 7 Respules",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:42:51.845Z"
+    },
+    "235472": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:52.866Z"
+    },
+    "235499": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:42:55.230Z"
+    },
+    "235550": {
+      "status": "success",
+      "product_name": "Zyrop 4000Iu Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:43:02.390Z"
+    },
+    "235712": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:04.058Z"
+    },
+    "235727": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:05.652Z"
+    },
+    "235753": {
+      "status": "success",
+      "product_name": "Zyrova F10 Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:43:17.323Z"
+    },
+    "235799": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:19.560Z"
+    },
+    "235919": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:21.630Z"
+    },
+    "235945": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:23.650Z"
+    },
+    "236039": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:26.289Z"
+    },
+    "236052": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:27.902Z"
+    },
+    "236083": {
+      "status": "success",
+      "product_name": "Cadofer Xt Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:43:39.227Z"
+    },
+    "236102": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:42.054Z"
+    },
+    "236165": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:43:44.108Z"
+    },
+    "236209": {
+      "status": "success",
+      "product_name": "Siromus 1Mg Strip Of 6 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:44:01.618Z"
+    },
+    "236212": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:03.750Z"
+    },
+    "236332": {
+      "status": "success",
+      "product_name": "Oritaxim O 200Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:44:19.832Z"
+    },
+    "236394": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:22.208Z"
+    },
+    "236421": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:24.057Z"
+    },
+    "236427": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:26.036Z"
+    },
+    "236584": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:28.333Z"
+    },
+    "236597": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:30.288Z"
+    },
+    "236883": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:32.221Z"
+    },
+    "236963": {
+      "status": "success",
+      "product_name": "Miliana Strip Of 21 Tablets",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:44:44.190Z"
+    },
+    "236968": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:44:46.130Z"
+    },
+    "236976": {
+      "status": "success",
+      "product_name": "Nucoxia Pg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:44:57.386Z"
+    },
+    "237017": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:00.234Z"
+    },
+    "237084": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:02.866Z"
+    },
+    "237119": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:05.001Z"
+    },
+    "237158": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:08.154Z"
+    },
+    "237192": {
+      "status": "success",
+      "product_name": "Pirfetab 200Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:45:24.994Z"
+    },
+    "237203": {
+      "status": "success",
+      "product_name": "Calcirol Xt Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:45:38.176Z"
+    },
+    "237306": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:41.426Z"
+    },
+    "237319": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:43.683Z"
+    },
+    "237378": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:46.570Z"
+    },
+    "237386": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:48.862Z"
+    },
+    "237427": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:45:50.436Z"
+    },
+    "237463": {
+      "status": "success",
+      "product_name": "Nasoclear 0.65% Bottle Of 20Ml Nasal Spray",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:45:58.931Z"
+    },
+    "237468": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:02.240Z"
+    },
+    "237489": {
+      "status": "success",
+      "product_name": "Fusys 150Mg Strip Of 6 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:46:10.330Z"
+    },
+    "237498": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:14.200Z"
+    },
+    "237676": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:15.724Z"
+    },
+    "237678": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:18.898Z"
+    },
+    "237812": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:21.282Z"
+    },
+    "237822": {
+      "status": "success",
+      "product_name": "Proluton Depot 250Mg Ampoule Of 1Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:46:30.432Z"
+    },
+    "237824": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:32.968Z"
+    },
+    "237827": {
+      "status": "success",
+      "product_name": "Paternia Xt Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:46:43.580Z"
+    },
+    "237834": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:45.516Z"
+    },
+    "237847": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:48.192Z"
+    },
+    "237925": {
+      "status": "success",
+      "product_name": "Fembio Bottle Of 10 Capsules",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:46:54.734Z"
+    },
+    "237948": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:56.470Z"
+    },
+    "238013": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:46:58.640Z"
+    },
+    "238027": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:00.782Z"
+    },
+    "238059": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:02.916Z"
+    },
+    "238146": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:06.302Z"
+    },
+    "238164": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:07.541Z"
+    },
+    "238198": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:08.688Z"
+    },
+    "238234": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:10.672Z"
+    },
+    "238298": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:12.848Z"
+    },
+    "238323": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:14.458Z"
+    },
+    "238394": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:16.511Z"
+    },
+    "238407": {
+      "status": "success",
+      "product_name": "Odimont Lc Bottle Of 60Ml Syrup",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:47:25.860Z"
+    },
+    "238413": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:28.986Z"
+    },
+    "238443": {
+      "status": "success",
+      "product_name": "Amdepin 5Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:47:38.957Z"
+    },
+    "238463": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:40.086Z"
+    },
+    "238469": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:43.830Z"
+    },
+    "238470": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:48.577Z"
+    },
+    "238491": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:49.420Z"
+    },
+    "238575": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:47:53.220Z"
+    },
+    "238636": {
+      "status": "success",
+      "product_name": "Amlodac 10Mg Strip Of 30 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:48:02.714Z"
+    },
+    "238822": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:04.394Z"
+    },
+    "238833": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:06.827Z"
+    },
+    "238856": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:10.117Z"
+    },
+    "238867": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:11.793Z"
+    },
+    "238934": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:13.884Z"
+    },
+    "238954": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:15.133Z"
+    },
+    "238971": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:16.325Z"
+    },
+    "239030": {
+      "status": "success",
+      "product_name": "New Sunbless C Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:48:26.167Z"
+    },
+    "239118": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:27.961Z"
+    },
+    "239143": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:30.158Z"
+    },
+    "239150": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:33.319Z"
+    },
+    "239256": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:34.841Z"
+    },
+    "239259": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:35.484Z"
+    },
+    "239324": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:36.302Z"
+    },
+    "239374": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:36.936Z"
+    },
+    "239390": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:37.746Z"
+    },
+    "239414": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:38.365Z"
+    },
+    "239424": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:39.050Z"
+    },
+    "239425": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:48:39.739Z"
+    },
+    "239435": {
+      "status": "success",
+      "product_name": "Calcirol 60K Sachet 1Gm Granules",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:48:48.873Z"
+    },
+    "239629": {
+      "status": "success",
+      "product_name": "Formonide 100Mcg Bottle Of 30 Respicaps",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:49:01.593Z"
+    },
+    "239659": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:06.580Z"
+    },
+    "239690": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:08.842Z"
+    },
+    "239706": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:10.768Z"
+    },
+    "239807": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:12.586Z"
+    },
+    "239831": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:16.164Z"
+    },
+    "239915": {
+      "status": "success",
+      "product_name": "Tenglyn 20Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:49:25.239Z"
+    },
+    "240030": {
+      "status": "success",
+      "product_name": "Odimont Fx Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:49:32.520Z"
+    },
+    "240032": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:35.952Z"
+    },
+    "240209": {
+      "status": "success",
+      "product_name": "Lifepill 3 Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:49:44.779Z"
+    },
+    "240479": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:49:48.609Z"
+    },
+    "240528": {
+      "status": "success",
+      "product_name": "New Redulid Hb Strip Of 15 Tablets",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:50:14.470Z"
+    },
+    "240554": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:16.034Z"
+    },
+    "240568": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:19.803Z"
+    },
+    "240652": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:23.223Z"
+    },
+    "240705": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:24.741Z"
+    },
+    "240763": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:25.814Z"
+    },
+    "240864": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:29.015Z"
+    },
+    "240870": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:30.417Z"
+    },
+    "240929": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:33.785Z"
+    },
+    "240937": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:35.707Z"
+    },
+    "241025": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:37.887Z"
+    },
+    "241066": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:39.206Z"
+    },
+    "241154": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:50:42.945Z"
+    },
+    "241204": {
+      "status": "success",
+      "product_name": "Rosubest F Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:50:50.661Z"
+    },
+    "241205": {
+      "status": "success",
+      "product_name": "Azildac 80Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:50:59.048Z"
+    },
+    "241218": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:02.654Z"
+    },
+    "241233": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:04.696Z"
+    },
+    "241316": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:06.841Z"
+    },
+    "241328": {
+      "status": "success",
+      "product_name": "Etogesic 400Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:51:19.761Z"
+    },
+    "241341": {
+      "status": "success",
+      "product_name": "Hipen Clav Dry Syrup 30Ml",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:51:27.018Z"
+    },
+    "241343": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:29.830Z"
+    },
+    "241344": {
+      "status": "success",
+      "product_name": "Pantodac 40Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:51:39.386Z"
+    },
+    "241349": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:41.831Z"
+    },
+    "241499": {
+      "status": "success",
+      "product_name": "Laxsia Plus Delicious Mint Flavour Bottle Of 200Ml Oral Liquid",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:51:51.081Z"
+    },
+    "241523": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:53.067Z"
+    },
+    "241578": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:55.395Z"
+    },
+    "241584": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:51:57.276Z"
+    },
+    "241637": {
+      "status": "success",
+      "product_name": "Deca Durabolin 50Mg Ampoule Of 1Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:52:08.541Z"
+    },
+    "241660": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:10.557Z"
+    },
+    "241664": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:11.525Z"
+    },
+    "241670": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:14.905Z"
+    },
+    "241701": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:17.040Z"
+    },
+    "241780": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:19.597Z"
+    },
+    "241816": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:21.975Z"
+    },
+    "241822": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:24.469Z"
+    },
+    "241826": {
+      "status": "success",
+      "product_name": "Danclear Bottle Of 50Ml Shampoo",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:52:40.171Z"
+    },
+    "241841": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:41.607Z"
+    },
+    "241847": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:43.881Z"
+    },
+    "241884": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:52:46.186Z"
+    },
+    "241937": {
+      "status": "success",
+      "product_name": "Cadilose Delicious Lemon Flavour Sugar Free Bottle Of 150Ml Oral Solution",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:52:53.453Z"
+    },
+    "241983": {
+      "status": "success",
+      "product_name": "Naturogest 100Mg Strip Of 10 Oral/Vaginal/Rectal Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:53:02.899Z"
+    },
+    "242062": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:06.261Z"
+    },
+    "242066": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:09.811Z"
+    },
+    "242077": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:10.653Z"
+    },
+    "242189": {
+      "status": "success",
+      "product_name": "Inditel H 80Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:53:19.381Z"
+    },
+    "242237": {
+      "status": "success",
+      "product_name": "Actilife Strip Of 15 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:53:32.786Z"
+    },
+    "242271": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:34.327Z"
+    },
+    "242292": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:35.237Z"
+    },
+    "242331": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:37.829Z"
+    },
+    "242361": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:40.085Z"
+    },
+    "242531": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:41.169Z"
+    },
+    "242625": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:44.321Z"
+    },
+    "242671": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:46.143Z"
+    },
+    "242733": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:49.283Z"
+    },
+    "242769": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:53:51.491Z"
+    },
+    "242775": {
+      "status": "success",
+      "product_name": "Nasoclear Aloe Vera Tube Of 15Gm Saline Nasal Gel",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:54:04.594Z"
+    },
+    "242783": {
+      "status": "success",
+      "product_name": "Depotex 16Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:54:13.995Z"
+    },
+    "242834": {
+      "status": "success",
+      "product_name": "Forair 250Mcg Box Of 30 Respicaps",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:54:27.839Z"
+    },
+    "242926": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:28.918Z"
+    },
+    "242944": {
+      "status": "success",
+      "product_name": "Arzep 0.1% Bottle Of 10Ml Nasal Spray",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:54:36.776Z"
+    },
+    "242963": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:37.836Z"
+    },
+    "242987": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:39.626Z"
+    },
+    "242998": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:43.240Z"
+    },
+    "243006": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:45.366Z"
+    },
+    "243075": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:46.877Z"
+    },
+    "243092": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:49.320Z"
+    },
+    "243095": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:52.874Z"
+    },
+    "243141": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:55.506Z"
+    },
+    "243244": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:54:58.510Z"
+    },
+    "243246": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:01.045Z"
+    },
+    "243309": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:02.770Z"
+    },
+    "243330": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:05.024Z"
+    },
+    "243389": {
+      "status": "success",
+      "product_name": "Aciloc Rd 20Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:55:17.070Z"
+    },
+    "243481": {
+      "status": "success",
+      "product_name": "Mexate 7.5Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:55:25.736Z"
+    },
+    "243502": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:29.506Z"
+    },
+    "243554": {
+      "status": "success",
+      "product_name": "Oflin 200Mg Tablet",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:55:37.261Z"
+    },
+    "243556": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:40.834Z"
+    },
+    "243650": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:42.391Z"
+    },
+    "243713": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:55:44.899Z"
+    },
+    "243776": {
+      "status": "success",
+      "product_name": "Sugamet Mc 1Gm Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:55:59.452Z"
+    },
+    "243777": {
+      "status": "success",
+      "product_name": "Atorvafine 5 Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:56:06.839Z"
+    },
+    "243804": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:08.206Z"
+    },
+    "243943": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:11.705Z"
+    },
+    "243953": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:14.015Z"
+    },
+    "243990": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:16.269Z"
+    },
+    "244012": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:19.301Z"
+    },
+    "244083": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:21.248Z"
+    },
+    "244099": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:25.328Z"
+    },
+    "244104": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:27.346Z"
+    },
+    "244173": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:30.515Z"
+    },
+    "244194": {
+      "status": "success",
+      "product_name": "Smarti M Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:56:39.483Z"
+    },
+    "244200": {
+      "status": "success",
+      "product_name": "Aciloc Rd 20Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:56:51.839Z"
+    },
+    "244244": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:53.785Z"
+    },
+    "244288": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:55.966Z"
+    },
+    "244295": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:56:58.359Z"
+    },
+    "244388": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:00.619Z"
+    },
+    "244404": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:02.982Z"
+    },
+    "244450": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:03.921Z"
+    },
+    "244529": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:04.689Z"
+    },
+    "244710": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:05.569Z"
+    },
+    "244731": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:06.272Z"
+    },
+    "244740": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:06.965Z"
+    },
+    "244764": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:09.404Z"
+    },
+    "244845": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:11.408Z"
+    },
+    "245007": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:15.645Z"
+    },
+    "245008": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:18.634Z"
+    },
+    "245057": {
+      "status": "success",
+      "product_name": "Btn Ultra Strip Of 30 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:57:29.374Z"
+    },
+    "245129": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:32.104Z"
+    },
+    "245250": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:35.577Z"
+    },
+    "245264": {
+      "status": "success",
+      "product_name": "Nodon Am 5/5Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:57:45.791Z"
+    },
+    "245268": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:49.139Z"
+    },
+    "245352": {
+      "status": "success",
+      "product_name": "Deriphyllin Bm Expectorant 120Ml",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:57:55.533Z"
+    },
+    "245392": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:57:59.131Z"
+    },
+    "245430": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:01.496Z"
+    },
+    "245515": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:03.626Z"
+    },
+    "245561": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:08.224Z"
+    },
+    "245566": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:10.345Z"
+    },
+    "245576": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:13.719Z"
+    },
+    "245579": {
+      "status": "success",
+      "product_name": "Bonmax D3 60000Iu Strip Of 4 Capsules",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:58:30.761Z"
+    },
+    "245636": {
+      "status": "success",
+      "product_name": "Calcigen D3 Strip Of 4 Capsules",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:58:39.687Z"
+    },
+    "245848": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:41.137Z"
+    },
+    "245941": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:42.861Z"
+    },
+    "245958": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:58:44.981Z"
+    },
+    "246080": {
+      "status": "success",
+      "product_name": "Nozia 100Mcg Strip Of 3 Tablets",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:58:59.217Z"
+    },
+    "246251": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:01.921Z"
+    },
+    "246269": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:04.021Z"
+    },
+    "246285": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:05.371Z"
+    },
+    "246298": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:06.401Z"
+    },
+    "246332": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:08.977Z"
+    },
+    "246461": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:10.731Z"
+    },
+    "246496": {
+      "status": "success",
+      "product_name": "Espra 40Mg Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:59:21.578Z"
+    },
+    "246588": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:23.621Z"
+    },
+    "246654": {
+      "status": "success",
+      "product_name": "Zurig 80Mg Bottle Of 30 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:59:34.462Z"
+    },
+    "246664": {
+      "status": "success",
+      "product_name": "Divalpro Xr 250Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:59:42.147Z"
+    },
+    "246694": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:45.472Z"
+    },
+    "246780": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:48.505Z"
+    },
+    "246973": {
+      "status": "success",
+      "product_name": "Dp Gesic Bottle Of 50Gm Spray",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T00:59:55.522Z"
+    },
+    "247047": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T00:59:57.645Z"
+    },
+    "247061": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:00.667Z"
+    },
+    "247074": {
+      "status": "success",
+      "product_name": "Envas 2.5Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T01:00:09.081Z"
+    },
+    "247092": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:10.729Z"
+    },
+    "247129": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:12.839Z"
+    },
+    "247165": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:14.495Z"
+    },
+    "247179": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:15.773Z"
+    },
+    "247203": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:17.615Z"
+    },
+    "247234": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:20.301Z"
+    },
+    "247243": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T01:00:23.805Z"
     },
     "278925": {
       "status": "success",

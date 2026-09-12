@@ -1,0 +1,318 @@
+#!/usr/bin/env node
+
+/**
+ * scripts/audit_and_clean_catalog_images.ts
+ *
+ * Dedicated AI Packaging Audit & Purge Tool:
+ * Rule: Check front or back. Some medicines have the name on the front (carton/bottle),
+ * some have the name printed on the back foil (blister strips).
+ * Either front OR back confirmed by Gemini Vision -> Entire product packaging PASSES!
+ * The confirmed face is automatically set as Primary (is_primary = 1).
+ * Only if NEITHER front nor back matches is the product packaging purged.
+ */
+
+import fs from 'fs';
+import path from 'path';
+import Database from 'better-sqlite3';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const ROOT_DIR = process.cwd();
+const DB_PATH = path.join(ROOT_DIR, 'data', 'app.db');
+const STATE_FILE = path.join(ROOT_DIR, 'data', 'top100_harvest_state.json');
+const TARGET_FRONTEND = path.join(ROOT_DIR, 'frontend', 'public', 'products');
+const TARGET_UPLOADS = path.join(ROOT_DIR, 'uploads', 'products');
+
+// Load API key pool
+const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
+const API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+
+let keyIndex = 0;
+
+async function verifyWithGemini(
+  imgBuffer: Buffer,
+  targetName: string
+): Promise<{ isExactMatch: boolean; printedName: string; confidence: number; reason: string }> {
+  const base64Data = imgBuffer.toString('base64');
+  const prompt = `You are a strict pharmaceutical verification AI.
+Examine this medicine packaging photo.
+Target Medicine to Verify: "${targetName}"
+
+Tasks:
+1. Read the printed brand name and active strength from the packaging photo.
+2. Confirm if this image genuinely depicts the target medicine brand.
+3. Pack quantity differences (e.g. 10 tablets vs 15 tablets of the same brand and strength) ARE ALLOWED and count as a match (is_exact_match: true).
+4. If the image is for a DIFFERENT drug brand, a medical device, or has a conflicting strength/formulation, mark is_exact_match: false.
+
+Return valid JSON with:
+{
+  "is_exact_match": boolean,
+  "printed_name": string,
+  "printed_strength": string,
+  "confidence": number (0-100),
+  "reason": string
+}`;
+
+  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+
+  for (const model of models) {
+    for (let attempt = 0; attempt < Math.min(API_KEYS.length, 3); attempt++) {
+      const activeKey = API_KEYS[(keyIndex + attempt) % API_KEYS.length];
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
+      const payload = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+          ]
+        }],
+        generationConfig: { responseMimeType: 'application/json' }
+      };
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
+
+        if (res.status === 503 || res.status === 429) {
+          if (API_KEYS.length > 1) {
+            console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(keyIndex + attempt) % API_KEYS.length + 1}, rotating key...`);
+          }
+          continue;
+        }
+
+        if (!res.ok) continue;
+
+        const data: any = await res.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) continue;
+
+        const parsed = JSON.parse(rawText);
+        keyIndex = (keyIndex + attempt + 1) % API_KEYS.length;
+
+        return {
+          isExactMatch: Boolean(parsed.is_exact_match),
+          printedName: parsed.printed_name || '',
+          confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 90,
+          reason: parsed.reason || ''
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return { isExactMatch: false, printedName: '', confidence: 0, reason: 'Gemini service unreachable' };
+}
+
+function loadHarvestState(): { last_updated: string | null; products: Record<string, any> } {
+  if (fs.existsSync(STATE_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+    } catch {}
+  }
+  return { last_updated: null, products: {} };
+}
+
+function saveHarvestState(state: any) {
+  state.last_updated = new Date().toISOString();
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  let auditAll = args.includes('--all');
+  let limit = 0;
+  let delayMs = 1000; // 1 second spacing between requests
+
+  for (const a of args) {
+    if (a.startsWith('--limit=')) limit = parseInt(a.split('=')[1], 10);
+    if (a.startsWith('--delay=')) delayMs = parseInt(a.split('=')[1], 10);
+  }
+
+  console.log('===============================================================');
+  console.log('   CATALOG IMAGE AUDIT: FRONT / BACK CONFIRMATION RULE');
+  console.log('===============================================================');
+  console.log(`🔑 Key Pool: ${API_KEYS.length} Gemini API keys loaded with round-robin rotation.`);
+  console.log(`⏱️ Spacing: ${delayMs}ms delay between verification calls.`);
+  console.log(`🎯 Rule: Either Front OR Back confirmed -> Entire product passes!`);
+  console.log(`🎯 Scope: ${auditAll ? 'All catalog medicines' : 'Medicines with OCR fallback images'}\n`);
+
+  const db = new Database(DB_PATH);
+  const state = loadHarvestState();
+
+  let query = `
+    SELECT DISTINCT ci.medicine_id, m.name as med_name, m.manufacturer as med_mfg
+    FROM catalog_images ci
+    JOIN medicines m ON m.id = ci.medicine_id
+  `;
+
+  if (!auditAll) {
+    query += " WHERE ci.matching_method = 'ai_ocr_verified'";
+  }
+
+  query += " ORDER BY ci.medicine_id ASC";
+
+  if (limit > 0) {
+    query += ` LIMIT ${limit}`;
+  }
+
+  const distinctMeds = db.prepare(query).all() as any[];
+  console.log(`Found ${distinctMeds.length} distinct medicines to evaluate.\n`);
+
+  if (distinctMeds.length === 0) {
+    console.log('✅ No medicines require auditing. All catalog images are verified!\n');
+    return;
+  }
+
+  let auditedMedsCount = 0;
+  let confirmedMedsCount = 0;
+  let purgedMedsCount = 0;
+  let totalAuditedCalls = 0;
+
+  const updateStmt = db.prepare(`
+    UPDATE catalog_images
+    SET matching_method = 'gemini_vision_verified',
+        confidence_score = ?,
+        verification_status = 'VERIFIED',
+        verification_reason = ?,
+        is_primary = ?,
+        verified_by = 'gemini_audit_bot',
+        verified_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  const deleteStmt = db.prepare(`
+    DELETE FROM catalog_images WHERE id = ?
+  `);
+
+  for (let i = 0; i < distinctMeds.length; i++) {
+    const med = distinctMeds[i];
+    const medId = med.medicine_id;
+    const medName = med.med_name;
+
+    const imgRows = db.prepare(`
+      SELECT * FROM catalog_images WHERE medicine_id = ? ORDER BY is_primary DESC, id ASC
+    `).all(medId) as any[];
+
+    if (imgRows.length === 0) continue;
+
+    auditedMedsCount++;
+    console.log(`[${i + 1}/${distinctMeds.length}] Medicine: "${medName}" (ID ${medId}, ${imgRows.length} angles stored)`);
+
+    // Prioritize testing candidate faces:
+    // 1. Current primary face (usually front or clearest text)
+    // 2. Front faces ('box-front', 'front')
+    // 3. Back faces ('box-back', 'back')
+    // 4. Other faces ('combo', 'side')
+    const candidates = [...imgRows].sort((a, b) => {
+      if (a.is_primary && !b.is_primary) return -1;
+      if (!a.is_primary && b.is_primary) return 1;
+      const isAFront = /front/i.test(a.image_type);
+      const isBFront = /front/i.test(b.image_type);
+      const isABack = /back/i.test(a.image_type);
+      const isBBack = /back/i.test(b.image_type);
+      if (isAFront && !isBFront) return -1;
+      if (!isAFront && isBFront) return 1;
+      if (isABack && !isBBack) return -1;
+      if (!isABack && isBBack) return 1;
+      return 0;
+    });
+
+    let confirmedResult: any = null;
+    let confirmedRow: any = null;
+
+    // Test up to 2 key faces (e.g. Front, and if that has no name, Back)
+    const testLimit = Math.min(candidates.length, 2);
+    for (let t = 0; t < testLimit; t++) {
+      const cand = candidates[t];
+      const fileName = path.basename(cand.image_path);
+      const p1 = path.join(TARGET_FRONTEND, fileName);
+      const p2 = path.join(TARGET_UPLOADS, fileName);
+      let imgBuf: Buffer | null = null;
+      if (fs.existsSync(p1)) imgBuf = fs.readFileSync(p1);
+      else if (fs.existsSync(p2)) imgBuf = fs.readFileSync(p2);
+
+      if (!imgBuf || imgBuf.length < 500) continue;
+
+      totalAuditedCalls++;
+      console.log(`    🔍 Testing Face "${cand.image_type}" with Gemini Vision...`);
+      const res = await verifyWithGemini(imgBuf, medName);
+
+      if (res.isExactMatch) {
+        confirmedResult = res;
+        confirmedRow = cand;
+        break; // Either one confirmed -> PASS!
+      } else {
+        console.log(`    ⚠️ Face "${cand.image_type}" not confirmed: ${res.reason}`);
+        if (t < testLimit - 1) {
+          console.log(`    Checking alternate face (e.g. back foil packaging)...`);
+          if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+        }
+      }
+    }
+
+    if (confirmedResult && confirmedRow) {
+      console.log(`    ✅ 100% CONFIRMED on Face "${confirmedRow.image_type}": "${confirmedResult.printedName}" (${confirmedResult.confidence}%)`);
+      console.log(`       Reason: ${confirmedResult.reason}`);
+      console.log(`       ✨ ALL ${imgRows.length} ANGLES PASSED! Setting "${confirmedRow.image_type}" as Primary.\n`);
+
+      // Update all images for this medicine to verified
+      for (const row of imgRows) {
+        const isPrimary = (row.id === confirmedRow.id) ? 1 : 0;
+        updateStmt.run(confirmedResult.confidence, confirmedResult.reason, isPrimary, row.id);
+      }
+      confirmedMedsCount++;
+    } else {
+      console.log(`    ❌ WRONG PACKAGING: Neither front nor back matched target "${medName}".`);
+      console.log(`       🗑️ Purging all ${imgRows.length} angles from disk and database...\n`);
+
+      for (const row of imgRows) {
+        const fn = path.basename(row.image_path);
+        try { fs.unlinkSync(path.join(TARGET_FRONTEND, fn)); } catch {}
+        try { fs.unlinkSync(path.join(TARGET_UPLOADS, fn)); } catch {}
+        deleteStmt.run(row.id);
+      }
+
+      if (state.products[medId]) {
+        state.products[medId] = {
+          status: 'gemini_rejected',
+          reason: 'Neither front nor back matched medicine packaging',
+          checked_at: new Date().toISOString()
+        };
+        saveHarvestState(state);
+      }
+      purgedMedsCount++;
+    }
+
+    if (delayMs > 0 && i < distinctMeds.length - 1) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+
+  saveHarvestState(state);
+
+  const finalVerifiedCount = db.prepare("SELECT count(*) as c FROM catalog_images WHERE matching_method = 'gemini_vision_verified'").get() as any;
+  const remainingOcrCount = db.prepare("SELECT count(*) as c FROM catalog_images WHERE matching_method = 'ai_ocr_verified'").get() as any;
+
+  console.log('===============================================================');
+  console.log('                    AUDIT COMPLETED');
+  console.log('===============================================================');
+  console.log(`Total Medicines Audited             : ${auditedMedsCount}`);
+  console.log(`  - Confirmed & Passed (Front/Back) : ${confirmedMedsCount}`);
+  console.log(`  - Wrong Packaging Purged & Deleted: ${purgedMedsCount}`);
+  console.log(`Total Gemini API Calls Used         : ${totalAuditedCalls}`);
+  console.log(`\nCurrent Database Status:`);
+  console.log(`  - Total Gemini Verified in DB     : ${finalVerifiedCount.c}`);
+  console.log(`  - Remaining OCR Fallback in DB    : ${remainingOcrCount.c}`);
+  console.log('===============================================================\n');
+}
+
+main().catch(err => {
+  console.error('Audit fatal error:', err);
+  process.exit(1);
+});

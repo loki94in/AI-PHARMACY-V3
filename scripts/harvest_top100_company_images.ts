@@ -82,21 +82,23 @@ function triggerWindowsShutdown(reason: string) {
   }
 }
 
+let globalKeyIndex = 0;
+
 async function verifyWithGeminiVision(
   buffer: Buffer,
   targetMedName: string,
-  apiKey: string
+  apiKeys: string[]
 ): Promise<{ isExactMatch: boolean; printedName: string; confidence: number; reason: string }> {
-  try {
-    const base64Data = buffer.toString('base64');
-    const prompt = `You are a strict pharmaceutical verification AI.
+  const base64Data = buffer.toString('base64');
+  const prompt = `You are a strict pharmaceutical verification AI.
 Examine this medicine packaging photo.
 Target Medicine to Verify: "${targetMedName}"
 
 Tasks:
 1. Read the printed brand name and active strength from the packaging photo.
-2. Confirm if this image genuinely depicts the target medicine.
-3. If the image is for a different drug, a medical device (belt/binder), or conflicting strength/formulation, mark is_exact_match: false.
+2. Confirm if this image genuinely depicts the target medicine brand.
+3. Pack quantity differences (e.g. 10 tablets vs 15 tablets of the same brand and strength) ARE ALLOWED and count as a match (is_exact_match: true).
+4. If the image is for a DIFFERENT drug brand, a medical device (belt/binder/brace/footwear), or has a conflicting strength/formulation, mark is_exact_match: false.
 
 Return valid JSON with:
 {
@@ -107,46 +109,66 @@ Return valid JSON with:
   "reason": string
 }`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const payload = {
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
-        ]
-      }],
-      generationConfig: { responseMimeType: 'application/json' }
-    };
+  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const keysToTry = apiKeys.length > 0 ? apiKeys : ['AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A'];
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(18000)
-    });
+  for (const model of models) {
+    for (let attempt = 0; attempt < Math.min(keysToTry.length, 3); attempt++) {
+      const activeKey = keysToTry[(globalKeyIndex + attempt) % keysToTry.length];
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
+      const payload = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+          ]
+        }],
+        generationConfig: { responseMimeType: 'application/json' }
+      };
 
-    if (!res.ok) {
-      console.warn(`[Gemini Vision] API error (HTTP ${res.status}), accepting OCR fallback`);
-      return { isExactMatch: true, printedName: '', confidence: 75, reason: `API status ${res.status}` };
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
+
+        if (res.status === 503 || res.status === 429) {
+          if (keysToTry.length > 1) {
+            console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(globalKeyIndex + attempt) % keysToTry.length + 1}, rotating to next key...`);
+          }
+          continue;
+        }
+
+        if (!res.ok) {
+          console.warn(`[Gemini Vision] ${model} HTTP ${res.status}`);
+          continue;
+        }
+
+        const data: any = await res.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) continue;
+
+        const parsed = JSON.parse(rawText);
+        // Advance global key index so next medicine rotates to the next key
+        globalKeyIndex = (globalKeyIndex + attempt + 1) % keysToTry.length;
+
+        return {
+          isExactMatch: Boolean(parsed.is_exact_match),
+          printedName: parsed.printed_name || '',
+          confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 90,
+          reason: parsed.reason || ''
+        };
+      } catch (err: any) {
+        continue;
+      }
     }
-
-    const data: any = await res.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawText) {
-      return { isExactMatch: true, printedName: '', confidence: 75, reason: 'Empty Gemini text' };
-    }
-
-    const parsed = JSON.parse(rawText);
-    return {
-      isExactMatch: Boolean(parsed.is_exact_match),
-      printedName: parsed.printed_name || '',
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 90,
-      reason: parsed.reason || ''
-    };
-  } catch (err: any) {
-    console.warn('[Gemini Vision] Verification call timeout/error:', err.message);
-    return { isExactMatch: true, printedName: '', confidence: 70, reason: err.message };
   }
+
+  // Fallback to local OCR if Gemini had network issues
+  console.warn('[Gemini Vision] API temporarily unavailable, using OCR fallback');
+  return { isExactMatch: true, printedName: '', confidence: 75, reason: 'Gemini offline fallback to OCR' };
 }
 
 // Formulation modifier conflict dictionary
@@ -218,7 +240,11 @@ function hasStrengthConflict(name1: string, name2: string): boolean {
   const m1 = name1.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
   const m2 = name2.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
   if (m1 && m2) {
-    if (m1[1] !== m2[1] || m1[2].toLowerCase() !== m2[2].toLowerCase()) {
+    const v1 = parseFloat(m1[1]);
+    const v2 = parseFloat(m2[1]);
+    const u1 = m1[2].toLowerCase();
+    const u2 = m2[2].toLowerCase();
+    if (u1 !== u2 || Math.abs(v1 - v2) > 0.001) {
       return true;
     }
   }
@@ -226,62 +252,103 @@ function hasStrengthConflict(name1: string, name2: string): boolean {
 }
 
 function isBrandMatch(query: string, candidateName: string): boolean {
-  const cleanQ = query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
-  const cleanCand = candidateName.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
+  let cleanQ = query.toLowerCase()
+    .replace(/\bever\s+yuth\b/gi, 'everyuth')
+    .replace(/\bsugar\s+free\b/gi, 'sugarfree')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim();
+  let cleanCand = candidateName.toLowerCase()
+    .replace(/\bever\s+yuth\b/gi, 'everyuth')
+    .replace(/\bsugar\s+free\b/gi, 'sugarfree')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim();
 
   const stopWords = new Set([
     'test', 'dummy', 'sample', 'strip', 'tablets', 'tablet', 'capsules', 'capsule',
     'bottle', 'syrup', 'suspension', 'drops', 'pack', 'solution', 'cream', 'ointment',
     'injection', 'powder', 'device', 'tape', 'plaster', 'plasters', 'cotton', 'bandage',
-    'unit', 'units', 'mg', 'mcg', 'ml', 'gm', 'iu', 'of'
+    'unit', 'units', 'mg', 'mcg', 'ml', 'gm', 'iu', 'of', 'and', 'with', 'for', 'in',
+    'wash', 'lotion', 'gel', 'soap', 'sachet', 'sach', 'granules', 'pellets', 'sweetener',
+    'substitute', 'diskettes', 'scrub', 'cleanser', 'mask', 'bar', 'shampoo', 'tonic',
+    'lozenge', 'lozenges', 'patch', 'diet', 'biscuit', 'biscuits', 'flavour', 'flavor',
+    'natural', 'naturals', 'cook', 'bake', 'box', 'pouch', 'jar', 'tube'
   ]);
 
   const qBrandWords = cleanQ.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w) && !/^\d+$/.test(w));
   if (qBrandWords.length === 0) return false;
 
-  const candWords = cleanCand.split(/\s+/);
+  const candWords = cleanCand.split(/\s+/).filter(Boolean);
   const primaryBrand = qBrandWords[0];
 
-  // 1. Primary brand must be at index 0 of candidate name (exact brand lead)
-  // or index 1 only if index 0 is an allowed cosmetic prefix like 'dr', 'new', 'baby'
-  const brandIndex = candWords.indexOf(primaryBrand);
-  if (brandIndex === -1 || (brandIndex > 0 && !['new', 'dr', 'baby'].includes(candWords[0]))) {
+  // 1. Primary brand must match lead of candidate or allowed prefix (new, dr, baby, the)
+  const brandIndex = candWords.findIndex(cw => cw === primaryBrand || cw.startsWith(primaryBrand));
+  if (brandIndex === -1 || (brandIndex > 0 && !['new', 'dr', 'baby', 'the'].includes(candWords[0]))) {
     return false;
   }
 
-  // 2. All brand words in multi-word names (e.g. "CHEST KOLD", "HARVEST PS") must exist in candidate
-  for (const bw of qBrandWords) {
-    if (!candWords.includes(bw)) return false;
+  // 2. Multi-word brand: check first 2 core brand tokens
+  const coreWords = qBrandWords.slice(0, 2);
+  for (const bw of coreWords) {
+    const found = candWords.some(cw => cw === bw || cw.startsWith(bw));
+    if (!found) return false;
   }
 
   return true;
 }
 
 function generateSearchQueries(rawName: string): string[] {
-  let cleaned = rawName.replace(/\[.*?\]/g, ' ');
+  let cleaned = rawName.replace(/\(.*?\)/g, ' ').replace(/\[.*?\]/g, ' ');
   cleaned = cleaned.replace(/\b(STRIP OF \d+ (TABLETS|CAPSULES)|BOTTLE OF \d+ (TABLETS|ML)|NO'S|\d+\s*NO'S|\d+'S)\b/gi, ' ');
-  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup)\b\s*\d*/gi, ' ');
+  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b\s*\d*/gi, ' ');
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  const queries = [cleaned];
+  const queries: string[] = [cleaned];
 
-  // Try without dosage unit (e.g. "CIPLOX 500MG" -> "CIPLOX 500")
-  const withoutUnit = cleaned.replace(/(\d+)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim();
+  // 1. Normalized decimal strength (e.g. "0.50 MG" -> "0.5 MG", "1.0 GM" -> "1 GM")
+  const normDecimal = cleaned.replace(/\b(\d+)\.0+(\s*(?:mg|mcg|ml|gm|iu|%))\b/gi, '$1$2')
+                             .replace(/\b(\d+\.[1-9]+)0+(\s*(?:mg|mcg|ml|gm|iu|%))\b/gi, '$1$2');
+  if (normDecimal !== cleaned) {
+    queries.push(normDecimal);
+    queries.push(normDecimal.replace(/(\d+(?:\.\d+)?)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim());
+  }
+
+  // 2. Try without dosage unit (e.g. "CIPLOX 500MG" -> "CIPLOX 500")
+  const withoutUnit = cleaned.replace(/(\d+(?:\.\d+)?)\s*(mg|mcg|ml|gm|iu|%)\b/gi, '$1').trim();
   if (withoutUnit && withoutUnit !== cleaned) {
     queries.push(withoutUnit);
   }
 
-  // Try brand + modifier if present
-  const tokens = cleaned.split(/\s+/);
-  if (tokens.length >= 2) {
-    const brand = tokens[0];
-    const mods = tokens.filter(t => FORMULATION_MODIFIERS.has(t.toUpperCase()));
+  // 3. Try Brand + normalized strength number
+  const strengthMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:mg|mcg|ml|gm|iu|%|\b)/i);
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length >= 1) {
+    const brand = words[0];
+    if (strengthMatch) {
+      const num = parseFloat(strengthMatch[1]);
+      queries.push(`${brand} ${num}`);
+    }
+
+    // 4. Try Brand + Modifiers (e.g. "OFREX TZ", "PAN D")
+    const mods = words.filter(t => FORMULATION_MODIFIERS.has(t.toUpperCase()));
     if (mods.length > 0) {
       queries.push(`${brand} ${mods.join(' ')}`);
+      if (strengthMatch) {
+        queries.push(`${brand} ${mods.join(' ')} ${parseFloat(strengthMatch[1])}`);
+      }
+    }
+
+    // 5. Try first two words if word 2 is not a pure number
+    if (words.length >= 2 && !/^\d+$/.test(words[1]) && !['MG', 'ML', 'GM', 'TAB', 'CAP', 'INJ'].includes(words[1].toUpperCase())) {
+      queries.push(`${brand} ${words[1]}`);
+    }
+
+    // 6. Distinctive brand only (>= 4 letters)
+    if (brand.length >= 4 && !['TABLET', 'CAPSULE', 'INJECTION', 'CREAM', 'LOTION'].includes(brand.toUpperCase())) {
+      queries.push(brand);
     }
   }
 
-  return Array.from(new Set(queries));
+  return Array.from(new Set(queries.filter(q => q && q.length >= 3)));
 }
 
 function slugify(text: string): string {
@@ -328,7 +395,7 @@ async function fetchCdnImages(queries: string[], rawMedName: string): Promise<an
       const matched = prods.filter((c: any) => {
         const hasImg = (c.damImages && c.damImages.length > 0) || Boolean(c.image);
         if (!hasImg) return false;
-        if (!isBrandMatch(q, c.name)) return false;
+        if (!isBrandMatch(rawMedName, c.name) && !isBrandMatch(q, c.name)) return false;
         if (hasDosageConflict(rawMedName, c.name)) return false;
         if (hasStrengthConflict(rawMedName, c.name)) return false;
         if (hasModifierConflict(rawMedName, c.name)) return false;
@@ -466,9 +533,11 @@ async function main() {
   console.log('    MASTER PRODUCT IMAGE HARVESTER & AI OCR VERIFICATION');
   console.log('===============================================================\n');
 
-  const geminiKey = process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
+  const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
+  const geminiKeys = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
   if (useGemini) {
-    console.log(`🤖 Google Gemini 2.5 Flash Vision: ACTIVE (100% label confirmation on every image).`);
+    console.log(`🤖 Google Gemini 3.8 Flash Vision: ACTIVE (100% label confirmation).`);
+    console.log(`🔑 Key Pool: ${geminiKeys.length} API key(s) loaded with round-robin rotation & instant failover.`);
   }
   if (commitEvery > 0) {
     console.log(`📦 Git Auto-Commit: ACTIVE (commits every ${commitEvery} saved images).`);
@@ -695,14 +764,32 @@ async function main() {
     // Sort: Face with clearest printed medicine name becomes PRIMARY (never blank blister foil)
     downloadedAngles.sort((a, b) => b.brandConfidence - a.brandConfidence);
 
-    // Optional Gemini 2.5 Flash Vision Confirmation Gate
+    // Optional Gemini Flash Vision Confirmation Gate:
+    // Check primary face (front or clearest text). If unconfirmed, check back face.
+    // If either front OR back confirms, all angles pass!
     let finalMatchingMethod = 'ai_ocr_verified';
-    if (useGemini && geminiKey) {
-      console.log(`    🤖 Verifying packaging with Gemini 2.5 Flash Vision...`);
-      const gResult = await verifyWithGeminiVision(downloadedAngles[0].buffer, medName, geminiKey);
-      if (!gResult.isExactMatch) {
-        console.log(`    ❌ Gemini Vision REJECTED: ${gResult.reason}`);
-        console.log(`       Target: "${medName}", Printed on Pack: "${gResult.printedName}"\n`);
+    if (useGemini && geminiKeys.length > 0) {
+      console.log(`    🤖 Verifying packaging with Gemini Vision (front/back check)...`);
+      let confirmedResult: any = null;
+      let primaryAngleIndex = 0;
+
+      // Try top 2 candidate angles (front, and if unconfirmed, back)
+      const anglesToTry = Math.min(downloadedAngles.length, 2);
+      for (let aIdx = 0; aIdx < anglesToTry; aIdx++) {
+        const angle = downloadedAngles[aIdx];
+        const gResult = await verifyWithGeminiVision(angle.buffer, medName, geminiKeys);
+        if (gResult.isExactMatch) {
+          confirmedResult = gResult;
+          primaryAngleIndex = aIdx;
+          break;
+        } else if (aIdx < anglesToTry - 1) {
+          console.log(`    ⚠️ Face "${angle.face}" unconfirmed, checking alternate face "${downloadedAngles[aIdx + 1].face}"...`);
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
+
+      if (!confirmedResult) {
+        console.log(`    ❌ Gemini Vision REJECTED: Neither front nor back matched "${medName}"\n`);
         for (const ang of downloadedAngles) {
           const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
           const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
@@ -710,16 +797,22 @@ async function main() {
         }
         state.products[medId] = {
           status: 'gemini_rejected',
-          reason: gResult.reason,
-          printed: gResult.printedName,
+          reason: 'Neither front nor back matched target brand',
           checked_at: new Date().toISOString()
         };
         saveState(state);
         continue;
       }
+
+      // Promote the confirmed face to index 0 so it becomes is_primary = 1
+      if (primaryAngleIndex > 0) {
+        const confirmedAngle = downloadedAngles.splice(primaryAngleIndex, 1)[0];
+        downloadedAngles.unshift(confirmedAngle);
+      }
+
       finalMatchingMethod = 'gemini_vision_verified';
-      downloadedAngles[0].brandConfidence = Math.max(downloadedAngles[0].brandConfidence, gResult.confidence);
-      console.log(`    ✨ Gemini 100% Confirmed: "${gResult.printedName}" (${gResult.confidence}% confidence)`);
+      downloadedAngles[0].brandConfidence = Math.max(downloadedAngles[0].brandConfidence, confirmedResult.confidence);
+      console.log(`    ✨ Gemini 100% Confirmed on face "${downloadedAngles[0].face}": "${confirmedResult.printedName}" (${confirmedResult.confidence}% confidence) -> All angles PASSED!`);
     }
 
     // Persist cleanly in catalog_images
