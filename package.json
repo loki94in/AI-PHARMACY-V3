@@ -21,6 +21,8 @@
     "harvest:overnight": "tsx scripts/harvest_top100_company_images.ts --top=100 --auto-shutdown --gemini",
     "harvest:company": "tsx scripts/harvest_top100_company_images.ts",
     "harvest:status": "tsx scripts/harvest_top100_company_images.ts --status",
+    "harvest:rejected": "tsx scripts/redownload_and_verify_rejected.ts --watch --delay=2000",
+    "harvest:rejected:once": "tsx scripts/redownload_and_verify_rejected.ts --delay=2000",
     "enqueue-catalog": "tsx ./src/cli/enqueueCatalog.ts",
     "worker": "tsx ./src/worker/catalogWorker.ts",
     "watch-catalog": "tsx ./src/cli/watchCatalog.ts",

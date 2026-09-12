@@ -57,7 +57,7 @@ Return valid JSON with:
   const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
 
   for (const model of models) {
-    for (let attempt = 0; attempt < Math.min(API_KEYS.length, 3); attempt++) {
+    for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
       const activeKey = API_KEYS[(keyIndex + attempt) % API_KEYS.length];
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
       const payload = {
@@ -118,14 +118,25 @@ function loadHarvestState(): { last_updated: string | null; products: Record<str
   return { last_updated: null, products: {} };
 }
 
-function saveHarvestState(state: any) {
-  state.last_updated = new Date().toISOString();
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+function saveHarvestState(entryMedId?: number | string, entryData?: any) {
+  try {
+    const current = loadHarvestState();
+    if (entryMedId !== undefined && entryData !== undefined) {
+      current.products[String(entryMedId)] = entryData;
+    }
+    current.last_updated = new Date().toISOString();
+    const tmp = `${STATE_FILE}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
+    fs.writeFileSync(tmp, JSON.stringify(current, null, 2), 'utf-8');
+    fs.renameSync(tmp, STATE_FILE);
+  } catch (err: any) {
+    console.warn('[State Save Notice]:', err.message);
+  }
 }
 
 async function main() {
   const args = process.argv.slice(2);
   let auditAll = args.includes('--all');
+  let force = args.includes('--force');
   let limit = 0;
   let delayMs = 1000; // 1 second spacing between requests
 
@@ -140,10 +151,10 @@ async function main() {
   console.log(`🔑 Key Pool: ${API_KEYS.length} Gemini API keys loaded with round-robin rotation.`);
   console.log(`⏱️ Spacing: ${delayMs}ms delay between verification calls.`);
   console.log(`🎯 Rule: Either Front OR Back confirmed -> Entire product passes!`);
-  console.log(`🎯 Scope: ${auditAll ? 'All catalog medicines' : 'Medicines with OCR fallback images'}\n`);
+  console.log(`🎯 Scope: ${auditAll ? (force ? 'All catalog medicines (force recheck)' : 'All pending un-audited catalog medicines') : 'Medicines with OCR fallback images'}\n`);
 
   const db = new Database(DB_PATH);
-  const state = loadHarvestState();
+  db.pragma('busy_timeout = 30000');
 
   let query = `
     SELECT DISTINCT ci.medicine_id, m.name as med_name, m.manufacturer as med_mfg
@@ -151,7 +162,11 @@ async function main() {
     JOIN medicines m ON m.id = ci.medicine_id
   `;
 
-  if (!auditAll) {
+  if (auditAll) {
+    if (!force) {
+      query += " WHERE (ci.verified_by IS NULL OR ci.verified_by != 'gemini_audit_bot')";
+    }
+  } else {
     query += " WHERE ci.matching_method = 'ai_ocr_verified'";
   }
 
@@ -204,32 +219,22 @@ async function main() {
     auditedMedsCount++;
     console.log(`[${i + 1}/${distinctMeds.length}] Medicine: "${medName}" (ID ${medId}, ${imgRows.length} angles stored)`);
 
-    // Prioritize testing candidate faces:
-    // 1. Current primary face (usually front or clearest text)
-    // 2. Front faces ('box-front', 'front')
-    // 3. Back faces ('box-back', 'back')
-    // 4. Other faces ('combo', 'side')
-    const candidates = [...imgRows].sort((a, b) => {
-      if (a.is_primary && !b.is_primary) return -1;
-      if (!a.is_primary && b.is_primary) return 1;
-      const isAFront = /front/i.test(a.image_type);
-      const isBFront = /front/i.test(b.image_type);
-      const isABack = /back/i.test(a.image_type);
-      const isBBack = /back/i.test(b.image_type);
-      if (isAFront && !isBFront) return -1;
-      if (!isAFront && isBFront) return 1;
-      if (isABack && !isBBack) return -1;
-      if (!isABack && isBBack) return 1;
-      return 0;
-    });
+    // Strictly scan ONLY Front and Back faces:
+    // 1. FRONT Candidate (carton front, bottle front, or primary)
+    // 2. BACK Candidate (foil back, carton back, composition)
+    const frontCand = imgRows.find(r => /front/i.test(r.image_type)) || imgRows.find(r => r.is_primary) || imgRows[0];
+    const backCand = imgRows.find(r => /back/i.test(r.image_type) && r.id !== frontCand?.id)
+                  || imgRows.find(r => r.id !== frontCand?.id);
+
+    const candidatesToTest = [frontCand, backCand].filter((c): c is NonNullable<typeof c> => Boolean(c));
 
     let confirmedResult: any = null;
     let confirmedRow: any = null;
 
-    // Test up to 2 key faces (e.g. Front, and if that has no name, Back)
-    const testLimit = Math.min(candidates.length, 2);
-    for (let t = 0; t < testLimit; t++) {
-      const cand = candidates[t];
+    // Test up to 2 key faces: Front first, and if unconfirmed, Back
+    for (let t = 0; t < candidatesToTest.length; t++) {
+      const cand = candidatesToTest[t];
+      if (!cand) continue;
       const fileName = path.basename(cand.image_path);
       const p1 = path.join(TARGET_FRONTEND, fileName);
       const p2 = path.join(TARGET_UPLOADS, fileName);
@@ -240,16 +245,17 @@ async function main() {
       if (!imgBuf || imgBuf.length < 500) continue;
 
       totalAuditedCalls++;
-      console.log(`    🔍 Testing Face "${cand.image_type}" with Gemini Vision...`);
+      const faceLabel = /front/i.test(cand.image_type) ? 'FRONT' : (/back/i.test(cand.image_type) ? 'BACK' : cand.image_type.toUpperCase());
+      console.log(`    🔍 Testing Face "${cand.image_type}" [${faceLabel}] with Gemini Vision...`);
       const res = await verifyWithGemini(imgBuf, medName);
 
       if (res.isExactMatch) {
         confirmedResult = res;
         confirmedRow = cand;
-        break; // Either one confirmed -> PASS!
+        break; // Either front OR back confirmed -> Entire product PASSES!
       } else {
-        console.log(`    ⚠️ Face "${cand.image_type}" not confirmed: ${res.reason}`);
-        if (t < testLimit - 1) {
+        console.log(`    ⚠️ Face "${cand.image_type}" [${faceLabel}] not confirmed: ${res.reason}`);
+        if (t < candidatesToTest.length - 1) {
           console.log(`    Checking alternate face (e.g. back foil packaging)...`);
           if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
         }
@@ -261,12 +267,23 @@ async function main() {
       console.log(`       Reason: ${confirmedResult.reason}`);
       console.log(`       ✨ ALL ${imgRows.length} ANGLES PASSED! Setting "${confirmedRow.image_type}" as Primary.\n`);
 
-      // Update all images for this medicine to verified
+      // Update all images for this medicine to verified, with confirmed face as Primary
       for (const row of imgRows) {
         const isPrimary = (row.id === confirmedRow.id) ? 1 : 0;
         updateStmt.run(confirmedResult.confidence, confirmedResult.reason, isPrimary, row.id);
       }
       confirmedMedsCount++;
+
+      saveHarvestState(medId, {
+        status: 'success',
+        medicine_id: medId,
+        medicine_name: medName,
+        manufacturer: med.med_mfg,
+        primary_face: confirmedRow.image_type,
+        confidence: confirmedResult.confidence,
+        verified_by: 'gemini_audit_bot',
+        checked_at: new Date().toISOString()
+      });
     } else {
       console.log(`    ❌ WRONG PACKAGING: Neither front nor back matched target "${medName}".`);
       console.log(`       🗑️ Purging all ${imgRows.length} angles from disk and database...\n`);
@@ -278,14 +295,14 @@ async function main() {
         deleteStmt.run(row.id);
       }
 
-      if (state.products[medId]) {
-        state.products[medId] = {
-          status: 'gemini_rejected',
-          reason: 'Neither front nor back matched medicine packaging',
-          checked_at: new Date().toISOString()
-        };
-        saveHarvestState(state);
-      }
+      saveHarvestState(medId, {
+        status: 'gemini_rejected',
+        medicine_id: medId,
+        medicine_name: medName,
+        manufacturer: med.med_mfg,
+        reason: 'Neither front nor back matched medicine packaging',
+        checked_at: new Date().toISOString()
+      });
       purgedMedsCount++;
     }
 
@@ -293,8 +310,6 @@ async function main() {
       await new Promise(r => setTimeout(r, delayMs));
     }
   }
-
-  saveHarvestState(state);
 
   const finalVerifiedCount = db.prepare("SELECT count(*) as c FROM catalog_images WHERE matching_method = 'gemini_vision_verified'").get() as any;
   const remainingOcrCount = db.prepare("SELECT count(*) as c FROM catalog_images WHERE matching_method = 'ai_ocr_verified'").get() as any;
