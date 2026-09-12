@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T13:31:51.117Z",
+  "last_updated": "2026-09-12T13:33:15.408Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -46039,6 +46039,23 @@
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T03:27:03.357Z"
     },
+    "151535": {
+      "status": "success",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "Omey 20Mg Strip Of 20 Capsules",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:26.849Z"
+    },
+    "151541": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "INTAZIDE 750MG CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:30.786Z"
+    },
     "151566": {
       "status": "success",
       "company": "SUN PHARMA",
@@ -46137,6 +46154,16 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:34:13.282Z"
+    },
+    "151880": {
+      "status": "success",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "Golbi 300Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:33:06.399Z"
     },
     "151886": {
       "status": "not_found",
@@ -54578,6 +54605,50 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T13:31:49.107Z"
     },
+    "176778": {
+      "status": "not_found",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "CROLIM 0.03% OINT 15GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:31:54.369Z"
+    },
+    "176808": {
+      "status": "success",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "Zelgor 500Mg Bottle Of 60 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:10.547Z"
+    },
+    "176811": {
+      "status": "success",
+      "company": "SUN PHARMA",
+      "product_name": "Sizodon MD 0.5 Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:24.823Z"
+    },
+    "176823": {
+      "status": "success",
+      "company": "SUN PHARMA",
+      "product_name": "Axcer 60Mg Strip Of 14 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:41.776Z"
+    },
+    "176834": {
+      "status": "not_found",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "FLOTRAL D KIT 1'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:45.774Z"
+    },
     "176870": {
       "status": "success",
       "medicine_id": 176870,
@@ -54637,12 +54708,33 @@
       "status": "not_found",
       "checked_at": "2026-09-12T06:12:23.579Z"
     },
+    "177034": {
+      "status": "not_found",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "DISTENIL 80 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:50.547Z"
+    },
     "177041": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
       "product_name": "ROXIKIND SP 150/10 MG TABLET 10",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:28:33.294Z"
+    },
+    "177067": {
+      "status": "not_found",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "INERSAN TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:52.348Z"
+    },
+    "177075": {
+      "status": "not_found",
+      "company": "RANBAXY LABORATORIES (SUN PHARMA)",
+      "product_name": "ENFLOX 400MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:55.639Z"
     },
     "177097": {
       "status": "not_found",
@@ -68142,9 +68234,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:41:09.710Z"
     },
+    "234862": {
+      "status": "success",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "Gudcef 100Mg Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:15.442Z"
+    },
     "234869": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:41:10.340Z"
+    },
+    "234906": {
+      "status": "not_found",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "HISTAKIND SUSPENSION 60ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:17.011Z"
     },
     "234932": {
       "status": "not_found",
@@ -68235,6 +68344,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:41:51.368Z"
     },
+    "235220": {
+      "status": "not_found",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "TONAKIND VET BOLUS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:20.778Z"
+    },
     "235257": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:41:53.002Z"
@@ -68275,6 +68391,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:42:12.792Z"
     },
+    "235339": {
+      "status": "success",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "Lecope M Kid Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:33.946Z"
+    },
     "235380": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:42:15.373Z"
@@ -68290,6 +68416,16 @@
       "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:23:23.490Z"
+    },
+    "235405": {
+      "status": "success",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "Vermact 6Mg Strip Of 4 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:50.150Z"
     },
     "235418": {
       "status": "not_found",
@@ -68330,6 +68466,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:42:55.230Z"
     },
+    "235566": {
+      "status": "not_found",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "GUDMAG CREAM 75 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:54.660Z"
+    },
     "235593": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -68343,6 +68486,16 @@
       "product_name": "CALUTIDE 50MG TABLET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:02:22.659Z"
+    },
+    "235624": {
+      "status": "success",
+      "company": "MANKIND PHARMACEUTICALS LTD",
+      "product_name": "Drotikind 80Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:33:15.408Z"
     },
     "235712": {
       "status": "not_found",
@@ -73529,6 +73682,82 @@
       "primary_confidence": 75,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T13:31:32.730Z"
+    },
+    "267990": {
+      "status": "success",
+      "company": "CIPLA LIMITED",
+      "product_name": "Imicrit 500Mg Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:31:59.250Z"
+    },
+    "268011": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "AMPHOTERICIN B 50MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:05.661Z"
+    },
+    "268097": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "ERYTHROMYCIN 125 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:08.693Z"
+    },
+    "268181": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "ALERFEX 120MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:09.987Z"
+    },
+    "268221": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "POVIDONE IODINE(CIPLA) OINTMENT 20 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:12.954Z"
+    },
+    "268290": {
+      "status": "success",
+      "company": "CIPLA LIMITED",
+      "product_name": "Zotide Injection",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-12T13:32:28.935Z"
+    },
+    "268420": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "CLOTRIM V 2 % CREAM 30 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:34.654Z"
+    },
+    "268448": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "P GLITZ 30MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:40.498Z"
+    },
+    "268469": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "ADLUBE EYE OINT 5GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:46.994Z"
+    },
+    "268679": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "product_name": "CIPRIL H FORTE TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T13:32:50.072Z"
     },
     "278925": {
       "status": "success",
