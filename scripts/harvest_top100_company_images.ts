@@ -434,6 +434,51 @@ function slugify(text: string): string {
     .replace(/\s+/g, '-');
 }
 
+function initHarvestTable(db: any) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS catalog_harvest_state (
+        medicine_id INTEGER PRIMARY KEY,
+        medicine_name TEXT,
+        company TEXT,
+        status TEXT NOT NULL,
+        reason TEXT,
+        checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_harvest_state_status ON catalog_harvest_state(status);
+    `);
+
+    // Seed SQLite from JSON state if table is newly created / empty
+    const row = db.prepare('SELECT count(*) as c FROM catalog_harvest_state').get() as any;
+    if ((row?.c || 0) === 0 && fs.existsSync(STATE_FILE)) {
+      const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      const entries = Object.entries(disk.products || {});
+      if (entries.length > 0) {
+        const insertMany = db.transaction((rows: any[]) => {
+          const stmt = db.prepare(`
+            INSERT OR IGNORE INTO catalog_harvest_state (medicine_id, medicine_name, company, status, reason, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `);
+          for (const [idStr, data] of rows) {
+            const medId = parseInt(idStr, 10);
+            if (!isNaN(medId)) {
+              stmt.run(
+                medId,
+                data.product_name || data.medicine_name || null,
+                data.company || data.manufacturer || null,
+                data.status || 'unknown',
+                data.reason || null,
+                data.checked_at || data.updated_at || new Date().toISOString()
+              );
+            }
+          }
+        });
+        insertMany(entries);
+      }
+    }
+  } catch {}
+}
+
 function loadState(): { last_updated: string | null; products: Record<string, any> } {
   if (fs.existsSync(STATE_FILE)) {
     try {
@@ -445,9 +490,71 @@ function loadState(): { last_updated: string | null; products: Record<string, an
   return { last_updated: null, products: {} };
 }
 
-function saveState(state: any) {
-  state.last_updated = new Date().toISOString();
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
+let inMemoryState = loadState();
+
+function recordProductState(
+  db: any,
+  medId: number | string,
+  entryData: {
+    status: string;
+    product_name?: string;
+    company?: string;
+    reason?: string;
+    angles_saved?: number;
+    primary_face?: string;
+    primary_confidence?: number;
+    verified_by?: string;
+    [key: string]: any;
+  }
+) {
+  const now = new Date().toISOString();
+  const data = { ...entryData, checked_at: now };
+  inMemoryState.products[String(medId)] = data;
+
+  // 1. Multi-terminal concurrency-safe SQLite persistence
+  try {
+    db.prepare(`
+      INSERT INTO catalog_harvest_state (medicine_id, medicine_name, company, status, reason, checked_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        status = excluded.status,
+        medicine_name = COALESCE(excluded.medicine_name, catalog_harvest_state.medicine_name),
+        company = COALESCE(excluded.company, catalog_harvest_state.company),
+        reason = excluded.reason,
+        checked_at = excluded.checked_at
+    `).run(
+      Number(medId),
+      data.product_name || null,
+      data.company || null,
+      data.status,
+      data.reason || null,
+      now
+    );
+  } catch {}
+
+  // 2. Multi-terminal atomic merge write to JSON state file (lock-free temp file + atomic rename)
+  const tmpFile = `${STATE_FILE}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      let current: any = { last_updated: null, products: {} };
+      if (fs.existsSync(STATE_FILE)) {
+        try {
+          current = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+        } catch {}
+      }
+      current.products = current.products || {};
+      current.products[String(medId)] = data;
+      current.last_updated = now;
+
+      fs.writeFileSync(tmpFile, JSON.stringify(current, null, 2), 'utf-8');
+      fs.renameSync(tmpFile, STATE_FILE);
+      return;
+    } catch {
+      try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch {}
+      const waitTill = Date.now() + 25 * (attempt + 1);
+      while (Date.now() < waitTill) {}
+    }
+  }
 }
 
 async function fetchTata1mgImages(queries: string[], rawMedName: string): Promise<any | null> {
@@ -642,6 +749,8 @@ async function main() {
   let limit = 0;
   let delayMs = 500;
   let force = false;
+  let retryFailed = false;
+  let shardStr = '';
   let idleShutdownMin = 0;
   let shutdownOnComplete = false;
   let useGemini = false;
@@ -657,10 +766,12 @@ async function main() {
     if (args[i].startsWith('--company=')) companyFilter = args[i].split('=')[1].replace(/['"]/g, '');
     else if (args[i].startsWith('--filter=')) nameFilter = args[i].split('=')[1].replace(/['"]/g, '');
     else if (args[i].startsWith('--pool=')) poolNumber = parseInt(args[i].split('=')[1], 10);
+    else if (args[i].startsWith('--shard=')) shardStr = args[i].split('=')[1].trim();
     else if (args[i].startsWith('--top=')) topCount = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--limit=')) limit = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--delay=')) delayMs = parseInt(args[i].split('=')[1], 10);
     else if (args[i] === '--force') force = true;
+    else if (args[i] === '--retry-failed') retryFailed = true;
     else if (args[i].startsWith('--idle-shutdown-min=')) idleShutdownMin = parseInt(args[i].split('=')[1], 10);
     else if (args[i] === '--shutdown-on-complete') shutdownOnComplete = true;
     else if (args[i] === '--gemini') useGemini = true;
@@ -700,6 +811,9 @@ async function main() {
     console.log(`🤖 Google Gemini Flash Vision: ACTIVE (100% label confirmation).`);
     console.log(`🔑 Key Pool #${poolNumber}: ${geminiKeys.length} active rotating keys + dedicated Emergency Spare Key.`);
   }
+  if (shardStr) {
+    console.log(`⚡ Shard Partition: ${shardStr}`);
+  }
   if (commitEvery > 0) {
     console.log(`📦 Git Auto-Commit: ACTIVE (commits every ${commitEvery} saved images).`);
   }
@@ -713,6 +827,9 @@ async function main() {
 
   const db = new Database(DB_PATH);
   db.pragma('busy_timeout = 30000');
+  initHarvestTable(db);
+  inMemoryState = loadState();
+
   const visualIndex = VisualIndexService.getInstance();
   await aiCameraService.initialize();
 
@@ -772,13 +889,114 @@ async function main() {
     query += ` LIMIT ${limit}`;
   }
 
-  const medicines = db.prepare(query).all(...params);
-  console.log(`Loaded ${medicines.length} medicines to process.\n`);
+  const allMedicines = db.prepare(query).all(...params);
+  console.log(`Loaded ${allMedicines.length} total medicines in target scope.`);
 
-  const state = loadState();
+  // 2. Upfront check: Skip all already-processed medicines instantly
+  const checkDbStmt = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1');
+  const checkSqliteStateStmt = db.prepare('SELECT status, reason FROM catalog_harvest_state WHERE medicine_id = ? LIMIT 1');
+
+  let dbImageCount = 0;
+  let diskImageCount = 0;
+  let notFoundCount = 0;
+  let rejectedCount = 0;
+  let otherProcessedCount = 0;
+
+  const remainingMedicines: any[] = [];
+
+  for (const med of allMedicines) {
+    const medId = med.id;
+    const medName = med.name || med.canonical_name;
+    const baseSlug = slugify(medName);
+
+    if (force) {
+      remainingMedicines.push(med);
+      continue;
+    }
+
+    // A. Check database for active verified catalog images
+    const hasDbImage = checkDbStmt.get(medId);
+    if (hasDbImage) {
+      dbImageCount++;
+      continue;
+    }
+
+    // B. Check disk for existing product packaging
+    const frontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-front.jpg`);
+    const boxFrontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-box-front.jpg`);
+    if ((fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
+        (fs.existsSync(boxFrontOnDisk) && fs.statSync(boxFrontOnDisk).size > 1000)) {
+      diskImageCount++;
+      continue;
+    }
+
+    // C. Check persistent harvest state (DB and JSON)
+    const jsonState = inMemoryState.products[String(medId)];
+    const sqlState = checkSqliteStateStmt.get(medId) as any;
+    const status = jsonState?.status || sqlState?.status;
+
+    if (status) {
+      if (status === 'success') {
+        dbImageCount++;
+        continue;
+      }
+
+      if (!retryFailed) {
+        if (status === 'not_found' || status === 'no_authentic_match_on_cdn') {
+          notFoundCount++;
+          continue;
+        } else if (status === 'gemini_rejected') {
+          rejectedCount++;
+          continue;
+        } else {
+          otherProcessedCount++;
+          continue;
+        }
+      }
+    }
+
+    // Needs processing!
+    remainingMedicines.push(med);
+  }
+
+  const totalSkipped = dbImageCount + diskImageCount + notFoundCount + rejectedCount + otherProcessedCount;
+
+  console.log('===============================================================');
+  console.log('       TARGET AUDIT & FAST RESUME CHECKPOINT');
+  console.log('===============================================================');
+  console.log(`📋 Total Medicines in Target Scope    : ${allMedicines.length.toLocaleString()}`);
+  console.log(`⏩ Already Processed & Skipped        : ${totalSkipped.toLocaleString()}`);
+  console.log(`   • Confirmed with Images in DB      : ${dbImageCount.toLocaleString()}`);
+  if (diskImageCount > 0) {
+    console.log(`   • Image Pack Found on Disk         : ${diskImageCount.toLocaleString()}`);
+  }
+  console.log(`   • Previously Not Found on CDN      : ${notFoundCount.toLocaleString()}`);
+  console.log(`   • Rejected by Gemini Vision Gate   : ${rejectedCount.toLocaleString()}`);
+  if (otherProcessedCount > 0) {
+    console.log(`   • Other Prior Evaluations          : ${otherProcessedCount.toLocaleString()}`);
+  }
+  console.log(`🎯 Remaining Unprocessed to Scan       : ${remainingMedicines.length.toLocaleString()}`);
+  console.log('===============================================================\n');
+
+  // 3. Shard partition handling
+  let workList = remainingMedicines;
+  if (shardStr) {
+    const parts = shardStr.split('/');
+    const shardIndex = parseInt(parts[0], 10) - 1;
+    const totalShards = parseInt(parts[1] || '4', 10);
+    if (!isNaN(shardIndex) && !isNaN(totalShards) && totalShards > 1) {
+      workList = remainingMedicines.filter((_, idx) => idx % totalShards === shardIndex);
+      console.log(`⚡ Shard Mode: Terminal ${shardIndex + 1} of ${totalShards} -> Assigned ${workList.length.toLocaleString()} of ${remainingMedicines.length.toLocaleString()} remaining medicines.\n`);
+    }
+  }
+
+  if (workList.length === 0) {
+    console.log('🎉 100% COMPLETE: All target medicines in scope have already been processed! Zero remaining scans.\n');
+    return;
+  }
+
   let processed = 0;
   let successCount = 0;
-  let skippedCount = 0;
   let lastImageSavedTimestamp = Date.now();
   let imagesSavedSinceLastCommit = 0;
   let totalImagesSavedCount = 0;
@@ -793,7 +1011,6 @@ async function main() {
         console.log(`Flushing progress and turning off PC...`);
         console.log(`===============================================================\n`);
         if (watchdogTimer) clearInterval(watchdogTimer);
-        saveState(state);
         if (imagesSavedSinceLastCommit > 0) {
           autoCommitBatch(imagesSavedSinceLastCommit, totalImagesSavedCount);
           imagesSavedSinceLastCommit = 0;
@@ -803,35 +1020,26 @@ async function main() {
     }, 10000);
   }
 
-  for (let i = 0; i < medicines.length; i++) {
-    const med: any = medicines[i];
+  for (let i = 0; i < workList.length; i++) {
+    const med: any = workList[i];
     const medId = med.id;
     const medName = med.name || med.canonical_name;
     const mfg = med.manufacturer || 'Unknown';
 
-    if (!force) {
-      if (state.products[medId]?.status === 'success') {
-        skippedCount++;
-        continue;
-      }
-      const alreadyInDb = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1').get(medId);
-      if (alreadyInDb) {
-        state.products[medId] = { status: 'success', checked_at: new Date().toISOString() };
-        skippedCount++;
-        continue;
-      }
-    }
-
     processed++;
     const searchQueries = generateSearchQueries(medName);
-    console.log(`[${i + 1}/${medicines.length}] ID ${medId}: "${medName}" (${mfg})`);
+    console.log(`[${i + 1}/${workList.length}] ID ${medId}: "${medName}" (${mfg})`);
     console.log(`    Querying CDN for: "${searchQueries[0]}"...`);
 
     const cdnResult = await fetchCdnImages(searchQueries, medName);
     if (!cdnResult || Object.keys(cdnResult.images).length === 0) {
       console.log(`    ⚠️ No verified match found on pharma CDN.\n`);
-      state.products[medId] = { status: 'not_found', checked_at: new Date().toISOString() };
-      saveState(state);
+      recordProductState(db, medId, {
+        status: 'not_found',
+        company: mfg,
+        product_name: medName,
+        reason: 'No match found on pharma CDN'
+      });
       await new Promise(r => setTimeout(r, delayMs));
       continue;
     }
@@ -926,8 +1134,12 @@ async function main() {
     }
 
     if (downloadedAngles.length === 0) {
-      state.products[medId] = { status: 'download_failed', checked_at: new Date().toISOString() };
-      saveState(state);
+      recordProductState(db, medId, {
+        status: 'download_failed',
+        company: mfg,
+        product_name: medName,
+        reason: 'Zero valid angles downloaded'
+      });
       continue;
     }
 
@@ -965,12 +1177,12 @@ async function main() {
           const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
           try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
         }
-        state.products[medId] = {
+        recordProductState(db, medId, {
           status: 'gemini_rejected',
-          reason: 'Neither front nor back matched target brand',
-          checked_at: new Date().toISOString()
-        };
-        saveState(state);
+          company: mfg,
+          product_name: medName,
+          reason: 'Neither front nor back matched target brand'
+        });
         continue;
       }
 
@@ -1021,16 +1233,15 @@ async function main() {
     totalImagesSavedCount += downloadedAngles.length;
     imagesSavedSinceLastCommit += downloadedAngles.length;
 
-    state.products[medId] = {
+    recordProductState(db, medId, {
       status: 'success',
+      company: mfg,
       product_name: cdnResult.name,
       angles_saved: downloadedAngles.length,
       primary_face: downloadedAngles[0].face,
       primary_confidence: downloadedAngles[0].brandConfidence,
-      verified_by: finalMatchingMethod,
-      updated_at: new Date().toISOString()
-    };
-    saveState(state);
+      verified_by: finalMatchingMethod
+    });
 
     // Auto-commit milestone every 1,000 saved images
     if (commitEvery > 0 && imagesSavedSinceLastCommit >= commitEvery) {
