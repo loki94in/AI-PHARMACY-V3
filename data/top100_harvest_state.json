@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T22:03:11.494Z",
+  "last_updated": "2026-09-12T23:01:36.959Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -22423,12 +22423,14 @@
       "checked_at": "2026-09-12T11:15:55.599Z"
     },
     "66098": {
-      "status": "gemini_rejected",
-      "medicine_id": 66098,
-      "medicine_name": "NATUROGEST 8% GEL",
-      "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
-      "reason": "Neither front nor back matched medicine packaging",
-      "checked_at": "2026-09-12T02:32:19.060Z"
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NATUROGEST 8% GEL",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:08:09.832Z"
     },
     "66112": {
       "status": "success",
@@ -30319,11 +30321,14 @@
       "checked_at": "2026-09-12T06:58:53.899Z"
     },
     "81800": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "PREVA 75MG STRIP OF 15 TABLETS",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T11:22:44.946Z"
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:37:45.115Z"
     },
     "81815": {
       "status": "not_found",
@@ -42430,6 +42435,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T14:14:31.946Z"
     },
+    "103790": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PANTAGON IT CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:04:12.839Z"
+    },
     "103797": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -42474,6 +42486,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:40:16.626Z"
     },
+    "103911": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NADERM RF CREAM 5GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:05:13.018Z"
+    },
     "103915": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -42511,6 +42530,30 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:48:46.648Z"
     },
+    "104076": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "COSYMOXYL 375MG TAB 10`S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:06:13.757Z"
+    },
+    "104082": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "DIGENE MIXED FRUIT FLAVOUR TABLET 12'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:06:52.409Z"
+    },
+    "104089": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Femoston 1/10Mg Strip Of 28 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:07:49.046Z"
+    },
     "104090": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -42546,6 +42589,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:48:47.401Z"
     },
+    "104197": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Elocon Tube Of 30Gm Cream",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:08:08.445Z"
+    },
     "104205": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:40:39.976Z"
@@ -42558,6 +42611,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:48:48.101Z"
     },
+    "104249": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AZRO 1GM TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:08:11.996Z"
+    },
     "104250": {
       "status": "not_found",
       "company": "BAYER PHARMACEUTICALS",
@@ -42568,6 +42628,23 @@
     "104265": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:48:48.801Z"
+    },
+    "104268": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Telpres Ln 40Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:08:56.677Z"
+    },
+    "104279": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CAREX RF POWDER 200 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:01.784Z"
     },
     "104325": {
       "status": "not_found",
@@ -42598,6 +42675,13 @@
     "104391": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:40:48.825Z"
+    },
+    "104407": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BECOMAX FORTE SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:06.693Z"
     },
     "104422": {
       "status": "not_found",
@@ -42644,6 +42728,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:09:42.136Z"
     },
+    "104492": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CELETOP 100MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:09.358Z"
+    },
     "104501": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:41:15.807Z"
@@ -42662,6 +42753,20 @@
       "product_name": "MUCOLINC AX SYP",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:06:56.367Z"
+    },
+    "104533": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "REX XR 250MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:12.836Z"
+    },
+    "104551": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AURATREX 7.5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:15.578Z"
     },
     "104557": {
       "status": "not_found",
@@ -42705,6 +42810,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T21:56:53.421Z"
     },
+    "104620": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PAGERO 40MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:09:18.278Z"
+    },
     "104626": {
       "status": "success",
       "product_name": "Nimrest Plus Strip Of 10 Tablets",
@@ -42714,12 +42826,29 @@
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:41:42.501Z"
     },
+    "104631": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EPILEX CHRONO 300MG TABLET 10'S",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:09:46.109Z"
+    },
     "104662": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
       "product_name": "SERAKIND VET BOLUS",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:19:50.981Z"
+    },
+    "104670": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Lorsaid Sd 8Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:10:25.479Z"
     },
     "104676": {
       "status": "not_found",
@@ -42833,6 +42962,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:28.220Z"
     },
+    "104852": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Basiton Forte New Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:10:51.556Z"
+    },
     "104858": {
       "status": "success",
       "product_name": "Skelebenz 15Mg Strip Of 10 Capsules",
@@ -42852,6 +42991,13 @@
     "104909": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:28.817Z"
+    },
+    "104921": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FINECEF DT 100MG TAB 10`S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:10:56.916Z"
     },
     "104929": {
       "status": "not_found",
@@ -42915,6 +43061,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:11:52.169Z"
     },
+    "105039": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Betonin AST Syrup Sugar Free",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:11:10.922Z"
+    },
     "105055": {
       "status": "not_found",
       "checked_at": "2026-09-11T21:57:06.508Z"
@@ -42933,6 +43089,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:12:16.192Z"
     },
+    "105075": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NICOFLOX O TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:11:13.011Z"
+    },
     "105080": {
       "status": "gemini_rejected",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -42949,6 +43112,13 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:02:54.347Z"
+    },
+    "105089": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CEFI T 562.5MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:11:17.410Z"
     },
     "105091": {
       "status": "not_found",
@@ -42969,6 +43139,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T21:57:21.180Z"
     },
+    "105115": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZIMNIC CV 200MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:11:21.102Z"
+    },
     "105127": {
       "status": "not_found",
       "checked_at": "2026-09-11T21:57:22.732Z"
@@ -42976,6 +43153,13 @@
     "105136": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:29.440Z"
+    },
+    "105156": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DIGENE DANGLER TABLET 15'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:11:23.053Z"
     },
     "105161": {
       "status": "not_found",
@@ -42987,6 +43171,13 @@
       "product_name": "D3 MUST 60K STRIP OF 12 TABLETS",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:07:19.541Z"
+    },
+    "105164": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SECNIL MD 500 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:11:28.634Z"
     },
     "105180": {
       "status": "not_found",
@@ -43001,6 +43192,16 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:12:32.288Z"
+    },
+    "105192": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Thyronorm 25Mcg Bottle Of 120 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:11:39.653Z"
     },
     "105196": {
       "status": "not_found",
@@ -43058,12 +43259,46 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:02.303Z"
     },
+    "105345": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Finecef 1Gm Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:12:06.609Z"
+    },
+    "105346": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CHEKMET O LB TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:12:09.116Z"
+    },
     "105350": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
       "product_name": "GASOFAST REGULAR SACHET 5 GM",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:19:56.495Z"
+    },
+    "105374": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Freestyle Libre | Sensor | Continuous Glucose Monitoring Device 1 Unit",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:12:22.453Z"
+    },
+    "105375": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MEGAMOX DT 250MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:12:26.472Z"
     },
     "105383": {
       "status": "not_found",
@@ -43118,6 +43353,36 @@
     "105473": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:11.191Z"
+    },
+    "105492": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Etody 120Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:12:39.142Z"
+    },
+    "105498": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Ime Cila 500Mg Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:13:04.461Z"
+    },
+    "105521": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Acitrom 3Mg Strip Of 30 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:13:33.668Z"
     },
     "105535": {
       "status": "not_found",
@@ -43177,6 +43442,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:35.394Z"
     },
+    "105711": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LEVILEX (ABBOTT) 250 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:37.620Z"
+    },
     "105720": {
       "status": "not_found",
       "checked_at": "2026-09-11T21:58:08.908Z"
@@ -43194,6 +43466,13 @@
       "product_name": "TINIX AQ LIQUID VET 1LTR",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:13:12.413Z"
+    },
+    "105748": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LINAXON INJ 2ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:40.375Z"
     },
     "105765": {
       "status": "not_found",
@@ -43289,6 +43568,20 @@
       "status": "not_found",
       "checked_at": "2026-09-11T21:58:29.030Z"
     },
+    "105999": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIVUP D SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:44.669Z"
+    },
+    "106016": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIPIZYL 300MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:47.151Z"
+    },
     "106036": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:33.022Z"
@@ -43304,6 +43597,13 @@
     "106088": {
       "status": "not_found",
       "checked_at": "2026-09-11T21:58:32.627Z"
+    },
+    "106091": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LOFATIN 1% CREAM 10GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:51.511Z"
     },
     "106098": {
       "status": "not_found",
@@ -43354,6 +43654,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T21:58:52.618Z"
     },
+    "106151": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PHENSEDYL DMR SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:13:55.479Z"
+    },
     "106157": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:34.404Z"
@@ -43368,6 +43675,16 @@
       "product_name": "OXECAINE BOTTLE OF 170ML GEL",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:19:51.150Z"
+    },
+    "106233": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "New Life Bach Flower Rescue Remedy 30",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:14:48.199Z"
     },
     "106234": {
       "status": "success",
@@ -43439,6 +43756,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:13:50.987Z"
     },
+    "106349": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OMNATAX 500MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:14:51.260Z"
+    },
     "106354": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:38.027Z"
@@ -43497,6 +43821,16 @@
       "product_name": "HINERGIC CAP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:14:30.106Z"
+    },
+    "106463": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD.",
+      "product_name": "Arachitol Nano Daily 2K IU Sugar Free Oral Solution",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:15:30.170Z"
     },
     "106466": {
       "status": "not_found",
@@ -43566,6 +43900,13 @@
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T18:06:35.897Z"
+    },
+    "106614": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SUPERMET XL 12.5 MG TABLET XL 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:15:35.729Z"
     },
     "106631": {
       "status": "not_found",
@@ -43661,6 +44002,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:44.722Z"
     },
+    "106884": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ADVACORT 1MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:15:38.403Z"
+    },
     "106890": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -43671,6 +44019,16 @@
     "106911": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:44.991Z"
+    },
+    "106917": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Meklin-PG Capsule",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:16:04.292Z"
     },
     "106919": {
       "status": "not_found",
@@ -43699,6 +44057,13 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:15:38.069Z"
+    },
+    "106941": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TOSSEX DMR KIWI FLAV SF SYP 100ML",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:16:23.712Z"
     },
     "106959": {
       "status": "success",
@@ -43737,6 +44102,13 @@
     "106979": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:46.877Z"
+    },
+    "106989": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "THYRONORM 112MCG TABLET",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:16:33.884Z"
     },
     "107000": {
       "status": "not_found",
@@ -43782,9 +44154,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:49.136Z"
     },
+    "107055": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CAREX POWDER SACH 15GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:16:37.624Z"
+    },
     "107058": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:00:08.426Z"
+    },
+    "107074": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NUCLAV DUO SYP 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:16:41.619Z"
     },
     "107076": {
       "status": "not_found",
@@ -43814,6 +44200,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:49:48.102Z"
     },
+    "107134": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "VALANCE SUGAR FREE 500MG SYP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:16:46.126Z"
+    },
     "107142": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:00:11.570Z"
@@ -43837,6 +44230,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:00:12.762Z"
     },
+    "107187": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EXERGE HC CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:16:48.125Z"
+    },
     "107189": {
       "status": "gemini_rejected",
       "medicine_id": 107189,
@@ -43848,6 +44248,23 @@
     "107200": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:43:58.749Z"
+    },
+    "107207": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Bactrim Bottle Of 50Ml Suspension",
+      "angles_saved": 2,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:17:13.471Z"
+    },
+    "107221": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ESDEP 10MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:17:16.360Z"
     },
     "107222": {
       "status": "success",
@@ -43872,6 +44289,13 @@
       "product_name": "NUROKIND 5GM GOLD SACHET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:02.399Z"
+    },
+    "107265": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SYNTARIS NASAL SPRAY 10ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:17:21.304Z"
     },
     "107275": {
       "status": "not_found",
@@ -43951,6 +44375,23 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:23:01.909Z"
     },
+    "107381": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZOBID R CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:17:23.205Z"
+    },
+    "107382": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Zeformin Xr 60Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:17:51.004Z"
+    },
     "107390": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -43991,6 +44432,16 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:04:39.573Z"
     },
+    "107440": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Surbex Xt Strip Of 15 Tablet",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:18:40.565Z"
+    },
     "107446": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:06.492Z"
@@ -44006,6 +44457,16 @@
     "107457": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:07.017Z"
+    },
+    "107479": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Lysupra Bottle Of 200Ml Syrup",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:18:50.279Z"
     },
     "107515": {
       "status": "not_found",
@@ -44028,6 +44489,13 @@
       "product_name": "SUCRADAY SF SUSP 100ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:05.713Z"
+    },
+    "107580": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LEPTOS 15MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:18:53.140Z"
     },
     "107583": {
       "status": "success",
@@ -44204,6 +44672,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:13.925Z"
     },
+    "107884": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "NEO MERCAZOLE 10MG BOTTLE OF 100 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:18:56.512Z"
+    },
     "107897": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:45:28.863Z"
@@ -44244,9 +44719,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:45:58.017Z"
     },
+    "107968": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TOPAC PLUS TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:18:58.428Z"
+    },
     "107974": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:14.557Z"
+    },
+    "107975": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NAZI SUSP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:18:59.590Z"
     },
     "107977": {
       "status": "not_found",
@@ -44281,6 +44770,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:15.682Z"
     },
+    "108042": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Inderal 10Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:19:21.599Z"
+    },
     "108047": {
       "status": "success",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -44299,6 +44798,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:16.260Z"
     },
+    "108079": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DIGENE TOTAL STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:19:23.900Z"
+    },
     "108082": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -44314,9 +44820,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:16.880Z"
     },
+    "108150": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLUOTHANE LIQUID 50ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:19:28.367Z"
+    },
     "108170": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:02:01.438Z"
+    },
+    "108174": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Electral - Z+ | ORS + Zinc Ready to Drink | Flavour Liquid Delicious Orange",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:20:06.555Z"
     },
     "108175": {
       "status": "not_found",
@@ -44334,6 +44857,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:17.998Z"
     },
+    "108226": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NIFEDINE 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:09.556Z"
+    },
     "108236": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:02:06.398Z"
@@ -44350,9 +44880,23 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:02:10.062Z"
     },
+    "108262": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PIRACILLIN 500MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:12.166Z"
+    },
     "108264": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:18.527Z"
+    },
+    "108285": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "GESICAIN WITH ADRENALINE INJ 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:16.495Z"
     },
     "108290": {
       "status": "not_found",
@@ -44369,6 +44913,13 @@
     "108313": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:02:16.798Z"
+    },
+    "108333": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MAYLOX TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:17.730Z"
     },
     "108335": {
       "status": "success",
@@ -44424,12 +44975,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:20.668Z"
     },
+    "108433": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BACTRIM SUSP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:21.172Z"
+    },
     "108443": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MILPOND TERRA LIQUID VET 5LTR",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:17:24.958Z"
+    },
+    "108454": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DERMALIBOUR FOAMING GEL 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:25.608Z"
     },
     "108460": {
       "status": "not_found",
@@ -44438,6 +45003,16 @@
     "108467": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:46:23.832Z"
+    },
+    "108497": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Elocon Tube Of 10Gm Ointment",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:20:45.147Z"
     },
     "108504": {
       "status": "not_found",
@@ -44486,6 +45061,13 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:05:24.706Z"
     },
+    "108576": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FENSAIDE GEL 30GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:48.736Z"
+    },
     "108617": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:03:04.229Z"
@@ -44497,9 +45079,37 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T18:06:52.674Z"
     },
+    "108635": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EFFIMAX S 375MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:52.876Z"
+    },
+    "108637": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CHEKMET 100MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:55.579Z"
+    },
+    "108653": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PHENOBARBITONE AMPOULE OF 1M INJECTION",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:20:58.075Z"
+    },
     "108674": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:22.175Z"
+    },
+    "108676": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ENTAMIZOLE SYP 60ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:00.676Z"
     },
     "108684": {
       "status": "not_found",
@@ -44515,6 +45125,13 @@
     "108701": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:46:24.885Z"
+    },
+    "108715": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FINECEF DT 50MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:04.123Z"
     },
     "108718": {
       "status": "not_found",
@@ -44579,6 +45196,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:36.980Z"
     },
+    "108859": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "STEMETIL 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:07.182Z"
+    },
     "108865": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:26.583Z"
@@ -44606,6 +45230,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:03:10.565Z"
     },
+    "108946": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PHENLINCTUS SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:09.902Z"
+    },
     "108955": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:03:12.736Z"
@@ -44613,6 +45244,13 @@
     "108966": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:03:13.984Z"
+    },
+    "108974": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EPTIFAB 75MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:12.458Z"
     },
     "108978": {
       "status": "gemini_rejected",
@@ -44647,6 +45285,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T14:24:07.064Z"
     },
+    "109012": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CDPRO 1MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:15.152Z"
+    },
     "109019": {
       "status": "not_found",
       "company": "SUN PHARMA",
@@ -44671,6 +45316,20 @@
     "109045": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:27.892Z"
+    },
+    "109046": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ICUPEN 500MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:18.146Z"
+    },
+    "109060": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TRESMOX KID 250MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:22.472Z"
     },
     "109075": {
       "status": "not_found",
@@ -44712,6 +45371,13 @@
     "109152": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:30.263Z"
+    },
+    "109155": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "CREMADIET DUO JAR OF 90GM POWDER",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:21:49.419Z"
     },
     "109165": {
       "status": "gemini_rejected",
@@ -44770,9 +45436,23 @@
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:47:41.613Z"
     },
+    "109236": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "COSYMOXYL DRY SYP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:51.400Z"
+    },
     "109247": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:03:44.444Z"
+    },
+    "109256": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "GATRI OZ TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:21:53.576Z"
     },
     "109260": {
       "status": "not_found",
@@ -44798,6 +45478,23 @@
     "109299": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:32.277Z"
+    },
+    "109310": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Gut Renew Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:22:39.298Z"
+    },
+    "109314": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZETALO 40MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:22:42.304Z"
     },
     "109317": {
       "status": "not_found",
@@ -44834,6 +45531,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:43.608Z"
     },
+    "109353": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "ENTAMIZOLE O TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:22:44.169Z"
+    },
     "109364": {
       "status": "success",
       "product_name": "Strocit 100Mg Bottle Of 30Ml Oral Drops",
@@ -44842,6 +45546,16 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:47:54.613Z"
+    },
+    "109367": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Elocon 0.1% Bottle Of 5Ml Lotion",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:23:24.311Z"
     },
     "109374": {
       "status": "not_found",
@@ -44959,6 +45673,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:20:42.767Z"
     },
+    "109607": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DIRASEC 30MG POWDER",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:23:28.860Z"
+    },
     "109613": {
       "status": "success",
       "medicine_id": 109613,
@@ -44976,6 +45697,16 @@
     "109626": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:48:39.423Z"
+    },
+    "109637": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Betonin AST Syrup No Added Sugar",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:24:17.379Z"
     },
     "109653": {
       "status": "success",
@@ -45073,6 +45804,20 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:16:10.322Z"
     },
+    "109899": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "POPUP 20MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:24:20.472Z"
+    },
+    "109942": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLUOTHANE LIQUID 200ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:24:24.382Z"
+    },
     "109951": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:49:13.937Z"
@@ -45118,6 +45863,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:03:39.468Z"
     },
+    "110028": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Estrabet 1Mg Strip Of 28 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:25:16.756Z"
+    },
     "110039": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:04:39.738Z"
@@ -45152,6 +45907,13 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:49:38.624Z"
+    },
+    "110082": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FIGHTOX 375MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:20.124Z"
     },
     "110085": {
       "status": "not_found",
@@ -45202,6 +45964,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:04:47.878Z"
     },
+    "110174": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "R2 F 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:23.178Z"
+    },
     "110183": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -45222,6 +45991,13 @@
       "product_name": "ZENOXA OD 600MG TABLET",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:16:42.464Z"
+    },
+    "110232": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TUFDROX CV DT 250MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:28.218Z"
     },
     "110256": {
       "status": "not_found",
@@ -45274,6 +46050,13 @@
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:50:18.276Z"
     },
+    "110301": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NICOTAC 150MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:30.926Z"
+    },
     "110326": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:40.306Z"
@@ -45311,6 +46094,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:04:56.080Z"
     },
+    "110394": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "RAMTEL H 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:35.844Z"
+    },
     "110395": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:50:24.925Z"
@@ -45319,9 +46109,23 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:04:56.973Z"
     },
+    "110409": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CEFIRONE V INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:37.805Z"
+    },
     "110429": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:04:57.706Z"
+    },
+    "110442": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PIRAFLOX O IV",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:40.915Z"
     },
     "110445": {
       "status": "not_found",
@@ -45382,6 +46186,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:00.773Z"
     },
+    "110592": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PRASCHAMP 16MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:25:43.910Z"
+    },
     "110612": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -45409,6 +46220,16 @@
       "product_name": "MEPRESSO T 8MG TABLET",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:18:16.853Z"
+    },
+    "110649": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Caat 80Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:26:27.011Z"
     },
     "110664": {
       "status": "not_found",
@@ -45489,6 +46310,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:41.699Z"
     },
+    "110745": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NEW DELETUS BX SYRUP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:28.972Z"
+    },
     "110748": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -45530,6 +46358,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:04.318Z"
     },
+    "110800": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EPHYNAL 100MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:32.559Z"
+    },
     "110805": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:51:06.305Z"
@@ -45545,6 +46380,13 @@
     "110832": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:44.107Z"
+    },
+    "110840": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIPIGOAL 10MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:35.998Z"
     },
     "110841": {
       "status": "not_found",
@@ -45608,6 +46450,13 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:18:43.624Z"
     },
+    "111001": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TIGIMAX 50MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:38.895Z"
+    },
     "111002": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:45.746Z"
@@ -45649,6 +46498,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:51:40.741Z"
     },
+    "111039": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TENOCLOR 100MG STRIP OF 14 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:41.599Z"
+    },
     "111044": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:09.821Z"
@@ -45656,6 +46512,13 @@
     "111056": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:46.446Z"
+    },
+    "111060": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "VERTIN OD 32MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:45.614Z"
     },
     "111076": {
       "status": "success",
@@ -45680,6 +46543,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:10.705Z"
     },
+    "111119": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PEDIAGROW VANILLA POWDER 400GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:50.649Z"
+    },
     "111123": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:13.279Z"
@@ -45700,6 +46570,13 @@
     "111142": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:52:05.643Z"
+    },
+    "111143": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "DIGENE FIZZ PAAN SACHET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:26:53.055Z"
     },
     "111156": {
       "status": "success",
@@ -45783,6 +46660,23 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:26:25.311Z"
     },
+    "111276": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "New Erythrocin 500Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:27:43.614Z"
+    },
+    "111280": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BETA NIFEDINE CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:27:45.838Z"
+    },
     "111291": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:50:49.348Z"
@@ -45795,9 +46689,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:52:37.913Z"
     },
+    "111307": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Calcimax 500Mg Strip Of 30 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:27:57.589Z"
+    },
     "111316": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:52:41.279Z"
+    },
+    "111328": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "VALTO P 40MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:01.893Z"
     },
     "111343": {
       "status": "success",
@@ -45811,6 +46722,13 @@
     "111353": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:10.865Z"
+    },
+    "111370": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ROCKBON 60000IU SACHET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:06.496Z"
     },
     "111372": {
       "status": "success",
@@ -45839,6 +46757,13 @@
     "111456": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:52:59.440Z"
+    },
+    "111460": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NUPOD CV 200MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:10.085Z"
     },
     "111474": {
       "status": "not_found",
@@ -45921,6 +46846,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:24.962Z"
     },
+    "111642": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AZRO DT 100MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:14.261Z"
+    },
     "111643": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:25.864Z"
@@ -45936,6 +46868,13 @@
     "111664": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:27.262Z"
+    },
+    "111671": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "VAH 10MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:16.627Z"
     },
     "111683": {
       "status": "not_found",
@@ -45957,9 +46896,23 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:31.193Z"
     },
+    "111751": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "PROTHIADEN 50MG STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:19.215Z"
+    },
     "111755": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:33.319Z"
+    },
+    "111757": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ISORANE SOLUTION 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:23.925Z"
     },
     "111758": {
       "status": "not_found",
@@ -45971,6 +46924,13 @@
     "111772": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:36.170Z"
+    },
+    "111801": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BETONIN CZ CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:26.014Z"
     },
     "111811": {
       "status": "not_found",
@@ -45996,6 +46956,13 @@
     "111846": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:28.366Z"
+    },
+    "111860": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MALIDENS BANANA FLAVOUR 60ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:30.578Z"
     },
     "111869": {
       "status": "not_found",
@@ -46038,6 +47005,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:51.394Z"
     },
+    "111924": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MAXIGARD CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:28:31.865Z"
+    },
     "111929": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:44.102Z"
@@ -46051,6 +47025,16 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:06:58.585Z"
+    },
+    "111944": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Stator F Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:28:58.135Z"
     },
     "111959": {
       "status": "not_found",
@@ -46074,13 +47058,37 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:29.188Z"
     },
+    "111979": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "METICA 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:29:01.747Z"
+    },
     "111980": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:05.327Z"
     },
+    "111983": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Ppg Met 0.3Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:29:28.275Z"
+    },
     "111986": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:29.810Z"
+    },
+    "112014": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SYMOXYL BR SUSP 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:29:33.140Z"
     },
     "112026": {
       "status": "not_found",
@@ -46119,6 +47127,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:31.022Z"
     },
+    "112164": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CREMAFFIN WHITE LIQUID 200ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:29:37.344Z"
+    },
+    "112174": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Levesam Injection",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:30:15.836Z"
+    },
     "112179": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:54:03.051Z"
@@ -46131,6 +47156,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:54:05.482Z"
     },
+    "112218": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PHENSEDYL EX EXPT 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:20.542Z"
+    },
     "112231": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -46141,6 +47173,13 @@
     "112243": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:54:08.410Z"
+    },
+    "112270": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OMNACEFPO 100MG DRY SYP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:24.654Z"
     },
     "112282": {
       "status": "not_found",
@@ -46338,6 +47377,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:36.448Z"
     },
+    "112770": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MOXYCARB 500MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:28.168Z"
+    },
     "112781": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:33.416Z"
@@ -46416,6 +47462,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:42.543Z"
     },
+    "112934": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "UPBEAT CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:29.342Z"
+    },
     "112936": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -46480,6 +47533,13 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:26:48.977Z"
+    },
+    "113047": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PARAXIN 1GM INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:32.052Z"
     },
     "113048": {
       "status": "not_found",
@@ -46557,6 +47617,23 @@
     "113202": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:41.484Z"
+    },
+    "113224": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PIFLASYN 400MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:34.826Z"
+    },
+    "113265": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Megamox Cv 625Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:30:49.563Z"
     },
     "113266": {
       "status": "not_found",
@@ -46656,6 +47733,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:26:58.324Z"
     },
+    "113499": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "QUIET BR SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:53.491Z"
+    },
     "113512": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:07:22.029Z"
@@ -46663,6 +47747,13 @@
     "113519": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:07:24.799Z"
+    },
+    "113535": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ROCALTROL 0.25MCG STRIP OF 10 CAPSULES",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:31:16.417Z"
     },
     "113543": {
       "status": "gemini_rejected",
@@ -46706,6 +47797,13 @@
       "product_name": "MAHAMOX 500MG STRIP OF 10 CAPSULES",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:20:58.493Z"
+    },
+    "113622": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MINICHEK 5% SOLUTION 60ML",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:32:04.049Z"
     },
     "113636": {
       "status": "not_found",
@@ -46757,6 +47855,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:27:53.692Z"
     },
+    "113746": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AMOXYCLAV 1.2GM INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:32:06.664Z"
+    },
     "113773": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -46767,6 +47872,16 @@
     "113785": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:46.822Z"
+    },
+    "113795": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Actnew Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:32:29.010Z"
     },
     "113799": {
       "status": "not_found",
@@ -46790,6 +47905,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:48.338Z"
     },
+    "113857": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Winbp Ct 40/12.5Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:33:13.724Z"
+    },
     "113858": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -46807,6 +47932,16 @@
     "113862": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:07:37.133Z"
+    },
+    "113871": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Valtoval 1g Tablet",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:33:54.873Z"
     },
     "113878": {
       "status": "not_found",
@@ -46842,6 +47977,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:28:18.626Z"
     },
+    "113908": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "WINBP AM 20MG TABLET 15'S",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:34:39.556Z"
+    },
     "113921": {
       "status": "not_found",
       "checked_at": "2026-09-12T07:56:48.941Z"
@@ -46869,6 +48011,16 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T07:57:06.761Z"
+    },
+    "113947": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Digene | Acidity & Gas Relief | Mint | Sugar Free | Antacid Gel450 Ml",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:35:15.774Z"
     },
     "113949": {
       "status": "not_found",
@@ -46971,6 +48123,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:02.313Z"
     },
+    "114138": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Durajoint Gm New Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:36:03.300Z"
+    },
     "114139": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -46994,6 +48156,16 @@
       "product_name": "HEMILIFT 100 MG INJECTION 5 ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:05:38.720Z"
+    },
+    "114182": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Cefitrust-O Dry Syrup Orange",
+      "angles_saved": 3,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:36:38.815Z"
     },
     "114204": {
       "status": "gemini_rejected",
@@ -47038,6 +48210,13 @@
     "114268": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:15.486Z"
+    },
+    "114290": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "VIROCIL TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:36:40.406Z"
     },
     "114301": {
       "status": "not_found",
@@ -47109,6 +48288,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:18.610Z"
     },
+    "114509": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Deletus Pearls Strip Of 10 Softgel Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:37:04.404Z"
+    },
     "114513": {
       "status": "success",
       "medicine_id": 114513,
@@ -47142,6 +48331,16 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:06:50.020Z"
+    },
+    "114565": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Claribid 500Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:37:47.692Z"
     },
     "114569": {
       "status": "not_found",
@@ -47222,6 +48421,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:07:14.891Z"
     },
+    "114709": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PIOZONE M 30MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:37:52.102Z"
+    },
     "114716": {
       "status": "gemini_rejected",
       "medicine_id": 114716,
@@ -47272,6 +48478,13 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:09:43.419Z"
     },
+    "114777": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "TITAFERON 50MCG VIAL OF 1 INJECTION",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:37:56.937Z"
+    },
     "114785": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -47312,6 +48525,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:08:54.784Z"
     },
+    "114898": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "B CRIP 5MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:38:00.524Z"
+    },
     "114905": {
       "status": "not_found",
       "company": "CADILA PHARMACEUTICALS LTD",
@@ -47339,6 +48559,13 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:08:19.457Z"
     },
+    "114948": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "BRIVETOIN 100MG STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:38:03.280Z"
+    },
     "114954": {
       "status": "success",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -47349,9 +48576,23 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:08:11.198Z"
     },
+    "114966": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CARDULES PLUS 10MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:38:07.858Z"
+    },
     "114977": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:22.410Z"
+    },
+    "114983": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ABETOROX 90MG TABLET 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:38:10.786Z"
     },
     "115023": {
       "status": "not_found",
@@ -47411,6 +48652,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:24.272Z"
     },
+    "115129": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BRUFEN 600 MG TABLET 30",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:38:56.232Z"
+    },
     "115139": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:24.740Z"
@@ -47429,6 +48677,16 @@
       "product_name": "DUDROPS EYE DROPS 5ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:08:22.411Z"
+    },
+    "115182": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Phensedyl Lr Bottle Of 100Ml Suspension",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:39:37.719Z"
     },
     "115184": {
       "status": "not_found",
@@ -47507,9 +48765,23 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:20.146Z"
     },
+    "115325": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BRIVAJOY 75MG STRIP OF 14 TABLETS",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:39:58.438Z"
+    },
     "115327": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:27.210Z"
+    },
+    "115339": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FIGHTOX 375MG STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:00.697Z"
     },
     "115347": {
       "status": "not_found",
@@ -47540,6 +48812,13 @@
     "115396": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:28.404Z"
+    },
+    "115400": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "RONEMOX 500MG CAP 15'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:02.977Z"
     },
     "115410": {
       "status": "success",
@@ -47621,6 +48900,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:10:20.201Z"
     },
+    "115672": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AMBISTRYN S 1 GM INJ",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:40:25.521Z"
+    },
     "115679": {
       "status": "not_found",
       "company": "SUN PHARMA",
@@ -47642,9 +48928,30 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:30.518Z"
     },
+    "115699": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZIMNIC 200MG TAB 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:27.994Z"
+    },
+    "115711": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ESGIPYRIN INSTA GEL 50GM",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:40:38.877Z"
+    },
     "115714": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:10:23.918Z"
+    },
+    "115717": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NERVOPTIN TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:40.019Z"
     },
     "115743": {
       "status": "gemini_rejected",
@@ -47652,6 +48959,13 @@
       "product_name": "SUPERIA 20MG STRIP OF 15 TABLETS",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:29:38.693Z"
+    },
+    "115744": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TRIZIDINE 20MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:42.770Z"
     },
     "115754": {
       "status": "not_found",
@@ -47693,6 +49007,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:10:28.112Z"
     },
+    "115782": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OPTIUM FREE STYLE STRIPS 25`S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:46.277Z"
+    },
     "115791": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:31.836Z"
@@ -47726,6 +49047,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:12:47.988Z"
     },
+    "115847": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "LIBRAX STRIP OF 20 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:47.502Z"
+    },
+    "115855": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OMNA ONE 250MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:51.608Z"
+    },
     "115882": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:10:36.131Z"
@@ -47753,6 +49088,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:10:46.456Z"
     },
+    "115938": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NIVAQUINE P SUSP 60ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:56.355Z"
+    },
     "115955": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:33.150Z"
@@ -47770,6 +49112,13 @@
       "product_name": "NEW OLAHAIR TABLET 10'S",
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T19:05:58.388Z"
+    },
+    "115974": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TOPAC 25MG",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:40:59.002Z"
     },
     "116021": {
       "status": "not_found",
@@ -47800,6 +49149,20 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:34.780Z"
     },
+    "116086": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "THYRONORM 150MCG BOTTLE OF 100 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:41:01.341Z"
+    },
+    "116100": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "RACY 30MG SACHET 3GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:41:06.652Z"
+    },
     "116118": {
       "status": "success",
       "company": "SUN PHARMA",
@@ -47809,6 +49172,23 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:09:25.499Z"
+    },
+    "116119": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Valance Od 750Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:41:32.962Z"
+    },
+    "116132": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DELETUS BX SYP",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:42:01.822Z"
     },
     "116154": {
       "status": "not_found",
@@ -47826,6 +49206,13 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:09:48.063Z"
+    },
+    "116163": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ROPIZUVA 2MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:04.801Z"
     },
     "116166": {
       "status": "not_found",
@@ -47891,9 +49278,23 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:10:10.387Z"
     },
+    "116255": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NCAL 250 MG/125IU SUSPENSION 200 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:08.646Z"
+    },
     "116260": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:37.476Z"
+    },
+    "116263": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CLIVARINE MDV INJ 6ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:13.360Z"
     },
     "116265": {
       "status": "not_found",
@@ -47967,6 +49368,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:39.406Z"
     },
+    "116397": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "EVEPEARL MP TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:15.514Z"
+    },
+    "116402": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Cerom 500Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:42:28.309Z"
+    },
     "116418": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:39.992Z"
@@ -47998,6 +49416,20 @@
     "116548": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:42.625Z"
+    },
+    "116564": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LORSAID P 8MG/500MG TAB 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:33.460Z"
+    },
+    "116576": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AURATREX 2.5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:36.183Z"
     },
     "116580": {
       "status": "not_found",
@@ -48032,6 +49464,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:11:02.964Z"
     },
+    "116625": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CEFOTAX 250MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:39.132Z"
+    },
     "116629": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -48042,6 +49481,13 @@
     "116642": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:11:23.501Z"
+    },
+    "116644": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CLIADUO 5 MG TABLET 1",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:43.342Z"
     },
     "116674": {
       "status": "not_found",
@@ -48095,6 +49541,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:11:29.833Z"
     },
+    "116747": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AZRO 200MG SUSPENSION 15ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:42:47.678Z"
+    },
     "116756": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -48124,6 +49577,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:46.296Z"
     },
+    "116801": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Gluformin G 0.5Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:43:32.053Z"
+    },
     "116803": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -48144,6 +49607,13 @@
     "116818": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:46.827Z"
+    },
+    "116819": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZIMNIC DRY SYP 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:43:36.372Z"
     },
     "116824": {
       "status": "success",
@@ -48246,9 +49716,36 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:38.361Z"
     },
+    "117018": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Lobate Gm Neo Tube Of 20Gm Cream",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:44:02.209Z"
+    },
+    "117035": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Paraxin 500Mg Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:44:31.644Z"
+    },
     "117062": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:52.157Z"
+    },
+    "117066": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MELAGARD LOTION 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:44:34.741Z"
     },
     "117069": {
       "status": "not_found",
@@ -48270,6 +49767,20 @@
     "117084": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:12:07.630Z"
+    },
+    "117088": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIFE 1000IU INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:44:37.370Z"
+    },
+    "117091": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "B STIL 16MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:44:40.907Z"
     },
     "117094": {
       "status": "not_found",
@@ -48315,6 +49826,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:33:14.510Z"
     },
+    "117148": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LEVILEX (ABBOTT) 500 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:44:44.471Z"
+    },
     "117154": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -48351,6 +49869,13 @@
       "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T03:10:18.658Z"
+    },
+    "117238": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLAGYNOR TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:44:45.626Z"
     },
     "117241": {
       "status": "not_found",
@@ -48438,6 +49963,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:06:00.072Z"
     },
+    "117379": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "D3 SHOT 1000IU CAPSULE",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:45:14.547Z"
+    },
     "117381": {
       "status": "success",
       "medicine_id": 117381,
@@ -48459,6 +49991,13 @@
     "117429": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:23.672Z"
+    },
+    "117439": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AGOVIZ 25MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:45:17.371Z"
     },
     "117491": {
       "status": "not_found",
@@ -48524,6 +50063,13 @@
       "product_name": "STROCIT 1GM TABLET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:12:33.895Z"
+    },
+    "117688": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MOXYDIL 250MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:45:20.302Z"
     },
     "117706": {
       "status": "not_found",
@@ -48636,6 +50182,13 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:13:02.569Z"
+    },
+    "117828": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PARAZOBID TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:45:21.611Z"
     },
     "117838": {
       "status": "not_found",
@@ -48750,9 +50303,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:32.388Z"
     },
+    "118082": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OMNA XP 500MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:45:25.417Z"
+    },
     "118087": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:13:28.160Z"
+    },
+    "118094": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIPEZET 10MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:45:28.076Z"
     },
     "118101": {
       "status": "not_found",
@@ -48760,6 +50327,16 @@
       "product_name": "CEFPOTAS DT 100MG TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:34:59.892Z"
+    },
+    "118112": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Tribet 1Mg Strip Of 15 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:46:28.081Z"
     },
     "118122": {
       "status": "not_found",
@@ -48795,9 +50372,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:32.925Z"
     },
+    "118205": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Rzt-Via R Tablet",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:47:21.600Z"
+    },
     "118223": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:33.564Z"
+    },
+    "118230": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "TENFOPLUS TABLET 30'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:23.235Z"
     },
     "118238": {
       "status": "success",
@@ -48836,6 +50430,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:13:33.538Z"
     },
+    "118287": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NERVUPTIN TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:24.597Z"
+    },
     "118289": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:13:34.397Z"
@@ -48855,6 +50456,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:36.764Z"
     },
+    "118353": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MEXEF DRY SYP 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:29.265Z"
+    },
     "118366": {
       "status": "success",
       "company": "SUN PHARMA",
@@ -48864,6 +50472,13 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:13:52.887Z"
+    },
+    "118374": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FINECEF AM 100MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:33.155Z"
     },
     "118392": {
       "status": "not_found",
@@ -48886,6 +50501,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:14:29.034Z"
     },
+    "118446": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AGGRIBLOC INF",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:35.224Z"
+    },
     "118454": {
       "status": "success",
       "company": "SUN PHARMA",
@@ -48902,6 +50524,13 @@
       "product_name": "COZABAL 750MG CAP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:14:52.105Z"
+    },
+    "118459": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ARCHITOL CHEW 60000 IU TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:39.660Z"
     },
     "118470": {
       "status": "not_found",
@@ -48956,6 +50585,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:37.341Z"
     },
+    "118613": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CAREX PROTEIN POWDER 200 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:47:43.557Z"
+    },
     "118626": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -49004,6 +50640,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:40.052Z"
     },
+    "118769": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Tyza 1% Tube Of 15Gm Cream",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:48:21.919Z"
+    },
     "118771": {
       "status": "success",
       "medicine_id": 118771,
@@ -49017,6 +50663,13 @@
     "118772": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:40.596Z"
+    },
+    "118782": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DIVALEP ER 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:48:26.297Z"
     },
     "118787": {
       "status": "success",
@@ -49034,6 +50687,13 @@
       "product_name": "RANIDOM D 30/40 MG CAPSULE SR 10'S",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:56.563Z"
+    },
+    "118834": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLUOTHANE LIQUID 250ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:48:30.111Z"
     },
     "118835": {
       "status": "success",
@@ -49077,6 +50737,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:15:52.776Z"
     },
+    "118924": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Brugel Actifast Tube Of 30Gm Gel",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:49:08.236Z"
+    },
     "118968": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -49116,6 +50786,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:41.297Z"
     },
+    "119008": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CELETOP 200MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:49:10.786Z"
+    },
     "119009": {
       "status": "not_found",
       "company": "CADILA PHARMACEUTICALS LTD",
@@ -49131,9 +50808,23 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:14:06.326Z"
     },
+    "119036": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PUREGON 75IU INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:49:13.906Z"
+    },
     "119041": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:14:08.716Z"
+    },
+    "119045": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FENSAIDE P TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:49:15.771Z"
     },
     "119088": {
       "status": "not_found",
@@ -49142,6 +50833,16 @@
     "119094": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:42.618Z"
+    },
+    "119098": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Abvida M 50/500Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:49:51.481Z"
     },
     "119103": {
       "status": "not_found",
@@ -49278,9 +50979,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:43.762Z"
     },
+    "119383": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "BRUFEN 5% GEL 25GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:49:55.931Z"
+    },
     "119395": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:44.247Z"
+    },
+    "119397": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Calaptin Sr 240Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:50:35.975Z"
     },
     "119409": {
       "status": "not_found",
@@ -49339,6 +51057,20 @@
     "119466": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:46.954Z"
+    },
+    "119475": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FORTIUS 5MG TAB",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:50:46.363Z"
+    },
+    "119476": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "FEMOSTON CONTI 1/5MG TABLET 28'S",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:51:29.770Z"
     },
     "119478": {
       "status": "not_found",
@@ -49414,6 +51146,23 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:22:03.316Z"
     },
+    "119622": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CEFI XL 100MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:51:33.612Z"
+    },
+    "119632": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Levesam Xr 500Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:51:51.262Z"
+    },
     "119642": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:53:48.210Z"
@@ -49442,6 +51191,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:15:17.781Z"
     },
+    "119689": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MAMA`S BEST VANILLA POWDER 400GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:51:55.276Z"
+    },
     "119713": {
       "status": "gemini_rejected",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -49465,6 +51221,13 @@
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T19:06:34.529Z"
+    },
+    "119757": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "ZOLFRESH 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:51:58.042Z"
     },
     "119758": {
       "status": "not_found",
@@ -49560,6 +51323,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T14:07:32.822Z"
     },
+    "120032": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OPTIUM FREE STYLE STRIPS 10`S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:52:01.113Z"
+    },
     "120062": {
       "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -49584,6 +51354,13 @@
       "product_name": "GANGUARD 250MG CAPSULE",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:18:00.382Z"
+    },
+    "120103": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SEMI EUGLUCON TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:52:02.861Z"
     },
     "120108": {
       "status": "not_found",
@@ -49737,6 +51514,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:54:25.832Z"
     },
+    "120360": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Gluformin Xl New 1Gm Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:52:19.682Z"
+    },
     "120369": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -49845,6 +51632,16 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:54:29.740Z"
     },
+    "120568": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Telpres 20Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:52:43.706Z"
+    },
     "120572": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:54:30.356Z"
@@ -49927,6 +51724,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:16:39.441Z"
     },
+    "120735": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "OMNATAX CV DT TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:52:49.702Z"
+    },
     "120750": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -49936,6 +51740,13 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T12:38:27.134Z"
+    },
+    "120771": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LIVUP D SYP 200ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:52:53.626Z"
     },
     "120779": {
       "status": "not_found",
@@ -50032,6 +51843,13 @@
       "product_name": "SOVICAL L LIQUID 200ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:19:14.078Z"
+    },
+    "120957": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PANCURONIUM BROMIDE INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:52:55.780Z"
     },
     "120964": {
       "status": "not_found",
@@ -50137,6 +51955,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:17:12.089Z"
     },
+    "121150": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FINECEF T 281.25MG VIAL OF 1 INJECTION",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:53:00.107Z"
+    },
     "121174": {
       "status": "success",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -50167,6 +51992,13 @@
       "product_name": "CARITEC 4MG STRIP OF 10 TABLETS",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:19:47.158Z"
+    },
+    "121216": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "RONEMOX 125 MG SYRUP 30 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:53:03.924Z"
     },
     "121226": {
       "status": "not_found",
@@ -50230,6 +52062,13 @@
       "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:23:41.703Z"
+    },
+    "121323": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLAGYL SUSP 30ML",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:53:38.941Z"
     },
     "121330": {
       "status": "not_found",
@@ -50373,6 +52212,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:22:34.883Z"
     },
+    "121501": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DUPHALAC PAED SYP 60ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:53:43.115Z"
+    },
     "121518": {
       "status": "gemini_rejected",
       "company": "CIPLA GX",
@@ -50408,6 +52254,13 @@
       "product_name": "RIMAREX 150 MG CAPSULE 10",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:07.902Z"
+    },
+    "121594": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "AMBISTRYN 1 GM INJECTION 1",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:54:05.001Z"
     },
     "121605": {
       "status": "not_found",
@@ -50445,6 +52298,16 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:17:36.847Z"
     },
+    "121639": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Gledepa 10mg Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:54:53.314Z"
+    },
     "121661": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:17:39.345Z"
@@ -50452,6 +52315,13 @@
     "121663": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:17:42.389Z"
+    },
+    "121669": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ANTRIMA SS TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:54:55.381Z"
     },
     "121675": {
       "status": "not_found",
@@ -50518,6 +52388,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:21:52.041Z"
     },
+    "121796": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Thiospas A 4Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:55:18.535Z"
+    },
     "121797": {
       "status": "not_found",
       "company": "ASTRAZENECA PHARMA INDIA LTD",
@@ -50565,6 +52445,16 @@
       "product_name": "IBINATOR 100MG STRIP OF 15 CAPSULES",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:06:58.535Z"
+    },
+    "121852": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Paraxin 500Mg Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:55:47.425Z"
     },
     "121853": {
       "status": "not_found",
@@ -50654,12 +52544,39 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:54:46.920Z"
     },
+    "122032": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Glimer 2Mg Strip Of 15 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:56:33.438Z"
+    },
     "122042": {
       "status": "gemini_rejected",
       "company": "HONASA CONSUMER PRIVATE LIMITED",
       "product_name": "MAMAEARTH BREATHE EASY VAPOUR ROLL ON FOR BABIES 40ML",
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T18:18:44.563Z"
+    },
+    "122046": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Thyronorm 62.5Mcg Bottle Of 120 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:56:44.974Z"
+    },
+    "122070": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DIGENE 300MG TABLET 12'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:56:48.141Z"
     },
     "122085": {
       "status": "not_found",
@@ -50702,6 +52619,23 @@
     "122141": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:54:48.272Z"
+    },
+    "122149": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Thyronorm 137Mcg Bottle Of 120 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:56:58.245Z"
+    },
+    "122167": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "NAMIPRIL 2.5MG STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:01.465Z"
     },
     "122172": {
       "status": "not_found",
@@ -50859,6 +52793,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:15.360Z"
     },
+    "122507": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Zolephos Iv Vial Of 100Ml Infusion",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:57:13.131Z"
+    },
+    "122532": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DILCAL 30MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:15.924Z"
+    },
     "122534": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -50869,6 +52820,13 @@
     "122569": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:12.557Z"
+    },
+    "122574": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "PROTHIADEN-M 1500 MG/75MCG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:19.662Z"
     },
     "122596": {
       "status": "not_found",
@@ -50917,6 +52875,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:16.646Z"
     },
+    "122694": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "GLIMER 4 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:23.650Z"
+    },
     "122695": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:17.416Z"
@@ -50934,6 +52899,13 @@
       "product_name": "TRIZORYL FORTE 2MG TABLET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:41:48.879Z"
+    },
+    "122739": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "DIGENE COLA FLAVOUR TABLET 12'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:26.026Z"
     },
     "122744": {
       "status": "not_found",
@@ -50963,6 +52935,13 @@
     "122780": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:22.967Z"
+    },
+    "122788": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TRIBETROL 2MG FORTE TABLET 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:33.018Z"
     },
     "122789": {
       "status": "not_found",
@@ -51032,6 +53011,13 @@
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T03:13:16.199Z"
     },
+    "122857": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "PIRACILLIN 500 MG CAPSULE 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:57:36.924Z"
+    },
     "122876": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:38.901Z"
@@ -51068,9 +53054,36 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:23:33.609Z"
     },
+    "122950": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Suganril 20Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:58:01.759Z"
+    },
     "122957": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:44.585Z"
+    },
+    "122962": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CLIADUO 10 MG TABLET 1",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:58:05.225Z"
+    },
+    "122968": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Essentiale L 1Gm Strip Of 10 Capsules",
+      "angles_saved": 3,
+      "primary_face": "box-back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:58:44.914Z"
     },
     "122985": {
       "status": "not_found",
@@ -51078,6 +53091,13 @@
       "product_name": "OFLOKIND OZ INF 100ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T11:23:40.370Z"
+    },
+    "122986": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TRUSTYL COLD TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:58:46.877Z"
     },
     "122993": {
       "status": "not_found",
@@ -51147,6 +53167,13 @@
     "123101": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:51.906Z"
+    },
+    "123107": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FIGHTOX KID 200/28.5 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:58:51.211Z"
     },
     "123138": {
       "status": "success",
@@ -51221,6 +53248,13 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:22.721Z"
     },
+    "123300": {
+      "status": "not_found",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "CREMALAX PLUS SYRUP 200ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:58:55.463Z"
+    },
     "123330": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -51246,6 +53280,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:56.056Z"
     },
+    "123366": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "DOL 500/50 MG TABLET 10",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:59:08.629Z"
+    },
     "123367": {
       "status": "not_found",
       "company": "SUN PHARMA",
@@ -51267,6 +53308,13 @@
     "123389": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:24.045Z"
+    },
+    "123415": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ABIXIM DRY SYRUP 30 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:59:13.073Z"
     },
     "123419": {
       "status": "success",
@@ -51291,6 +53339,16 @@
       "primary_confidence": 95,
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:25:12.739Z"
+    },
+    "123451": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "Calaptin Sr 120Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:59:46.889Z"
     },
     "123462": {
       "status": "not_found",
@@ -51318,6 +53376,13 @@
     "123513": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:18:59.649Z"
+    },
+    "123530": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SUGAFEN 200MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:59:49.760Z"
     },
     "123534": {
       "status": "not_found",
@@ -51404,6 +53469,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-12T11:24:29.839Z"
     },
+    "123720": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "COSYMOXYL 1.2GM INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:32.226Z"
+    },
     "123726": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -51447,6 +53519,13 @@
       "product_name": "CARDIVAS 6.25MG STRIP OF 10 TABLETS",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:34:46.718Z"
+    },
+    "123838": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "FLUDON 150MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:35.222Z"
     },
     "123843": {
       "status": "not_found",
@@ -51605,9 +53684,23 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T14:22:31.794Z"
     },
+    "124117": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "CYLTABS TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:36.443Z"
+    },
     "124118": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:30.094Z"
+    },
+    "124125": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "MALATRIT PAN PF",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:39.534Z"
     },
     "124131": {
       "status": "success",
@@ -51650,6 +53743,13 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:19:44.747Z"
     },
+    "124191": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "TRUEPLAN 200MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:42.258Z"
+    },
     "124198": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -51686,9 +53786,23 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:19:47.147Z"
     },
+    "124263": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ERTYCIN L 250MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:46.039Z"
+    },
     "124283": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:19:49.161Z"
+    },
+    "124287": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "R CID D 10/20 MG CAPSULE 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:51.967Z"
     },
     "124295": {
       "status": "not_found",
@@ -51751,9 +53865,33 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:33.670Z"
     },
+    "124367": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ZYREM CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T23:00:53.308Z"
+    },
     "124373": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:55:34.199Z"
+    },
+    "124376": {
+      "status": "gemini_rejected",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "ORAHEX 0.2% ORAL RINSE",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T23:01:06.253Z"
+    },
+    "124379": {
+      "status": "success",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "LObate S Ointment",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T23:01:36.959Z"
     },
     "124380": {
       "status": "not_found",
@@ -67051,11 +69189,14 @@
       "checked_at": "2026-09-12T12:06:37.548Z"
     },
     "155851": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "X COLD TABLET 10",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T14:28:57.031Z"
+      "angles_saved": 2,
+      "primary_face": "side",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:27:04.654Z"
     },
     "155852": {
       "status": "not_found",
@@ -71025,11 +73166,14 @@
       "checked_at": "2026-09-12T14:55:43.853Z"
     },
     "163844": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZEVERT MD 24MG TABLET",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T14:56:10.833Z"
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:50:40.938Z"
     },
     "163857": {
       "status": "not_found",
@@ -78808,11 +80952,14 @@
       "checked_at": "2026-09-12T14:30:28.263Z"
     },
     "180230": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TAH 40MG TABLET",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T15:48:20.036Z"
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:52:40.638Z"
     },
     "180238": {
       "status": "not_found",
@@ -85640,11 +87787,14 @@
       "checked_at": "2026-09-12T16:08:35.283Z"
     },
     "194166": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ESPIN 5MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T16:25:03.646Z"
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:48:55.409Z"
     },
     "194169": {
       "status": "not_found",
@@ -89101,11 +91251,14 @@
       "checked_at": "2026-09-12T06:19:44.679Z"
     },
     "200777": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "DIVAA 500MG SOLUTION",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T16:47:32.508Z"
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:34:27.705Z"
     },
     "200816": {
       "status": "gemini_rejected",
@@ -95528,8 +97681,14 @@
       "checked_at": "2026-09-12T13:09:03.903Z"
     },
     "213480": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T00:11:45.302Z"
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VASOGRAIN STRIP OF 10 TABLETS",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:21:08.028Z"
     },
     "213487": {
       "status": "not_found",
@@ -112690,14 +114849,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ANDULFA 100MG INJ",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:07:40.198Z"
+      "checked_at": "2026-09-12T22:23:59.533Z"
     },
     "245571": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MEREX 500MG DROPS 5ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:07:42.919Z"
+      "checked_at": "2026-09-12T22:24:03.095Z"
     },
     "245576": {
       "status": "not_found",
@@ -112716,7 +114875,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ADRECAIN ADRENALINE INJ 30ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:07:49.221Z"
+      "checked_at": "2026-09-12T22:24:07.915Z"
     },
     "245636": {
       "status": "gemini_rejected",
@@ -112731,14 +114890,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "LIVOTAS LIQUID VET 500ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:07:55.950Z"
+      "checked_at": "2026-09-12T22:24:11.648Z"
     },
     "245733": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ETILAAM-S DS 0.5/10 MG TABLET 10",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:07:58.004Z"
+      "checked_at": "2026-09-12T22:24:17.229Z"
     },
     "245747": {
       "status": "not_found",
@@ -112769,7 +114928,7 @@
       "primary_face": "back",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:08:55.312Z"
+      "checked_at": "2026-09-12T22:24:53.070Z"
     },
     "245775": {
       "status": "success",
@@ -112786,7 +114945,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "NEOMEC SX INJ VET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:08:56.792Z"
+      "checked_at": "2026-09-12T22:24:55.841Z"
     },
     "245781": {
       "status": "not_found",
@@ -112810,11 +114969,14 @@
       "checked_at": "2026-09-12T14:45:24.263Z"
     },
     "245813": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "ARVAST A 150MG CAPSULE",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:08:58.426Z"
+      "product_name": "Arvast A 150Mg Strip Of 10 Capsules",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:25:14.838Z"
     },
     "245848": {
       "status": "not_found",
@@ -112832,7 +114994,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "AZIMAY 500 MG TABLET 3",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:09:00.106Z"
+      "checked_at": "2026-09-12T22:25:19.128Z"
     },
     "245900": {
       "status": "not_found",
@@ -112844,29 +115006,26 @@
     "245906": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Arvast Gold 75mg/20mg/75mg Capsule",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 80,
+      "product_name": "Arvast A 75Mg Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:09:32.419Z"
+      "checked_at": "2026-09-12T22:26:17.130Z"
     },
     "245919": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "GRIPTOL N LIQUID VET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:09:34.766Z"
+      "checked_at": "2026-09-12T22:26:19.793Z"
     },
     "245924": {
-      "status": "success",
+      "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Cold-X Oral Suspension",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:10:07.536Z"
+      "product_name": "X COLD SYRUP 100 ML",
+      "reason": "CDN returned sibling \"X COLD TABLET 10\" packaging instead",
+      "checked_at": "2026-09-12T22:27:04.761Z"
     },
     "245938": {
       "status": "not_found",
@@ -112905,7 +115064,7 @@
       "primary_face": "front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:10:21.455Z"
+      "checked_at": "2026-09-12T22:27:21.461Z"
     },
     "246026": {
       "status": "not_found",
@@ -112943,14 +115102,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "URITAS 300MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:10:24.631Z"
+      "checked_at": "2026-09-12T22:27:23.890Z"
     },
     "246126": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "VORIFIT 200MG INJ",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:10:27.252Z"
+      "checked_at": "2026-09-12T22:27:26.143Z"
     },
     "246153": {
       "status": "success",
@@ -112960,14 +115119,14 @@
       "primary_face": "back",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:10:49.597Z"
+      "checked_at": "2026-09-12T22:27:54.439Z"
     },
     "246160": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TINITAS 300MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:10:50.957Z"
+      "checked_at": "2026-09-12T22:27:57.722Z"
     },
     "246167": {
       "status": "not_found",
@@ -113031,7 +115190,7 @@
       "primary_face": "front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:11:22.147Z"
+      "checked_at": "2026-09-12T22:28:47.135Z"
     },
     "246298": {
       "status": "not_found",
@@ -113045,14 +115204,14 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:11:57.245Z"
+      "checked_at": "2026-09-12T22:29:30.950Z"
     },
     "246326": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ACECLOMAY 100 MG TABLET 10",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:12.866Z"
+      "checked_at": "2026-09-12T22:29:34.399Z"
     },
     "246332": {
       "status": "not_found",
@@ -113094,7 +115253,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "KUFREST SYRUP 100 ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:16.084Z"
+      "checked_at": "2026-09-12T22:29:37.032Z"
     },
     "246442": {
       "status": "not_found",
@@ -113157,7 +115316,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "SARTEL H 40MG TABLET",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:12:36.606Z"
+      "checked_at": "2026-09-12T22:30:19.819Z"
     },
     "246611": {
       "status": "not_found",
@@ -113212,7 +115371,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "FERINTA Z TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:38.786Z"
+      "checked_at": "2026-09-12T22:30:21.325Z"
     },
     "246719": {
       "status": "not_found",
@@ -113247,7 +115406,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MELONEX INJ VET 100ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:41.011Z"
+      "checked_at": "2026-09-12T22:30:25.503Z"
     },
     "246820": {
       "status": "not_found",
@@ -113282,7 +115441,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "CARDIPEN RETARD 20MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:42.970Z"
+      "checked_at": "2026-09-12T22:30:30.674Z"
     },
     "246919": {
       "status": "success",
@@ -113299,7 +115458,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MEREX 1GM INJ 10ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:12:47.758Z"
+      "checked_at": "2026-09-12T22:30:35.444Z"
     },
     "246941": {
       "status": "not_found",
@@ -113315,15 +115474,22 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:29:06.105Z"
     },
+    "246949": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "OMECAP 20 MG CAPSULE 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:30:39.536Z"
+    },
     "246952": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Pira GPC Tablet",
+      "product_name": "Pira Gpc Strip Of 10 Tablets",
       "angles_saved": 3,
-      "primary_face": "front",
+      "primary_face": "box-front",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:13:24.296Z"
+      "checked_at": "2026-09-12T22:31:23.919Z"
     },
     "246973": {
       "status": "success",
@@ -113410,7 +115576,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MOXINTA 125MG DRY SYP 30ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:35.192Z"
+      "checked_at": "2026-09-12T22:31:27.935Z"
     },
     "247092": {
       "status": "not_found",
@@ -113454,7 +115620,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "PIOLET 30MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:38.293Z"
+      "checked_at": "2026-09-12T22:31:30.222Z"
     },
     "247203": {
       "status": "success",
@@ -113489,7 +115655,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZOLAX SR 0.5MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:42.825Z"
+      "checked_at": "2026-09-12T22:31:33.824Z"
     },
     "247243": {
       "status": "not_found",
@@ -113535,7 +115701,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MEGATIL 50MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:44.413Z"
+      "checked_at": "2026-09-12T22:31:36.465Z"
     },
     "247354": {
       "status": "success",
@@ -113559,7 +115725,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZALAT 2.5MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:45.800Z"
+      "checked_at": "2026-09-12T22:31:39.769Z"
     },
     "247399": {
       "status": "not_found",
@@ -113573,7 +115739,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "IMIGEM 500/500 MG INJECTION 1",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:13:48.028Z"
+      "checked_at": "2026-09-12T22:31:44.506Z"
     },
     "247407": {
       "status": "gemini_rejected",
@@ -113611,7 +115777,7 @@
       "primary_face": "front",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:14:17.398Z"
+      "checked_at": "2026-09-12T22:32:39.041Z"
     },
     "247464": {
       "status": "gemini_rejected",
@@ -113705,7 +115871,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "LIZOFIT 600 MG TABLET 4",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:14:21.467Z"
+      "checked_at": "2026-09-12T22:32:42.678Z"
     },
     "247642": {
       "status": "gemini_rejected",
@@ -113778,7 +115944,7 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:15:10.699Z"
+      "checked_at": "2026-09-12T22:33:42.993Z"
     },
     "247739": {
       "status": "success",
@@ -113982,7 +116148,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MELONEX PLUS INJ VET 30ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:15:15.122Z"
+      "checked_at": "2026-09-12T22:33:47.403Z"
     },
     "248029": {
       "status": "not_found",
@@ -114010,7 +116176,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "BAKFLEX 8MG CAPSULE",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:15:17.831Z"
+      "checked_at": "2026-09-12T22:33:49.649Z"
     },
     "248056": {
       "status": "not_found",
@@ -114044,14 +116210,11 @@
       "checked_at": "2026-09-12T12:31:49.302Z"
     },
     "248113": {
-      "status": "success",
+      "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Divaa 500Mg Bottle Of 100Ml Oral Solution",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:15:36.263Z"
+      "product_name": "DIVAA 500 STRIP OF 15 TABLETS",
+      "reason": "CDN returned sibling \"DIVAA 500MG SOLUTION\" packaging instead",
+      "checked_at": "2026-09-12T22:34:27.763Z"
     },
     "248124": {
       "status": "not_found",
@@ -114072,14 +116235,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "KWINIL 30MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:15:39.599Z"
+      "checked_at": "2026-09-12T22:34:30.029Z"
     },
     "248184": {
       "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TIMOLONG 0.5% EYE DROPS 3.5ML",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:16:21.775Z"
+      "checked_at": "2026-09-12T22:35:47.591Z"
     },
     "248207": {
       "status": "not_found",
@@ -114103,7 +116266,7 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:16:39.962Z"
+      "checked_at": "2026-09-12T22:36:13.917Z"
     },
     "248248": {
       "status": "not_found",
@@ -114148,7 +116311,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TRAZONIL 50MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:16:41.364Z"
+      "checked_at": "2026-09-12T22:36:16.962Z"
     },
     "248332": {
       "status": "not_found",
@@ -114231,7 +116394,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "QUTAN 300MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:16:44.528Z"
+      "checked_at": "2026-09-12T22:36:19.273Z"
     },
     "248393": {
       "status": "not_found",
@@ -114325,7 +116488,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "NILOL H TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:16:47.046Z"
+      "checked_at": "2026-09-12T22:36:21.152Z"
     },
     "248531": {
       "status": "not_found",
@@ -114360,7 +116523,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZOLAX SR 1.5MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:16:48.906Z"
+      "checked_at": "2026-09-12T22:36:25.011Z"
     },
     "248570": {
       "status": "not_found",
@@ -114398,7 +116561,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZENOXA BANANA FLAV SYP 60ML",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:17:16.822Z"
+      "checked_at": "2026-09-12T22:37:06.374Z"
     },
     "248630": {
       "status": "not_found",
@@ -114425,14 +116588,11 @@
       "checked_at": "2026-09-12T19:05:57.761Z"
     },
     "248710": {
-      "status": "success",
+      "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Preva 75Mg Strip Of 15 Tablets",
-      "angles_saved": 2,
-      "primary_face": "back",
-      "primary_confidence": 95,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:17:36.221Z"
+      "product_name": "PREVA 75MG STRIP OF 10 TABLETS",
+      "reason": "CDN returned sibling \"PREVA 75MG STRIP OF 15 TABLETS\" packaging instead",
+      "checked_at": "2026-09-12T22:37:45.169Z"
     },
     "248729": {
       "status": "not_found",
@@ -114474,7 +116634,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "CLAVIX GOLD 40MG STRIP OF 10 CAPSULES",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:18:08.261Z"
+      "checked_at": "2026-09-12T22:38:19.165Z"
     },
     "248819": {
       "status": "not_found",
@@ -114491,11 +116651,14 @@
       "checked_at": "2026-09-12T12:34:47.065Z"
     },
     "248880": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "BRIVAZEN 25MG STRIP OF 10 TABLETS",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:18:09.227Z"
+      "product_name": "Brivazen 25Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:38:35.758Z"
     },
     "248885": {
       "status": "not_found",
@@ -114526,7 +116689,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "INTAMOX INJ VET 3.5GM",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:18:10.955Z"
+      "checked_at": "2026-09-12T22:38:40.086Z"
     },
     "248917": {
       "status": "gemini_rejected",
@@ -114567,11 +116730,14 @@
       "checked_at": "2026-09-12T19:18:58.252Z"
     },
     "248956": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "AZERVA 40MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:18:12.276Z"
+      "product_name": "Azerva 40Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:39:06.489Z"
     },
     "248969": {
       "status": "not_found",
@@ -114583,12 +116749,12 @@
     "248977": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Cetadom Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
+      "product_name": "Cetadom Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:18:49.309Z"
+      "checked_at": "2026-09-12T22:39:37.591Z"
     },
     "248995": {
       "status": "not_found",
@@ -114693,6 +116859,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:08:23.351Z"
     },
+    "249150": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "DECOTAZ 30MG STRIP OF 6 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:39:40.582Z"
+    },
     "249172": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -114719,14 +116892,17 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "CEFOKIL 125MG INJ",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:18:56.057Z"
+      "checked_at": "2026-09-12T22:39:42.816Z"
     },
     "249247": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "TGR 160MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:18:57.150Z"
+      "product_name": "Tgr 160Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:40:15.531Z"
     },
     "249299": {
       "status": "not_found",
@@ -114759,12 +116935,12 @@
     "249321": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Lukotas LC Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
+      "product_name": "Lukotas Lc Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:19:24.738Z"
+      "checked_at": "2026-09-12T22:40:41.292Z"
     },
     "249339": {
       "status": "success",
@@ -114864,7 +117040,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "QUIKHALE FB 6/100 MCG CAPSULE 1",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:19:28.749Z"
+      "checked_at": "2026-09-12T22:40:45.096Z"
     },
     "249470": {
       "status": "not_found",
@@ -114923,7 +117099,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "BLONITAS 4MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:19:35.737Z"
+      "checked_at": "2026-09-12T22:40:47.997Z"
     },
     "249543": {
       "status": "success",
@@ -114949,6 +117125,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T12:37:41.300Z"
     },
+    "249562": {
+      "status": "success",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "Ometab 20mg Tablet DR",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:41:54.350Z"
+    },
     "249569": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -114964,7 +117150,7 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:20:57.652Z"
+      "checked_at": "2026-09-12T22:42:36.491Z"
     },
     "249590": {
       "status": "not_found",
@@ -115019,7 +117205,17 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "INCAL TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:20:58.559Z"
+      "checked_at": "2026-09-12T22:42:37.795Z"
+    },
+    "249691": {
+      "status": "success",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "Veltride 0.5Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:43:03.929Z"
     },
     "249708": {
       "status": "not_found",
@@ -115266,11 +117462,14 @@
       "checked_at": "2026-09-12T12:39:49.105Z"
     },
     "250132": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "BEXOL 2MG STRIP OF 10 TABLETS",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:01.124Z"
+      "product_name": "Bexol 2Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:43:54.881Z"
     },
     "250146": {
       "status": "gemini_rejected",
@@ -115294,7 +117493,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "HYPORID SACH VET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:02.353Z"
+      "checked_at": "2026-09-12T22:43:58.274Z"
     },
     "250164": {
       "status": "success",
@@ -115388,7 +117587,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MIRNITE 15MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:03.560Z"
+      "checked_at": "2026-09-12T22:44:00.832Z"
     },
     "250289": {
       "status": "not_found",
@@ -115418,11 +117617,14 @@
       "checked_at": "2026-09-12T12:41:30.495Z"
     },
     "250301": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "NEOPRIDE 25MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:04.874Z"
+      "product_name": "Neopride 25Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:44:52.288Z"
     },
     "250329": {
       "status": "not_found",
@@ -115540,7 +117742,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "LOOZ FIBRE 80GM",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:21:35.820Z"
+      "checked_at": "2026-09-12T22:45:48.119Z"
     },
     "250482": {
       "status": "not_found",
@@ -115634,7 +117836,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TRAMATAS FORTE TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:41.380Z"
+      "checked_at": "2026-09-12T22:45:49.352Z"
     },
     "250665": {
       "status": "not_found",
@@ -115700,7 +117902,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MAXXTOL INJ VET 30ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:21:44.780Z"
+      "checked_at": "2026-09-12T22:45:52.642Z"
     },
     "250800": {
       "status": "success",
@@ -115789,7 +117991,7 @@
       "primary_face": "side",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:23:00.678Z"
+      "checked_at": "2026-09-12T22:46:40.521Z"
     },
     "250926": {
       "status": "not_found",
@@ -115848,11 +118050,14 @@
       "checked_at": "2026-09-12T12:44:10.604Z"
     },
     "250994": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "NAPRA D 250MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:02.809Z"
+      "product_name": "Napra D 250Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:47:09.127Z"
     },
     "251004": {
       "status": "not_found",
@@ -115956,7 +118161,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "AMIKACIN (INTAS) 100 MG INJECTION 2 ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:06.427Z"
+      "checked_at": "2026-09-12T22:47:14.607Z"
     },
     "251161": {
       "status": "not_found",
@@ -115970,7 +118175,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "CEFINTAS POWDER VET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:07.896Z"
+      "checked_at": "2026-09-12T22:47:17.423Z"
     },
     "251180": {
       "status": "not_found",
@@ -116011,11 +118216,14 @@
       "checked_at": "2026-09-12T19:21:45.655Z"
     },
     "251244": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "CYPHOS 200MG INJ 15ML",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:09.658Z"
+      "product_name": "Cyphos 200Mg Injection 15Ml",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:47:33.257Z"
     },
     "251250": {
       "status": "not_found",
@@ -116050,7 +118258,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "OLOFAST NASAL SPRAY",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:10.872Z"
+      "checked_at": "2026-09-12T22:47:36.192Z"
     },
     "251292": {
       "status": "not_found",
@@ -116064,7 +118272,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "HIDEAGE CAP",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:11.634Z"
+      "checked_at": "2026-09-12T22:47:37.371Z"
     },
     "251332": {
       "status": "gemini_rejected",
@@ -116161,14 +118369,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "PEPRADOM FORTE 10/40 MG TABLET 10",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:14.258Z"
+      "checked_at": "2026-09-12T22:47:43.621Z"
     },
     "251515": {
-      "status": "not_found",
+      "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZORYL M4 FORTE TAB",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:15.892Z"
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:48:20.244Z"
     },
     "251519": {
       "status": "success",
@@ -116222,8 +118430,8 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ESPIN 5MG STRIP OF 15 TABLETS",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:16.969Z"
+      "reason": "CDN returned sibling \"ESPIN 5MG TABLET\" packaging instead",
+      "checked_at": "2026-09-12T22:48:55.459Z"
     },
     "251582": {
       "status": "not_found",
@@ -116240,11 +118448,11 @@
       "checked_at": "2026-09-12T19:20:12.752Z"
     },
     "251607": {
-      "status": "not_found",
+      "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "NEOPRIDE TOTAL 75MG STRIP OF 15 CAPSULES",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:23:18.800Z"
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:49:38.115Z"
     },
     "251609": {
       "status": "not_found",
@@ -116254,14 +118462,11 @@
       "checked_at": "2026-09-12T12:47:27.536Z"
     },
     "251610": {
-      "status": "success",
+      "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Zevert MD 24 Tablet",
-      "angles_saved": 3,
-      "primary_face": "combo",
-      "primary_confidence": 95,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:23:51.211Z"
+      "product_name": "ZEVERT MD 24MG TAB 15'S",
+      "reason": "CDN returned sibling \"ZEVERT MD 24MG TABLET\" packaging instead",
+      "checked_at": "2026-09-12T22:50:40.993Z"
     },
     "251634": {
       "status": "success",
@@ -116319,7 +118524,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "SERTIMA 25MG TABLET",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:24:32.265Z"
+      "checked_at": "2026-09-12T22:51:36.475Z"
     },
     "251788": {
       "status": "not_found",
@@ -116336,14 +118541,11 @@
       "checked_at": "2026-09-12T19:24:16.005Z"
     },
     "251801": {
-      "status": "success",
+      "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Tah 40Mg Strip Of 15 Tablets",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:25:10.804Z"
+      "product_name": "TAH 40MG TABLET 15'S",
+      "reason": "CDN returned sibling \"TAH 40MG TABLET\" packaging instead",
+      "checked_at": "2026-09-12T22:52:40.743Z"
     },
     "251826": {
       "status": "gemini_rejected",
@@ -116388,7 +118590,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ACIFAC MR 100/325/500 MG TABLET MR 10",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:25:13.814Z"
+      "checked_at": "2026-09-12T22:52:46.705Z"
     },
     "251885": {
       "status": "not_found",
@@ -116402,7 +118604,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "TELAST CT 80 TAB 7'S",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:25:15.444Z"
+      "checked_at": "2026-09-12T22:52:50.736Z"
     },
     "251937": {
       "status": "success",
@@ -116436,14 +118638,11 @@
       "checked_at": "2026-09-12T12:48:38.307Z"
     },
     "252029": {
-      "status": "success",
+      "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Clavix Gold 10 Capsule",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:25:51.462Z"
+      "product_name": "CLAVIX GOLD 10MG STRIP OF 15 CAPSULES",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:53:23.949Z"
     },
     "252035": {
       "status": "not_found",
@@ -116467,7 +118666,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ERYN SUSPENSION 60 ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:25:55.001Z"
+      "checked_at": "2026-09-12T22:53:25.831Z"
     },
     "252050": {
       "status": "not_found",
@@ -116536,7 +118735,7 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:26:04.880Z"
+      "checked_at": "2026-09-12T22:53:38.229Z"
     },
     "252221": {
       "status": "gemini_rejected",
@@ -116591,7 +118790,7 @@
       "primary_face": "front",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:26:49.854Z"
+      "checked_at": "2026-09-12T22:54:38.618Z"
     },
     "252300": {
       "status": "gemini_rejected",
@@ -116653,7 +118852,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "PREGABID 25MG CAPSULE",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:26:54.359Z"
+      "checked_at": "2026-09-12T22:54:41.276Z"
     },
     "252370": {
       "status": "success",
@@ -116663,7 +118862,7 @@
       "primary_face": "front",
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:27:14.627Z"
+      "checked_at": "2026-09-12T22:55:13.585Z"
     },
     "252388": {
       "status": "not_found",
@@ -116677,7 +118876,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "DEPSOL PLUS 2MG TABLET",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:27:16.198Z"
+      "checked_at": "2026-09-12T22:55:18.120Z"
     },
     "252420": {
       "status": "not_found",
@@ -116872,12 +119071,12 @@
     "252841": {
       "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "Borviz 2mg Injection",
-      "angles_saved": 3,
-      "primary_face": "front",
+      "product_name": "Borviz 2Mg Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 1,
+      "primary_face": "box-front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:27:44.309Z"
+      "checked_at": "2026-09-12T22:55:34.301Z"
     },
     "252853": {
       "status": "success",
@@ -116894,7 +119093,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "INTACAL SUSPENSION 100 ML",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:28:01.486Z"
+      "checked_at": "2026-09-12T22:56:11.490Z"
     },
     "252858": {
       "status": "gemini_rejected",
@@ -116953,14 +119152,14 @@
       "primary_face": "side",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:29:13.679Z"
+      "checked_at": "2026-09-12T22:57:43.313Z"
     },
     "252959": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "QUIKHALE FF 250MG ROTACAP",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:15.743Z"
+      "checked_at": "2026-09-12T22:57:47.111Z"
     },
     "252977": {
       "status": "not_found",
@@ -116991,11 +119190,14 @@
       "checked_at": "2026-09-12T19:27:55.507Z"
     },
     "253000": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "LEVERA XR 1GM TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:17.550Z"
+      "product_name": "Levera Xr 1Gm Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:58:16.766Z"
     },
     "253019": {
       "status": "success",
@@ -117057,7 +119259,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "OVUNAL SC 5000IU INJECTION",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:19.270Z"
+      "checked_at": "2026-09-12T22:58:21.034Z"
     },
     "253072": {
       "status": "not_found",
@@ -117085,7 +119287,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "SUPRAPOD DT 50MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:20.890Z"
+      "checked_at": "2026-09-12T22:58:25.068Z"
     },
     "253143": {
       "status": "not_found",
@@ -117129,6 +119331,13 @@
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T19:29:09.298Z"
     },
+    "253174": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "MEPRESSO D 40 MG VAIL OF 2ML SOLUTION FOR INJECTION",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:58:29.679Z"
+    },
     "253175": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -117137,11 +119346,14 @@
       "checked_at": "2026-09-12T19:29:56.516Z"
     },
     "253242": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "SARTEL C 40MG TABLET",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:25.016Z"
+      "product_name": "Sartel C 40Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:58:56.150Z"
     },
     "253248": {
       "status": "not_found",
@@ -117186,7 +119398,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZEETHROM DT 100MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:29:26.704Z"
+      "checked_at": "2026-09-12T22:59:00.334Z"
     },
     "253384": {
       "status": "not_found",
@@ -117231,7 +119443,7 @@
       "primary_face": "front",
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
-      "checked_at": "2026-09-12T19:29:56.935Z"
+      "checked_at": "2026-09-12T22:59:47.172Z"
     },
     "253463": {
       "status": "not_found",
@@ -117269,14 +119481,14 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MECOFOL 500MG STRIP OF 15 TABLETS",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:00.918Z"
+      "checked_at": "2026-09-12T22:59:49.243Z"
     },
     "253567": {
       "status": "gemini_rejected",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "PREGABID ME 75MG STRIP OF 15 CAPSULES",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-12T19:30:20.742Z"
+      "checked_at": "2026-09-12T23:00:29.356Z"
     },
     "253624": {
       "status": "not_found",
@@ -117379,7 +119591,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "MILZA 50MG TAB",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:21.480Z"
+      "checked_at": "2026-09-12T23:00:31.546Z"
     },
     "253799": {
       "status": "gemini_rejected",
@@ -117435,7 +119647,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "EPOFIT 2000IU INJ PFS",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:23.116Z"
+      "checked_at": "2026-09-12T23:00:35.893Z"
     },
     "253866": {
       "status": "not_found",
@@ -117459,11 +119671,14 @@
       "checked_at": "2026-09-12T19:32:58.024Z"
     },
     "253914": {
-      "status": "not_found",
+      "status": "success",
       "company": "INTAS PHARMACEUTICALS LTD",
-      "product_name": "QUIKHALE T 18MCG BOTTLE OF 30 CAPSULES",
-      "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:25.144Z"
+      "product_name": "Quikhale T 18Mcg Bottle Of 30 Capsules",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T23:01:19.256Z"
     },
     "253939": {
       "status": "not_found",
@@ -117512,21 +119727,21 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "FLUTAS 500MG INJ",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:27.324Z"
+      "checked_at": "2026-09-12T23:01:22.082Z"
     },
     "254049": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "FACTOCEL-IX 250 IU INJECTION 1",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:29.520Z"
+      "checked_at": "2026-09-12T23:01:25.646Z"
     },
     "254067": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ORS (INTAS) SACHET OF 21.8GM POWDER",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:30.989Z"
+      "checked_at": "2026-09-12T23:01:28.778Z"
     },
     "254070": {
       "status": "not_found",
@@ -117633,7 +119848,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "CYPHOS 50MG SUSP 60ML",
       "reason": "No match found on pharma CDN",
-      "checked_at": "2026-09-12T19:30:46.196Z"
+      "checked_at": "2026-09-12T23:01:32.339Z"
     },
     "254237": {
       "status": "not_found",
@@ -124598,6 +126813,16 @@
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T19:59:33.719Z"
+    },
+    "265989": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NATUROGEST 400MG SOFT GELATIN CAPSULE",
+      "angles_saved": 3,
+      "primary_face": "box-back",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:09:03.672Z"
     },
     "266004": {
       "status": "not_found",
@@ -135514,6 +137739,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T16:07:44.014Z"
     },
+    "282160": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "MAHABHRINGARAJ OIL 100 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:03:50.198Z"
+    },
     "282163": {
       "status": "gemini_rejected",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -135745,6 +137977,13 @@
       "product_name": "MESACOL 1GM",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T21:23:26.079Z"
+    },
+    "282375": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "METBETIC GL 1/500 MG TABLET 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:04:50.913Z"
     },
     "282376": {
       "status": "not_found",
@@ -136097,6 +138336,13 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T16:45:13.670Z"
     },
+    "282670": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "MYCOCLEAR 200MG CAPSULE 7'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:05:27.084Z"
+    },
     "282696": {
       "status": "gemini_rejected",
       "company": "CIPLA LIMITED",
@@ -136139,15 +138385,26 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T16:47:27.541Z"
     },
+    "282719": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NASOCLEAR MIST 0.65% NASAL SPRAY 20 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:06:24.797Z"
+    },
+    "282734": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NATUROGEST 200MG STRIP OF 10 CAPSULES",
+      "reason": "CDN returned sibling \"NATUROGEST 8% GEL\" packaging instead",
+      "checked_at": "2026-09-12T22:08:09.900Z"
+    },
     "282735": {
-      "status": "success",
+      "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "product_name": "NATUROGEST 400MG CAPSULE",
-      "angles_saved": 3,
-      "primary_face": "box-back",
-      "primary_confidence": 90,
-      "verified_by": "gemini_sibling_remapped",
-      "checked_at": "2026-09-12T20:28:01.306Z"
+      "reason": "CDN returned sibling \"NATUROGEST 400MG SOFT GELATIN CAPSULE\" packaging instead",
+      "checked_at": "2026-09-12T22:09:03.728Z"
     },
     "282758": {
       "status": "gemini_rejected",
@@ -136193,6 +138450,13 @@
       "product_name": "NEW OKACET TABLET 10'S",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T16:48:01.492Z"
+    },
+    "282835": {
+      "status": "gemini_rejected",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NEW SNEEZY COLD AND FLU TABLET 10",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:09:15.674Z"
     },
     "282841": {
       "status": "not_found",
@@ -136511,6 +138775,53 @@
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T16:17:29.377Z"
     },
+    "283071": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NUCOXIA 60MG TAB 15'S",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:11:07.000Z"
+    },
+    "283072": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NUCOXIA 60MG TABLET",
+      "reason": "CDN returned sibling \"NUCOXIA 60MG TAB 15'S\" packaging instead",
+      "checked_at": "2026-09-12T22:11:07.097Z"
+    },
+    "283073": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Nucoxia 90Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:11:43.638Z"
+    },
+    "283074": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Nucoxia Mr Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:12:39.414Z"
+    },
+    "283075": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Nucoxia P Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:13:06.876Z"
+    },
     "283077": {
       "status": "gemini_rejected",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -136615,6 +138926,23 @@
       "product_name": "NUROKIND Z FORT",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T16:21:53.556Z"
+    },
+    "283127": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OCID 20MG",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:14:14.404Z"
+    },
+    "283128": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OCID QRS 20MG STRIP OF 15 TABLETS",
+      "reason": "CDN returned sibling \"OCID 20MG\" packaging instead",
+      "checked_at": "2026-09-12T22:14:14.453Z"
     },
     "283156": {
       "status": "gemini_rejected",
@@ -136952,6 +139280,16 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T19:41:10.447Z"
     },
+    "283314": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Onvin 4 MD Tablet",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:15:09.489Z"
+    },
     "283347": {
       "status": "gemini_rejected",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -136999,6 +139337,20 @@
       "product_name": "OVERZYME SYP 200ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T16:22:59.229Z"
+    },
+    "283415": {
+      "status": "gemini_rejected",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OXALGIN DP TABLET 15'S",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:15:37.410Z"
+    },
+    "283416": {
+      "status": "gemini_rejected",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OXALGIN NANO GEL 30GM",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:16:42.587Z"
     },
     "283417": {
       "status": "success",
@@ -137466,6 +139818,16 @@
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T18:21:20.417Z"
     },
+    "283971": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Protimed Pro Milk Chocolate Flavour Protein Powder Jar 200 Gm",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:16:57.907Z"
+    },
     "284019": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -137819,15 +140181,39 @@
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T20:59:32.791Z"
     },
+    "284729": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "SKINDID CREAM 15GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:17:01.013Z"
+    },
+    "284731": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Skinlite Tube Of 25Gm Cream",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:17:46.135Z"
+    },
+    "284733": {
+      "status": "gemini_rejected",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "SKINSHINE PAPAYA FACE WASH",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:18:07.823Z"
+    },
     "284734": {
       "status": "success",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
-      "product_name": "SKINSHINE SOAP",
+      "product_name": "Skinshine Tube Of 15Gm Cream",
       "angles_saved": 4,
-      "primary_face": "combo",
-      "primary_confidence": 90,
-      "verified_by": "gemini_sibling_remapped",
-      "checked_at": "2026-09-12T20:01:06.389Z"
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:18:54.326Z"
     },
     "284736": {
       "status": "success",
@@ -138173,6 +140559,40 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T16:32:14.380Z"
     },
+    "285222": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "THROMBOPHOB GEL 20GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:18:56.903Z"
+    },
+    "285223": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Thrombophob Ointment",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:19:41.114Z"
+    },
+    "285224": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Thromboscar Tube Of 15Gm Gel",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:19:53.038Z"
+    },
+    "285234": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "THYRORITE 75MCG TAB 100'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T22:19:55.491Z"
+    },
     "285280": {
       "status": "not_found",
       "company": "SUN PHARMA",
@@ -138257,6 +140677,16 @@
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T18:10:29.030Z"
+    },
+    "285377": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Triquilar Strip Of 21 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:20:44.434Z"
     },
     "285385": {
       "status": "not_found",
@@ -138380,6 +140810,13 @@
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T21:05:26.740Z"
+    },
+    "285534": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VASOGRAIN STRIP OF 14 TABLETS",
+      "reason": "CDN returned sibling \"VASOGRAIN STRIP OF 10 TABLETS\" packaging instead",
+      "checked_at": "2026-09-12T22:21:08.088Z"
     },
     "285565": {
       "status": "gemini_rejected",
@@ -138773,6 +141210,16 @@
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T19:46:30.255Z"
     },
+    "285964": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Xylocaine 2% Jelly",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:22:04.449Z"
+    },
     "285985": {
       "status": "not_found",
       "company": "CHARAK PHARMA PVT LTD",
@@ -138848,6 +141295,30 @@
       "product_name": "ZUKANORM M 50/500MG TABLET 10'S",
       "reason": "Neither front nor back matched target brand",
       "checked_at": "2026-09-12T16:35:49.778Z"
+    },
+    "286111": {
+      "status": "gemini_rejected",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYCLIN NANO GEL 15GM",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T22:22:50.310Z"
+    },
+    "286116": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYKT",
+      "angles_saved": 2,
+      "primary_face": "box-back",
+      "primary_confidence": 90,
+      "verified_by": "gemini_sibling_remapped",
+      "checked_at": "2026-09-12T22:23:28.358Z"
+    },
+    "286117": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYKT SOAP 75GM",
+      "reason": "CDN returned sibling \"ZYKT\" packaging instead",
+      "checked_at": "2026-09-12T22:23:28.413Z"
     },
     "286129": {
       "status": "success",
@@ -138939,6 +141410,16 @@
       "primary_confidence": 95,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-12T21:08:16.871Z"
+    },
+    "286185": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Orni 500Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T22:23:56.513Z"
     },
     "286187": {
       "status": "success",
