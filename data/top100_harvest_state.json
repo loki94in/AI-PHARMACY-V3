@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T06:28:26.700Z",
+  "last_updated": "2026-09-12T06:36:27.036Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -32460,6 +32460,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:04:34.619Z"
     },
+    "208039": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:27.174Z"
+    },
     "208042": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:04:36.597Z"
@@ -32468,6 +32472,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:04:38.785Z"
     },
+    "208049": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:27.647Z"
+    },
     "208056": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:04:40.873Z"
@@ -32475,6 +32483,14 @@
     "208057": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:04:42.463Z"
+    },
+    "208080": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:28.289Z"
+    },
+    "208106": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:28.882Z"
     },
     "208132": {
       "status": "success",
@@ -32518,6 +32534,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:18.313Z"
     },
+    "208293": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:29.597Z"
+    },
     "208332": {
       "status": "gemini_rejected",
       "medicine_id": 208332,
@@ -32525,6 +32545,18 @@
       "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:04:09.162Z"
+    },
+    "208368": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:30.201Z"
+    },
+    "208379": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:30.949Z"
+    },
+    "208399": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:31.547Z"
     },
     "208419": {
       "status": "not_found",
@@ -32546,25 +32578,57 @@
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:04:15.845Z"
     },
+    "208514": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:32.252Z"
+    },
     "208535": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:44.001Z"
+    },
+    "208543": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:32.978Z"
     },
     "208572": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:47.525Z"
     },
+    "208611": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:33.516Z"
+    },
     "208646": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:49.817Z"
+    },
+    "208656": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:34.090Z"
+    },
+    "208673": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:34.687Z"
+    },
+    "208706": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:35.297Z"
     },
     "208736": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:51.997Z"
     },
+    "208779": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:35.933Z"
+    },
     "208792": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:05:53.463Z"
+    },
+    "208835": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:36.681Z"
     },
     "208846": {
       "status": "not_found",
@@ -32592,6 +32656,10 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:04:22.305Z"
     },
+    "209042": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:37.459Z"
+    },
     "209064": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:13.543Z"
@@ -32599,6 +32667,10 @@
     "209100": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:16.061Z"
+    },
+    "209108": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:38.067Z"
     },
     "209134": {
       "status": "not_found",
@@ -32638,13 +32710,65 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:36.769Z"
     },
+    "209312": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:38.698Z"
+    },
+    "209388": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:39.445Z"
+    },
+    "209392": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:40.195Z"
+    },
+    "209396": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:40.819Z"
+    },
+    "209418": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:41.464Z"
+    },
+    "209467": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:42.187Z"
+    },
+    "209471": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:42.750Z"
+    },
     "209527": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:37.708Z"
     },
+    "209528": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:43.366Z"
+    },
+    "209539": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:43.962Z"
+    },
+    "209565": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:44.592Z"
+    },
     "209568": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:38.662Z"
+    },
+    "209596": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:45.312Z"
+    },
+    "209599": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:45.962Z"
+    },
+    "209637": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:46.504Z"
     },
     "209651": {
       "status": "not_found",
@@ -32658,6 +32782,22 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:41.125Z"
     },
+    "209702": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:47.110Z"
+    },
+    "209730": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:47.671Z"
+    },
+    "209731": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:48.253Z"
+    },
+    "209749": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:48.853Z"
+    },
     "209753": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:41.787Z"
@@ -32665,6 +32805,10 @@
     "209755": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:06:42.444Z"
+    },
+    "209764": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:49.449Z"
     },
     "209777": {
       "status": "not_found",
@@ -32690,21 +32834,63 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:04:40.841Z"
     },
+    "209842": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:49.980Z"
+    },
+    "209856": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:50.577Z"
+    },
+    "209871": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:51.049Z"
+    },
     "209873": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:04.664Z"
+    },
+    "209877": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:51.651Z"
     },
     "209913": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:05.543Z"
     },
+    "209923": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:53.807Z"
+    },
+    "209939": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:28:58.002Z"
+    },
     "209984": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:07.571Z"
     },
+    "210007": {
+      "status": "success",
+      "product_name": "Olvance Am 20Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:29:08.602Z"
+    },
     "210078": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:09.789Z"
+    },
+    "210089": {
+      "status": "success",
+      "product_name": "Covance At Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:29:15.253Z"
     },
     "210090": {
       "status": "not_found",
@@ -32718,9 +32904,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:18.188Z"
     },
+    "210210": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:29:19.563Z"
+    },
     "210235": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:19.975Z"
+    },
+    "210243": {
+      "status": "success",
+      "product_name": "Idrofos 150Mg Strip Of 3 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:29:32.060Z"
+    },
+    "210259": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:29:34.717Z"
     },
     "210280": {
       "status": "success",
@@ -32731,6 +32934,10 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:04:53.596Z"
+    },
+    "210309": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:29:37.187Z"
     },
     "210314": {
       "status": "success",
@@ -32756,13 +32963,48 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:51.621Z"
     },
+    "210391": {
+      "status": "success",
+      "product_name": "Onoff 400Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:29:56.244Z"
+    },
     "210415": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:53.130Z"
     },
+    "210417": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:29:58.633Z"
+    },
     "210426": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:07:54.421Z"
+    },
+    "210441": {
+      "status": "success",
+      "product_name": "Trilopace Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:30:08.230Z"
+    },
+    "210452": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:11.435Z"
+    },
+    "210454": {
+      "status": "success",
+      "product_name": "Liofen 25Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:30:26.782Z"
     },
     "210460": {
       "status": "success",
@@ -32782,13 +33024,41 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:08:10.430Z"
     },
+    "210590": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:29.413Z"
+    },
     "210626": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:08:12.862Z"
     },
+    "210629": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:34.189Z"
+    },
+    "210676": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:38.623Z"
+    },
+    "210688": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:41.323Z"
+    },
     "210728": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:08:15.326Z"
+    },
+    "210742": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:44.251Z"
+    },
+    "210803": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:45.856Z"
+    },
+    "210821": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:46.464Z"
     },
     "210830": {
       "status": "success",
@@ -32799,6 +33069,26 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:05:29.869Z"
+    },
+    "210894": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:47.002Z"
+    },
+    "210939": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:47.692Z"
+    },
+    "210969": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:48.226Z"
+    },
+    "210972": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:49.000Z"
+    },
+    "210975": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:49.478Z"
     },
     "211020": {
       "status": "not_found",
@@ -32858,9 +33148,21 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:09:11.100Z"
     },
+    "211216": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:50.254Z"
+    },
+    "211279": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:50.967Z"
+    },
     "211304": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:09:12.519Z"
+    },
+    "211362": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:51.440Z"
     },
     "211372": {
       "status": "not_found",
@@ -32874,9 +33176,17 @@
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:06:22.475Z"
     },
+    "211384": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:52.048Z"
+    },
     "211508": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:09:26.223Z"
+    },
+    "211525": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:30:54.933Z"
     },
     "211546": {
       "status": "not_found",
@@ -32889,6 +33199,23 @@
     "211572": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:09:34.197Z"
+    },
+    "211631": {
+      "status": "success",
+      "product_name": "Olvan Trio 20Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:31:04.395Z"
+    },
+    "211667": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:06.148Z"
+    },
+    "211677": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:08.972Z"
     },
     "211703": {
       "status": "not_found",
@@ -32918,6 +33245,15 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:09:58.549Z"
     },
+    "211788": {
+      "status": "success",
+      "product_name": "Aztor Ez 40Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:31:17.262Z"
+    },
     "211806": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:00.903Z"
@@ -32925,6 +33261,10 @@
     "211813": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:02.093Z"
+    },
+    "211827": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:20.348Z"
     },
     "211828": {
       "status": "not_found",
@@ -32938,9 +33278,22 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:06.899Z"
     },
+    "211866": {
+      "status": "success",
+      "product_name": "Alfakim 500Mg Vial Of 2Ml Injection",
+      "angles_saved": 2,
+      "primary_face": "combo",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:31:33.833Z"
+    },
     "211921": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:08.933Z"
+    },
+    "211953": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:35.059Z"
     },
     "211976": {
       "status": "success",
@@ -32952,13 +33305,25 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:06:40.171Z"
     },
+    "211999": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:35.737Z"
+    },
     "212010": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:21.208Z"
     },
+    "212033": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:36.288Z"
+    },
     "212053": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:23.053Z"
+    },
+    "212086": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:36.895Z"
     },
     "212099": {
       "status": "not_found",
@@ -32982,6 +33347,14 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:37.263Z"
     },
+    "212208": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:37.516Z"
+    },
+    "212216": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:38.189Z"
+    },
     "212234": {
       "status": "success",
       "medicine_id": 212234,
@@ -32992,17 +33365,41 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:06:53.378Z"
     },
+    "212250": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:38.690Z"
+    },
+    "212257": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:39.455Z"
+    },
     "212260": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:46.205Z"
+    },
+    "212346": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:40.070Z"
+    },
+    "212354": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:40.680Z"
     },
     "212372": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:47.845Z"
     },
+    "212393": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:41.400Z"
+    },
     "212404": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:51.137Z"
+    },
+    "212443": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:42.006Z"
     },
     "212444": {
       "status": "not_found",
@@ -33011,6 +33408,10 @@
     "212466": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:10:54.941Z"
+    },
+    "212495": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:42.639Z"
     },
     "212529": {
       "status": "not_found",
@@ -33042,17 +33443,45 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:14.657Z"
     },
+    "212629": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:43.435Z"
+    },
     "212634": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:17.097Z"
+    },
+    "212660": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:44.037Z"
+    },
+    "212679": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:44.652Z"
+    },
+    "212707": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:45.136Z"
     },
     "212750": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:18.319Z"
     },
+    "212753": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:45.770Z"
+    },
+    "212803": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:46.328Z"
+    },
     "212804": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:20.293Z"
+    },
+    "212830": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:47.110Z"
     },
     "212882": {
       "status": "not_found",
@@ -33070,6 +33499,14 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:31.259Z"
     },
+    "212945": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:47.730Z"
+    },
+    "213019": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:48.338Z"
+    },
     "213088": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:32.113Z"
@@ -33077,6 +33514,10 @@
     "213093": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:34.587Z"
+    },
+    "213109": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:49.039Z"
     },
     "213112": {
       "status": "not_found",
@@ -33086,9 +33527,25 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:39.151Z"
     },
+    "213152": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:49.652Z"
+    },
+    "213181": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:50.381Z"
+    },
+    "213182": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:50.986Z"
+    },
     "213187": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:40.347Z"
+    },
+    "213201": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:51.455Z"
     },
     "213256": {
       "status": "not_found",
@@ -33106,6 +33563,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:43.941Z"
     },
+    "213390": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:31:52.013Z"
+    },
     "213468": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:44.672Z"
@@ -33122,13 +33583,48 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:46.741Z"
     },
+    "213544": {
+      "status": "success",
+      "product_name": "Coq 10Mg Strip Of 10 Capsules",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:32:11.689Z"
+    },
+    "213607": {
+      "status": "success",
+      "product_name": "Encorate Chrono 500Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:32:22.364Z"
+    },
     "213610": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:47.461Z"
     },
+    "213615": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:26.942Z"
+    },
+    "213620": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:28.699Z"
+    },
     "213642": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:48.131Z"
+    },
+    "213658": {
+      "status": "success",
+      "product_name": "Prohep Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:32:36.638Z"
     },
     "213681": {
       "status": "not_found",
@@ -33138,13 +33634,29 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:49.562Z"
     },
+    "213703": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:37.195Z"
+    },
+    "213704": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:38.013Z"
+    },
     "213716": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:50.286Z"
     },
+    "213735": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:38.771Z"
+    },
     "213774": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:50.944Z"
+    },
+    "213785": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:39.451Z"
     },
     "213797": {
       "status": "not_found",
@@ -33153,6 +33665,14 @@
     "213809": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:52.522Z"
+    },
+    "213836": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:40.051Z"
+    },
+    "213838": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:40.655Z"
     },
     "213848": {
       "status": "not_found",
@@ -33166,13 +33686,29 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:54.681Z"
     },
+    "213880": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:41.383Z"
+    },
+    "213900": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:41.973Z"
+    },
     "213917": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:55.348Z"
     },
+    "213931": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:42.557Z"
+    },
     "213953": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:56.064Z"
+    },
+    "213976": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:43.275Z"
     },
     "213977": {
       "status": "not_found",
@@ -33182,9 +33718,17 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:57.509Z"
     },
+    "214081": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:43.869Z"
+    },
     "214088": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:11:58.096Z"
+    },
+    "214092": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:44.457Z"
     },
     "214100": {
       "status": "not_found",
@@ -33198,6 +33742,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:00.396Z"
     },
+    "214137": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:45.159Z"
+    },
     "214153": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:00.963Z"
@@ -33206,13 +33754,33 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:01.683Z"
     },
+    "214179": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:45.763Z"
+    },
+    "214183": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:46.493Z"
+    },
     "214224": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:02.401Z"
     },
+    "214282": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:47.021Z"
+    },
     "214303": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:03.253Z"
+    },
+    "214307": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:47.501Z"
+    },
+    "214321": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:48.239Z"
     },
     "214351": {
       "status": "not_found",
@@ -33222,6 +33790,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:04.973Z"
     },
+    "214395": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:48.821Z"
+    },
     "214430": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:05.647Z"
@@ -33229,6 +33801,14 @@
     "214438": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:08.788Z"
+    },
+    "214460": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:49.376Z"
+    },
+    "214462": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:49.975Z"
     },
     "214570": {
       "status": "success",
@@ -33262,6 +33842,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:41.595Z"
     },
+    "214651": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:50.573Z"
+    },
     "214662": {
       "status": "success",
       "medicine_id": 214662,
@@ -33272,9 +33856,17 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:07:28.723Z"
     },
+    "214721": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:51.189Z"
+    },
     "214788": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:12:50.723Z"
+    },
+    "214806": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:51.907Z"
     },
     "214821": {
       "status": "success",
@@ -33285,6 +33877,10 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:07:34.723Z"
+    },
+    "214836": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:32:56.816Z"
     },
     "214849": {
       "status": "success",
@@ -33305,6 +33901,19 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:07:47.264Z"
+    },
+    "215028": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:00.161Z"
+    },
+    "215042": {
+      "status": "success",
+      "product_name": "Olvance Ct 20Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:33:11.196Z"
     },
     "215078": {
       "status": "not_found",
@@ -33338,9 +33947,51 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:13:44.524Z"
     },
+    "215134": {
+      "status": "success",
+      "product_name": "Montek Lc Kid Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:33:22.648Z"
+    },
     "215142": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:13:45.363Z"
+    },
+    "215190": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:24.709Z"
+    },
+    "215193": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:28.432Z"
+    },
+    "215200": {
+      "status": "success",
+      "product_name": "Liofen Xl 30Mg Strip Of 10 Capsules",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:33:41.087Z"
+    },
+    "215216": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:45.012Z"
+    },
+    "215230": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:47.775Z"
+    },
+    "215248": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:48.364Z"
+    },
+    "215259": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:48.955Z"
     },
     "215300": {
       "status": "gemini_rejected",
@@ -33349,6 +34000,14 @@
       "manufacturer": "ZYDUS CADILA HEALTHCARE LTD",
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:08:12.744Z"
+    },
+    "215334": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:49.546Z"
+    },
+    "215369": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:50.083Z"
     },
     "215389": {
       "status": "success",
@@ -33359,6 +34018,10 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:08:18.631Z"
+    },
+    "215414": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:50.717Z"
     },
     "215424": {
       "status": "success",
@@ -33374,9 +34037,21 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:11.662Z"
     },
+    "215619": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:51.306Z"
+    },
+    "215635": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:51.780Z"
+    },
     "215665": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:15.380Z"
+    },
+    "215699": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:33:52.506Z"
     },
     "215702": {
       "status": "not_found",
@@ -33398,17 +34073,55 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:30.794Z"
     },
+    "215799": {
+      "status": "success",
+      "product_name": "Noculi B6 Bottle Of 200Ml Oral Solution",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:34:05.259Z"
+    },
+    "215832": {
+      "status": "success",
+      "product_name": "Cepodem Dt 50Mg Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:34:27.590Z"
+    },
     "215843": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:33.249Z"
+    },
+    "215862": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:30.418Z"
+    },
+    "215921": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:31.389Z"
     },
     "215947": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:35.284Z"
     },
+    "215954": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:34.340Z"
+    },
+    "215983": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:36.971Z"
+    },
     "216008": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:36.246Z"
+    },
+    "216042": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:39.865Z"
     },
     "216123": {
       "status": "success",
@@ -33420,9 +34133,26 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T04:08:48.715Z"
     },
+    "216126": {
+      "status": "success",
+      "product_name": "Duralast 30Mg Strip Of 4 Tablets",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:34:47.557Z"
+    },
+    "216175": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:49.670Z"
+    },
     "216254": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:47.580Z"
+    },
+    "216260": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:52.282Z"
     },
     "216280": {
       "status": "not_found",
@@ -33440,6 +34170,14 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:14:56.418Z"
     },
+    "216321": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:54.479Z"
+    },
+    "216343": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:34:58.035Z"
+    },
     "216353": {
       "status": "gemini_rejected",
       "medicine_id": 216353,
@@ -33448,13 +34186,56 @@
       "reason": "Neither front nor back matched medicine packaging",
       "checked_at": "2026-09-12T04:08:59.476Z"
     },
+    "216360": {
+      "status": "success",
+      "product_name": "Zanocin 50Mg Bottle Of 60Ml Oral Liquid",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:35:06.826Z"
+    },
+    "216361": {
+      "status": "success",
+      "product_name": "Clopilet A 150Mg Strip Of 15 Capsules",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:35:26.741Z"
+    },
+    "216385": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:29.470Z"
+    },
+    "216391": {
+      "status": "success",
+      "product_name": "Etrobax 120Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:35:39.143Z"
+    },
     "216414": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:13.478Z"
     },
+    "216417": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:41.070Z"
+    },
     "216420": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:15.816Z"
+    },
+    "216429": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:42.778Z"
+    },
+    "216491": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:45.441Z"
     },
     "216518": {
       "status": "success",
@@ -33478,6 +34259,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:41.300Z"
     },
+    "216576": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:48.098Z"
+    },
     "216579": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:43.349Z"
@@ -33496,9 +34281,21 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:51.711Z"
     },
+    "216631": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:51.286Z"
+    },
+    "216700": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:53.727Z"
+    },
     "216702": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:15:53.984Z"
+    },
+    "216717": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:55.586Z"
     },
     "216744": {
       "status": "not_found",
@@ -33512,6 +34309,19 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:16:00.503Z"
     },
+    "216928": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:35:57.060Z"
+    },
+    "216949": {
+      "status": "success",
+      "product_name": "Decitex 50Mg Injection",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:36:05.785Z"
+    },
     "216961": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:16:02.571Z"
@@ -33519,6 +34329,14 @@
     "216967": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:16:07.111Z"
+    },
+    "216979": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:36:06.957Z"
+    },
+    "216985": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:36:09.569Z"
     },
     "217008": {
       "status": "not_found",
@@ -33528,9 +34346,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:16:11.174Z"
     },
+    "217119": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:36:11.837Z"
+    },
+    "217121": {
+      "status": "success",
+      "product_name": "Lacoset 150Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T06:36:25.720Z"
+    },
     "217128": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:16:12.517Z"
+    },
+    "217192": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:36:27.036Z"
     },
     "217228": {
       "status": "not_found",
