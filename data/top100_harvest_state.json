@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T18:21:20.417Z",
+  "last_updated": "2026-09-12T18:21:46.257Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -1897,9 +1897,29 @@
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T18:21:11.210Z"
     },
+    "8322": {
+      "status": "success",
+      "company": "MARICO",
+      "product_name": "Set Wet Hair Gel for Men | No Alcohol Casually Cool",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T18:21:28.366Z"
+    },
     "8325": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:10:24.600Z"
+    },
+    "8330": {
+      "status": "success",
+      "company": "MARICO",
+      "product_name": "Livon Serum for Frizz-free | Smooth Hair with Argan Oil & Vitamin E for All Hair Types",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T18:21:46.257Z"
     },
     "8354": {
       "status": "not_found",
@@ -4308,6 +4328,23 @@
       "primary_face": "box-front",
       "primary_confidence": 95,
       "updated_at": "2026-09-11T19:36:39.391Z"
+    },
+    "20622": {
+      "status": "success",
+      "company": "ABBOTT INDIA LTD",
+      "product_name": "Duphalac Bears Lactulose Prebiotic Gummy | Flavour Strawberry",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T18:21:40.886Z"
+    },
+    "20689": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "product_name": "SIMILAC MT 1 MG POWDER 400 GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:43.200Z"
     },
     "20728": {
       "status": "not_found",
@@ -91323,9 +91360,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:33:39.240Z"
     },
+    "230007": {
+      "status": "success",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "Halodent 5 Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T18:21:33.751Z"
+    },
     "230064": {
       "status": "not_found",
       "checked_at": "2026-09-12T00:33:40.872Z"
+    },
+    "230079": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "ZENOTAS OZ SUSP 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:35.670Z"
     },
     "230087": {
       "status": "not_found",
@@ -91409,6 +91463,20 @@
       "status": "not_found",
       "checked_at": "2026-09-12T06:31:31.184Z"
     },
+    "230279": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "PRELIN 75MG CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:36.932Z"
+    },
+    "230297": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD GX",
+      "product_name": "HISTACET 10MG CAP 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:38.235Z"
+    },
     "230305": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -91439,12 +91507,26 @@
       "status": "not_found",
       "checked_at": "2026-09-12T00:34:16.537Z"
     },
+    "230365": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "ZOREM 2.5MG STRIP OF 15 CAPSULES",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:39.397Z"
+    },
     "230406": {
       "status": "not_found",
       "company": "SUN PHARMA",
       "product_name": "GYNOSTATUM 2% TUBE OF 30GM VAGINAL CREAM",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-12T18:04:59.501Z"
+    },
+    "230411": {
+      "status": "not_found",
+      "company": "INTAS PHARMACEUTICALS LTD",
+      "product_name": "DUVANTA FORTE 40MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-12T18:21:41.249Z"
     },
     "230416": {
       "status": "not_found",
@@ -104894,6 +104976,23 @@
       "product_name": "MAMAEARTH ONION SHAMPOO  BOTTLE OF 400 ML",
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-12T18:21:04.901Z"
+    },
+    "282202": {
+      "status": "success",
+      "company": "HONASA CONSUMER PRIVATE LIMITED",
+      "product_name": "Mamaearth Vitamin C Under Eye Cream",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "ai_ocr_verified",
+      "checked_at": "2026-09-12T18:21:27.695Z"
+    },
+    "282203": {
+      "status": "gemini_rejected",
+      "company": "HONASA CONSUMER PRIVATE LIMITED",
+      "product_name": "MAMAEARTH VITAMIN C FACE WASH WITH VITAMIN C AND TURMERIC FOR SKIN ILLUMINATION - 100 ML",
+      "reason": "Packaging did not match target brand or strength",
+      "checked_at": "2026-09-12T18:21:45.424Z"
     },
     "282204": {
       "status": "not_found",
