@@ -181,9 +181,16 @@ const FORMULATION_MODIFIERS = new Set([
   'DT', 'MD', 'SL', 'OD'
 ]);
 
+function normalizeTokens(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/([a-zA-Z])(\d+)/g, '$1 $2')
+    .replace(/(\d+)(mg|mcg|ml|gm|iu|%)\b/gi, '$1 $2');
+}
+
 function extractModifiers(name: string): Set<string> {
   if (!name) return new Set();
-  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
+  const clean = normalizeTokens(name).toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
   for (const w of words) {
@@ -212,15 +219,36 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isQTab = /\b(tab|tablet|tablets|dt)\b/.test(qLower);
   const isQCap = /\b(cap|capsule|capsules)\b/.test(qLower);
   const isQInj = /\b(inj|injection)\b/.test(qLower);
-  const isQTop = /\b(gel|cream|ointment)\b/.test(qLower);
+  const isQTop = /\b(gel|cream|ointment|lotion)\b/.test(qLower);
   const isQDrops = /\b(drops?|eye\s*drops?|ear\s*drops?|e\/e|ophthalmic)\b/.test(qLower);
+  const isQInhaler = /\b(inhaler|rotacap|rotacaps|respules|transhaler|neohaler|inhalation)\b/.test(qLower);
 
   const isCTab = /\b(tab|tablet|tablets)\b/.test(cLower);
   const isCCap = /\b(cap|capsule|capsules)\b/.test(cLower);
   const isCSyp = /\b(syp|syrup|susp|suspension)\b/.test(cLower);
   const isCInj = /\b(inj|injection)\b/.test(cLower);
-  const isCTop = /\b(gel|cream|ointment)\b/.test(cLower);
+  const isCTop = /\b(gel|cream|ointment|lotion)\b/.test(cLower);
   const isCDrops = /\b(drops?|eye\s*drops?|ear\s*drops?|e\/e|ophthalmic)\b/.test(cLower);
+  const isCInhaler = /\b(inhaler|rotacap|rotacaps|respules|transhaler|neohaler|inhalation)\b/.test(cLower);
+
+  // Inhalers vs Oral/Topical
+  if (isQInhaler && (isCTab || isCCap || isCSyp || isCInj || isCTop || isCDrops)) return true;
+  if (isCInhaler && (isQTab || isQCap || isQSyrup || isQInj || isQTop || isQDrops)) return true;
+
+  // Specific Topical Clashes (Cream vs Ointment vs Gel vs Lotion)
+  const isQCream = /\b(cream|crm)\b/.test(qLower);
+  const isCCream = /\b(cream|crm)\b/.test(cLower);
+  const isQOint = /\b(oint|ointment)\b/.test(qLower);
+  const isCOint = /\b(oint|ointment)\b/.test(cLower);
+  const isQGel = /\b(gel)\b/.test(qLower);
+  const isCGel = /\b(gel)\b/.test(cLower);
+  const isQLotion = /\b(lotion)\b/.test(qLower);
+  const isCLotion = /\b(lotion)\b/.test(cLower);
+
+  if (isQCream && (isCOint || isCGel || isCLotion)) return true;
+  if (isQOint && (isCCream || isCGel || isCLotion)) return true;
+  if (isQGel && (isCCream || isCOint || isCLotion)) return true;
+  if (isQLotion && (isCCream || isCOint || isCGel)) return true;
 
   if (isQDrops && (isCTab || isCCap || isCSyp || isCInj || isCTop)) return true;
   if (isCDrops && (isQTab || isQCap || isQSyrup || isQInj || isQTop)) return true;
@@ -230,7 +258,7 @@ function hasDosageConflict(q: string, c: string): boolean {
   if (isQInj && (isCTab || isCCap || isCSyp)) return true;
 
   // Medical device & accessory conflict gate: tablets/capsules/syrups must NEVER match devices/belts/binders
-  const isMedForm = /\b(tab|tablet|tablets|dt|cap|capsule|capsules|syp|syrup|susp|suspension|inj|injection|gel|cream|ointment|drops?)\b/.test(qLower);
+  const isMedForm = /\b(tab|tablet|tablets|dt|cap|capsule|capsules|syp|syrup|susp|suspension|inj|injection|gel|cream|ointment|drops?|inhaler)\b/.test(qLower);
   const isDevice = /\b(binder|belt|brace|support|crepe|bandage|cotton|massager|vaporizer|condom|thermometer|oximeter|nebulizer|glucometer|lancet|wheelchair|walker|diaper|sanitary|pad|wipes|patch|tape|plaster|plasters|gauze|mask|gloves?|unit)\b/.test(cLower);
   if (isMedForm && isDevice) return true;
 
@@ -238,8 +266,10 @@ function hasDosageConflict(q: string, c: string): boolean {
 }
 
 function hasStrengthConflict(name1: string, name2: string): boolean {
-  const m1 = name1.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
-  const m2 = name2.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
+  const norm1 = normalizeTokens(name1);
+  const norm2 = normalizeTokens(name2);
+  const m1 = norm1.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
+  const m2 = norm2.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
   if (m1 && m2) {
     const v1 = parseFloat(m1[1]);
     const v2 = parseFloat(m2[1]);
@@ -396,7 +426,7 @@ async function fetchCdnImages(queries: string[], rawMedName: string): Promise<an
       const matched = prods.filter((c: any) => {
         const hasImg = (c.damImages && c.damImages.length > 0) || Boolean(c.image);
         if (!hasImg) return false;
-        if (!isBrandMatch(rawMedName, c.name) && !isBrandMatch(q, c.name)) return false;
+        if (!isBrandMatch(rawMedName, c.name)) return false;
         if (hasDosageConflict(rawMedName, c.name)) return false;
         if (hasStrengthConflict(rawMedName, c.name)) return false;
         if (hasModifierConflict(rawMedName, c.name)) return false;
