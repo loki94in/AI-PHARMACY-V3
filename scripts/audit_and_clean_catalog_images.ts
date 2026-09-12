@@ -25,7 +25,7 @@ const TARGET_FRONTEND = path.join(ROOT_DIR, 'frontend', 'public', 'products');
 const TARGET_UPLOADS = path.join(ROOT_DIR, 'uploads', 'products');
 
 // Load API key pool
-const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
+const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
 let API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
 
 let keyIndex = 0;

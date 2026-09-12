@@ -39,7 +39,7 @@ fs.mkdirSync(TARGET_FRONTEND, { recursive: true });
 fs.mkdirSync(TARGET_UPLOADS, { recursive: true });
 
 // Load rotating API keys
-const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
+const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
 let API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 

@@ -87,7 +87,8 @@ let globalKeyIndex = 0;
 async function verifyWithGeminiVision(
   buffer: Buffer,
   targetMedName: string,
-  apiKeys: string[]
+  apiKeys: string[],
+  spareKey?: string
 ): Promise<{ isExactMatch: boolean; printedName: string; confidence: number; reason: string }> {
   const base64Data = buffer.toString('base64');
   const prompt = `You are a strict pharmaceutical verification AI.
@@ -109,11 +110,11 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
-  const keysToTry = apiKeys.length > 0 ? apiKeys : ['AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A'];
+  const models = ['gemini-flash-latest', 'gemini-2.5-flash'];
+  const keysToTry = apiKeys.length > 0 ? apiKeys : (spareKey ? [spareKey] : []);
 
   for (const model of models) {
-    for (let attempt = 0; attempt < Math.min(keysToTry.length, 3); attempt++) {
+    for (let attempt = 0; attempt < Math.min(keysToTry.length, 5); attempt++) {
       const activeKey = keysToTry[(globalKeyIndex + attempt) % keysToTry.length];
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
       const payload = {
@@ -127,6 +128,9 @@ Return valid JSON with:
       };
 
       try {
+        // 300ms pacing delay to guarantee staying under 15 RPM per key
+        await new Promise(r => setTimeout(r, 300));
+
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -164,6 +168,46 @@ Return valid JSON with:
       } catch (err: any) {
         continue;
       }
+    }
+  }
+
+  // Emergency failover to dedicated Spare Key if all active keys experienced rate limit / spikes
+  if (spareKey) {
+    for (const model of models) {
+      console.log(`    ⚡ Using dedicated Emergency Spare Key for "${targetMedName}"...`);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${spareKey}`;
+      const payload = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+          ]
+        }],
+        generationConfig: { responseMimeType: 'application/json' }
+      };
+      try {
+        await new Promise(r => setTimeout(r, 400));
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            const parsed = JSON.parse(rawText);
+            console.log(`    ✨ Verified via Emergency Spare Key!`);
+            return {
+              isExactMatch: Boolean(parsed.is_exact_match),
+              printedName: parsed.printed_name || '',
+              confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 90,
+              reason: parsed.reason || 'Verified via emergency spare key'
+            };
+          }
+        }
+      } catch {}
     }
   }
 
@@ -406,6 +450,68 @@ function saveState(state: any) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
 }
 
+async function fetchTata1mgImages(queries: string[], rawMedName: string): Promise<any | null> {
+  for (const q of queries) {
+    const url = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(q)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'accept': 'application/vnd.healthkartplus.v4+json',
+          'x-access-key': '1mg_client_access_key',
+          'x-platform': 'desktop-0.0.1',
+          'x-city': 'Gurgaon',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (!response.ok) continue;
+      const data: any = await response.json();
+      const prods = data?.data?.search_results || [];
+      if (prods.length === 0) continue;
+
+      const matched = prods.filter((c: any) => {
+        const hasImgs = (c.cropped_image_urls && c.cropped_image_urls.length > 0) || Boolean(c.image_url);
+        if (!hasImgs) return false;
+        if (!isBrandMatch(rawMedName, c.name)) return false;
+        if (hasDosageConflict(rawMedName, c.name)) return false;
+        if (hasStrengthConflict(rawMedName, c.name)) return false;
+        if (hasModifierConflict(rawMedName, c.name)) return false;
+        return true;
+      });
+
+      if (matched.length === 0) continue;
+
+      const best = matched[0];
+      const imageMap: Record<string, string> = {};
+      const rawUrls = best.cropped_image_urls || (best.image_url ? [best.image_url] : []);
+
+      const faces = ['front', 'back', 'combo', 'side'];
+      for (let idx = 0; idx < rawUrls.length; idx++) {
+        // Strip Gumlet watermark transformation to download pristine 800x800 studio photo!
+        const cleanUrl = rawUrls[idx]
+          .replace(/l_watermark_[^/]+\//g, '')
+          .replace(/w_\d+,h_\d+/g, 'w_800,h_800');
+        const face = faces[idx] || `angle_${idx + 1}`;
+        imageMap[face] = cleanUrl;
+      }
+
+      if (Object.keys(imageMap).length > 0) {
+        console.log(`    🔍 Rescued from Tata 1mg Clean CDN: "${best.name}" (${Object.keys(imageMap).length} angles)`);
+        return {
+          name: best.name,
+          slug: slugify(best.name),
+          images: imageMap,
+          source: 'tata_1mg_clean'
+        };
+      }
+    } catch {
+      // try next query
+    }
+  }
+  return null;
+}
+
 async function fetchCdnImages(queries: string[], rawMedName: string): Promise<any | null> {
   for (const q of queries) {
     const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(q)}&page=1`;
@@ -469,7 +575,9 @@ async function fetchCdnImages(queries: string[], rawMedName: string): Promise<an
       // try next query
     }
   }
-  return null;
+
+  // 2. Automatic Fallback: Tata 1mg Zero-Watermark Studio CDN (rescuing hospital/fertility/specialty meds)
+  return await fetchTata1mgImages(queries, rawMedName);
 }
 
 async function downloadBuffer(url: string): Promise<Buffer | null> {
@@ -538,6 +646,7 @@ async function main() {
   let shutdownOnComplete = false;
   let useGemini = false;
   let commitEvery = 1000;
+  let poolNumber = 1;
   let customKeys: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -547,6 +656,7 @@ async function main() {
     }
     if (args[i].startsWith('--company=')) companyFilter = args[i].split('=')[1].replace(/['"]/g, '');
     else if (args[i].startsWith('--filter=')) nameFilter = args[i].split('=')[1].replace(/['"]/g, '');
+    else if (args[i].startsWith('--pool=')) poolNumber = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--top=')) topCount = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--limit=')) limit = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--delay=')) delayMs = parseInt(args[i].split('=')[1], 10);
@@ -568,11 +678,27 @@ async function main() {
   console.log('    MASTER PRODUCT IMAGE HARVESTER & AI OCR VERIFICATION');
   console.log('===============================================================\n');
 
-  const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
-  const geminiKeys = customKeys.length > 0 ? customKeys : rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+  let geminiKeys: string[] = [];
+  let spareKey: string | undefined = undefined;
+
+  if (customKeys.length > 0) {
+    geminiKeys = customKeys;
+  } else if (poolNumber >= 1 && poolNumber <= 4) {
+    const poolEnv = process.env[`GEMINI_API_KEYS_POOL_${poolNumber}`];
+    spareKey = process.env[`GEMINI_SPARE_KEY_POOL_${poolNumber}`];
+    if (poolEnv) {
+      geminiKeys = poolEnv.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+    }
+  }
+
+  if (geminiKeys.length === 0) {
+    const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+    geminiKeys = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+  }
+
   if (useGemini) {
-    console.log(`🤖 Google Gemini 3.8 Flash Vision: ACTIVE (100% label confirmation).`);
-    console.log(`🔑 Key Pool: ${geminiKeys.length} API key(s) loaded with round-robin rotation & instant failover.`);
+    console.log(`🤖 Google Gemini Flash Vision: ACTIVE (100% label confirmation).`);
+    console.log(`🔑 Key Pool #${poolNumber}: ${geminiKeys.length} active rotating keys + dedicated Emergency Spare Key.`);
   }
   if (commitEvery > 0) {
     console.log(`📦 Git Auto-Commit: ACTIVE (commits every ${commitEvery} saved images).`);
@@ -683,9 +809,17 @@ async function main() {
     const medName = med.name || med.canonical_name;
     const mfg = med.manufacturer || 'Unknown';
 
-    if (!force && state.products[medId]?.status === 'success') {
-      skippedCount++;
-      continue;
+    if (!force) {
+      if (state.products[medId]?.status === 'success') {
+        skippedCount++;
+        continue;
+      }
+      const alreadyInDb = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1').get(medId);
+      if (alreadyInDb) {
+        state.products[medId] = { status: 'success', checked_at: new Date().toISOString() };
+        skippedCount++;
+        continue;
+      }
     }
 
     processed++;
@@ -813,7 +947,7 @@ async function main() {
       const anglesToTry = Math.min(downloadedAngles.length, 2);
       for (let aIdx = 0; aIdx < anglesToTry; aIdx++) {
         const angle = downloadedAngles[aIdx];
-        const gResult = await verifyWithGeminiVision(angle.buffer, medName, geminiKeys);
+        const gResult = await verifyWithGeminiVision(angle.buffer, medName, geminiKeys, spareKey);
         if (gResult.isExactMatch) {
           confirmedResult = gResult;
           primaryAngleIndex = aIdx;
