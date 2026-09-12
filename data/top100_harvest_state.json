@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T07:53:34.482Z",
+  "last_updated": "2026-09-12T07:55:44.347Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -21314,9 +21314,17 @@
       "status": "not_found",
       "checked_at": "2026-09-12T07:53:34.482Z"
     },
+    "111712": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:36.514Z"
+    },
     "111715": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:28.621Z"
+    },
+    "111718": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:39.536Z"
     },
     "111723": {
       "status": "not_found",
@@ -21338,13 +21346,25 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:28.366Z"
     },
+    "111869": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:41.960Z"
+    },
     "111877": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:39.586Z"
     },
+    "111890": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:45.032Z"
+    },
     "111892": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:05:41.944Z"
+    },
+    "111913": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:47.139Z"
     },
     "111929": {
       "status": "not_found",
@@ -21380,6 +21400,23 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:30.420Z"
     },
+    "112031": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:53:49.243Z"
+    },
+    "112060": {
+      "status": "success",
+      "product_name": "Rozavel 20Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:53:57.798Z"
+    },
+    "112069": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:01.486Z"
+    },
     "112079": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:06.609Z"
@@ -21388,9 +21425,21 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:31.022Z"
     },
+    "112179": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:03.051Z"
+    },
     "112191": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:09.985Z"
+    },
+    "112200": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:05.482Z"
+    },
+    "112243": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:08.410Z"
     },
     "112282": {
       "status": "not_found",
@@ -21411,6 +21460,19 @@
     "112388": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:33.786Z"
+    },
+    "112393": {
+      "status": "success",
+      "product_name": "Cifran Oz Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:54:23.857Z"
+    },
+    "112410": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:27.360Z"
     },
     "112429": {
       "status": "not_found",
@@ -21446,6 +21508,27 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:35.846Z"
     },
+    "112633": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:29.006Z"
+    },
+    "112634": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:31.970Z"
+    },
+    "112642": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:35.046Z"
+    },
+    "112661": {
+      "status": "success",
+      "product_name": "Bectodine Tube Of 10Gm Ointment",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:54:47.591Z"
+    },
     "112692": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:29.222Z"
@@ -21454,9 +21537,22 @@
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:30.912Z"
     },
+    "112737": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:54:51.800Z"
+    },
     "112757": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:36.448Z"
+    },
+    "112766": {
+      "status": "success",
+      "product_name": "Volix R 0.2/0.5Mg Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:55:05.617Z"
     },
     "112781": {
       "status": "not_found",
@@ -21502,9 +21598,35 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:40.088Z"
     },
+    "112942": {
+      "status": "success",
+      "product_name": "Revlamer 800Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:55:15.635Z"
+    },
     "113006": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:06:45.156Z"
+    },
+    "113016": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:55:18.293Z"
+    },
+    "113025": {
+      "status": "success",
+      "product_name": "Afenak Plus Ns Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:55:34.713Z"
+    },
+    "113048": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:55:38.414Z"
     },
     "113075": {
       "status": "not_found",
@@ -21536,9 +21658,17 @@
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:07:25.694Z"
     },
+    "113200": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:55:41.872Z"
+    },
     "113202": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:41.484Z"
+    },
+    "113266": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:55:44.347Z"
     },
     "113295": {
       "status": "not_found",
