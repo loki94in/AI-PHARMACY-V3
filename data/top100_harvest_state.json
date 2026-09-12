@@ -1,9 +1,9 @@
 {
-  "last_updated": "2026-09-12T09:26:58.463Z",
+  "last_updated": "2026-09-12T09:33:52.830Z",
   "products": {
     "35": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:55:27.475Z"
+      "checked_at": "2026-09-12T06:37:33.817Z"
     },
     "118": {
       "status": "success",
@@ -24,20 +24,11 @@
     },
     "416": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:10:32.620Z"
-    },
-    "713": {
-      "status": "success",
-      "product_name": "Olimab 60Mg Pre Filled Syringe Of 1Ml Solution For Injection",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 99,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:53:34.943Z"
+      "checked_at": "2026-09-12T08:53:11.638Z"
     },
     "803": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:10:36.965Z"
+      "checked_at": "2026-09-12T08:53:17.355Z"
     },
     "880": {
       "status": "success",
@@ -66,24 +57,15 @@
     },
     "927": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:10:39.384Z"
+      "checked_at": "2026-09-12T08:53:22.935Z"
     },
     "1090": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:09:08.765Z"
     },
-    "1174": {
-      "status": "success",
-      "product_name": "Lipitas 20Mg Strip Of 15 Tablets",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 99,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:54:03.469Z"
-    },
     "1212": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:10:42.148Z"
+      "checked_at": "2026-09-12T08:53:26.035Z"
     },
     "1228": {
       "status": "success",
@@ -133,34 +115,23 @@
     },
     "1801": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:11:03.016Z"
+      "checked_at": "2026-09-12T08:53:30.318Z"
     },
     "1923": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:55:28.819Z"
+      "checked_at": "2026-09-12T06:38:21.062Z"
     },
     "1992": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:09:13.340Z"
     },
-    "2129": {
-      "status": "success",
-      "product_name": "Leupo 11.25Mg Dry Vial Of 1 Powder For Injection",
-      "angles_saved": 1,
-      "primary_face": "side",
-      "primary_confidence": 98,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:54:13.064Z"
-    },
     "2245": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:11:32.571Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:53:33.653Z"
     },
     "2246": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:11:56.896Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:53:36.431Z"
     },
     "2270": {
       "status": "success",
@@ -173,7 +144,7 @@
     },
     "2340": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:02.160Z"
+      "checked_at": "2026-09-12T08:53:42.026Z"
     },
     "2480": {
       "status": "success",
@@ -184,47 +155,28 @@
       "updated_at": "2026-09-11T19:20:55.771Z"
     },
     "2601": {
-      "status": "success",
-      "product_name": "New Anofer Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:55:45.560Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:30.735Z"
     },
     "2699": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:09:15.155Z"
     },
     "2737": {
-      "status": "success",
-      "product_name": "Etirest 0.5 Tablet",
-      "angles_saved": 4,
-      "primary_face": "combo",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:56:04.770Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:33.603Z"
     },
     "2801": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:04.864Z"
+      "checked_at": "2026-09-12T08:53:46.292Z"
     },
     "2847": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:56:08.701Z"
-    },
-    "2852": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T08:54:50.058Z"
+      "checked_at": "2026-09-12T06:38:37.834Z"
     },
     "2877": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:56:10.695Z"
-    },
-    "2980": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T08:54:51.307Z"
+      "checked_at": "2026-09-12T06:38:39.326Z"
     },
     "2993": {
       "status": "success",
@@ -246,46 +198,27 @@
     },
     "3112": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:09.508Z"
-    },
-    "3153": {
-      "status": "success",
-      "product_name": "Romy 250Mcg Dry Vial Of 0.5Ml Powder For Injection",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 98,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:55:10.910Z"
+      "checked_at": "2026-09-12T08:53:48.168Z"
     },
     "3159": {
-      "status": "success",
-      "product_name": "Fomtide 200Mcg Box Of 30 Octacaps",
-      "angles_saved": 4,
-      "primary_face": "box-side",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:56:31.375Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:57.096Z"
     },
     "3185": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:56:31.888Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:57.608Z"
     },
     "3187": {
       "status": "not_found",
       "checked_at": "2026-09-11T19:20:57.881Z"
     },
     "3411": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:12:23.681Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:53:49.691Z"
     },
     "3464": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:26.916Z"
-    },
-    "3472": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T08:55:16.499Z"
+      "checked_at": "2026-09-12T08:53:51.337Z"
     },
     "3476": {
       "status": "success",
@@ -297,8 +230,8 @@
       "updated_at": "2026-09-12T05:12:41.163Z"
     },
     "3602": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:56:31.888Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:58.194Z"
     },
     "3642": {
       "status": "not_found",
@@ -306,7 +239,7 @@
     },
     "3714": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:43.336Z"
+      "checked_at": "2026-09-12T08:53:52.736Z"
     },
     "3764": {
       "status": "not_found",
@@ -322,11 +255,12 @@
     },
     "3796": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:45.968Z"
+      "checked_at": "2026-09-12T08:53:54.524Z"
     },
     "3999": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:12:48.527Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched target brand",
+      "checked_at": "2026-09-12T08:54:35.583Z"
     },
     "4032": {
       "status": "success",
@@ -338,24 +272,19 @@
     },
     "4144": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:56:34.820Z"
+      "checked_at": "2026-09-12T06:38:58.862Z"
     },
     "4184": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:12:51.039Z"
+      "checked_at": "2026-09-12T08:54:37.967Z"
     },
     "4224": {
-      "status": "success",
-      "product_name": "New NormOz-DS Sachet Tangy Orange",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:56:56.369Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:38:59.396Z"
     },
     "4297": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:56:56.893Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:00.107Z"
     },
     "4619": {
       "status": "success",
@@ -372,7 +301,7 @@
     },
     "4720": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:56:58.039Z"
+      "checked_at": "2026-09-12T06:39:00.706Z"
     },
     "4761": {
       "status": "not_found",
@@ -380,24 +309,19 @@
     },
     "4998": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:56:59.165Z"
+      "checked_at": "2026-09-12T06:39:01.250Z"
     },
     "5029": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:56:59.686Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:01.939Z"
     },
     "5045": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:13:15.933Z"
+      "checked_at": "2026-09-12T08:54:42.040Z"
     },
     "5058": {
-      "status": "success",
-      "product_name": "Nasomet Nasal Spray",
-      "angles_saved": 1,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:57:09.908Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:02.584Z"
     },
     "5138": {
       "status": "success",
@@ -417,16 +341,21 @@
       "updated_at": "2026-09-12T05:13:54.892Z"
     },
     "5341": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:13:56.364Z"
+      "status": "success",
+      "product_name": "Cranfit Tablet",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 98,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:55:01.912Z"
     },
     "5381": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:57:10.427Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:03.071Z"
     },
     "5969": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:57:10.427Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:03.626Z"
     },
     "6089": {
       "status": "success",
@@ -441,30 +370,20 @@
       "updated_at": "2026-09-12T01:55:15.093Z"
     },
     "6147": {
-      "status": "success",
-      "product_name": "Prohance -D Nutritional Supplement for Diabetes Care | Flavour Chocolate",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:57:34.175Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:04.515Z"
     },
     "6293": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:57:39.239Z"
+      "checked_at": "2026-09-12T06:39:05.275Z"
     },
     "6357": {
-      "status": "success",
-      "product_name": "New Suncros Matte Finish Soft Sunscreen Gel SPF 50+  PA+++",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:57:56.078Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:05.992Z"
     },
     "6422": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:14:00.002Z"
+      "checked_at": "2026-09-12T08:55:06.749Z"
     },
     "6758": {
       "status": "not_found",
@@ -489,24 +408,19 @@
     },
     "7613": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:57:58.178Z"
+      "checked_at": "2026-09-12T06:39:09.773Z"
     },
     "7661": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:14:43.337Z"
+      "checked_at": "2026-09-12T08:55:09.496Z"
     },
     "7696": {
-      "status": "success",
-      "product_name": "Exel skin Cream",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:58:16.004Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:12.875Z"
     },
     "7867": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:19.473Z"
+      "checked_at": "2026-09-12T06:39:17.027Z"
     },
     "7883": {
       "status": "not_found",
@@ -526,9 +440,13 @@
       "updated_at": "2026-09-12T06:39:28.245Z"
     },
     "7925": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:14:58.436Z"
+      "status": "success",
+      "product_name": "Dermadew Vg Wash Lotion 100Ml",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:55:47.933Z"
     },
     "8040": {
       "status": "not_found",
@@ -544,15 +462,15 @@
     },
     "8514": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:15:02.375Z"
+      "checked_at": "2026-09-12T08:55:52.458Z"
     },
     "8598": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:23.956Z"
+      "checked_at": "2026-09-12T06:39:31.375Z"
     },
     "8658": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:15:05.084Z"
+      "checked_at": "2026-09-12T08:55:55.051Z"
     },
     "8665": {
       "status": "no_authentic_match_on_cdn",
@@ -563,19 +481,24 @@
     },
     "8762": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:15:09.102Z"
+      "checked_at": "2026-09-12T08:55:59.410Z"
     },
     "8813": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:15:14.164Z"
+      "checked_at": "2026-09-12T08:56:04.033Z"
     },
     "8920": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:10:28.249Z"
     },
     "9097": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:15:16.387Z"
+      "status": "success",
+      "product_name": "First Aid Box",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:56:32.497Z"
     },
     "9167": {
       "status": "not_found",
@@ -604,11 +527,11 @@
     },
     "9634": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:27.214Z"
+      "checked_at": "2026-09-12T06:39:48.650Z"
     },
     "9660": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:15:20.959Z"
+      "checked_at": "2026-09-12T08:56:38.172Z"
     },
     "9764": {
       "status": "success",
@@ -621,11 +544,11 @@
     },
     "9766": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:16:07.169Z"
+      "checked_at": "2026-09-12T08:56:39.742Z"
     },
     "9818": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:29.523Z"
+      "checked_at": "2026-09-12T06:39:49.230Z"
     },
     "9866": {
       "status": "not_found",
@@ -641,15 +564,20 @@
     },
     "10111": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:16:08.582Z"
+      "checked_at": "2026-09-12T08:56:41.267Z"
     },
     "10183": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:16:12.115Z"
+      "status": "success",
+      "product_name": "ActivStart Unobiotics Sachet",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:57:02.894Z"
     },
     "10185": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:34.043Z"
+      "checked_at": "2026-09-12T06:39:50.055Z"
     },
     "10269": {
       "status": "success",
@@ -665,13 +593,8 @@
       "checked_at": "2026-09-11T20:10:47.119Z"
     },
     "10362": {
-      "status": "success",
-      "product_name": "Prohance -D Nutritional Supplement for Diabetes Care | Flavour Vanilla",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:58:56.989Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:50.814Z"
     },
     "10602": {
       "status": "not_found",
@@ -691,7 +614,7 @@
     },
     "10738": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:16:27.333Z"
+      "checked_at": "2026-09-12T08:57:05.147Z"
     },
     "10810": {
       "status": "success",
@@ -710,17 +633,16 @@
       "checked_at": "2026-09-12T04:27:02.571Z"
     },
     "11183": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:17:32.258Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:57:08.115Z"
     },
     "11350": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:58:57.515Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:51.502Z"
     },
     "11388": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:17:35.192Z"
+      "checked_at": "2026-09-12T08:57:11.405Z"
     },
     "11741": {
       "status": "not_found",
@@ -735,9 +657,8 @@
       "updated_at": "2026-09-11T19:34:39.743Z"
     },
     "12145": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:17:49.706Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:57:15.173Z"
     },
     "12263": {
       "status": "not_found",
@@ -745,23 +666,23 @@
     },
     "12300": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:58:59.209Z"
+      "checked_at": "2026-09-12T06:39:52.255Z"
     },
     "12316": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:01.060Z"
+      "checked_at": "2026-09-12T06:39:52.949Z"
     },
     "12320": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:03.228Z"
+      "checked_at": "2026-09-12T06:39:53.661Z"
     },
     "12366": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:03.745Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:54.157Z"
     },
     "12422": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:03.745Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:54.799Z"
     },
     "12557": {
       "status": "not_found",
@@ -780,8 +701,8 @@
       "updated_at": "2026-09-12T01:56:20.881Z"
     },
     "12766": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:03.745Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:55.448Z"
     },
     "12821": {
       "status": "not_found",
@@ -789,7 +710,7 @@
     },
     "12822": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:17:52.854Z"
+      "checked_at": "2026-09-12T08:57:19.104Z"
     },
     "12831": {
       "status": "not_found",
@@ -800,13 +721,12 @@
       "checked_at": "2026-09-11T20:10:53.656Z"
     },
     "12902": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T05:18:20.348Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T08:57:21.991Z"
     },
     "12991": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:03.745Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:56.296Z"
     },
     "13003": {
       "status": "not_found",
@@ -814,7 +734,7 @@
     },
     "13069": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:04.528Z"
+      "checked_at": "2026-09-12T06:39:56.900Z"
     },
     "13788": {
       "status": "success",
@@ -859,7 +779,7 @@
     },
     "14212": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:18:53.407Z"
+      "checked_at": "2026-09-12T08:57:23.123Z"
     },
     "14218": {
       "status": "success",
@@ -889,7 +809,7 @@
     },
     "14303": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:06.575Z"
+      "checked_at": "2026-09-12T06:39:57.642Z"
     },
     "14374": {
       "status": "success",
@@ -901,7 +821,7 @@
     },
     "14452": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:19:56.563Z"
+      "checked_at": "2026-09-12T08:57:24.688Z"
     },
     "14492": {
       "status": "success",
@@ -912,8 +832,13 @@
       "updated_at": "2026-09-11T19:35:37.514Z"
     },
     "14750": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:19:59.089Z"
+      "status": "success",
+      "product_name": "Efavir 600 Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:57:47.767Z"
     },
     "14760": {
       "status": "not_found",
@@ -930,31 +855,32 @@
     },
     "14828": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:09.043Z"
+      "checked_at": "2026-09-12T06:39:58.326Z"
     },
     "14900": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:09.554Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:39:59.143Z"
     },
     "14956": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:13.347Z"
+      "checked_at": "2026-09-12T06:39:59.883Z"
     },
     "14980": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:18.933Z"
+      "checked_at": "2026-09-12T06:40:00.535Z"
     },
     "15033": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:20:16.333Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched target brand",
+      "checked_at": "2026-09-12T08:58:41.321Z"
     },
     "15083": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:20:18.067Z"
+      "checked_at": "2026-09-12T08:58:45.112Z"
     },
     "15108": {
-      "status": "success",
-      "checked_at": "2026-09-12T08:59:19.457Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:01.113Z"
     },
     "15242": {
       "status": "not_found",
@@ -962,28 +888,23 @@
     },
     "15323": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:20:22.910Z"
+      "checked_at": "2026-09-12T08:58:48.384Z"
     },
     "15362": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:22.647Z"
+      "checked_at": "2026-09-12T06:40:01.930Z"
     },
     "15374": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:10:57.040Z"
     },
     "15565": {
-      "status": "success",
-      "product_name": "Anaboom+ Anti Hair Fall Shampoo Paraben Free",
-      "angles_saved": 3,
-      "primary_face": "combo",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T08:59:49.915Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:02.646Z"
     },
     "15689": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:20:26.224Z"
+      "checked_at": "2026-09-12T08:58:50.052Z"
     },
     "15725": {
       "status": "not_found",
@@ -1004,11 +925,11 @@
     },
     "15933": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:13.271Z"
+      "checked_at": "2026-09-12T08:58:51.676Z"
     },
     "15953": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:15.697Z"
+      "checked_at": "2026-09-12T08:58:53.295Z"
     },
     "16034": {
       "status": "success",
@@ -1024,44 +945,74 @@
       "checked_at": "2026-09-11T20:10:59.108Z"
     },
     "16288": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:26.996Z"
+      "status": "success",
+      "product_name": "Cetafresh Cleansing Lotion | pH Balanced & Fragrance Free",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 98,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T08:59:26.202Z"
     },
     "16332": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:10:59.830Z"
     },
     "16383": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:27.592Z"
+      "status": "success",
+      "product_name": "Fit Eye Plus Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:00:06.651Z"
     },
     "16399": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:28.288Z"
+      "status": "success",
+      "product_name": "Everfresh Hygiene Wash",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 98,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:00:32.102Z"
     },
     "16512": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:29.022Z"
+      "checked_at": "2026-09-12T09:00:37.461Z"
     },
     "16598": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:29.508Z"
+      "status": "success",
+      "product_name": "Rivela Lite Weightless Mousse Broad Spectrum UVA/UVB Sunscreen SPF 50",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:00:53.174Z"
     },
     "16620": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:30.140Z"
+      "status": "success",
+      "product_name": "Dr. Morepen Aid Adhesive First Aid Dressing",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:01:19.294Z"
     },
     "16651": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:30.846Z"
+      "status": "success",
+      "product_name": "Divaine 100Mg Dry Vial Of 1 Powder For Injection",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:01:40.687Z"
     },
     "16670": {
       "status": "not_found",
-      "checked_at": "2026-09-12T08:59:54.190Z"
+      "checked_at": "2026-09-12T06:40:03.441Z"
     },
     "16704": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:31.450Z"
+      "checked_at": "2026-09-12T09:01:45.725Z"
     },
     "16736": {
       "status": "not_found",
@@ -1072,17 +1023,12 @@
       "checked_at": "2026-09-11T20:11:01.330Z"
     },
     "17011": {
-      "status": "success",
-      "product_name": "New Socril Strip Of 15 Capsules",
-      "angles_saved": 1,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:00:14.384Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:03.917Z"
     },
     "17032": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:32.086Z"
+      "checked_at": "2026-09-12T09:01:49.235Z"
     },
     "17039": {
       "status": "not_found",
@@ -1102,29 +1048,19 @@
     },
     "17222": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:32.805Z"
+      "checked_at": "2026-09-12T09:01:55.403Z"
     },
     "17225": {
-      "status": "success",
-      "product_name": "New Speedral Strip Of 15 Capsules",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:00:36.016Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:04.429Z"
     },
     "17228": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:11:04.604Z"
     },
     "17397": {
-      "status": "success",
-      "product_name": "Prohance Mom Chocolate Flavour | Nutrition Drink | Jar Of 400 Gm",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:00:53.538Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:05.162Z"
     },
     "17419": {
       "status": "success",
@@ -1135,28 +1071,38 @@
       "updated_at": "2026-09-11T19:36:08.654Z"
     },
     "17579": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:33.505Z"
+      "status": "success",
+      "product_name": "Activkids Uno Biotics Junior Sugar Free Sachet Of 1Gm Oral Powder",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:02:20.808Z"
     },
     "17580": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:34.088Z"
+      "checked_at": "2026-09-12T09:02:25.074Z"
     },
     "17585": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:00:56.545Z"
+      "checked_at": "2026-09-12T06:40:05.961Z"
     },
     "17590": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:34.733Z"
+      "status": "success",
+      "product_name": "Dr. Morepen | Bp-15 | Blood Pressure Monitor | 1 Unit",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:02:44.516Z"
     },
     "17604": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:35.440Z"
+      "checked_at": "2026-09-12T09:02:50.125Z"
     },
     "17719": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:36.185Z"
+      "checked_at": "2026-09-12T09:02:53.969Z"
     },
     "17728": {
       "status": "success",
@@ -1169,16 +1115,11 @@
     },
     "17813": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:36.856Z"
+      "checked_at": "2026-09-12T09:02:55.721Z"
     },
     "17941": {
-      "status": "success",
-      "product_name": "Anaboom AD Anti-Dandruff Leave On Lotion",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:01:11.651Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:23.103Z"
     },
     "18057": {
       "status": "not_found",
@@ -1189,20 +1130,25 @@
       "checked_at": "2026-09-11T20:11:06.076Z"
     },
     "18098": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:37.558Z"
+      "status": "success",
+      "product_name": "Rivela Lite Weightless Mousse Broad Spectrum UVA/UVB Sunscreen SPF 50",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:03:10.093Z"
     },
     "18275": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:38.280Z"
+      "checked_at": "2026-09-12T09:03:12.304Z"
     },
     "18290": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:01:16.669Z"
+      "checked_at": "2026-09-12T06:40:27.527Z"
     },
     "18318": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:39.033Z"
+      "checked_at": "2026-09-12T09:03:19.674Z"
     },
     "18464": {
       "status": "not_found",
@@ -1230,29 +1176,34 @@
       "checked_at": "2026-09-11T20:11:08.621Z"
     },
     "18767": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:39.626Z"
+      "status": "success",
+      "product_name": "Cetafresh Cleansing Lotion 200Ml",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 99,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:03:50.314Z"
     },
     "18805": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:01:22.057Z"
+      "checked_at": "2026-09-12T06:40:42.586Z"
     },
     "18851": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:11:09.341Z"
     },
     "18917": {
-      "status": "success",
-      "product_name": "Prohance D Diabetes Care | Vanilla Flavour | Nutrition Powder | Sugar Free | Box 200 Gm",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:01:41.990Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:43.315Z"
     },
     "18918": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:40.230Z"
+      "status": "success",
+      "product_name": "Ketocip 200Mg Strip Of 10 Tablets",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:05:03.040Z"
     },
     "19051": {
       "status": "not_found",
@@ -1268,36 +1219,46 @@
     },
     "19150": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:40.826Z"
+      "checked_at": "2026-09-12T09:05:07.390Z"
     },
     "19192": {
-      "status": "success",
-      "product_name": "Sonata Lr Strip Of 10 Capsules",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:02:08.077Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:43.875Z"
     },
     "19401": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:41.356Z"
+      "status": "success",
+      "product_name": "Vc X Vitamin C|E & Ferulic Acid Serum | Antioxidant Face Care Product For Ageing & Dull Skin 10 Ml",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:05:37.322Z"
     },
     "19470": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:11:12.219Z"
     },
     "19548": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:42.115Z"
+      "status": "success",
+      "product_name": "Nutrimune Plus Strawberry Powder 200Gm",
+      "angles_saved": 2,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:05:53.822Z"
     },
     "19626": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:11:12.962Z"
     },
     "19671": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:42.712Z"
+      "status": "success",
+      "product_name": "Efavir 600 Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:06:14.315Z"
     },
     "19718": {
       "status": "not_found",
@@ -1305,37 +1266,27 @@
     },
     "19722": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:02:11.104Z"
+      "checked_at": "2026-09-12T06:40:44.529Z"
     },
     "19935": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:02:12.675Z"
+      "checked_at": "2026-09-12T06:40:45.176Z"
     },
     "20283": {
-      "status": "success",
-      "product_name": "Prohance Activ Vanilla Flavour Jar 400 Gm",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:02:30.338Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:45.851Z"
     },
     "20351": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:02:36.835Z"
+      "checked_at": "2026-09-12T06:40:46.752Z"
     },
     "20415": {
-      "status": "success",
-      "product_name": "Anaboom+ Anti Hair Fall Shampoo Paraben Free",
-      "angles_saved": 3,
-      "primary_face": "combo",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:02:52.692Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:47.499Z"
     },
     "20493": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:43.356Z"
+      "checked_at": "2026-09-12T09:06:16.391Z"
     },
     "20548": {
       "status": "success",
@@ -1347,11 +1298,11 @@
     },
     "20728": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:44.020Z"
+      "checked_at": "2026-09-12T09:06:25.602Z"
     },
     "20740": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:44.668Z"
+      "checked_at": "2026-09-12T09:06:30.237Z"
     },
     "20749": {
       "status": "success",
@@ -1362,60 +1313,50 @@
       "updated_at": "2026-09-11T19:36:45.222Z"
     },
     "20831": {
-      "status": "success",
-      "product_name": "Moisturex Wash Body Wash Bottle Of 200 Ml",
-      "angles_saved": 3,
-      "primary_face": "combo",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:03:08.439Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:48.215Z"
     },
     "20853": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:45.258Z"
+      "status": "success",
+      "product_name": "Activstart Uno Biotics Sugar Free Sachet Of 1Gm Oral Powder",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 98,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:06:52.346Z"
     },
     "20964": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:03:10.969Z"
+      "checked_at": "2026-09-12T06:40:48.959Z"
     },
     "21263": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:21:45.845Z"
-    },
-    "21293": {
       "status": "success",
-      "product_name": "Prohance -D Nutritional Supplement for Diabetes Care | Flavour Chocolate",
-      "angles_saved": 4,
-      "primary_face": "combo",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:03:32.467Z"
-    },
-    "21358": {
-      "status": "success",
-      "product_name": "New Maxoza Neo Strip Of 10 Softgel Capsules",
+      "product_name": "Excela | Rich Facial Hydrating Lotion | Bottle 50 Gm",
       "angles_saved": 1,
       "primary_face": "side",
-      "primary_confidence": 98,
+      "primary_confidence": 80,
       "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:03:41.391Z"
+      "updated_at": "2026-09-12T09:07:05.060Z"
+    },
+    "21293": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:49.764Z"
+    },
+    "21358": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:50.326Z"
     },
     "21431": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:50.204Z"
+      "checked_at": "2026-09-12T09:07:07.628Z"
     },
     "21601": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:21:52.827Z"
+      "checked_at": "2026-09-12T09:07:09.571Z"
     },
     "21649": {
-      "status": "success",
-      "product_name": "Prohance D Diabetes Care | Chocolate Flavour | Nutrition Powder | Sugar Free | Jar 400 Gm",
-      "angles_saved": 4,
-      "primary_face": "side",
-      "primary_confidence": 92,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:03:58.020Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:51.049Z"
     },
     "21672": {
       "status": "not_found",
@@ -1435,17 +1376,17 @@
       "checked_at": "2026-09-11T20:11:17.048Z"
     },
     "21958": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:22:16.454Z"
+      "status": "success",
+      "product_name": "Rapid Relief Oil",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:07:21.838Z"
     },
     "21993": {
-      "status": "success",
-      "product_name": "Sporit Gg 10 Sachet Of 1Gm Granules",
-      "angles_saved": 1,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:04:28.104Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:51.789Z"
     },
     "22026": {
       "status": "success",
@@ -1456,26 +1397,16 @@
       "updated_at": "2026-09-11T19:36:52.547Z"
     },
     "22060": {
-      "status": "success",
-      "product_name": "Thealife Strip Of 10 Tablets",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:04:54.938Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:52.275Z"
     },
     "22121": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:11:19.132Z"
     },
     "22244": {
-      "status": "success",
-      "product_name": "Suncros Tint Sunscreen Lotion SPF 50+ PA+++ | Water-Resistant & Chemical-Free",
-      "angles_saved": 3,
-      "primary_face": "back",
-      "primary_confidence": 90,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:05:13.401Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:52.975Z"
     },
     "22382": {
       "status": "success",
@@ -1488,31 +1419,16 @@
       "checked_at": "2026-09-12T01:53:58.511Z"
     },
     "22393": {
-      "status": "success",
-      "product_name": "Silverex Heal Tube Of 50Gm Gel",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 98,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:05:28.684Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:53.743Z"
     },
     "22474": {
-      "status": "success",
-      "product_name": "Suncros 50 Aqua Sunscreen SPF 50 | For Sensitive Skin | Non-Greasy Lotion",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:05:54.057Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:54.599Z"
     },
     "22506": {
-      "status": "success",
-      "product_name": "Gloeye Strip Of 10 Tablets",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:06:15.191Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:55.069Z"
     },
     "22571": {
       "status": "success",
@@ -1524,11 +1440,11 @@
     },
     "22685": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:06:16.907Z"
+      "checked_at": "2026-09-12T06:40:55.547Z"
     },
     "22804": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:06:21.521Z"
+      "checked_at": "2026-09-12T06:40:56.292Z"
     },
     "22923": {
       "status": "not_found",
@@ -1536,7 +1452,7 @@
     },
     "22999": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:06:25.988Z"
+      "checked_at": "2026-09-12T06:40:56.977Z"
     },
     "23212": {
       "status": "not_found",
@@ -1565,46 +1481,31 @@
     },
     "23572": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:06:31.422Z"
+      "checked_at": "2026-09-12T06:40:57.649Z"
     },
     "23713": {
-      "status": "success",
-      "product_name": "Suncros Matte Finish Soft SPF 50+ Sunscreen PA+++ | Water-Resistant Lotion",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:06:53.333Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:58.400Z"
     },
     "23757": {
-      "status": "success",
-      "product_name": "New Anaboom AD Antidandruff Shampoo",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:07:09.347Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:59.115Z"
     },
     "23760": {
-      "status": "success",
-      "product_name": "Prohance Junior Formula for Kids' Immunity, Growth & Brain Development | Flavour Refill Chocolate",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:07:33.769Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:40:59.775Z"
     },
     "23767": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:22:48.930Z"
+      "checked_at": "2026-09-12T09:07:24.418Z"
     },
     "23814": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:22:52.061Z"
+      "checked_at": "2026-09-12T09:07:28.990Z"
     },
     "23837": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:07:40.421Z"
+      "checked_at": "2026-09-12T06:41:00.505Z"
     },
     "23852": {
       "status": "not_found",
@@ -1619,8 +1520,8 @@
       "updated_at": "2026-09-11T19:37:14.202Z"
     },
     "24032": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:40.934Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:01.109Z"
     },
     "24036": {
       "status": "not_found",
@@ -1637,24 +1538,24 @@
       "checked_at": "2026-09-12T01:54:09.664Z"
     },
     "24140": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:40.934Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:01.596Z"
     },
     "24252": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:22:53.825Z"
+      "checked_at": "2026-09-12T09:07:32.234Z"
     },
     "24353": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:22:55.002Z"
+      "checked_at": "2026-09-12T09:07:35.370Z"
     },
     "24401": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:40.934Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:02.297Z"
     },
     "24416": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:40.934Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:03.061Z"
     },
     "24446": {
       "status": "success",
@@ -1667,7 +1568,7 @@
     },
     "24505": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:07:44.755Z"
+      "checked_at": "2026-09-12T06:41:03.715Z"
     },
     "24535": {
       "status": "not_found",
@@ -1683,12 +1584,17 @@
       "updated_at": "2026-09-12T05:23:37.636Z"
     },
     "24577": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:38.502Z"
+      "status": "success",
+      "product_name": "Everfresh Tears Eye Drop",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:07:57.686Z"
     },
     "24605": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:45.278Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:04.464Z"
     },
     "24644": {
       "status": "not_found",
@@ -1696,7 +1602,7 @@
     },
     "24646": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:39.211Z"
+      "checked_at": "2026-09-12T09:08:00.016Z"
     },
     "24778": {
       "status": "not_found",
@@ -1715,8 +1621,9 @@
       "checked_at": "2026-09-11T20:12:19.375Z"
     },
     "25217": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:39.943Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched target brand",
+      "checked_at": "2026-09-12T09:08:21.192Z"
     },
     "25233": {
       "status": "success",
@@ -1736,15 +1643,15 @@
     },
     "25353": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:40.472Z"
+      "checked_at": "2026-09-12T09:08:23.573Z"
     },
     "25470": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:07:48.421Z"
+      "checked_at": "2026-09-12T06:41:05.139Z"
     },
     "25520": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:07:48.940Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:05.849Z"
     },
     "25530": {
       "status": "not_found",
@@ -1764,11 +1671,12 @@
     },
     "25684": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:41.036Z"
+      "checked_at": "2026-09-12T09:08:27.042Z"
     },
     "25862": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:41.695Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched target brand",
+      "checked_at": "2026-09-12T09:08:50.766Z"
     },
     "25871": {
       "status": "success",
@@ -1798,59 +1706,43 @@
     },
     "26162": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:42.563Z"
+      "checked_at": "2026-09-12T09:08:57.479Z"
     },
     "26205": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:07:50.221Z"
+      "checked_at": "2026-09-12T06:41:42.296Z"
     },
     "26434": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:07:52.899Z"
+      "checked_at": "2026-09-12T06:41:46.219Z"
     },
     "26521": {
-      "status": "success",
-      "product_name": "Prohance Complete Drink for Energy, Muscle Growth & Immunity | Flavour Powder Vanilla",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:08:13.755Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:46.909Z"
     },
     "26683": {
-      "status": "success",
-      "product_name": "Prohance Complete Drink for Energy, Muscle Growth & Immunity | Flavour Powder Vanilla",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 90,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:08:26.746Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:47.585Z"
     },
     "26711": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:08:30.593Z"
+      "checked_at": "2026-09-12T06:41:48.329Z"
     },
     "26787": {
-      "status": "success",
-      "product_name": "Yugard Anti Ageing Bottle Of 30 Cream",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 98,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:08:46.025Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:49.063Z"
     },
     "26819": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:43.300Z"
+      "checked_at": "2026-09-12T09:08:59.957Z"
     },
     "26893": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:12:27.736Z"
     },
     "26901": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T09:08:56.472Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:49.744Z"
     },
     "27017": {
       "status": "success",
@@ -1862,11 +1754,11 @@
     },
     "27103": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:08:59.246Z"
+      "checked_at": "2026-09-12T06:41:50.453Z"
     },
     "27270": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:43.948Z"
+      "checked_at": "2026-09-12T09:09:01.591Z"
     },
     "27435": {
       "status": "not_found",
@@ -1886,21 +1778,15 @@
     },
     "27902": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:44.500Z"
+      "checked_at": "2026-09-12T09:09:02.724Z"
     },
     "28020": {
-      "status": "gemini_rejected",
-      "reason": "Neither front nor back matched target brand",
-      "checked_at": "2026-09-12T09:09:33.266Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:51.130Z"
     },
     "28077": {
-      "status": "success",
-      "product_name": "Anaboom+ Anti Hair Fall Shampoo Paraben Free",
-      "angles_saved": 3,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:09:53.850Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:51.855Z"
     },
     "28100": {
       "status": "not_found",
@@ -1924,8 +1810,9 @@
       "checked_at": "2026-09-12T01:58:20.892Z"
     },
     "28491": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:45.171Z"
+      "status": "gemini_rejected",
+      "reason": "Neither front nor back matched target brand",
+      "checked_at": "2026-09-12T09:09:35.492Z"
     },
     "28522": {
       "status": "gemini_rejected",
@@ -1943,31 +1830,16 @@
       "updated_at": "2026-09-11T19:38:31.286Z"
     },
     "28564": {
-      "status": "success",
-      "product_name": "Prohance Mom Chocolate Flavour | Nutrition Drink | Jar Of 400 Gm",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:10:11.878Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:52.539Z"
     },
     "28679": {
-      "status": "success",
-      "product_name": "Betadine 5% Bottle Of 10Gm Microbicidal Sprinkling Powder",
-      "angles_saved": 1,
-      "primary_face": "side",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:10:27.843Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:53.139Z"
     },
     "28824": {
-      "status": "success",
-      "product_name": "Argiprime Refreshing Orange Flavour Sugar Free Sachet Of 6Gm Granules",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:10:48.496Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:53.864Z"
     },
     "28853": {
       "status": "not_found",
@@ -1989,16 +1861,11 @@
     },
     "29184": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:10:53.342Z"
+      "checked_at": "2026-09-12T06:41:54.579Z"
     },
     "29275": {
-      "status": "success",
-      "product_name": "New Suncros Matte Finish Soft Sunscreen Gel SPF 50+  PA+++",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:11:09.553Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:55.331Z"
     },
     "29453": {
       "status": "not_found",
@@ -2006,20 +1873,20 @@
     },
     "29502": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:11.271Z"
+      "checked_at": "2026-09-12T06:41:55.992Z"
     },
     "29562": {
-      "status": "success",
-      "product_name": "Exel GN Cream",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:11:24.154Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:41:56.658Z"
     },
     "29809": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:45.693Z"
+      "status": "success",
+      "product_name": "Cipladine 5% Tube Of 20Gm Ointment",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:09:46.270Z"
     },
     "29920": {
       "status": "not_found",
@@ -2027,7 +1894,7 @@
     },
     "30001": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:25.974Z"
+      "checked_at": "2026-09-12T06:41:57.289Z"
     },
     "30022": {
       "status": "not_found",
@@ -2035,11 +1902,11 @@
     },
     "30046": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:27.530Z"
+      "checked_at": "2026-09-12T06:41:57.936Z"
     },
     "30134": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:46.227Z"
+      "checked_at": "2026-09-12T09:09:48.084Z"
     },
     "30186": {
       "status": "success",
@@ -2051,27 +1918,37 @@
     },
     "30197": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:46.812Z"
+      "checked_at": "2026-09-12T09:09:52.001Z"
     },
     "30276": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:47.475Z"
+      "checked_at": "2026-09-12T09:09:55.979Z"
     },
     "30285": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:28.860Z"
+      "checked_at": "2026-09-12T06:41:58.578Z"
     },
     "30293": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:48.177Z"
+      "status": "success",
+      "product_name": "Xgain Shampoo 100Ml",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:10:13.501Z"
     },
     "30370": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:13:24.886Z"
     },
     "30377": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:23:49.026Z"
+      "status": "success",
+      "product_name": "Cranfit Tablet",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:10:29.308Z"
     },
     "30447": {
       "status": "not_found",
@@ -2079,7 +1956,7 @@
     },
     "30452": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:52.932Z"
+      "checked_at": "2026-09-12T09:10:32.814Z"
     },
     "30469": {
       "status": "not_found",
@@ -2087,11 +1964,11 @@
     },
     "30641": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:33.633Z"
+      "checked_at": "2026-09-12T06:41:59.473Z"
     },
     "30650": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:37.751Z"
+      "checked_at": "2026-09-12T06:42:00.104Z"
     },
     "30665": {
       "status": "no_authentic_match_on_cdn",
@@ -2101,16 +1978,16 @@
       "checked_at": "2026-09-12T01:56:56.723Z"
     },
     "30667": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:11:38.269Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:00.800Z"
     },
     "30709": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:54.102Z"
+      "checked_at": "2026-09-12T09:10:34.186Z"
     },
     "30721": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:42.531Z"
+      "checked_at": "2026-09-12T06:42:01.557Z"
     },
     "30754": {
       "status": "not_found",
@@ -2125,15 +2002,15 @@
     },
     "30783": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:45.955Z"
+      "checked_at": "2026-09-12T06:42:02.213Z"
     },
     "30789": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:50.017Z"
+      "checked_at": "2026-09-12T06:42:02.858Z"
     },
     "30825": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:56.979Z"
+      "checked_at": "2026-09-12T09:10:37.062Z"
     },
     "30850": {
       "status": "not_found",
@@ -2149,7 +2026,7 @@
     },
     "30951": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:23:59.268Z"
+      "checked_at": "2026-09-12T09:10:39.225Z"
     },
     "31014": {
       "status": "gemini_rejected",
@@ -2188,11 +2065,11 @@
     },
     "31164": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:52.887Z"
+      "checked_at": "2026-09-12T06:42:03.609Z"
     },
     "31194": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:56.417Z"
+      "checked_at": "2026-09-12T06:42:04.439Z"
     },
     "31252": {
       "status": "success",
@@ -2265,7 +2142,7 @@
     },
     "31604": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:20.047Z"
+      "checked_at": "2026-09-12T09:10:41.421Z"
     },
     "31627": {
       "status": "gemini_rejected",
@@ -2296,19 +2173,19 @@
     },
     "31783": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:11:58.747Z"
+      "checked_at": "2026-09-12T06:42:05.219Z"
     },
     "31806": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:00.064Z"
+      "checked_at": "2026-09-12T06:42:05.856Z"
     },
     "31896": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:02.462Z"
+      "checked_at": "2026-09-12T06:42:08.066Z"
     },
     "31907": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:20.713Z"
+      "checked_at": "2026-09-12T09:10:45.094Z"
     },
     "31928": {
       "status": "not_found",
@@ -2324,11 +2201,11 @@
     },
     "32009": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:04.820Z"
+      "checked_at": "2026-09-12T06:42:12.034Z"
     },
     "32050": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:21.321Z"
+      "checked_at": "2026-09-12T09:10:49.814Z"
     },
     "32066": {
       "status": "not_found",
@@ -2336,11 +2213,11 @@
     },
     "32094": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:07.270Z"
+      "checked_at": "2026-09-12T06:42:15.931Z"
     },
     "32179": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:21.909Z"
+      "checked_at": "2026-09-12T09:10:52.807Z"
     },
     "32226": {
       "status": "not_found",
@@ -2348,7 +2225,7 @@
     },
     "32273": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:08.686Z"
+      "checked_at": "2026-09-12T06:42:18.515Z"
     },
     "32302": {
       "status": "success",
@@ -2361,7 +2238,7 @@
     },
     "32318": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:10.453Z"
+      "checked_at": "2026-09-12T06:42:31.658Z"
     },
     "32479": {
       "status": "not_found",
@@ -2369,11 +2246,11 @@
     },
     "32554": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:22.543Z"
+      "checked_at": "2026-09-12T09:10:55.835Z"
     },
     "32561": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:23.215Z"
+      "checked_at": "2026-09-12T09:10:57.539Z"
     },
     "32604": {
       "status": "not_found",
@@ -2385,7 +2262,7 @@
     },
     "32646": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:12.614Z"
+      "checked_at": "2026-09-12T06:42:32.478Z"
     },
     "32687": {
       "status": "not_found",
@@ -2397,7 +2274,7 @@
     },
     "32766": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:23.992Z"
+      "checked_at": "2026-09-12T09:10:59.854Z"
     },
     "32807": {
       "status": "not_found",
@@ -2422,13 +2299,8 @@
       "checked_at": "2026-09-11T20:15:29.696Z"
     },
     "32851": {
-      "status": "success",
-      "product_name": "Suncros 50 Aqua Sunscreen SPF 50 | For Sensitive Skin | Non-Greasy Lotion",
-      "angles_saved": 3,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:12:29.329Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:33.250Z"
     },
     "32862": {
       "status": "success",
@@ -2461,13 +2333,8 @@
       "checked_at": "2026-09-11T20:15:59.466Z"
     },
     "33043": {
-      "status": "success",
-      "product_name": "Headon 4Iu Vial Of 1 Powder For Injection",
-      "angles_saved": 1,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:12:44.759Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:33.914Z"
     },
     "33069": {
       "status": "not_found",
@@ -2479,11 +2346,16 @@
     },
     "33077": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:51.557Z"
+      "checked_at": "2026-09-12T06:42:34.688Z"
     },
     "33125": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:24.577Z"
+      "status": "success",
+      "product_name": "Cofsils Lozenges for Quick Relief from Sore Throat Honey lemon",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:11:18.167Z"
     },
     "33208": {
       "status": "not_found",
@@ -2495,11 +2367,11 @@
     },
     "33233": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:55.161Z"
+      "checked_at": "2026-09-12T06:42:35.329Z"
     },
     "33274": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:25.241Z"
+      "checked_at": "2026-09-12T09:11:20.347Z"
     },
     "33334": {
       "status": "not_found",
@@ -2511,11 +2383,11 @@
     },
     "33393": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:25.876Z"
+      "checked_at": "2026-09-12T09:11:22.353Z"
     },
     "33395": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:12:58.487Z"
+      "checked_at": "2026-09-12T06:42:35.990Z"
     },
     "33396": {
       "status": "not_found",
@@ -2530,19 +2402,19 @@
     },
     "33493": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:26.571Z"
+      "checked_at": "2026-09-12T09:11:24.095Z"
     },
     "33575": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:02.944Z"
+      "checked_at": "2026-09-12T06:42:36.739Z"
     },
     "33597": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:07.843Z"
+      "checked_at": "2026-09-12T06:42:37.558Z"
     },
     "33601": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:27.099Z"
+      "checked_at": "2026-09-12T09:11:25.793Z"
     },
     "33661": {
       "status": "gemini_rejected",
@@ -2599,11 +2471,11 @@
     },
     "33873": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:27.627Z"
+      "checked_at": "2026-09-12T09:11:27.056Z"
     },
     "33911": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:28.255Z"
+      "checked_at": "2026-09-12T09:11:28.671Z"
     },
     "33942": {
       "status": "not_found",
@@ -2611,7 +2483,7 @@
     },
     "33955": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:28.875Z"
+      "checked_at": "2026-09-12T09:11:31.396Z"
     },
     "34019": {
       "status": "success",
@@ -2642,17 +2514,12 @@
       "checked_at": "2026-09-11T20:18:31.726Z"
     },
     "34195": {
-      "status": "success",
-      "product_name": "Riconia G Strip Of 10 Softgel Capsules",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:13:42.974Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:38.108Z"
     },
     "34287": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:29.477Z"
+      "checked_at": "2026-09-12T09:11:34.042Z"
     },
     "34314": {
       "status": "not_found",
@@ -2680,8 +2547,13 @@
       "checked_at": "2026-09-12T02:06:52.614Z"
     },
     "34400": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:30.234Z"
+      "status": "success",
+      "product_name": "Ors Insta Orange Flavour 21.8G Powder",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:11:54.698Z"
     },
     "34409": {
       "status": "not_found",
@@ -2696,7 +2568,7 @@
     },
     "34446": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:46.766Z"
+      "checked_at": "2026-09-12T06:42:38.766Z"
     },
     "34463": {
       "status": "gemini_rejected",
@@ -2719,7 +2591,7 @@
     },
     "34691": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:49.908Z"
+      "checked_at": "2026-09-12T06:42:39.378Z"
     },
     "34726": {
       "status": "not_found",
@@ -2727,7 +2599,7 @@
     },
     "34731": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:30.731Z"
+      "checked_at": "2026-09-12T09:11:55.945Z"
     },
     "34742": {
       "status": "not_found",
@@ -2746,11 +2618,11 @@
     },
     "34799": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:31.358Z"
+      "checked_at": "2026-09-12T09:11:57.479Z"
     },
     "34800": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:55.260Z"
+      "checked_at": "2026-09-12T06:42:40.133Z"
     },
     "34811": {
       "status": "success",
@@ -2764,19 +2636,19 @@
     },
     "34822": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:31.958Z"
+      "checked_at": "2026-09-12T09:11:59.063Z"
     },
     "34833": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:57.515Z"
+      "checked_at": "2026-09-12T06:42:40.739Z"
     },
     "34894": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:32.672Z"
+      "checked_at": "2026-09-12T09:12:01.252Z"
     },
     "34898": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:33.213Z"
+      "checked_at": "2026-09-12T09:12:02.324Z"
     },
     "34936": {
       "status": "not_found",
@@ -2788,7 +2660,7 @@
     },
     "35048": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:33.796Z"
+      "checked_at": "2026-09-12T09:12:03.861Z"
     },
     "35056": {
       "status": "gemini_rejected",
@@ -2819,28 +2691,28 @@
     },
     "35168": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:34.336Z"
+      "checked_at": "2026-09-12T09:12:05.387Z"
     },
     "35220": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:13:58.850Z"
+      "checked_at": "2026-09-12T06:42:41.337Z"
     },
     "35246": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:34.931Z"
+      "status": "success",
+      "product_name": "Ciplacef 1gm INJECTION",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:12:21.450Z"
     },
     "35250": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:00.268Z"
+      "checked_at": "2026-09-12T06:42:41.965Z"
     },
     "35279": {
-      "status": "success",
-      "product_name": "Moisturex Syndet Bathing Bar | Skin Friendly pH 5.5 | Cleanses & Moisturises the Skin",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:14:17.247Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:42.639Z"
     },
     "35312": {
       "status": "not_found",
@@ -2848,7 +2720,7 @@
     },
     "35351": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:19.079Z"
+      "checked_at": "2026-09-12T06:42:43.296Z"
     },
     "35373": {
       "status": "not_found",
@@ -2863,12 +2735,22 @@
       "checked_at": "2026-09-11T20:20:25.632Z"
     },
     "35421": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:35.465Z"
+      "status": "success",
+      "product_name": "Pill 72 750mcg Tablet",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:12:31.851Z"
     },
     "35423": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:36.073Z"
+      "status": "success",
+      "product_name": "Zerostat Vt Spacer",
+      "angles_saved": 2,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:12:51.739Z"
     },
     "35459": {
       "status": "success",
@@ -2882,7 +2764,7 @@
     },
     "35578": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:36.617Z"
+      "checked_at": "2026-09-12T09:12:55.073Z"
     },
     "35607": {
       "status": "not_found",
@@ -2901,7 +2783,7 @@
     },
     "35681": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:20.981Z"
+      "checked_at": "2026-09-12T06:42:44.076Z"
     },
     "35691": {
       "status": "gemini_rejected",
@@ -2928,19 +2810,24 @@
     },
     "35760": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:22.449Z"
+      "checked_at": "2026-09-12T06:42:44.690Z"
     },
     "35797": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:37.200Z"
+      "checked_at": "2026-09-12T09:12:57.455Z"
     },
     "35910": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:37.678Z"
+      "status": "success",
+      "product_name": "Karovit Tablet",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:13:18.345Z"
     },
     "35925": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:38.388Z"
+      "checked_at": "2026-09-12T09:13:20.506Z"
     },
     "35937": {
       "status": "not_found",
@@ -2962,7 +2849,7 @@
     },
     "36006": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:23.744Z"
+      "checked_at": "2026-09-12T06:42:45.263Z"
     },
     "36016": {
       "status": "not_found",
@@ -2974,11 +2861,11 @@
     },
     "36031": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:39.003Z"
+      "checked_at": "2026-09-12T09:13:21.735Z"
     },
     "36036": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:25.468Z"
+      "checked_at": "2026-09-12T06:42:45.996Z"
     },
     "36091": {
       "status": "not_found",
@@ -3008,7 +2895,7 @@
     },
     "36461": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:26.575Z"
+      "checked_at": "2026-09-12T06:42:46.615Z"
     },
     "36463": {
       "status": "not_found",
@@ -3019,12 +2906,17 @@
       "checked_at": "2026-09-11T20:22:05.538Z"
     },
     "36513": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:39.480Z"
+      "status": "success",
+      "product_name": "Rivela Lite Weightless Mousse Broad Spectrum UVA/UVB Sunscreen SPF 50",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:13:41.345Z"
     },
     "36542": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:40.083Z"
+      "checked_at": "2026-09-12T09:13:45.430Z"
     },
     "36562": {
       "status": "not_found",
@@ -3049,7 +2941,7 @@
     },
     "36705": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:40.695Z"
+      "checked_at": "2026-09-12T09:13:48.716Z"
     },
     "36740": {
       "status": "not_found",
@@ -3061,11 +2953,11 @@
     },
     "36786": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:41.322Z"
+      "checked_at": "2026-09-12T09:13:51.786Z"
     },
     "36791": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:27.290Z"
+      "checked_at": "2026-09-12T06:42:47.095Z"
     },
     "36822": {
       "status": "not_found",
@@ -3077,7 +2969,7 @@
     },
     "36872": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:41.913Z"
+      "checked_at": "2026-09-12T09:13:56.931Z"
     },
     "36890": {
       "status": "not_found",
@@ -3085,19 +2977,24 @@
     },
     "36901": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:29.054Z"
+      "checked_at": "2026-09-12T06:42:47.869Z"
     },
     "36951": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:30.127Z"
+      "checked_at": "2026-09-12T06:42:48.417Z"
     },
     "36971": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:14:31.719Z"
+      "checked_at": "2026-09-12T06:42:49.069Z"
     },
     "37038": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:42.502Z"
+      "status": "success",
+      "product_name": "Zerostat VT Spacer with Flow Gate Valve",
+      "angles_saved": 4,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:14:13.965Z"
     },
     "37078": {
       "status": "not_found",
@@ -3105,7 +3002,7 @@
     },
     "37114": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:43.080Z"
+      "checked_at": "2026-09-12T09:14:15.190Z"
     },
     "37140": {
       "status": "gemini_rejected",
@@ -3116,7 +3013,7 @@
     },
     "37154": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:43.707Z"
+      "checked_at": "2026-09-12T09:14:16.569Z"
     },
     "37225": {
       "status": "not_found",
@@ -3127,13 +3024,8 @@
       "checked_at": "2026-09-11T20:22:29.906Z"
     },
     "37249": {
-      "status": "success",
-      "product_name": "New Xtraglo Tablet with Amino Acids, Vitamins & Minerals",
-      "angles_saved": 3,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:14:55.274Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:49.563Z"
     },
     "37252": {
       "status": "not_found",
@@ -3148,16 +3040,21 @@
       "checked_at": "2026-09-11T20:22:33.751Z"
     },
     "37379": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:44.268Z"
+      "status": "success",
+      "product_name": "The Pink Foundry Acne Care & Healing Gel Moisturiser Normal, Sensitive, Oily, Combination Skin",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:14:34.663Z"
     },
     "37415": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:00.101Z"
+      "checked_at": "2026-09-12T06:42:50.174Z"
     },
     "37419": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:44.810Z"
+      "checked_at": "2026-09-12T09:14:36.107Z"
     },
     "37420": {
       "status": "success",
@@ -3177,35 +3074,40 @@
     },
     "37468": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:05.707Z"
+      "checked_at": "2026-09-12T06:42:50.938Z"
     },
     "37474": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:45.284Z"
+      "checked_at": "2026-09-12T09:14:37.627Z"
     },
     "37547": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:11.360Z"
+      "checked_at": "2026-09-12T06:42:51.600Z"
     },
     "37669": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:45.819Z"
+      "status": "success",
+      "product_name": "Baby Mask Pack Of 1",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:14:56.823Z"
     },
     "37697": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:14.753Z"
+      "checked_at": "2026-09-12T06:42:52.209Z"
     },
     "37757": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:17.825Z"
+      "checked_at": "2026-09-12T06:42:52.849Z"
     },
     "37774": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:19.197Z"
+      "checked_at": "2026-09-12T06:42:53.333Z"
     },
     "37789": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:46.286Z"
+      "checked_at": "2026-09-12T09:14:59.484Z"
     },
     "37819": {
       "status": "not_found",
@@ -3217,7 +3119,7 @@
     },
     "37926": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:23.282Z"
+      "checked_at": "2026-09-12T06:42:54.059Z"
     },
     "37994": {
       "status": "not_found",
@@ -3225,7 +3127,7 @@
     },
     "38014": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:24.463Z"
+      "checked_at": "2026-09-12T06:42:54.669Z"
     },
     "38018": {
       "status": "not_found",
@@ -3241,15 +3143,15 @@
     },
     "38130": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:25.450Z"
+      "checked_at": "2026-09-12T06:42:55.206Z"
     },
     "38137": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:27.550Z"
+      "checked_at": "2026-09-12T06:42:55.921Z"
     },
     "38169": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:15:28.062Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:42:56.406Z"
     },
     "38210": {
       "status": "not_found",
@@ -3269,15 +3171,15 @@
     },
     "38249": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:46.756Z"
+      "checked_at": "2026-09-12T09:15:01.526Z"
     },
     "38254": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:29.614Z"
+      "checked_at": "2026-09-12T06:42:57.125Z"
     },
     "38265": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:30.951Z"
+      "checked_at": "2026-09-12T06:42:57.736Z"
     },
     "38269": {
       "status": "not_found",
@@ -3305,11 +3207,11 @@
     },
     "38552": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:47.481Z"
+      "checked_at": "2026-09-12T09:15:09.123Z"
     },
     "38625": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:32.419Z"
+      "checked_at": "2026-09-12T06:42:58.357Z"
     },
     "38659": {
       "status": "not_found",
@@ -3317,15 +3219,20 @@
     },
     "38893": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:33.836Z"
+      "checked_at": "2026-09-12T06:42:59.020Z"
     },
     "38913": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:22:45.589Z"
     },
     "38918": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:24:48.075Z"
+      "status": "success",
+      "product_name": "Cefvac- B Adult Vaccine",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:15:25.608Z"
     },
     "38955": {
       "status": "not_found",
@@ -3333,7 +3240,7 @@
     },
     "38964": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:35.468Z"
+      "checked_at": "2026-09-12T06:42:59.638Z"
     },
     "38993": {
       "status": "not_found",
@@ -3341,11 +3248,11 @@
     },
     "38999": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:50.128Z"
+      "checked_at": "2026-09-12T09:15:27.321Z"
     },
     "39021": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:15:38.461Z"
+      "checked_at": "2026-09-12T06:43:00.495Z"
     },
     "39084": {
       "status": "success",
@@ -3403,13 +3310,8 @@
       "updated_at": "2026-09-11T19:43:24.564Z"
     },
     "39312": {
-      "status": "success",
-      "product_name": "New Nusam 200Mg Strip Of 10 Tablets",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:15:56.764Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:01.093Z"
     },
     "39407": {
       "status": "not_found",
@@ -3417,7 +3319,7 @@
     },
     "39469": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:16:00.811Z"
+      "checked_at": "2026-09-12T06:43:01.707Z"
     },
     "39509": {
       "status": "not_found",
@@ -3425,7 +3327,7 @@
     },
     "39524": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:16:04.556Z"
+      "checked_at": "2026-09-12T06:43:02.305Z"
     },
     "39538": {
       "status": "not_found",
@@ -3433,16 +3335,11 @@
     },
     "39565": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:53.213Z"
+      "checked_at": "2026-09-12T09:15:29.071Z"
     },
     "39597": {
-      "status": "success",
-      "product_name": "Epilyno Bottle Of 50Gm Lotion",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:16:17.766Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:02.875Z"
     },
     "39624": {
       "status": "not_found",
@@ -3450,7 +3347,7 @@
     },
     "39670": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:24:55.364Z"
+      "checked_at": "2026-09-12T09:15:30.222Z"
     },
     "39762": {
       "status": "not_found",
@@ -3495,11 +3392,11 @@
     },
     "40072": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:12.258Z"
+      "checked_at": "2026-09-12T09:15:32.049Z"
     },
     "40075": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:16:20.777Z"
+      "checked_at": "2026-09-12T06:43:03.494Z"
     },
     "40080": {
       "status": "gemini_rejected",
@@ -3533,7 +3430,7 @@
     },
     "40229": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:12.855Z"
+      "checked_at": "2026-09-12T09:15:33.330Z"
     },
     "40288": {
       "status": "success",
@@ -3559,51 +3456,41 @@
       "checked_at": "2026-09-12T03:23:30.176Z"
     },
     "40402": {
-      "status": "success",
-      "product_name": "New Nusam 400Mg Strip Of 10 Tablets",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:16:41.622Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:04.253Z"
     },
     "40409": {
-      "status": "success",
-      "product_name": "New Adesam 200Mg Strip Of 10 Tablets",
-      "angles_saved": 3,
-      "primary_face": "box-front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:17:07.231Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:04.916Z"
     },
     "40421": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:24:39.847Z"
     },
     "40454": {
-      "status": "success",
-      "product_name": "Bioexidil Serum 60Ml",
-      "angles_saved": 1,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:17:19.822Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:05.639Z"
     },
     "40479": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:23.109Z"
+      "checked_at": "2026-09-12T06:43:06.235Z"
     },
     "40539": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:13.333Z"
+      "status": "success",
+      "product_name": "Emocip Cream",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:15:44.894Z"
     },
     "40719": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:26.138Z"
+      "checked_at": "2026-09-12T06:43:10.121Z"
     },
     "40775": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:31.080Z"
+      "checked_at": "2026-09-12T06:43:14.761Z"
     },
     "40776": {
       "status": "not_found",
@@ -3611,7 +3498,7 @@
     },
     "40789": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:32.536Z"
+      "checked_at": "2026-09-12T06:43:17.131Z"
     },
     "40794": {
       "status": "success",
@@ -3626,8 +3513,13 @@
       "checked_at": "2026-09-11T20:24:44.002Z"
     },
     "40866": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:13.878Z"
+      "status": "success",
+      "product_name": "Infant Mask",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:16:05.992Z"
     },
     "40883": {
       "status": "success",
@@ -3659,7 +3551,7 @@
     },
     "40984": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:14.466Z"
+      "checked_at": "2026-09-12T09:16:09.817Z"
     },
     "41010": {
       "status": "success",
@@ -3672,15 +3564,20 @@
     },
     "41023": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:34.646Z"
+      "checked_at": "2026-09-12T06:43:47.975Z"
     },
     "41027": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:35.556Z"
+      "checked_at": "2026-09-12T06:43:48.866Z"
     },
     "41040": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:15.030Z"
+      "status": "success",
+      "product_name": "Tranfib 250mg Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:16:30.907Z"
     },
     "41092": {
       "status": "gemini_rejected",
@@ -3699,7 +3596,7 @@
     },
     "41119": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:15.646Z"
+      "checked_at": "2026-09-12T09:16:33.144Z"
     },
     "41140": {
       "status": "not_found",
@@ -3725,7 +3622,7 @@
     },
     "41260": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:36.921Z"
+      "checked_at": "2026-09-12T06:43:52.254Z"
     },
     "41270": {
       "status": "success",
@@ -3769,8 +3666,13 @@
       "checked_at": "2026-09-11T20:26:07.512Z"
     },
     "41413": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:16.360Z"
+      "status": "success",
+      "product_name": "Xgain Shampoo | Nourishes & Strengthens Hair | For Hair Care",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:16:53.491Z"
     },
     "41423": {
       "status": "gemini_rejected",
@@ -3795,7 +3697,7 @@
     },
     "41516": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:16.977Z"
+      "checked_at": "2026-09-12T09:16:56.892Z"
     },
     "41523": {
       "status": "not_found",
@@ -3826,12 +3728,17 @@
       "updated_at": "2026-09-11T19:45:04.169Z"
     },
     "41716": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:17.456Z"
+      "status": "success",
+      "product_name": "Crisanta Strip Of 21 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:17:14.101Z"
     },
     "41743": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:17.937Z"
+      "checked_at": "2026-09-12T09:17:15.715Z"
     },
     "41771": {
       "status": "success",
@@ -3842,8 +3749,13 @@
       "updated_at": "2026-09-11T19:45:11.820Z"
     },
     "41789": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:18.528Z"
+      "status": "success",
+      "product_name": "Lenmid 5Mg Strip Of 10 Capsules",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:17:30.461Z"
     },
     "41800": {
       "status": "gemini_rejected",
@@ -3854,7 +3766,7 @@
     },
     "41805": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:37.745Z"
+      "checked_at": "2026-09-12T06:43:53.255Z"
     },
     "41818": {
       "status": "not_found",
@@ -3862,7 +3774,7 @@
     },
     "41823": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:19.146Z"
+      "checked_at": "2026-09-12T09:17:32.350Z"
     },
     "41866": {
       "status": "not_found",
@@ -3870,7 +3782,7 @@
     },
     "41889": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:19.882Z"
+      "checked_at": "2026-09-12T09:17:34.323Z"
     },
     "41895": {
       "status": "not_found",
@@ -3878,7 +3790,7 @@
     },
     "41900": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:17:38.738Z"
+      "checked_at": "2026-09-12T06:43:53.857Z"
     },
     "41945": {
       "status": "not_found",
@@ -3890,19 +3802,24 @@
     },
     "41952": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:20.380Z"
+      "checked_at": "2026-09-12T09:17:35.056Z"
     },
     "41987": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:27:08.051Z"
     },
     "41997": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:20.943Z"
+      "status": "success",
+      "product_name": "Crisanta LS Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:17:47.801Z"
     },
     "42009": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:21.543Z"
+      "checked_at": "2026-09-12T09:17:51.654Z"
     },
     "42028": {
       "status": "success",
@@ -3915,38 +3832,28 @@
       "checked_at": "2026-09-12T02:11:59.192Z"
     },
     "42063": {
-      "status": "success",
-      "product_name": "Fertisure F Nutraceutical Tablet with Amino Acids, Vitamins, Minerals & Antioxidants",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:17:55.175Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:54.395Z"
     },
     "42089": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:00.575Z"
+      "checked_at": "2026-09-12T06:43:55.134Z"
     },
     "42092": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:03.130Z"
+      "checked_at": "2026-09-12T06:43:55.730Z"
     },
     "42104": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:22.147Z"
+      "checked_at": "2026-09-12T09:17:54.526Z"
     },
     "42133": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:27:27.444Z"
     },
     "42161": {
-      "status": "success",
-      "product_name": "Sodox Bottle Of 15 Capsules",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:18:22.890Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:56.409Z"
     },
     "42172": {
       "status": "gemini_rejected",
@@ -3961,7 +3868,7 @@
     },
     "42232": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:23.921Z"
+      "checked_at": "2026-09-12T06:43:56.889Z"
     },
     "42257": {
       "status": "gemini_rejected",
@@ -3972,36 +3879,31 @@
     },
     "42258": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:25.258Z"
+      "checked_at": "2026-09-12T06:43:57.495Z"
     },
     "42294": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:22.740Z"
+      "checked_at": "2026-09-12T09:17:58.310Z"
     },
     "42301": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:23.338Z"
+      "checked_at": "2026-09-12T09:18:01.270Z"
     },
     "42305": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:26.494Z"
+      "checked_at": "2026-09-12T06:43:58.097Z"
     },
     "42323": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:23.942Z"
+      "checked_at": "2026-09-12T09:18:07.119Z"
     },
     "42363": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:27:58.644Z"
     },
     "42364": {
-      "status": "success",
-      "product_name": "New Anofer Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:18:41.776Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:43:58.558Z"
     },
     "42370": {
       "status": "not_found",
@@ -4009,7 +3911,7 @@
     },
     "42421": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:43.229Z"
+      "checked_at": "2026-09-12T06:43:59.201Z"
     },
     "42431": {
       "status": "not_found",
@@ -4035,15 +3937,15 @@
     },
     "42564": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:46.775Z"
+      "checked_at": "2026-09-12T06:43:59.900Z"
     },
     "42573": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:18:49.792Z"
+      "checked_at": "2026-09-12T06:44:00.502Z"
     },
     "42589": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:24.470Z"
+      "checked_at": "2026-09-12T09:18:10.135Z"
     },
     "42592": {
       "status": "gemini_rejected",
@@ -4054,20 +3956,15 @@
     },
     "42634": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:25.046Z"
+      "checked_at": "2026-09-12T09:18:12.604Z"
     },
     "42667": {
-      "status": "success",
-      "product_name": "HepaRel 100IU Injection",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:19:08.752Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:01.213Z"
     },
     "42699": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:25.580Z"
+      "checked_at": "2026-09-12T09:18:13.737Z"
     },
     "42725": {
       "status": "gemini_rejected",
@@ -4088,7 +3985,7 @@
     },
     "42792": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:26.246Z"
+      "checked_at": "2026-09-12T09:18:15.410Z"
     },
     "42825": {
       "status": "not_found",
@@ -4109,20 +4006,25 @@
       "checked_at": "2026-09-12T02:13:22.482Z"
     },
     "42890": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:19:09.276Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:01.923Z"
     },
     "42920": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:26.825Z"
+      "status": "success",
+      "product_name": "Rivela Tint Sunscreen SPF 50 with Vitamin E | Broad Spectrum Protection Lotion",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:18:34.923Z"
     },
     "42933": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:11.599Z"
+      "checked_at": "2026-09-12T06:44:02.523Z"
     },
     "42950": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:27.366Z"
+      "checked_at": "2026-09-12T09:18:36.472Z"
     },
     "42957": {
       "status": "not_found",
@@ -4134,7 +4036,7 @@
     },
     "43009": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:16.209Z"
+      "checked_at": "2026-09-12T06:44:03.258Z"
     },
     "43018": {
       "status": "not_found",
@@ -4152,7 +4054,7 @@
     },
     "43070": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:27.951Z"
+      "checked_at": "2026-09-12T09:18:37.556Z"
     },
     "43077": {
       "status": "not_found",
@@ -4160,11 +4062,16 @@
     },
     "43142": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:28.590Z"
+      "checked_at": "2026-09-12T09:18:39.321Z"
     },
     "43216": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:29.294Z"
+      "status": "success",
+      "product_name": "Saslic Hydra Foaming Face Wash",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:18:59.255Z"
     },
     "43219": {
       "status": "success",
@@ -4191,7 +4098,7 @@
     },
     "43290": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:29.937Z"
+      "checked_at": "2026-09-12T09:19:02.398Z"
     },
     "43293": {
       "status": "not_found",
@@ -4199,11 +4106,11 @@
     },
     "43340": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:30.475Z"
+      "checked_at": "2026-09-12T09:19:06.417Z"
     },
     "43359": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:19.330Z"
+      "checked_at": "2026-09-12T06:44:03.867Z"
     },
     "43372": {
       "status": "not_found",
@@ -4217,30 +4124,25 @@
       "checked_at": "2026-09-12T03:49:11.832Z"
     },
     "43468": {
-      "status": "success",
-      "product_name": "Flavojoint 500Mg Strip Of 10 Tablets",
-      "angles_saved": 2,
-      "primary_face": "back",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:19:36.828Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:04.482Z"
     },
     "43494": {
-      "status": "success",
-      "product_name": "Dronis 20 Tablet",
-      "angles_saved": 4,
-      "primary_face": "back",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:19:50.494Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:05.025Z"
     },
     "43497": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:30:40.294Z"
     },
     "43512": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:31.014Z"
+      "status": "success",
+      "product_name": "Liceclear Anti-Lice Shampoo 50 Ml",
+      "angles_saved": 1,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:19:18.789Z"
     },
     "43588": {
       "status": "not_found",
@@ -4248,11 +4150,11 @@
     },
     "43601": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:31.576Z"
+      "checked_at": "2026-09-12T09:19:20.380Z"
     },
     "43608": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:54.239Z"
+      "checked_at": "2026-09-12T06:44:05.754Z"
     },
     "43650": {
       "status": "not_found",
@@ -4260,11 +4162,11 @@
     },
     "43664": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:57.316Z"
+      "checked_at": "2026-09-12T06:44:06.377Z"
     },
     "43677": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:19:59.954Z"
+      "checked_at": "2026-09-12T06:44:10.081Z"
     },
     "43687": {
       "status": "not_found",
@@ -4295,7 +4197,7 @@
     },
     "43823": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:02.785Z"
+      "checked_at": "2026-09-12T06:44:12.554Z"
     },
     "43839": {
       "status": "success",
@@ -4330,11 +4232,16 @@
     },
     "43891": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:05.198Z"
+      "checked_at": "2026-09-12T06:44:15.582Z"
     },
     "43916": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:32.162Z"
+      "status": "success",
+      "product_name": "Huf Puf Kit 1",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:19:35.352Z"
     },
     "43931": {
       "status": "success",
@@ -4355,7 +4262,7 @@
     },
     "43984": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:08.120Z"
+      "checked_at": "2026-09-12T06:44:35.658Z"
     },
     "43986": {
       "status": "not_found",
@@ -4363,11 +4270,11 @@
     },
     "44019": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:32.698Z"
+      "checked_at": "2026-09-12T09:19:36.888Z"
     },
     "44038": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:33.245Z"
+      "checked_at": "2026-09-12T09:19:38.194Z"
     },
     "44044": {
       "status": "success",
@@ -4389,11 +4296,11 @@
     },
     "44082": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:12.807Z"
+      "checked_at": "2026-09-12T06:44:39.699Z"
     },
     "44113": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:14.137Z"
+      "checked_at": "2026-09-12T06:44:40.957Z"
     },
     "44135": {
       "status": "gemini_rejected",
@@ -4408,7 +4315,7 @@
     },
     "44186": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:34.039Z"
+      "checked_at": "2026-09-12T09:19:40.424Z"
     },
     "44213": {
       "status": "not_found",
@@ -4420,15 +4327,15 @@
     },
     "44278": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:34.505Z"
+      "checked_at": "2026-09-12T09:19:41.224Z"
     },
     "44333": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:16.190Z"
+      "checked_at": "2026-09-12T06:44:41.560Z"
     },
     "44355": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:35.044Z"
+      "checked_at": "2026-09-12T09:19:42.273Z"
     },
     "44365": {
       "status": "not_found",
@@ -4436,7 +4343,7 @@
     },
     "44393": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:35.780Z"
+      "checked_at": "2026-09-12T09:19:44.401Z"
     },
     "44404": {
       "status": "not_found",
@@ -4447,12 +4354,22 @@
       "checked_at": "2026-09-11T20:32:32.346Z"
     },
     "44500": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:36.372Z"
+      "status": "success",
+      "product_name": "Fit Eye Plus Strip Of 10 Capsules",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:20:11.755Z"
     },
     "44567": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:37.009Z"
+      "status": "success",
+      "product_name": "Zerostat Vt Spacer",
+      "angles_saved": 2,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:20:31.658Z"
     },
     "44589": {
       "status": "gemini_rejected",
@@ -4463,11 +4380,11 @@
     },
     "44621": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:17.853Z"
+      "checked_at": "2026-09-12T06:44:42.049Z"
     },
     "44675": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:37.540Z"
+      "checked_at": "2026-09-12T09:20:33.166Z"
     },
     "44785": {
       "status": "not_found",
@@ -4481,29 +4398,24 @@
       "checked_at": "2026-09-12T04:01:45.425Z"
     },
     "44859": {
-      "status": "success",
-      "product_name": "Nutrikit Cv Strip Of 10 Capsules",
-      "angles_saved": 1,
-      "primary_face": "side",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:20:30.851Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:42.600Z"
     },
     "44861": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:32.234Z"
+      "checked_at": "2026-09-12T06:44:43.281Z"
     },
     "44909": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:38.095Z"
+      "checked_at": "2026-09-12T09:20:34.042Z"
     },
     "44915": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:33.402Z"
+      "checked_at": "2026-09-12T06:44:43.999Z"
     },
     "44993": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:38.567Z"
+      "checked_at": "2026-09-12T09:20:34.760Z"
     },
     "45005": {
       "status": "not_found",
@@ -4511,7 +4423,7 @@
     },
     "45124": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:34.672Z"
+      "checked_at": "2026-09-12T06:44:44.613Z"
     },
     "45142": {
       "status": "gemini_rejected",
@@ -4521,12 +4433,17 @@
       "checked_at": "2026-09-12T04:03:31.575Z"
     },
     "45218": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:39.126Z"
+      "status": "success",
+      "product_name": "Rivela Lite Weightless Mousse Broad Spectrum UVA/UVB Sunscreen SPF 50",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:20:50.034Z"
     },
     "45291": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:39.648Z"
+      "checked_at": "2026-09-12T09:20:54.889Z"
     },
     "45304": {
       "status": "not_found",
@@ -4534,11 +4451,11 @@
     },
     "45339": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:40.232Z"
+      "checked_at": "2026-09-12T09:20:58.327Z"
     },
     "45427": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:36.853Z"
+      "checked_at": "2026-09-12T06:44:45.350Z"
     },
     "45455": {
       "status": "success",
@@ -4550,11 +4467,11 @@
     },
     "45522": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:38.013Z"
+      "checked_at": "2026-09-12T06:44:45.979Z"
     },
     "45548": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:40.836Z"
+      "checked_at": "2026-09-12T09:21:01.302Z"
     },
     "45552": {
       "status": "not_found",
@@ -4566,15 +4483,20 @@
     },
     "45659": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:38.967Z"
+      "checked_at": "2026-09-12T06:44:46.497Z"
     },
     "45671": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:41.426Z"
+      "status": "success",
+      "product_name": "VC 15 Vitamin C Serum | Rich in Antioxidants for Ageing Skin",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:21:18.962Z"
     },
     "45717": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:40.646Z"
+      "checked_at": "2026-09-12T06:44:47.093Z"
     },
     "45733": {
       "status": "not_found",
@@ -4582,7 +4504,7 @@
     },
     "45766": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:42.585Z"
+      "checked_at": "2026-09-12T06:44:47.805Z"
     },
     "45777": {
       "status": "not_found",
@@ -4594,7 +4516,7 @@
     },
     "45925": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:41.891Z"
+      "checked_at": "2026-09-12T09:21:20.479Z"
     },
     "45933": {
       "status": "no_authentic_match_on_cdn",
@@ -4616,7 +4538,7 @@
     },
     "45995": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:44.193Z"
+      "checked_at": "2026-09-12T06:44:48.417Z"
     },
     "45999": {
       "status": "not_found",
@@ -4635,7 +4557,7 @@
     },
     "46067": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:42.362Z"
+      "checked_at": "2026-09-12T09:21:22.272Z"
     },
     "46084": {
       "status": "not_found",
@@ -4643,7 +4565,7 @@
     },
     "46206": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:20:45.404Z"
+      "checked_at": "2026-09-12T06:44:49.045Z"
     },
     "46217": {
       "status": "success",
@@ -4657,7 +4579,7 @@
     },
     "46235": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:42.887Z"
+      "checked_at": "2026-09-12T09:21:25.778Z"
     },
     "46240": {
       "status": "success",
@@ -4688,17 +4610,12 @@
       "checked_at": "2026-09-12T04:07:40.549Z"
     },
     "46412": {
-      "status": "success",
-      "product_name": "Exel 0.05% Tube Of 30Gm Cream",
-      "angles_saved": 4,
-      "primary_face": "box-side",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:20:59.446Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:49.653Z"
     },
     "46478": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:01.302Z"
+      "checked_at": "2026-09-12T06:44:50.135Z"
     },
     "46559": {
       "status": "success",
@@ -4719,7 +4636,7 @@
     },
     "46622": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:06.579Z"
+      "checked_at": "2026-09-12T06:44:50.869Z"
     },
     "46688": {
       "status": "not_found",
@@ -4731,24 +4648,19 @@
     },
     "46773": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:43.451Z"
+      "checked_at": "2026-09-12T09:21:29.546Z"
     },
     "46775": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:08.016Z"
+      "checked_at": "2026-09-12T06:44:51.344Z"
     },
     "46839": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:34:55.324Z"
     },
     "46855": {
-      "status": "success",
-      "product_name": "New Speedral Strip Of 15 Capsules",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:21:30.506Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:51.993Z"
     },
     "46925": {
       "status": "gemini_rejected",
@@ -4759,7 +4671,7 @@
     },
     "46929": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:33.145Z"
+      "checked_at": "2026-09-12T06:44:52.747Z"
     },
     "46935": {
       "status": "not_found",
@@ -4780,13 +4692,8 @@
       "checked_at": "2026-09-12T02:17:19.783Z"
     },
     "47001": {
-      "status": "success",
-      "product_name": "Xerina Soft Moisturising Lotion | Paraben-Free",
-      "angles_saved": 1,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:21:43.922Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:53.222Z"
     },
     "47040": {
       "status": "not_found",
@@ -4794,7 +4701,7 @@
     },
     "47062": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:45.708Z"
+      "checked_at": "2026-09-12T06:44:53.925Z"
     },
     "47069": {
       "status": "not_found",
@@ -4802,19 +4709,24 @@
     },
     "47102": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:48.430Z"
+      "checked_at": "2026-09-12T06:44:54.498Z"
     },
     "47115": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:35:28.967Z"
     },
     "47144": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:44.060Z"
+      "status": "success",
+      "product_name": "Everfresh Hygiene Wash",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:21:46.800Z"
     },
     "47147": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:21:48.966Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:55.117Z"
     },
     "47165": {
       "status": "not_found",
@@ -4822,7 +4734,7 @@
     },
     "47175": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:51.370Z"
+      "checked_at": "2026-09-12T06:44:55.795Z"
     },
     "47180": {
       "status": "not_found",
@@ -4830,7 +4742,7 @@
     },
     "47195": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:21:55.344Z"
+      "checked_at": "2026-09-12T06:44:56.383Z"
     },
     "47219": {
       "status": "not_found",
@@ -4838,7 +4750,7 @@
     },
     "47255": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:44.584Z"
+      "checked_at": "2026-09-12T09:21:50.820Z"
     },
     "47279": {
       "status": "not_found",
@@ -4846,16 +4758,11 @@
     },
     "47284": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:00.765Z"
+      "checked_at": "2026-09-12T06:44:57.081Z"
     },
     "47311": {
-      "status": "success",
-      "product_name": "Suncros Aquagel | Spf 26 | Fpr Oily Skin Gel | 100 Gm",
-      "angles_saved": 4,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:22:21.160Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:57.807Z"
     },
     "47364": {
       "status": "gemini_rejected",
@@ -4873,8 +4780,13 @@
       "checked_at": "2026-09-11T20:35:54.397Z"
     },
     "47435": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:45.050Z"
+      "status": "success",
+      "product_name": "Optiqmega HD Tablet",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:22:09.414Z"
     },
     "47470": {
       "status": "not_found",
@@ -4890,11 +4802,11 @@
     },
     "47577": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:45.630Z"
+      "checked_at": "2026-09-12T09:22:16.702Z"
     },
     "47580": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:26.079Z"
+      "checked_at": "2026-09-12T06:44:58.653Z"
     },
     "47620": {
       "status": "gemini_rejected",
@@ -4912,7 +4824,7 @@
     },
     "47680": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:28.905Z"
+      "checked_at": "2026-09-12T06:44:59.259Z"
     },
     "47754": {
       "status": "gemini_rejected",
@@ -4933,13 +4845,8 @@
       "checked_at": "2026-09-12T04:19:35.662Z"
     },
     "47779": {
-      "status": "success",
-      "product_name": "New Xtraglo Strip Of 10 Tablets",
-      "angles_saved": 2,
-      "primary_face": "box-front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:22:47.139Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:44:59.735Z"
     },
     "47845": {
       "status": "gemini_rejected",
@@ -4950,15 +4857,20 @@
     },
     "47852": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:49.695Z"
+      "checked_at": "2026-09-12T06:45:00.273Z"
     },
     "47886": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:53.047Z"
+      "checked_at": "2026-09-12T06:45:00.874Z"
     },
     "47928": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:46.159Z"
+      "status": "success",
+      "product_name": "BETAsalic Ointment",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:22:35.230Z"
     },
     "47982": {
       "status": "not_found",
@@ -4978,7 +4890,7 @@
     },
     "48051": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:55.032Z"
+      "checked_at": "2026-09-12T06:45:01.422Z"
     },
     "48061": {
       "status": "gemini_rejected",
@@ -4989,11 +4901,11 @@
     },
     "48082": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:46.750Z"
+      "checked_at": "2026-09-12T09:22:41.728Z"
     },
     "48098": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:57.879Z"
+      "checked_at": "2026-09-12T06:45:02.033Z"
     },
     "48123": {
       "status": "gemini_rejected",
@@ -5003,8 +4915,13 @@
       "checked_at": "2026-09-12T04:24:20.191Z"
     },
     "48170": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:47.282Z"
+      "status": "success",
+      "product_name": "BETAsalic Ointment",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:22:56.900Z"
     },
     "48188": {
       "status": "success",
@@ -5018,15 +4935,20 @@
     },
     "48197": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:22:58.996Z"
+      "checked_at": "2026-09-12T06:45:02.525Z"
     },
     "48308": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:25:48.124Z"
+      "status": "success",
+      "product_name": "Triexer Forte 1 Tablet ER",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:23:18.166Z"
     },
     "48314": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:25:52.709Z"
+      "checked_at": "2026-09-12T09:23:20.981Z"
     },
     "48346": {
       "status": "success",
@@ -5043,11 +4965,11 @@
     },
     "48383": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:06.404Z"
+      "checked_at": "2026-09-12T09:23:22.265Z"
     },
     "48411": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:08.973Z"
+      "checked_at": "2026-09-12T09:23:24.082Z"
     },
     "48417": {
       "status": "success",
@@ -5060,7 +4982,7 @@
     },
     "48420": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:04.503Z"
+      "checked_at": "2026-09-12T06:45:03.247Z"
     },
     "48474": {
       "status": "not_found",
@@ -5068,11 +4990,16 @@
     },
     "48549": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:23.052Z"
+      "checked_at": "2026-09-12T09:23:25.722Z"
     },
     "48607": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:23.536Z"
+      "status": "success",
+      "product_name": "Easylax L Oral Solution Lemon Sugar Free",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:23:41.628Z"
     },
     "48628": {
       "status": "not_found",
@@ -5080,7 +5007,7 @@
     },
     "48636": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:07.562Z"
+      "checked_at": "2026-09-12T06:45:03.823Z"
     },
     "48668": {
       "status": "success",
@@ -5094,23 +5021,23 @@
     },
     "48680": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:10.521Z"
+      "checked_at": "2026-09-12T06:45:04.399Z"
     },
     "48728": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:13.009Z"
+      "checked_at": "2026-09-12T06:45:04.935Z"
     },
     "48750": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:13.521Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:05.621Z"
     },
     "48760": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:17.670Z"
+      "checked_at": "2026-09-12T06:45:06.338Z"
     },
     "48768": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:19.549Z"
+      "checked_at": "2026-09-12T06:45:09.163Z"
     },
     "48780": {
       "status": "success",
@@ -5123,7 +5050,7 @@
     },
     "48813": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:24.278Z"
+      "checked_at": "2026-09-12T09:23:44.280Z"
     },
     "48824": {
       "status": "not_found",
@@ -5144,15 +5071,15 @@
     },
     "48893": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:24.860Z"
+      "checked_at": "2026-09-12T09:23:45.324Z"
     },
     "48896": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:21.606Z"
+      "checked_at": "2026-09-12T06:45:33.884Z"
     },
     "48911": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:23.361Z"
+      "checked_at": "2026-09-12T06:45:36.657Z"
     },
     "48918": {
       "status": "not_found",
@@ -5164,35 +5091,45 @@
     },
     "48961": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:25.518Z"
+      "checked_at": "2026-09-12T09:23:47.944Z"
     },
     "48980": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:26.121Z"
+      "status": "success",
+      "product_name": "Rosulip 10Mg Strip Of 15 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:24:03.029Z"
     },
     "48988": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:26.967Z"
+      "checked_at": "2026-09-12T09:24:09.440Z"
     },
     "49009": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:27.581Z"
+      "status": "success",
+      "product_name": "Niveoli 6/100Mcg Box Of 120Md Metered Dose Inhaler",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:24:24.440Z"
     },
     "49019": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:23.872Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:37.405Z"
     },
     "49029": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:28.187Z"
+      "checked_at": "2026-09-12T09:24:26.703Z"
     },
     "49057": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:28.762Z"
+      "checked_at": "2026-09-12T09:24:27.997Z"
     },
     "49093": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:29.380Z"
+      "checked_at": "2026-09-12T09:24:29.146Z"
     },
     "49095": {
       "status": "gemini_rejected",
@@ -5213,15 +5150,15 @@
     },
     "49111": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:30.027Z"
+      "checked_at": "2026-09-12T09:24:30.612Z"
     },
     "49119": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:30.680Z"
+      "checked_at": "2026-09-12T09:24:32.363Z"
     },
     "49161": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:25.561Z"
+      "checked_at": "2026-09-12T06:45:38.069Z"
     },
     "49171": {
       "status": "not_found",
@@ -5232,28 +5169,43 @@
       "checked_at": "2026-09-11T20:38:56.219Z"
     },
     "49219": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:26.079Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:38.673Z"
     },
     "49271": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:31.351Z"
+      "status": "success",
+      "product_name": "Merocrit 1 Injection",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:24:47.852Z"
     },
     "49321": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:32.102Z"
+      "checked_at": "2026-09-12T09:24:54.297Z"
     },
     "49336": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:32.825Z"
+      "checked_at": "2026-09-12T09:24:58.741Z"
     },
     "49349": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:33.426Z"
+      "status": "success",
+      "product_name": "Levolin 1Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:25:13.286Z"
     },
     "49355": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:34.070Z"
+      "status": "success",
+      "product_name": "Novaclox Nf Strip Of 10 Capsules",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:25:34.670Z"
     },
     "49398": {
       "status": "not_found",
@@ -5267,8 +5219,13 @@
       "checked_at": "2026-09-12T04:25:02.337Z"
     },
     "49506": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:34.677Z"
+      "status": "success",
+      "product_name": "Fit Eye Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:25:57.529Z"
     },
     "49534": {
       "status": "not_found",
@@ -5276,11 +5233,11 @@
     },
     "49555": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:26.299Z"
+      "checked_at": "2026-09-12T06:45:39.162Z"
     },
     "49610": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:26.809Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:39.904Z"
     },
     "49611": {
       "status": "success",
@@ -5298,11 +5255,11 @@
     },
     "49634": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:27.438Z"
+      "checked_at": "2026-09-12T06:45:40.438Z"
     },
     "49639": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:27.956Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:41.043Z"
     },
     "49651": {
       "status": "not_found",
@@ -5310,7 +5267,7 @@
     },
     "49652": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:35.262Z"
+      "checked_at": "2026-09-12T09:26:01.276Z"
     },
     "49659": {
       "status": "gemini_rejected",
@@ -5320,24 +5277,29 @@
       "checked_at": "2026-09-12T04:26:17.936Z"
     },
     "49674": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:27.956Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:41.910Z"
     },
     "49680": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:29.402Z"
+      "checked_at": "2026-09-12T06:45:42.629Z"
     },
     "49703": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:30.539Z"
+      "checked_at": "2026-09-12T06:45:43.159Z"
     },
     "49716": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:36.097Z"
+      "checked_at": "2026-09-12T09:26:07.618Z"
     },
     "49735": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:36.867Z"
+      "status": "success",
+      "product_name": "Levolin 1Mg Orange Flavour Bottle Of 100Ml Syrup",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:26:23.743Z"
     },
     "49743": {
       "status": "not_found",
@@ -5349,15 +5311,15 @@
     },
     "49805": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:37.717Z"
+      "checked_at": "2026-09-12T09:26:29.834Z"
     },
     "49820": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:38.423Z"
+      "checked_at": "2026-09-12T09:26:34.842Z"
     },
     "49825": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:39.208Z"
+      "checked_at": "2026-09-12T09:26:37.354Z"
     },
     "49888": {
       "status": "success",
@@ -5370,29 +5332,29 @@
       "checked_at": "2026-09-12T02:20:20.667Z"
     },
     "49891": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:40.045Z"
+      "status": "success",
+      "product_name": "Nicotex Nicotine Gum Mint Plus Sugar Free",
+      "angles_saved": 3,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:26:53.792Z"
     },
     "49922": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:23:31.061Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:43.798Z"
     },
     "49932": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:31.518Z"
+      "checked_at": "2026-09-12T06:45:44.347Z"
     },
     "49983": {
-      "status": "success",
-      "product_name": "Somifiz 40mg Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:23:48.925Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:44.942Z"
     },
     "50003": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:53.847Z"
+      "checked_at": "2026-09-12T06:45:45.609Z"
     },
     "50005": {
       "status": "gemini_rejected",
@@ -5403,45 +5365,45 @@
       "checked_at": "2026-09-12T02:20:34.833Z"
     },
     "50024": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:40.646Z"
+      "status": "success",
+      "product_name": "Pruflox 600Mg Strip Of 5 Tablets",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:27:18.671Z"
     },
     "50031": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:41.300Z"
+      "checked_at": "2026-09-12T09:27:21.054Z"
     },
     "50033": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:41.979Z"
+      "checked_at": "2026-09-12T09:27:22.848Z"
     },
     "50081": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:23:58.019Z"
+      "checked_at": "2026-09-12T06:45:46.277Z"
     },
     "50107": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:04.322Z"
+      "checked_at": "2026-09-12T06:45:47.031Z"
     },
     "50123": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:40:07.205Z"
     },
     "50170": {
-      "status": "success",
-      "product_name": "Volini Maxx Pain Relief | Spray | 55 Gm",
-      "angles_saved": 2,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:24:17.290Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:47.777Z"
     },
     "50194": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:20.627Z"
+      "checked_at": "2026-09-12T06:45:48.315Z"
     },
     "50209": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:42.629Z"
+      "checked_at": "2026-09-12T09:27:24.743Z"
     },
     "50236": {
       "status": "success",
@@ -5455,43 +5417,48 @@
     },
     "50248": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:43.283Z"
+      "checked_at": "2026-09-12T09:27:26.354Z"
     },
     "50266": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:40:19.018Z"
     },
     "50283": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:43.935Z"
+      "status": "success",
+      "product_name": "Mucinac 20% Injection",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:27:48.225Z"
     },
     "50290": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:24.440Z"
+      "checked_at": "2026-09-12T06:45:48.923Z"
     },
     "50292": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:44.487Z"
+      "checked_at": "2026-09-12T09:27:50.273Z"
     },
     "50294": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:45.213Z"
+      "checked_at": "2026-09-12T09:27:55.133Z"
     },
     "50365": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:26.799Z"
+      "checked_at": "2026-09-12T06:45:49.649Z"
     },
     "50375": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:24:27.323Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:50.325Z"
     },
     "50409": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:45.819Z"
+      "checked_at": "2026-09-12T09:27:59.341Z"
     },
     "50480": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:46.378Z"
+      "checked_at": "2026-09-12T09:28:02.801Z"
     },
     "50484": {
       "status": "gemini_rejected",
@@ -5503,15 +5470,20 @@
     },
     "50490": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:28.511Z"
+      "checked_at": "2026-09-12T06:45:51.043Z"
     },
     "50530": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:40:39.505Z"
     },
     "50620": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:26:46.929Z"
+      "status": "success",
+      "product_name": "Duova Box Of 30 Rotacaps",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:28:22.449Z"
     },
     "50652": {
       "status": "not_found",
@@ -5528,59 +5500,44 @@
       "checked_at": "2026-09-12T02:21:09.069Z"
     },
     "50714": {
-      "status": "success",
-      "checked_at": "2026-09-12T09:24:29.024Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:51.633Z"
     },
     "50731": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:30.421Z"
+      "checked_at": "2026-09-12T06:45:52.339Z"
     },
     "50754": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:47.576Z"
+      "checked_at": "2026-09-12T09:28:28.822Z"
     },
     "50793": {
-      "status": "success",
-      "product_name": "Mesacol CR 1gm Granules",
-      "angles_saved": 4,
-      "primary_face": "combo",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:24:51.621Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:53.201Z"
     },
     "50794": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:26:50.188Z"
+      "checked_at": "2026-09-12T09:28:32.940Z"
     },
     "50798": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:24:57.800Z"
+      "checked_at": "2026-09-12T06:45:54.029Z"
     },
     "50802": {
-      "status": "success",
-      "product_name": "Modula 5Mg Strip Of 10 Tablets",
-      "angles_saved": 4,
-      "primary_face": "side",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:25:13.820Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:54.621Z"
     },
     "50841": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:25:18.805Z"
+      "checked_at": "2026-09-12T06:45:55.394Z"
     },
     "50843": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:41:08.939Z"
     },
     "50845": {
-      "status": "success",
-      "product_name": "Strocit 250Mg Ampoule Of 4Ml Injection",
-      "angles_saved": 1,
-      "primary_face": "side",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:25:32.766Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:56.083Z"
     },
     "50916": {
       "status": "success",
@@ -5602,16 +5559,26 @@
       "updated_at": "2026-09-12T05:27:00.906Z"
     },
     "50918": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:06.928Z"
+      "status": "success",
+      "product_name": "Triexer LS 2 Tablet SR",
+      "angles_saved": 4,
+      "primary_face": "combo",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:28:57.875Z"
     },
     "50972": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:41:24.567Z"
     },
     "50979": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:09.462Z"
+      "status": "success",
+      "product_name": "Mucinac 20% Injection",
+      "angles_saved": 3,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:29:18.125Z"
     },
     "51019": {
       "status": "not_found",
@@ -5627,15 +5594,15 @@
     },
     "51086": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:25:37.238Z"
+      "checked_at": "2026-09-12T06:45:56.747Z"
     },
     "51095": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:14.181Z"
+      "checked_at": "2026-09-12T09:29:22.830Z"
     },
     "51110": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:25:41.277Z"
+      "checked_at": "2026-09-12T06:45:57.471Z"
     },
     "51126": {
       "status": "success",
@@ -5660,54 +5627,39 @@
     },
     "51191": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:25:42.469Z"
+      "checked_at": "2026-09-12T06:45:58.062Z"
     },
     "51196": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:33.889Z"
+      "checked_at": "2026-09-12T09:29:25.594Z"
     },
     "51231": {
-      "status": "success",
-      "product_name": "Timolet OD BKC free Eye Drop",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 95,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:25:59.830Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:58.838Z"
     },
     "51252": {
-      "status": "success",
-      "product_name": "Paxidep CR 12.5 Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 75,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:26:18.668Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:45:59.741Z"
     },
     "51305": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:26:24.305Z"
+      "checked_at": "2026-09-12T06:46:00.493Z"
     },
     "51370": {
-      "status": "success",
-      "product_name": "Forzest 20 Tablet",
-      "angles_saved": 4,
-      "primary_face": "front",
-      "primary_confidence": 80,
-      "verified_by": "gemini_vision_verified",
-      "updated_at": "2026-09-12T09:26:50.962Z"
+      "status": "not_found",
+      "checked_at": "2026-09-12T06:46:01.253Z"
     },
     "51382": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:26:55.760Z"
+      "checked_at": "2026-09-12T06:46:02.003Z"
     },
     "51403": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:38.852Z"
+      "checked_at": "2026-09-12T09:29:31.684Z"
     },
     "51409": {
       "status": "not_found",
-      "checked_at": "2026-09-12T09:26:58.463Z"
+      "checked_at": "2026-09-12T06:46:02.599Z"
     },
     "51428": {
       "status": "not_found",
@@ -5719,7 +5671,7 @@
     },
     "51517": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:39.575Z"
+      "checked_at": "2026-09-12T09:29:36.919Z"
     },
     "51519": {
       "status": "not_found",
@@ -5731,19 +5683,24 @@
     },
     "51624": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:40.159Z"
+      "checked_at": "2026-09-12T09:29:41.984Z"
     },
     "51632": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:40.760Z"
+      "checked_at": "2026-09-12T09:29:44.772Z"
     },
     "51633": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:41:54.289Z"
     },
     "51634": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:41.547Z"
+      "status": "success",
+      "product_name": "Lametec 50 DT Tablet",
+      "angles_saved": 4,
+      "primary_face": "back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:29:59.236Z"
     },
     "51646": {
       "status": "not_found",
@@ -5755,7 +5712,7 @@
     },
     "51650": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:42.333Z"
+      "checked_at": "2026-09-12T09:30:05.923Z"
     },
     "51659": {
       "status": "not_found",
@@ -5763,7 +5720,7 @@
     },
     "51703": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:43.000Z"
+      "checked_at": "2026-09-12T09:30:11.569Z"
     },
     "51717": {
       "status": "not_found",
@@ -5774,8 +5731,13 @@
       "checked_at": "2026-09-11T20:41:56.942Z"
     },
     "51774": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:43.724Z"
+      "status": "success",
+      "product_name": "Nicotex 2Mg Ultra Mint Flavour Sugar Free Strip Of 9 Nicotine Gums",
+      "angles_saved": 3,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:30:35.605Z"
     },
     "51777": {
       "status": "not_found",
@@ -5787,7 +5749,7 @@
     },
     "51872": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:44.387Z"
+      "checked_at": "2026-09-12T09:30:39.220Z"
     },
     "51890": {
       "status": "not_found",
@@ -5795,11 +5757,11 @@
     },
     "51904": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:45.077Z"
+      "checked_at": "2026-09-12T09:30:43.305Z"
     },
     "51907": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:27:45.821Z"
+      "checked_at": "2026-09-12T09:30:49.037Z"
     },
     "51936": {
       "status": "not_found",
@@ -5810,24 +5772,39 @@
       "checked_at": "2026-09-11T20:41:58.943Z"
     },
     "51971": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:46.540Z"
+      "status": "success",
+      "product_name": "Cheston Cs Orange Pineapple Flavour Bottle Of 100Ml Syrup",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:31:02.157Z"
     },
     "51997": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:41:59.755Z"
     },
     "51999": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:47.066Z"
+      "status": "success",
+      "product_name": "Panstal Forte Strip Of 10 Capsules",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:31:24.204Z"
     },
     "52006": {
       "status": "not_found",
       "checked_at": "2026-09-11T20:42:00.381Z"
     },
     "52009": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:27:47.838Z"
+      "status": "success",
+      "product_name": "Excela | Moisturiser For Oily & Acne Prone Skin | Pump Bottle 50 Gm",
+      "angles_saved": 3,
+      "primary_face": "box-back",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:31:44.142Z"
     },
     "52021": {
       "status": "success",
@@ -5840,19 +5817,24 @@
     },
     "52028": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:11.653Z"
+      "checked_at": "2026-09-12T09:31:49.062Z"
     },
     "52037": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:14.530Z"
+      "checked_at": "2026-09-12T09:31:53.885Z"
     },
     "52042": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:17.478Z"
+      "checked_at": "2026-09-12T09:31:56.577Z"
     },
     "52102": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:28:18.386Z"
+      "status": "success",
+      "product_name": "Coldex Cough Expectorant",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:32:15.926Z"
     },
     "52139": {
       "status": "success",
@@ -5882,7 +5864,7 @@
     },
     "52231": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:21.495Z"
+      "checked_at": "2026-09-12T09:32:20.811Z"
     },
     "52241": {
       "status": "success",
@@ -5946,7 +5928,7 @@
     },
     "52499": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:46.445Z"
+      "checked_at": "2026-09-12T09:32:24.031Z"
     },
     "52507": {
       "status": "not_found",
@@ -5962,15 +5944,20 @@
     },
     "52551": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:47.050Z"
+      "checked_at": "2026-09-12T09:32:29.966Z"
     },
     "52630": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:28:47.658Z"
+      "checked_at": "2026-09-12T09:32:33.887Z"
     },
     "52654": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:28:48.261Z"
+      "status": "success",
+      "product_name": "Nicip Tablet",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 80,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:32:50.804Z"
     },
     "52660": {
       "status": "not_found",
@@ -6009,7 +5996,7 @@
     },
     "52711": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:00.533Z"
+      "checked_at": "2026-09-12T09:32:53.372Z"
     },
     "52716": {
       "status": "not_found",
@@ -6035,7 +6022,7 @@
     },
     "52789": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:02.812Z"
+      "checked_at": "2026-09-12T09:32:54.664Z"
     },
     "52804": {
       "status": "success",
@@ -6053,7 +6040,7 @@
     },
     "52868": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:05.986Z"
+      "checked_at": "2026-09-12T09:32:56.219Z"
     },
     "52963": {
       "status": "not_found",
@@ -6111,19 +6098,19 @@
     },
     "53057": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:28.836Z"
+      "checked_at": "2026-09-12T09:32:57.957Z"
     },
     "53073": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:29.421Z"
+      "checked_at": "2026-09-12T09:32:59.709Z"
     },
     "53092": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:30.075Z"
+      "checked_at": "2026-09-12T09:33:01.629Z"
     },
     "53095": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:30.724Z"
+      "checked_at": "2026-09-12T09:33:03.315Z"
     },
     "53099": {
       "status": "not_found",
@@ -6150,15 +6137,25 @@
     },
     "53173": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:31.316Z"
+      "checked_at": "2026-09-12T09:33:05.068Z"
     },
     "53197": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:29:32.157Z"
+      "status": "success",
+      "product_name": "Farobact 300mg Tablet ER",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:33:24.119Z"
     },
     "53206": {
-      "status": "not_found",
-      "checked_at": "2026-09-12T05:29:32.855Z"
+      "status": "success",
+      "product_name": "Cresar Ln 40/10Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T09:33:43.502Z"
     },
     "53214": {
       "status": "not_found",
@@ -6170,7 +6167,7 @@
     },
     "53251": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:33.452Z"
+      "checked_at": "2026-09-12T09:33:46.860Z"
     },
     "53263": {
       "status": "success",
@@ -6188,7 +6185,7 @@
     },
     "53276": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:34.044Z"
+      "checked_at": "2026-09-12T09:33:50.818Z"
     },
     "53328": {
       "status": "not_found",
@@ -6218,7 +6215,7 @@
     },
     "53407": {
       "status": "not_found",
-      "checked_at": "2026-09-12T05:29:34.791Z"
+      "checked_at": "2026-09-12T09:33:52.830Z"
     },
     "53453": {
       "status": "not_found",
