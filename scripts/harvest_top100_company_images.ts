@@ -91,15 +91,28 @@ async function verifyWithGeminiVision(
   spareKey?: string
 ): Promise<{ isExactMatch: boolean; printedName: string; confidence: number; reason: string }> {
   const base64Data = buffer.toString('base64');
-  const prompt = `You are a strict pharmaceutical verification AI.
-Examine this medicine packaging photo.
+  const prompt = `You are a strict pharmaceutical packaging verification AI.
+Examine this medicine packaging photo with extreme precision.
 Target Medicine to Verify: "${targetMedName}"
 
-Tasks:
-1. Read the printed brand name and active strength from the packaging photo.
-2. Confirm if this image genuinely depicts the target medicine brand.
-3. Pack quantity differences (e.g. 10 tablets vs 15 tablets of the same brand and strength) ARE ALLOWED and count as a match (is_exact_match: true).
-4. If the image is for a DIFFERENT drug brand, a medical device (belt/binder/brace/footwear), or has a conflicting strength/formulation, mark is_exact_match: false.
+CRITICAL PHARMACEUTICAL RULES:
+1. READ the printed brand name, active strength, formulation modifiers, and dosage form from the packaging photo.
+2. STRENGTH MUST MATCH EXACTLY:
+   - If target is 8 mg and packaging photo is 20 mg, is_exact_match: false!
+   - If target is 800 mg and photo is 400 mg, is_exact_match: false!
+   - If target is 100 mg and photo is 1 mg, is_exact_match: false!
+3. ACTIVE FORMULATION MODIFIERS MUST MATCH EXACTLY:
+   - Single-ingredient products must NEVER match combination products.
+   - E.g. 'Rosuvas' is NOT 'Rosuvas F'! 'Atorva' is NOT 'Atorva F'!
+   - E.g. 'Gemer' is NOT 'Gemer Sita IR'! 'Nurokind Plus' is NOT 'Nurokind Plus RF'!
+   - E.g. 'Nexiron LP' is NOT 'Nexiron LP Plus'!
+4. DOSAGE FORM MUST MATCH EXACTLY:
+   - Gel is NOT Spray (e.g. Volini Gel cannot match Volini Maxx Spray)!
+   - Powder is NOT Gel/Lotion/Cream (e.g. Sunheal Powder cannot match Sunheal Gel)!
+   - Tablet is NOT Syrup/Suspension! Drops are NOT Tablets!
+   - Medicine capsules/tablets must NEVER match medical devices/belts/inhaler hardware!
+5. Packaging pack counts (e.g. 10 tablets vs 15 tablets of the exact same brand and strength) ARE ALLOWED and count as a match (is_exact_match: true).
+6. If the image depicts a DIFFERENT medicine brand, wrong strength, wrong combination variant, or wrong form, you MUST set is_exact_match: false.
 
 Return valid JSON with:
 {
@@ -110,7 +123,7 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-flash-latest', 'gemini-2.5-flash'];
+  const models = ['gemini-3.6-flash', 'gemini-flash-latest'];
   const keysToTry = apiKeys.length > 0 ? apiKeys : (spareKey ? [spareKey] : []);
 
   for (const model of models) {
@@ -211,18 +224,19 @@ Return valid JSON with:
     }
   }
 
-  // Fallback to local OCR if Gemini had network issues
-  console.warn('[Gemini Vision] API temporarily unavailable, using OCR fallback');
-  return { isExactMatch: true, printedName: '', confidence: 75, reason: 'Gemini offline fallback to OCR' };
+  // If Gemini failed across all keys and spare key, REJECT! NEVER auto-approve unverified packaging!
+  console.warn(`    ⚠️ [Gemini Vision] All keys busy/rate-limited for "${targetMedName}". Rejecting candidate.`);
+  return { isExactMatch: false, printedName: '', confidence: 0, reason: 'Gemini rate limited / offline - unverified packaging rejected' };
 }
 
-// Formulation modifier conflict dictionary
+// Formulation modifier conflict dictionary (includes single letters and active combination abbreviations)
 const FORMULATION_MODIFIERS = new Set([
   'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF',
   'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
-  'DT', 'MD', 'SL', 'OD'
+  'DT', 'MD', 'SL', 'OD',
+  'F', 'RF', 'IR', 'SITA', 'CF', 'TC', 'P', 'M', 'G'
 ]);
 
 function normalizeTokens(text: string): string {
@@ -247,10 +261,54 @@ function hasModifierConflict(name1: string, name2: string): boolean {
   const m1 = extractModifiers(name1);
   const m2 = extractModifiers(name2);
   if (m1.size === 0 && m2.size === 0) return false;
+  // If one has combination modifiers that the other lacks -> strict conflict!
   if (m1.size === 0 && m2.size > 0) return true;
   if (m2.size === 0 && m1.size > 0) return true;
   for (const m of m1) {
     if (!m2.has(m)) return true;
+  }
+  for (const m of m2) {
+    if (!m1.has(m)) return true;
+  }
+  return false;
+}
+
+function extractStrengthTokens(name: string): Array<{ val: number; unit?: string }> {
+  const norm = normalizeTokens(name).toUpperCase();
+  const tokens: Array<{ val: number; unit?: string }> = [];
+
+  // 1. Explicit unit match (e.g. 500mg, 20mcg, 5%, 10ml, 1gm)
+  const regexUnit = /\b(\d+(?:\.\d+)?)\s*(MG|MCG|IU|%|ML|GM)\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regexUnit.exec(norm)) !== null) {
+    tokens.push({ val: parseFloat(match[1]), unit: match[2].toLowerCase() });
+  }
+
+  // 2. Standalone dosage number before dosage form (e.g. "Ciplar-LA 20 Tablet", "Norflox 400 Tablet", "Sizodon 1 Tablet")
+  const regexForm = /\b(\d+(?:\.\d+)?)\s*(?:TABLET|TABLETS|TAB|TABS|CAPSULE|CAPSULES|CAP|CAPS|STRIP|SUSPENSION|SYRUP|INJECTION|INJ|CREAM|GEL|OINTMENT|OINT)\b/gi;
+  while ((match = regexForm.exec(norm)) !== null) {
+    const val = parseFloat(match[1]);
+    const prevText = norm.slice(Math.max(0, match.index - 12), match.index);
+    if (!/STRIP\s+OF|PACK\s+OF|BOX\s+OF/i.test(prevText)) {
+      if (!tokens.some(t => Math.abs(t.val - val) < 0.001)) {
+        tokens.push({ val });
+      }
+    }
+  }
+
+  return tokens;
+}
+
+function hasStrengthConflict(name1: string, name2: string): boolean {
+  const s1 = extractStrengthTokens(name1);
+  const s2 = extractStrengthTokens(name2);
+
+  if (s1.length === 0 || s2.length === 0) return false;
+
+  for (const t1 of s1) {
+    const matching = s2.find(t2 => Math.abs(t2.val - t1.val) <= 0.001);
+    if (!matching) return true; // Value mismatch (e.g. 8 vs 20, 800 vs 400)
+    if (t1.unit && matching.unit && t1.unit !== matching.unit) return true; // Unit clash
   }
   return false;
 }
@@ -266,6 +324,8 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isQTop = /\b(gel|cream|ointment|lotion)\b/.test(qLower);
   const isQDrops = /\b(drops?|eye\s*drops?|ear\s*drops?|e\/e|ophthalmic)\b/.test(qLower);
   const isQInhaler = /\b(inhaler|rotacap|rotacaps|respules|transhaler|neohaler|inhalation)\b/.test(qLower);
+  const isQPowder = /\b(powder|pwd)\b/.test(qLower);
+  const isQSpray = /\b(spray)\b/.test(qLower);
 
   const isCTab = /\b(tab|tablet|tablets)\b/.test(cLower);
   const isCCap = /\b(cap|capsule|capsules)\b/.test(cLower);
@@ -274,12 +334,14 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isCTop = /\b(gel|cream|ointment|lotion)\b/.test(cLower);
   const isCDrops = /\b(drops?|eye\s*drops?|ear\s*drops?|e\/e|ophthalmic)\b/.test(cLower);
   const isCInhaler = /\b(inhaler|rotacap|rotacaps|respules|transhaler|neohaler|inhalation)\b/.test(cLower);
+  const isCPowder = /\b(powder|pwd)\b/.test(cLower);
+  const isCSpray = /\b(spray)\b/.test(cLower);
 
   // Inhalers vs Oral/Topical
   if (isQInhaler && (isCTab || isCCap || isCSyp || isCInj || isCTop || isCDrops)) return true;
   if (isCInhaler && (isQTab || isQCap || isQSyrup || isQInj || isQTop || isQDrops)) return true;
 
-  // Specific Topical Clashes (Cream vs Ointment vs Gel vs Lotion)
+  // Specific Topical Clashes (Gel vs Spray, Powder vs Gel, Cream vs Ointment)
   const isQCream = /\b(cream|crm)\b/.test(qLower);
   const isCCream = /\b(cream|crm)\b/.test(cLower);
   const isQOint = /\b(oint|ointment)\b/.test(qLower);
@@ -288,6 +350,11 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isCGel = /\b(gel)\b/.test(cLower);
   const isQLotion = /\b(lotion)\b/.test(qLower);
   const isCLotion = /\b(lotion)\b/.test(cLower);
+
+  if (isQGel && isCSpray) return true;
+  if (isQSpray && (isQGel || isCTop)) return true;
+  if (isQPowder && (isCGel || isCCream || isCLotion || isCSpray)) return true;
+  if (isCPowder && (isQGel || isQCream || isQLotion || isQSpray)) return true;
 
   if (isQCream && (isCOint || isCGel || isCLotion)) return true;
   if (isQOint && (isCCream || isCGel || isCLotion)) return true;
@@ -306,23 +373,6 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isDevice = /\b(binder|belt|brace|support|crepe|bandage|cotton|massager|vaporizer|condom|thermometer|oximeter|nebulizer|glucometer|lancet|wheelchair|walker|diaper|sanitary|pad|wipes|patch|tape|plaster|plasters|gauze|mask|gloves?|unit)\b/.test(cLower);
   if (isMedForm && isDevice) return true;
 
-  return false;
-}
-
-function hasStrengthConflict(name1: string, name2: string): boolean {
-  const norm1 = normalizeTokens(name1);
-  const norm2 = normalizeTokens(name2);
-  const m1 = norm1.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
-  const m2 = norm2.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|iu|%|ml|gm)\b/i);
-  if (m1 && m2) {
-    const v1 = parseFloat(m1[1]);
-    const v2 = parseFloat(m2[1]);
-    const u1 = m1[2].toLowerCase();
-    const u2 = m2[2].toLowerCase();
-    if (u1 !== u2 || Math.abs(v1 - v2) > 0.001) {
-      return true;
-    }
-  }
   return false;
 }
 
