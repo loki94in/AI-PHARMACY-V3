@@ -893,7 +893,11 @@ export class NotificationService {
         recipientPhone,
         message,
         'distributor_dispatch_reminder',
-        reminder.distributor_name
+        reminder.distributor_name,
+        undefined,
+        undefined,
+        undefined,
+        { skipDedupe: true }
       );
 
       await db.run(

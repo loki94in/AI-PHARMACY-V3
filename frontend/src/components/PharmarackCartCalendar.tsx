@@ -173,6 +173,9 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       localStorage.setItem('pharmarack_paused_dispatch_dates', JSON.stringify(newDates));
     } catch (_) {}
 
+    // Instantly notify Header Topbar & Dispatch components with new paused dates
+    window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { pausedDates: newDates } }));
+
     apiClient.post('/settings/save', {
       pharmarack_paused_dispatch_dates: JSON.stringify(newDates)
     }).catch(() => {});

@@ -1048,14 +1048,15 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       }
 
       // 2. Fetch dispatch schedule (paused dates)
+      // Check localStorage first so instantaneous UI changes are immediately respected
+      try {
+        const stored = localStorage.getItem('pharmarack_paused_dispatch_dates');
+        if (stored) setPausedDates(JSON.parse(stored));
+      } catch (_) {}
+
       const schedRes = await apiClient.get('/pharmarack/dispatch-schedule').catch(() => null);
       if (schedRes?.data?.success && Array.isArray(schedRes.data.pausedDates)) {
         setPausedDates(schedRes.data.pausedDates);
-      } else {
-        try {
-          const stored = localStorage.getItem('pharmarack_paused_dispatch_dates');
-          if (stored) setPausedDates(JSON.parse(stored));
-        } catch (_) {}
       }
 
       // 3. Fetch app settings for cutoff time and sent date
@@ -1082,13 +1083,26 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       debounceTimer = setTimeout(loadCartData, 600);
     };
 
-    window.addEventListener('refresh-pharmarack-cart', debouncedLoad);
+    const handleCartRefresh = (e?: Event) => {
+      const customDetail = (e as CustomEvent)?.detail;
+      if (customDetail?.pausedDates && Array.isArray(customDetail.pausedDates)) {
+        setPausedDates(customDetail.pausedDates);
+      } else {
+        try {
+          const stored = localStorage.getItem('pharmarack_paused_dispatch_dates');
+          if (stored) setPausedDates(JSON.parse(stored));
+        } catch (_) {}
+      }
+      debouncedLoad();
+    };
+
+    window.addEventListener('refresh-pharmarack-cart', handleCartRefresh);
     window.addEventListener('pharmarack-session-updated', debouncedLoad);
     window.addEventListener('sse-pharmarack-refreshed', debouncedLoad);
     window.addEventListener('focus', loadCartData);
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      window.removeEventListener('refresh-pharmarack-cart', debouncedLoad);
+      window.removeEventListener('refresh-pharmarack-cart', handleCartRefresh);
       window.removeEventListener('pharmarack-session-updated', debouncedLoad);
       window.removeEventListener('sse-pharmarack-refreshed', debouncedLoad);
       window.removeEventListener('focus', loadCartData);

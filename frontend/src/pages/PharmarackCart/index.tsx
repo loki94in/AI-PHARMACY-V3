@@ -425,6 +425,8 @@ export default function PharmarackCart() {
   }>>([]);
   const isProcessingDeleteQueueRef = useRef<boolean>(false);
   const pendingDeleteKeysRef = useRef<Set<string>>(new Set());
+  // In-flight optimistic quantity tracker: preserves user clicks during background sync settling
+  const pendingQtyMapRef = useRef<Map<string, { qty: number; timestamp: number }>>(new Map());
   const highPriorityActiveRef = useRef<boolean>(false);
   const pauseDeleteResolveRef = useRef<(() => void) | null>(null);
   const cancelSleepRef = useRef<(() => void) | null>(null);
@@ -1152,6 +1154,25 @@ export default function PharmarackCart() {
 
   // Batch WhatsApp order confirmation popup state
   const [showConfirmBatchModal, setShowConfirmBatchModal] = useState(false);
+  const [isValidatingBeforeSend, setIsValidatingBeforeSend] = useState(false);
+
+  const handleOpenConfirmBatchModal = async () => {
+    if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
+    setIsValidatingBeforeSend(true);
+    try {
+      // 1. Force a live round-trip fresh fetch from upstream Pharmarack (?fresh=true)
+      await fetchCart(true);
+      await fetchLatestSentMap();
+      // Brief settling pause to ensure state reconciles and paint settles cleanly
+      await new Promise(r => setTimeout(r, 250));
+    } catch (err) {
+      console.warn('Pre-send live cart sync failed:', err);
+    } finally {
+      setIsValidatingBeforeSend(false);
+      // 2. Open confirmation modal with guaranteed up-to-date counts & distributor list
+      setShowConfirmBatchModal(true);
+    }
+  };
 
   const hasDeliveryBoyContacts = () => {
     const hasActiveBoys = deliveryBoysList.some(b => b.name && b.whatsapp_number && b.whatsapp_number.trim().length > 0);
@@ -2339,6 +2360,16 @@ export default function PharmarackCart() {
     const merged = filteredIncoming.map(dist => {
       const mergedItems = dist.items.map(incItem => {
         const key = getItemCheckKey(dist.storeId, incItem);
+        // Safeguard: If user recently changed quantity within last 4 seconds, preserve optimistic quantity
+        const pendingQty = pendingQtyMapRef.current.get(key);
+        if (pendingQty && Date.now() - pendingQty.timestamp < 4000) {
+          incItem = {
+            ...incItem,
+            qty: pendingQty.qty,
+            amount: (incItem.ptr || 0) * pendingQty.qty
+          };
+        }
+
         const existing = currentItemMap.get(key);
         if (
           existing &&
@@ -2441,6 +2472,11 @@ export default function PharmarackCart() {
   };
 
   const fetchCartSilent = async () => {
+    // If user is currently updating an item quantity, postpone silent sync to prevent race conditions
+    if (updatingItemId || highPriorityActiveRef.current) {
+      scheduleCartSync(2000);
+      return;
+    }
     try {
       const data = await api.getPharmarackCart();
       if (data && data.success) {
@@ -2517,6 +2553,10 @@ export default function PharmarackCart() {
     setUpdatingItemId(item.productCode);
     beginHighPriorityAction(); // Priority lock: pause background delete worker immediately
 
+    // Track recently updated quantities so background syncs within settling period cannot revert this edit
+    const updateTs = Date.now();
+    pendingQtyMapRef.current.set(itemKey, { qty: newQty, timestamp: updateTs });
+
     // 2. High Priority Background API Sync
     try {
       const storeName = distributors.find(d => d.storeId === item.storeId)?.storeName || '';
@@ -2550,6 +2590,11 @@ export default function PharmarackCart() {
     } finally {
       setUpdatingItemId(null);
       endHighPriorityAction(); // Release priority lock: allow background delete worker to resume
+      setTimeout(() => {
+        if (pendingQtyMapRef.current.get(itemKey)?.timestamp === updateTs) {
+          pendingQtyMapRef.current.delete(itemKey);
+        }
+      }, 3000);
     }
   };
 
@@ -2865,6 +2910,8 @@ export default function PharmarackCart() {
   useEffect(() => {
     if (cachedDistributors.length === 0) {
       fetchCart();
+    } else {
+      fetchCartSilent();
     }
     fetchLatestSentMap();
   }, []);
@@ -2882,6 +2929,17 @@ export default function PharmarackCart() {
     fetchCartSilent();
     fetchLatestSentMap();
   }, [pageActive]);
+
+  // Auto-refresh when switching internal sub-tabs back to the 'cart' tab
+  const prevTabRef = useRef(currentTab);
+  useEffect(() => {
+    const prevTab = prevTabRef.current;
+    prevTabRef.current = currentTab;
+    if (currentTab === 'cart' && prevTab !== 'cart' && pageActive) {
+      fetchCartSilent();
+      fetchLatestSentMap();
+    }
+  }, [currentTab, pageActive]);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowPendingTier(true), 300);
@@ -3040,6 +3098,10 @@ export default function PharmarackCart() {
       // Hidden kept-alive page must not background-fetch (P3 gating) — the
       // activation effect silently syncs the moment the user returns.
       if (!pageActiveRef.current) return;
+      if (updatingItemId || highPriorityActiveRef.current) {
+        scheduleCartSync(2000);
+        return;
+      }
       // If a silent delete queue is in progress, skip intermediate fetches to avoid cart churn
       if (deleteQueueRef.current.length > 0 || isProcessingDeleteQueueRef.current) {
         return;
@@ -4617,12 +4679,14 @@ export default function PharmarackCart() {
               <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                 <button
                   type="button"
-                  onClick={() => setShowConfirmBatchModal(true)}
-                  disabled={isSendingBatchWhatsApp || distributors.length === 0}
+                  onClick={handleOpenConfirmBatchModal}
+                  disabled={isSendingBatchWhatsApp || isValidatingBeforeSend || distributors.length === 0}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black transition-all active:scale-95 text-xs disabled:opacity-50 shadow-[0_4px_14px_rgba(16,185,129,0.3)] cursor-pointer"
                   title="Review and send orders to distributors via WhatsApp"
                 >
                   {isSendingBatchWhatsApp ? (
+                    <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : isValidatingBeforeSend ? (
                     <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                   ) : (
                     <MessageSquare size={15} />
@@ -4630,6 +4694,8 @@ export default function PharmarackCart() {
                   <span>
                     {isSendingBatchWhatsApp
                       ? 'Sending orders…'
+                      : isValidatingBeforeSend
+                      ? 'Verifying live cart…'
                       : `Send All via WhatsApp (${readyToSendDistributors.length})`}
                   </span>
                 </button>

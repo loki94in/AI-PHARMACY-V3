@@ -658,7 +658,14 @@ class WhatsAppQueueWorker {
 
         // Pre-send Deduplication Check against permanent Sent Register:
         // If this message was already successfully delivered to this recipient, mark sent and suppress duplicate dispatch.
-        const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(item.number, item.message, 48);
+        // Exempt recurring daily operational reminders (distributor dispatch reminders) from the 48-hour check so
+        // daily morning/afternoon dispatches are never suppressed by yesterday's send.
+        const isRecurringDailyReminder = item.type === 'distributor_dispatch_reminder' || item.type === 'afternoon_delivery_boy_dispatch';
+        const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
+          item.number, 
+          item.message, 
+          isRecurringDailyReminder ? 12 : 48
+        );
         if (deliveryCheck.delivered) {
           console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
           const resolvedSentAt = deliveryCheck.sentAt || Date.now();
