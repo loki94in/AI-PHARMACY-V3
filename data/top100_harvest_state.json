@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-12T07:55:44.347Z",
+  "last_updated": "2026-09-12T07:57:06.761Z",
   "products": {
     "35": {
       "status": "not_found",
@@ -21678,6 +21678,28 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:42.762Z"
     },
+    "113329": {
+      "status": "success",
+      "product_name": "Maxmala Forte Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:55:54.933Z"
+    },
+    "113340": {
+      "status": "success",
+      "product_name": "Sporidex Cv 375Mg Strip Of 10 Tablets",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:56:03.495Z"
+    },
+    "113364": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:09.185Z"
+    },
     "113378": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:43.350Z"
@@ -21686,6 +21708,10 @@
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:44.088Z"
     },
+    "113459": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:12.535Z"
+    },
     "113461": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:07:03.772Z"
@@ -21693,6 +21719,28 @@
     "113466": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:44.822Z"
+    },
+    "113467": {
+      "status": "success",
+      "product_name": "Volini Pain Relief | Spray | 100 Gm",
+      "angles_saved": 1,
+      "primary_face": "side",
+      "primary_confidence": 75,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:56:20.821Z"
+    },
+    "113481": {
+      "status": "success",
+      "product_name": "Volitra Plus Tube Of 50Gm Gel",
+      "angles_saved": 4,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:56:31.591Z"
+    },
+    "113483": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:33.544Z"
     },
     "113485": {
       "status": "success",
@@ -21703,6 +21751,10 @@
       "confidence": 100,
       "verified_by": "gemini_audit_bot",
       "checked_at": "2026-09-12T03:07:34.526Z"
+    },
+    "113491": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:37.441Z"
     },
     "113512": {
       "status": "not_found",
@@ -21715,6 +21767,18 @@
     "113575": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:51:45.362Z"
+    },
+    "113582": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:40.771Z"
+    },
+    "113636": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:43.095Z"
+    },
+    "113637": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:46.673Z"
     },
     "113652": {
       "status": "success",
@@ -21767,6 +21831,10 @@
       "verified_by": "gemini_vision_verified",
       "updated_at": "2026-09-12T05:52:04.746Z"
     },
+    "113921": {
+      "status": "not_found",
+      "checked_at": "2026-09-12T07:56:48.941Z"
+    },
     "113925": {
       "status": "not_found",
       "checked_at": "2026-09-12T05:52:08.319Z"
@@ -21774,6 +21842,15 @@
     "113929": {
       "status": "not_found",
       "checked_at": "2026-09-11T22:07:39.626Z"
+    },
+    "113936": {
+      "status": "success",
+      "product_name": "Pantocid 20Mg Strip Of 15 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "updated_at": "2026-09-12T07:57:06.761Z"
     },
     "113949": {
       "status": "not_found",
