@@ -40,7 +40,7 @@ fs.mkdirSync(TARGET_UPLOADS, { recursive: true });
 
 // Load rotating API keys
 const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
-const API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+let API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
 let keyIndex = 0;
 
 // Expanded formulation modifiers (includes single-letter modifiers like S, M, G, P to avoid variant mix-ups)
@@ -99,7 +99,7 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
 
   for (const model of models) {
     for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
@@ -127,6 +127,7 @@ Return valid JSON with:
           if (API_KEYS.length > 1) {
             console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(keyIndex + attempt) % API_KEYS.length + 1}, rotating key...`);
           }
+          keyIndex = (keyIndex + 1) % API_KEYS.length;
           continue;
         }
 
@@ -257,7 +258,7 @@ function isBrandMatch(query: string, candidateName: string): boolean {
 function generateSearchQueries(rawName: string): string[] {
   let cleaned = rawName.replace(/\(.*?\)/g, ' ').replace(/\[.*?\]/g, ' ');
   cleaned = cleaned.replace(/\b(STRIP OF \d+ (TABLETS|CAPSULES)|BOTTLE OF \d+ (TABLETS|ML)|NO'S|\d+\s*NO'S|\d+'S)\b/gi, ' ');
-  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b\s*\d*/gi, ' ');
+  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b/gi, ' ');
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
   const queries: string[] = [cleaned];
@@ -396,20 +397,22 @@ async function processRejectedMedicine(
   if (candidates.length === 0) {
     console.log(`    ⚠️ No CDN matches pass conflict filter for "${medName}".`);
     saveProductState(medId, {
-      status: 'no_authentic_match_on_cdn',
+      status: 'manual_review_needed',
       medicine_id: medId,
       medicine_name: medName,
-      reason: 'No authentic packaging found on pharma CDN',
+      manufacturer: mfg,
+      reason: 'No authentic packaging found on pharma CDN (skipped for manual review)',
       checked_at: new Date().toISOString()
     });
     return false;
   }
 
-  console.log(`    Found ${candidates.length} candidate products on CDN. Testing candidates with Front/Back Gemini Vision...`);
+  const maxCandidatesToTry = Math.min(candidates.length, 3);
+  console.log(`    Found ${candidates.length} candidate products on CDN. Testing up to ${maxCandidatesToTry} candidates with Front/Back Gemini Vision...`);
 
-  for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
+  for (let cIdx = 0; cIdx < maxCandidatesToTry; cIdx++) {
     const cand = candidates[cIdx];
-    console.log(`    Candidate [${cIdx + 1}/${candidates.length}]: "${cand.name}" (${Object.keys(cand.images).length} angles)`);
+    console.log(`    Candidate [${cIdx + 1}/${maxCandidatesToTry}]: "${cand.name}" (${Object.keys(cand.images).length} angles)`);
 
     const downloadedAngles: Array<{
       face: string;
@@ -555,10 +558,11 @@ async function processRejectedMedicine(
   }
 
   saveProductState(medId, {
-    status: 'gemini_rejected',
+    status: 'manual_review_needed',
     medicine_id: medId,
     medicine_name: medName,
-    reason: 'None of the available packaging photos on CDN matched target medicine',
+    manufacturer: mfg,
+    reason: `Tested ${maxCandidatesToTry} candidate packaging photos from CDN - none matched target medicine. Skipped for manual review to save time.`,
     checked_at: new Date().toISOString()
   });
 
@@ -569,9 +573,15 @@ async function main() {
   const args = process.argv.slice(2);
   let watchMode = args.includes('--watch');
   let delayMs = 2000;
+  let companyFilter = '';
 
   for (const a of args) {
     if (a.startsWith('--delay=')) delayMs = parseInt(a.split('=')[1], 10);
+    else if (a.startsWith('--company=')) companyFilter = a.split('=')[1].replace(/['"]/g, '');
+    else if (a.startsWith('--keys=')) {
+      const parsedKeys = a.split('=')[1].split(/[,;]+/).map(k => k.trim()).filter(Boolean);
+      if (parsedKeys.length > 0) API_KEYS = parsedKeys;
+    }
   }
 
   console.log('===============================================================');
@@ -580,6 +590,7 @@ async function main() {
   console.log(`🔑 Key Pool: ${API_KEYS.length} Gemini API keys loaded with round-robin rotation.`);
   console.log(`⏱️ Spacing: ${delayMs}ms delay between verification calls.`);
   console.log(`🎯 Rule: Front/Back Gemini Vision check until 100% confirmed.`);
+  if (companyFilter) console.log(`🏢 Company Filter: "${companyFilter}"`);
   console.log(`📡 Mode: ${watchMode ? 'Continuous Watcher (runs concurrently with Terminal 1)' : 'Single Pass Run'}\n`);
 
   const db = new Database(DB_PATH);
@@ -618,12 +629,18 @@ async function main() {
     console.log(`📋 Found ${rejectedKeys.length} rejected medicine(s) needing re-download:\n`);
 
     const placeholders = rejectedKeys.map(() => '?').join(',');
-    const medsToProcess = db.prepare(`
+    let query = `
       SELECT id, name, manufacturer
       FROM medicines
       WHERE id IN (${placeholders})
-      ORDER BY id ASC
-    `).all(...rejectedKeys) as any[];
+    `;
+    const params: any[] = [...rejectedKeys];
+    if (companyFilter) {
+      query += ` AND manufacturer LIKE ?`;
+      params.push(`%${companyFilter}%`);
+    }
+    query += ` ORDER BY id ASC`;
+    const medsToProcess = db.prepare(query).all(...params) as any[];
 
     let reDownloadedSuccess = 0;
     let failedCount = 0;

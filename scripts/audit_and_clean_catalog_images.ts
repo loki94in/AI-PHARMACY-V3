@@ -26,7 +26,7 @@ const TARGET_UPLOADS = path.join(ROOT_DIR, 'uploads', 'products');
 
 // Load API key pool
 const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
-const API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+let API_KEYS = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
 
 let keyIndex = 0;
 
@@ -54,7 +54,7 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
 
   for (const model of models) {
     for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
@@ -82,6 +82,7 @@ Return valid JSON with:
           if (API_KEYS.length > 1) {
             console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(keyIndex + attempt) % API_KEYS.length + 1}, rotating key...`);
           }
+          keyIndex = (keyIndex + 1) % API_KEYS.length;
           continue;
         }
 
@@ -139,10 +140,16 @@ async function main() {
   let force = args.includes('--force');
   let limit = 0;
   let delayMs = 1000; // 1 second spacing between requests
+  let companyFilter = '';
 
   for (const a of args) {
     if (a.startsWith('--limit=')) limit = parseInt(a.split('=')[1], 10);
-    if (a.startsWith('--delay=')) delayMs = parseInt(a.split('=')[1], 10);
+    else if (a.startsWith('--delay=')) delayMs = parseInt(a.split('=')[1], 10);
+    else if (a.startsWith('--company=')) companyFilter = a.split('=')[1].replace(/['"]/g, '');
+    else if (a.startsWith('--keys=')) {
+      const parsedKeys = a.split('=')[1].split(/[,;]+/).map(k => k.trim()).filter(Boolean);
+      if (parsedKeys.length > 0) API_KEYS = parsedKeys;
+    }
   }
 
   console.log('===============================================================');
@@ -151,6 +158,7 @@ async function main() {
   console.log(`🔑 Key Pool: ${API_KEYS.length} Gemini API keys loaded with round-robin rotation.`);
   console.log(`⏱️ Spacing: ${delayMs}ms delay between verification calls.`);
   console.log(`🎯 Rule: Either Front OR Back confirmed -> Entire product passes!`);
+  if (companyFilter) console.log(`🏢 Company Filter: "${companyFilter}"`);
   console.log(`🎯 Scope: ${auditAll ? (force ? 'All catalog medicines (force recheck)' : 'All pending un-audited catalog medicines') : 'Medicines with OCR fallback images'}\n`);
 
   const db = new Database(DB_PATH);
@@ -168,6 +176,11 @@ async function main() {
     }
   } else {
     query += " WHERE ci.matching_method = 'ai_ocr_verified'";
+  }
+
+  if (companyFilter) {
+    query += query.includes('WHERE') ? " AND" : " WHERE";
+    query += ` m.manufacturer LIKE '%${companyFilter.replace(/'/g, "''")}%'`;
   }
 
   query += " ORDER BY ci.medicine_id ASC";

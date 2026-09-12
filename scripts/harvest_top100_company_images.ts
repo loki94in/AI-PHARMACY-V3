@@ -109,7 +109,7 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
   const keysToTry = apiKeys.length > 0 ? apiKeys : ['AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A'];
 
   for (const model of models) {
@@ -138,6 +138,7 @@ Return valid JSON with:
           if (keysToTry.length > 1) {
             console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(globalKeyIndex + attempt) % keysToTry.length + 1}, rotating to next key...`);
           }
+          globalKeyIndex = (globalKeyIndex + 1) % keysToTry.length;
           continue;
         }
 
@@ -299,7 +300,7 @@ function isBrandMatch(query: string, candidateName: string): boolean {
 function generateSearchQueries(rawName: string): string[] {
   let cleaned = rawName.replace(/\(.*?\)/g, ' ').replace(/\[.*?\]/g, ' ');
   cleaned = cleaned.replace(/\b(STRIP OF \d+ (TABLETS|CAPSULES)|BOTTLE OF \d+ (TABLETS|ML)|NO'S|\d+\s*NO'S|\d+'S)\b/gi, ' ');
-  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b\s*\d*/gi, ' ');
+  cleaned = cleaned.replace(/\b(tab|tablet|tablets|cap|capsule|capsules|sus|susp|suspension|syp|syrup|inj|injection|oint|ointment|crm|cream|gel|lotion|drops?)\b/gi, ' ');
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
   const queries: string[] = [cleaned];
@@ -507,6 +508,7 @@ async function main() {
   let shutdownOnComplete = false;
   let useGemini = false;
   let commitEvery = 1000;
+  let customKeys: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--status') {
@@ -522,7 +524,10 @@ async function main() {
     else if (args[i].startsWith('--idle-shutdown-min=')) idleShutdownMin = parseInt(args[i].split('=')[1], 10);
     else if (args[i] === '--shutdown-on-complete') shutdownOnComplete = true;
     else if (args[i] === '--gemini') useGemini = true;
-    else if (args[i].startsWith('--commit-every=')) commitEvery = parseInt(args[i].split('=')[1], 10);
+    else if (args[i].startsWith('--keys=')) {
+      const parsedKeys = args[i].split('=')[1].split(/[,;]+/).map(k => k.trim()).filter(Boolean);
+      if (parsedKeys.length > 0) customKeys = parsedKeys;
+    }
     else if (args[i] === '--auto-shutdown') {
       idleShutdownMin = 5;
       shutdownOnComplete = true;
@@ -534,7 +539,7 @@ async function main() {
   console.log('===============================================================\n');
 
   const rawKeyStr = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || 'AQ.Ab8RN6JAHR4vHkbsZvW9kHDdkZEwFUsN9uNPxRJLC3MJfY6t_A';
-  const geminiKeys = rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
+  const geminiKeys = customKeys.length > 0 ? customKeys : rawKeyStr.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
   if (useGemini) {
     console.log(`🤖 Google Gemini 3.8 Flash Vision: ACTIVE (100% label confirmation).`);
     console.log(`🔑 Key Pool: ${geminiKeys.length} API key(s) loaded with round-robin rotation & instant failover.`);
@@ -551,6 +556,7 @@ async function main() {
   console.log('');
 
   const db = new Database(DB_PATH);
+  db.pragma('busy_timeout = 30000');
   const visualIndex = VisualIndexService.getInstance();
   await aiCameraService.initialize();
 
