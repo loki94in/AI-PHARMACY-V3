@@ -75,7 +75,12 @@ const ALLOW = {
   // they must contrast against the colored track. This matches the identical pattern already used
   // in Settings/TriggerSchedulesTab (lines 1758, 1787, 1828, 1868) which isn't in the changed-diff
   // scan. Add here so the guardrail stays consistent regardless of which file is modified first.
-  f6RawColor: ['frontend/src/components/automationhubpopover.tsx'],
+  // UpdateBanner: text-white on bg-primary (accent fill) is MANDATORY per AGENTS.md 2026-08
+  // exception: "element whose background is a saturated accent MUST use text-white".
+  f6RawColor: [
+    'frontend/src/components/automationhubpopover.tsx',
+    'frontend/src/components/updatebanner.tsx',
+  ],
 };
 
 // Paths whose CONTENT legitimately documents/contains banned dummy tokens:

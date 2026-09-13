@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 58;
+const CURRENT_SCHEMA_VERSION = 59;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -3891,6 +3891,33 @@ export async function ensureSchema(dbPath: string) {
 
   // Schema v58: Real-Time Medicine Search Summary & Live Stock / Rate Triggers
   await ensureMedicineSearchSummaryTriggers(db);
+
+  // Schema v59: License binding + update check tracking
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS app_license (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      license_id TEXT,
+      machine_id TEXT,
+      pharmacy_name TEXT,
+      activated_at TEXT,
+      last_validated_at TEXT,
+      status TEXT NOT NULL DEFAULT 'testing',
+      offline_grace_days INTEGER NOT NULL DEFAULT 7,
+      testing_mode INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT OR IGNORE INTO app_license (id, status, testing_mode)
+    VALUES (1, 'testing', 1);
+
+    CREATE TABLE IF NOT EXISTS update_checks (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_checked_at TEXT,
+      last_known_version TEXT,
+      current_version TEXT DEFAULT '1.0.0',
+      check_interval_days INTEGER NOT NULL DEFAULT 15
+    );
+    INSERT OR IGNORE INTO update_checks (id, current_version, check_interval_days)
+    VALUES (1, '1.0.0', 15);
+  `);
 
   // Stamp schema version so subsequent boots skip all DDL
   await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

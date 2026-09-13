@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Pharmacy — Installer</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --bg2:       #161922;
+      --bg3:       #1d2230;
+      --border:    rgba(255,255,255,0.08);
+      --primary:   #22c55e;
+      --primary2:  #16a34a;
+      --text:      #f0f4f8;
+      --muted:     #8899aa;
+      --error:     #f87171;
+      --radius:    14px;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+      -webkit-app-region: no-drag;
+    }
+
+    /* ── Custom titlebar ─────────────────────────────── */
+    #titlebar {
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px 0;
+    }
+    #titlebar span { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+    .titlebar-btn {
+      -webkit-app-region: no-drag;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    .titlebar-btn:hover { opacity: .75; }
+    #btn-close    { background: #ff5f57; }
+    #btn-minimize { background: #febc2e; margin-left: 6px; }
+
+    /* ── Main card ───────────────────────────────────── */
+    #card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 36px 32px;
+      gap: 22px;
+    }
+
+    /* logo */
+    .logo-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo-icon {
+      width: 64px; height: 64px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, var(--primary) 0%, #15803d 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px;
+      box-shadow: 0 8px 32px rgba(34,197,94,.30);
+    }
+    .logo-title  { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+    .logo-sub    { font-size: 11px; color: var(--muted); }
+
+    /* screen switcher */
+    .screen { display: none; width: 100%; }
+    .screen.active { display: flex; flex-direction: column; gap: 14px; }
+
+    /* form */
+    label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+    input {
+      width: 100%;
+      padding: 11px 14px;
+      background: var(--bg3);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: 'Inter', monospace;
+      letter-spacing: .08em;
+      font-weight: 600;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input:focus { border-color: var(--primary); }
+    input::placeholder { color: var(--muted); font-weight: 400; letter-spacing: normal; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+
+    /* button */
+    .btn {
+      width: 100%;
+      padding: 13px;
+      border-radius: 10px;
+      border: none;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--primary2));
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(34,197,94,.25);
+    }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(34,197,94,.35); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+    /* error */
+    .error-box {
+      background: rgba(248,113,113,.08);
+      border: 1px solid rgba(248,113,113,.25);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--error);
+      display: none;
+    }
+    .error-box.show { display: block; }
+
+    /* progress bar */
+    .progress-wrap { width: 100%; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+    .progress-track {
+      width: 100%; height: 8px;
+      background: var(--bg3);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--primary), #4ade80);
+      transition: width .3s ease;
+      width: 0%;
+    }
+
+    /* step indicator */
+    .steps {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .step { display: flex; align-items: center; gap: 4px; }
+    .step-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--bg3);
+      border: 1.5px solid var(--border);
+    }
+    .step.active .step-dot { background: var(--primary); border-color: var(--primary); }
+    .step.done .step-dot   { background: var(--primary2); border-color: var(--primary2); }
+    .step-line { width: 24px; height: 1.5px; background: var(--border); }
+    .step.done + .step-line { background: var(--primary2); }
+
+    /* success */
+    .success-icon { font-size: 48px; }
+    .success-title { font-size: 18px; font-weight: 800; }
+    .success-sub   { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.6; }
+
+    /* spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2.5px solid rgba(255,255,255,.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Titlebar -->
+<div id="titlebar">
+  <span>AI PHARMACY INSTALLER</span>
+  <div style="display:flex">
+    <button class="titlebar-btn" id="btn-minimize" title="Minimize" onclick="window.installer.minimize()"></button>
+    <button class="titlebar-btn" id="btn-close"    title="Close"    onclick="window.installer.close()"></button>
+  </div>
+</div>
+
+<!-- Main card -->
+<div id="card">
+
+  <!-- Logo -->
+  <div class="logo-wrap">
+    <div class="logo-icon">💊</div>
+    <div class="logo-title">AI Pharmacy</div>
+    <div class="logo-sub">Professional Pharmacy Management System</div>
+  </div>
+
+  <!-- Step indicator -->
+  <div class="steps">
+    <div class="step active" id="step1"><div class="step-dot"></div><span>License</span></div>
+    <div class="step-line"></div>
+    <div class="step" id="step2"><div class="step-dot"></div><span>Download</span></div>
+    <div class="step-line"></div>
+    <div class="step" id="step3"><div class="step-dot"></div><span>Install</span></div>
+  </div>
+
+  <!-- Screen 1: License entry -->
+  <div class="screen active" id="screen-license">
+    <div class="field">
+      <label>License ID</label>
+      <input id="licenseId" type="text" placeholder="PHARM-XXXX" maxlength="10" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label>License Key</label>
+      <input id="licenseKey" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="error-box" id="license-error"></div>
+    <button class="btn btn-primary" id="btn-activate" onclick="activate()">
+      <span id="btn-activate-label">Activate &amp; Install</span>
+    </button>
+    <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.6">
+      Contact your vendor to receive your License ID and Key.<br/>
+      Each license is valid for one PC only.
+    </div>
+  </div>
+
+  <!-- Screen 2: Downloading -->
+  <div class="screen" id="screen-download">
+    <div class="progress-wrap">
+      <div class="progress-label">
+        <span id="dl-label">Downloading AI Pharmacy...</span>
+        <span id="dl-pct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-bar" id="dl-bar"></div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);text-align:center">
+      Please keep this window open. Do not disconnect from the internet.
+    </div>
+  </div>
+
+  <!-- Screen 3: Installing -->
+  <div class="screen" id="screen-install">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:14px">
+      <div class="spinner"></div>
+      <div style="font-size:14px;font-weight:600" id="install-label">Installing AI Pharmacy...</div>
+      <div style="font-size:12px;color:var(--muted);text-align:center">
+        This may take a few moments. Please wait.
+      </div>
+    </div>
+  </div>
+
+  <!-- Screen 4: Success -->
+  <div class="screen" id="screen-success">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center">
+      <div class="success-icon">✅</div>
+      <div class="success-title">Installation Complete!</div>
+      <div class="success-sub" id="success-msg">
+        AI Pharmacy has been installed successfully.<br/>
+        You can now launch it from your desktop shortcut.
+      </div>
+      <button class="btn btn-primary" style="margin-top:8px" onclick="window.installer.close()">
+        Close Installer
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>

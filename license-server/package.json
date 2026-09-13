@@ -1,0 +1,9 @@
+{
+  "name": "ai-pharmacy-license-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "License validation server for AI Pharmacy. Deployed to Vercel.",
+  "dependencies": {
+    "@vercel/kv": "^2.0.0"
+  }
+}

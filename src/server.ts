@@ -305,6 +305,7 @@ app.use('/api/tunnel', lazyRoute(() => import('./routes/tunnel.js'), 'hot'));
 app.use('/api/customer', lazyRoute(() => import('./routes/api/customerRoutes.js'), 'hot'));
 app.use('/api/admin', lazyRoute(() => import('./routes/api/adminRoutes.js'), 'hot'));
 app.use('/api/sync', lazyRoute(() => import('./routes/sync.js')));
+app.use('/api/license', lazyRoute(() => import('./routes/license.js'), 'hot'));
 // Core API routes
 app.use('/api/sales', lazyRoute(() => import('./routes/sales.js'), 'hot'));
 app.use('/api/inventory', lazyRoute(() => import('./routes/inventory.js'), 'hot'));
@@ -563,6 +564,11 @@ server.on('error', (err: any) => {
       import('./services/tokenRefreshScheduler.js')
         .then(m => m.tokenRefreshScheduler.start())
         .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
+
+      // Auto-update scheduler: checks every 15 days (DB-gated, won't hammer on every boot)
+      import('./services/autoUpdateService.js')
+        .then(m => m.autoUpdateService.start())
+        .catch(err => console.warn('[Boot:Phase2] Auto-update scheduler start failed:', err));
 
       // Record unclean boot flag (flipped to 'true' on clean gracefulShutdown)
       try {

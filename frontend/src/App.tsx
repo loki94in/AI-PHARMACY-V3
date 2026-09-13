@@ -9,6 +9,7 @@ import { getTodayString, getNDaysAgoString } from './utils/date';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { StoreProvider } from './context/StoreContext';
+import UpdateBanner from './components/UpdateBanner';
 
 // Minimal page-switch loading fallback — renders instantly, no layout shift
 const PageLoader = () => (
@@ -267,6 +268,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+      <UpdateBanner />
       <StoreProvider>
         <BrowserRouter>
           <Suspense fallback={<PageLoader />}>

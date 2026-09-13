@@ -77,6 +77,8 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   google_verification_solved: ['sse-google-verification'],
   toast_alert: ['app-show-toast'],
   message_send_progress: ['app-message-send-progress'],
+  update_available: ['sse:update_available'],
+  update_check_complete: ['sse:update_check_complete'],
 };
 
 // Chrome-owned queries rendered OUTSIDE KeepAliveOutlet pages (Layout /
