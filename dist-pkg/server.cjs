@@ -16277,13 +16277,13 @@ async function ensureSchema(dbPath) {
             if (unpopulated.length > 0) {
               console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
               const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-              const fs61 = await import("fs");
+              const fs62 = await import("fs");
               for (const email of unpopulated) {
                 try {
                   const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
                   const parsedItems = [];
                   for (const att of attachments) {
-                    if (att.local_path && fs61.existsSync(att.local_path)) {
+                    if (att.local_path && fs62.existsSync(att.local_path)) {
                       try {
                         const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
                         if (resParse && resParse.success && resParse.items) {
@@ -36382,19 +36382,19 @@ var init_messageDAO = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang, path64, values = {}) {
-  const dbValue = getTemplate(lang, path64);
+function getMessage(lang, path65, values = {}) {
+  const dbValue = getTemplate(lang, path65);
   let template = "";
   if (dbValue !== null) {
     template = dbValue;
   } else {
-    const keys = path64.split(".");
+    const keys = path65.split(".");
     let segment = ALL_MESSAGES[lang];
     for (const k of keys) {
-      if (segment == null) return `[Missing: ${path64}]`;
+      if (segment == null) return `[Missing: ${path65}]`;
       segment = segment[k];
     }
-    if (typeof segment !== "string") return `[Not a string: ${path64}]`;
+    if (typeof segment !== "string") return `[Not a string: ${path65}]`;
     template = segment;
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
@@ -59564,12 +59564,14 @@ __export(cloudflareTunnelService_exports, {
   cloudflareTunnelService: () => cloudflareTunnelService,
   default: () => cloudflareTunnelService_default
 });
-var import_child_process7, import_http, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var import_child_process7, import_http, import_fs48, import_path51, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
 var init_cloudflareTunnelService = __esm({
   "src/services/cloudflareTunnelService.ts"() {
     "use strict";
     import_child_process7 = require("child_process");
     import_http = __toESM(require("http"), 1);
+    import_fs48 = __toESM(require("fs"), 1);
+    import_path51 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     CloudflareTunnelService = class _CloudflareTunnelService {
@@ -59626,6 +59628,39 @@ var init_cloudflareTunnelService = __esm({
         });
       }
       /**
+       * Resolves the best available cloudflared binary on the current OS
+       */
+      resolveBinary() {
+        const isWindows = process.platform === "win32";
+        if (isWindows) {
+          const candidates = [
+            import_path51.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
+            import_path51.default.join(process.cwd(), "cloudflared.exe")
+          ];
+          for (const p of candidates) {
+            if (import_fs48.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
+          }
+          const localAppData = process.env.LOCALAPPDATA;
+          if (localAppData) {
+            const npxDir = import_path51.default.join(localAppData, "npm-cache", "_npx");
+            if (import_fs48.default.existsSync(npxDir)) {
+              try {
+                const dirs = import_fs48.default.readdirSync(npxDir);
+                for (const d of dirs) {
+                  const binPath = import_path51.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
+                  if (import_fs48.default.existsSync(binPath)) {
+                    return { binary: binPath, spawnArgsPrefix: [], useShell: false };
+                  }
+                }
+              } catch (_) {
+              }
+            }
+          }
+          return { binary: "npx.cmd", spawnArgsPrefix: ["-y", "cloudflared"], useShell: true };
+        }
+        return { binary: "cloudflared", spawnArgsPrefix: [], useShell: false };
+      }
+      /**
        * Initializes the service on server boot.
        * Auto-starts the tunnel if cloudflare_tunnel_autostart === '1'
        */
@@ -59663,7 +59698,14 @@ var init_cloudflareTunnelService = __esm({
             this.publicUrl = settings.customDomain.startsWith("http") ? settings.customDomain : `https://${settings.customDomain}`;
           }
         } else {
-          const targetPort = parseInt(process.env.PORT || "5174", 10);
+          let targetPort = parseInt(process.env.PORT || "5174", 10);
+          const is5175 = await this.checkPort(5175);
+          if (is5175) {
+            targetPort = 5175;
+          } else {
+            const is5174 = await this.checkPort(5174);
+            if (is5174) targetPort = 5174;
+          }
           const localTarget = `http://127.0.0.1:${targetPort}`;
           const hostHeader = `127.0.0.1:${targetPort}`;
           args = [
@@ -59671,9 +59713,7 @@ var init_cloudflareTunnelService = __esm({
             "--url",
             localTarget,
             "--http-host-header",
-            hostHeader,
-            "--metrics",
-            "127.0.0.1:20241"
+            hostHeader
           ];
         }
         const isWindows = process.platform === "win32";
@@ -59683,13 +59723,13 @@ var init_cloudflareTunnelService = __esm({
           } catch (_) {
           }
         }
-        const binary = isWindows ? "npx.cmd" : "npx";
-        const spawnArgs = ["-y", "cloudflared", ...args];
-        console.log(`[CloudflareTunnel] Spawning cloudflared in ${this.currentMode} mode...`);
+        const { binary, spawnArgsPrefix, useShell } = this.resolveBinary();
+        const spawnArgs = [...spawnArgsPrefix, ...args];
+        console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
         try {
           this.childProcess = (0, import_child_process7.spawn)(binary, spawnArgs, {
             stdio: ["ignore", "pipe", "pipe"],
-            shell: isWindows,
+            shell: useShell,
             detached: false
           });
           this.isRunning = true;
@@ -59731,47 +59771,6 @@ var init_cloudflareTunnelService = __esm({
             this.broadcastStatus();
           });
           this.broadcastStatus();
-          if (this.currentMode === "quick") {
-            let attempts = 0;
-            const probeMetrics = () => {
-              attempts++;
-              if (this.publicUrl || !this.isRunning || attempts > 20) {
-                return;
-              }
-              try {
-                const req = import_http.default.get("http://127.0.0.1:20241/metrics", (res) => {
-                  let body = "";
-                  res.on("data", (d) => {
-                    body += d;
-                  });
-                  res.on("end", () => {
-                    const match = body.match(/userHostname="([^"]+)"/);
-                    if (match && match[1] && !this.publicUrl) {
-                      this.publicUrl = match[1];
-                      console.log(`[CloudflareTunnel] URL captured from metrics: ${this.publicUrl}`);
-                      this.persistLastUrl(this.publicUrl);
-                      this.broadcastStatus();
-                      return;
-                    }
-                    if (!this.publicUrl && this.isRunning && attempts <= 20) {
-                      setTimeout(probeMetrics, 1200);
-                    }
-                  });
-                });
-                req.on("error", () => {
-                  if (!this.publicUrl && this.isRunning && attempts <= 20) {
-                    setTimeout(probeMetrics, 1200);
-                  }
-                });
-                req.setTimeout(800, () => req.destroy());
-              } catch {
-                if (!this.publicUrl && this.isRunning && attempts <= 20) {
-                  setTimeout(probeMetrics, 1200);
-                }
-              }
-            };
-            setTimeout(probeMetrics, 1200);
-          }
           return this.getStatus();
         } catch (err) {
           console.error("[CloudflareTunnel] Failed to spawn cloudflared:", err);
@@ -60371,9 +60370,9 @@ function loadCatalogAndImages() {
     return { catalog: catalogCache, images: imageStateCache };
   }
   try {
-    const csvPath = import_path51.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-    if (import_fs48.default.existsSync(csvPath)) {
-      const content = import_fs48.default.readFileSync(csvPath, "utf-8");
+    const csvPath = import_path52.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs49.default.existsSync(csvPath)) {
+      const content = import_fs49.default.readFileSync(csvPath, "utf-8");
       const lines = content.split(/\r?\n/);
       const items = [];
       for (let i = 1; i < lines.length; i++) {
@@ -60405,9 +60404,9 @@ function loadCatalogAndImages() {
         });
       }
       try {
-        const clinicalCsvPath = import_path51.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
-        if (import_fs48.default.existsSync(clinicalCsvPath)) {
-          const clinContent = import_fs48.default.readFileSync(clinicalCsvPath, "utf-8");
+        const clinicalCsvPath = import_path52.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs49.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs49.default.readFileSync(clinicalCsvPath, "utf-8");
           const clinLines = clinContent.split(/\r?\n/);
           for (let j = 1; j < clinLines.length; j++) {
             const clinLine = clinLines[j].trim();
@@ -60438,9 +60437,9 @@ function loadCatalogAndImages() {
     catalogCache = [];
   }
   try {
-    const statePath = import_path51.default.resolve(process.cwd(), "data/image_download_state.json");
-    if (import_fs48.default.existsSync(statePath)) {
-      const stateData = JSON.parse(import_fs48.default.readFileSync(statePath, "utf-8"));
+    const statePath = import_path52.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs49.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs49.default.readFileSync(statePath, "utf-8"));
       imageStateCache = stateData.products || {};
     }
   } catch (e) {
@@ -60449,14 +60448,14 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express26, import_crypto8, import_fs48, import_path51, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express26, import_crypto8, import_fs49, import_path52, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express26 = __toESM(require("express"), 1);
     import_crypto8 = __toESM(require("crypto"), 1);
-    import_fs48 = __toESM(require("fs"), 1);
-    import_path51 = __toESM(require("path"), 1);
+    import_fs49 = __toESM(require("fs"), 1);
+    import_path52 = __toESM(require("path"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_eventService();
@@ -61612,8 +61611,8 @@ ${upiUri}
       }
     });
     router26.get("/standalone-catalog", (req, res) => {
-      const filePath = import_path51.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
-      if (import_fs48.default.existsSync(filePath)) {
+      const filePath = import_path52.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs49.default.existsSync(filePath)) {
         return res.sendFile(filePath);
       }
       res.status(404).send("Live catalog website file not found");
@@ -63444,7 +63443,7 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express31, import_path52, import_fs49, import_pdfkit5, router31, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express31, import_path53, import_fs50, import_pdfkit5, router31, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
@@ -63457,8 +63456,8 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path52 = __toESM(require("path"), 1);
-    import_fs49 = __toESM(require("fs"), 1);
+    import_path53 = __toESM(require("path"), 1);
+    import_fs50 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
@@ -64145,13 +64144,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs49.default.existsSync(uploadsDir)) {
-                    import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs50.default.existsSync(uploadsDir)) {
+                    import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path52.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path53.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -65297,14 +65296,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs49.default.existsSync(uploadsDir)) {
-          import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs50.default.existsSync(uploadsDir)) {
+          import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit5.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path52.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs49.default.createWriteStream(pdfPath);
+        const pdfPath = import_path53.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs50.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -65330,7 +65329,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path52.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path53.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -66380,14 +66379,14 @@ var init_sales = __esm({
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path52.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs49.default.existsSync(uploadsDir)) {
-          import_fs49.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs50.default.existsSync(uploadsDir)) {
+          import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path52.default.join(uploadsDir, safeName);
+        const fullPath = import_path53.default.join(uploadsDir, safeName);
         await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
@@ -66446,17 +66445,17 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express32, import_path53, import_url40, __filename38, __dirname38, DB_PATH24, router32, dashboard_default;
+var import_express32, import_path54, import_url40, __filename38, __dirname38, DB_PATH24, router32, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
     import_express32 = __toESM(require("express"), 1);
     init_connection();
-    import_path53 = __toESM(require("path"), 1);
+    import_path54 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
-    __dirname38 = import_path53.default.dirname(__filename38);
-    DB_PATH24 = process.env.DB_PATH || import_path53.default.resolve(__dirname38, "..", "..", "data", "app.db");
+    __dirname38 = import_path54.default.dirname(__filename38);
+    DB_PATH24 = process.env.DB_PATH || import_path54.default.resolve(__dirname38, "..", "..", "data", "app.db");
     router32 = import_express32.default.Router();
     router32.get("/", async (_req, res) => {
       try {
@@ -66540,12 +66539,12 @@ async function seedMasterMedicines(force = false) {
         return { loaded: 0 };
       }
     }
-    const csvPath = import_path54.default.join(process.cwd(), "data", "reference_medicines.csv");
-    if (!import_fs50.default.existsSync(csvPath)) {
+    const csvPath = import_path55.default.join(process.cwd(), "data", "reference_medicines.csv");
+    if (!import_fs51.default.existsSync(csvPath)) {
       console.warn("[MasterSeed] Reference CSV not found at:", csvPath);
       return { loaded: 0 };
     }
-    const fileStream = import_fs50.default.createReadStream(csvPath, { encoding: "utf8" });
+    const fileStream = import_fs51.default.createReadStream(csvPath, { encoding: "utf8" });
     const rl = import_readline3.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -66683,12 +66682,12 @@ async function upsertMasterMedicine(item) {
     console.warn("[MasterSeed] Failed to upsert master medicine:", cleanName, err.message);
   }
 }
-var import_fs50, import_path54, import_readline3;
+var import_fs51, import_path55, import_readline3;
 var init_masterMedicinesSeedService = __esm({
   "src/services/masterMedicinesSeedService.ts"() {
     "use strict";
-    import_fs50 = __toESM(require("fs"), 1);
-    import_path54 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
+    import_path55 = __toESM(require("path"), 1);
     import_readline3 = __toESM(require("readline"), 1);
     init_connection();
   }
@@ -66928,13 +66927,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios2, import_fs51, import_path55, import_tesseract4, InvoiceVisionService, invoiceVisionService;
+var import_axios2, import_fs52, import_path56, import_tesseract4, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios2 = __toESM(require("axios"), 1);
-    import_fs51 = __toESM(require("fs"), 1);
-    import_path55 = __toESM(require("path"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
+    import_path56 = __toESM(require("path"), 1);
     import_tesseract4 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -66945,14 +66944,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path55.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs51.default.existsSync(uploadsDir)) {
-          import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path56.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs52.default.existsSync(uploadsDir)) {
+          import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path55.default.extname(originalFilename) || ".jpg";
+        const ext = import_path56.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path55.default.join(uploadsDir, safeFilename);
-        import_fs51.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path56.default.join(uploadsDir, safeFilename);
+        import_fs52.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         let geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         if (!geminiKey || geminiKey.trim() === "") {
@@ -67541,14 +67540,14 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express33, import_path56, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs52, __filename39, __dirname39, DB_PATH25, router33, upload2, purchases_default;
+var import_express33, import_path57, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs53, __filename39, __dirname39, DB_PATH25, router33, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
     import_express33 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path56 = __toESM(require("path"), 1);
+    import_path57 = __toESM(require("path"), 1);
     import_url41 = require("url");
     import_multer2 = __toESM(require("multer"), 1);
     import_pdf_parse2 = __toESM(require("pdf-parse"), 1);
@@ -67561,7 +67560,7 @@ var init_purchases = __esm({
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs52 = __toESM(require("fs"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -67571,8 +67570,8 @@ var init_purchases = __esm({
     init_barcodeService();
     init_storeContextService();
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
-    __dirname39 = import_path56.default.dirname(__filename39);
-    DB_PATH25 = process.env.DB_PATH || import_path56.default.resolve(__dirname39, "..", "..", "data", "app.db");
+    __dirname39 = import_path57.default.dirname(__filename39);
+    DB_PATH25 = process.env.DB_PATH || import_path57.default.resolve(__dirname39, "..", "..", "data", "app.db");
     router33 = import_express33.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
     router33.get("/summary", async (_req, res) => {
@@ -67593,17 +67592,17 @@ var init_purchases = __esm({
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path56.default.join(getAppDataDir(), "uploads");
-        if (!import_fs52.default.existsSync(uploadsDir)) {
-          import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path57.default.join(getAppDataDir(), "uploads");
+        if (!import_fs53.default.existsSync(uploadsDir)) {
+          import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path56.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path56.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs52.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path57.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path57.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs53.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs52.default.unlinkSync(tempPath);
+            import_fs53.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -68910,7 +68909,7 @@ var init_purchases = __esm({
           if (medNames.length === 0 && !email.medicine_names) {
             const parsedItems = [];
             for (const att of attachments) {
-              if (att.local_path && import_fs52.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items) {
@@ -69199,7 +69198,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs52.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -69308,7 +69307,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs52.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -69344,7 +69343,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs52.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs53.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -69625,14 +69624,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument7 } = await import("pdfkit");
-        const uploadsDir = import_path56.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs52.default.existsSync(uploadsDir)) {
-          import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path57.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs53.default.existsSync(uploadsDir)) {
+          import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument7({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path56.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs52.default.createWriteStream(pdfPath);
+        const pdfPath = import_path57.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs53.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -69661,7 +69660,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path56.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path57.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -70035,14 +70034,14 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express35, import_path57, import_fs53, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router35, returns_default;
+var import_express35, import_path58, import_fs54, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router35, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
     import_express35 = __toESM(require("express"), 1);
     init_connection();
-    import_path57 = __toESM(require("path"), 1);
-    import_fs53 = __toESM(require("fs"), 1);
+    import_path58 = __toESM(require("path"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
     import_pdfkit6 = __toESM(require("pdfkit"), 1);
     import_url42 = require("url");
     init_aiCameraService();
@@ -70051,8 +70050,8 @@ var init_returns = __esm({
     init_stockRebuild();
     init_eventService();
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
-    __dirname40 = import_path57.default.dirname(__filename40);
-    DB_PATH26 = process.env.DB_PATH || import_path57.default.resolve(__dirname40, "..", "..", "data", "app.db");
+    __dirname40 = import_path58.default.dirname(__filename40);
+    DB_PATH26 = process.env.DB_PATH || import_path58.default.resolve(__dirname40, "..", "..", "data", "app.db");
     router35 = import_express35.default.Router();
     router35.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -70259,8 +70258,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit6.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path57.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs53.default.createWriteStream(outPath);
+        const outPath = import_path58.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs54.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -71586,12 +71585,12 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
   let pdfPath = void 0;
   try {
-    const uploadsDir = import_path58.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs54.default.existsSync(uploadsDir)) {
-      import_fs54.default.mkdirSync(uploadsDir, { recursive: true });
+    const uploadsDir = import_path59.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs55.default.existsSync(uploadsDir)) {
+      import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
     }
     const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path58.default.join(uploadsDir, pdfFilename);
+    const fullPdfPath = import_path59.default.join(uploadsDir, pdfFilename);
     await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
     pdfPath = fullPdfPath;
   } catch (pdfErr) {
@@ -71617,14 +71616,14 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   });
   return true;
 }
-var import_express37, import_path58, import_fs54, import_url43, __filename41, __dirname41, DB_PATH27, router37, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express37, import_path59, import_fs55, import_url43, __filename41, __dirname41, DB_PATH27, router37, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
     import_express37 = __toESM(require("express"), 1);
     init_connection();
-    import_path58 = __toESM(require("path"), 1);
-    import_fs54 = __toESM(require("fs"), 1);
+    import_path59 = __toESM(require("path"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
     import_url43 = require("url");
     init_whatsappClient();
     init_storeSettingsService();
@@ -71637,8 +71636,8 @@ var init_orders = __esm({
     init_returnWindowService();
     init_orderScheduleService();
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
-    __dirname41 = import_path58.default.dirname(__filename41);
-    DB_PATH27 = process.env.DB_PATH || import_path58.default.resolve(__dirname41, "..", "..", "data", "app.db");
+    __dirname41 = import_path59.default.dirname(__filename41);
+    DB_PATH27 = process.env.DB_PATH || import_path59.default.resolve(__dirname41, "..", "..", "data", "app.db");
     router37 = import_express37.default.Router();
     broadcastOrdersChanged2 = () => {
       try {
@@ -72707,20 +72706,20 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express39, import_path59, import_url44, import_fs55, __filename42, __dirname42, DB_PATH28, router39, expiry_default;
+var import_express39, import_path60, import_url44, import_fs56, __filename42, __dirname42, DB_PATH28, router39, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
     import_express39 = __toESM(require("express"), 1);
     init_connection();
-    import_path59 = __toESM(require("path"), 1);
+    import_path60 = __toESM(require("path"), 1);
     import_url44 = require("url");
-    import_fs55 = __toESM(require("fs"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
     init_reportExporter();
     init_config();
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
-    __dirname42 = import_path59.default.dirname(__filename42);
-    DB_PATH28 = process.env.DB_PATH || import_path59.default.resolve(__dirname42, "..", "..", "data", "app.db");
+    __dirname42 = import_path60.default.dirname(__filename42);
+    DB_PATH28 = process.env.DB_PATH || import_path60.default.resolve(__dirname42, "..", "..", "data", "app.db");
     router39 = import_express39.default.Router();
     router39.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
@@ -72729,11 +72728,11 @@ var init_expiry = __esm({
         const days = req.query.days ? parseInt(req.query.days, 10) : 90;
         date_to = getNDaysAheadString(days);
       }
-      const cacheDir = import_path59.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path60.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs55.default.existsSync(cacheDir);
-        const isInitialized = cacheDirExists && import_fs55.default.existsSync(import_path59.default.join(cacheDir, "manifest.json"));
+        const cacheDirExists = import_fs56.default.existsSync(cacheDir);
+        const isInitialized = cacheDirExists && import_fs56.default.existsSync(import_path60.default.join(cacheDir, "manifest.json"));
         if (!isInitialized) {
           console.log("[ExpiryCache] Cache directory or manifest missing. Using live SQL and triggering initial rebuild.");
           const db2 = await dbManager.getConnection();
@@ -72762,10 +72761,10 @@ var init_expiry = __esm({
         }
         let items = [];
         for (const ym of months) {
-          const filePath = import_path59.default.join(cacheDir, `expiry_${ym}.json`);
-          if (import_fs55.default.existsSync(filePath)) {
+          const filePath = import_path60.default.join(cacheDir, `expiry_${ym}.json`);
+          if (import_fs56.default.existsSync(filePath)) {
             try {
-              const raw = await import_fs55.default.promises.readFile(filePath, "utf-8");
+              const raw = await import_fs56.default.promises.readFile(filePath, "utf-8");
               items = items.concat(JSON.parse(raw));
             } catch (err) {
               console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -72788,12 +72787,12 @@ var init_expiry = __esm({
         date_to = getNDaysAheadString(days);
       }
       const format = req.query.format || "pdf";
-      const cacheDir = import_path59.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path60.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       let items = [];
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs55.default.existsSync(cacheDir);
-        const hasCacheFiles = cacheDirExists && import_fs55.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
+        const cacheDirExists = import_fs56.default.existsSync(cacheDir);
+        const hasCacheFiles = cacheDirExists && import_fs56.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
         if (!cacheDirExists || !hasCacheFiles) {
           const db2 = await dbManager.getConnection();
           items = await db2.all(`
@@ -72817,10 +72816,10 @@ var init_expiry = __esm({
           items = items.filter((item) => isDateInRange(item.expiry_date, date_from, date_to));
         } else {
           for (const ym of months) {
-            const filePath = import_path59.default.join(cacheDir, `expiry_${ym}.json`);
-            if (import_fs55.default.existsSync(filePath)) {
+            const filePath = import_path60.default.join(cacheDir, `expiry_${ym}.json`);
+            if (import_fs56.default.existsSync(filePath)) {
               try {
-                const raw = await import_fs55.default.promises.readFile(filePath, "utf-8");
+                const raw = await import_fs56.default.promises.readFile(filePath, "utf-8");
                 items = items.concat(JSON.parse(raw));
               } catch (err) {
                 console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -73019,17 +73018,17 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express40, import_path60, import_url45, __filename43, __dirname43, DB_PATH29, router40, compliance_default;
+var import_express40, import_path61, import_url45, __filename43, __dirname43, DB_PATH29, router40, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
     import_express40 = __toESM(require("express"), 1);
     init_connection();
-    import_path60 = __toESM(require("path"), 1);
+    import_path61 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
-    __dirname43 = import_path60.default.dirname(__filename43);
-    DB_PATH29 = process.env.DB_PATH || import_path60.default.resolve(__dirname43, "..", "..", "data", "app.db");
+    __dirname43 = import_path61.default.dirname(__filename43);
+    DB_PATH29 = process.env.DB_PATH || import_path61.default.resolve(__dirname43, "..", "..", "data", "app.db");
     router40 = import_express40.default.Router();
     router40.get("/", async (_req, res) => {
       try {
@@ -73646,31 +73645,31 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express43, import_crypto9, import_path61, import_fs56, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router43, upload_default;
+var import_express43, import_crypto9, import_path62, import_fs57, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router43, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
     import_express43 = __toESM(require("express"), 1);
     import_crypto9 = __toESM(require("crypto"), 1);
-    import_path61 = __toESM(require("path"), 1);
-    import_fs56 = __toESM(require("fs"), 1);
+    import_path62 = __toESM(require("path"), 1);
+    import_fs57 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
     import_url46 = require("url");
     init_connection();
     init_config();
     __filename44 = (0, import_url46.fileURLToPath)(import_meta_url);
-    __dirname44 = import_path61.default.dirname(__filename44);
-    UPLOAD_DIR = import_path61.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR4 = import_path61.default.join(UPLOAD_DIR, "temp");
-    RAW_DIR = import_path61.default.resolve(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs56.default.existsSync(UPLOAD_DIR)) {
-      import_fs56.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+    __dirname44 = import_path62.default.dirname(__filename44);
+    UPLOAD_DIR = import_path62.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR4 = import_path62.default.join(UPLOAD_DIR, "temp");
+    RAW_DIR = import_path62.default.resolve(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs57.default.existsSync(UPLOAD_DIR)) {
+      import_fs57.default.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
-    if (!import_fs56.default.existsSync(TEMP_DIR4)) {
-      import_fs56.default.mkdirSync(TEMP_DIR4, { recursive: true });
+    if (!import_fs57.default.existsSync(TEMP_DIR4)) {
+      import_fs57.default.mkdirSync(TEMP_DIR4, { recursive: true });
     }
-    if (!import_fs56.default.existsSync(RAW_DIR)) {
-      import_fs56.default.mkdirSync(RAW_DIR, { recursive: true });
+    if (!import_fs57.default.existsSync(RAW_DIR)) {
+      import_fs57.default.mkdirSync(RAW_DIR, { recursive: true });
     }
     ALLOWED_UPLOAD_EXTENSIONS = /\.(csv|xlsx?|pdf|zip|jpg|jpeg|png|gif|bmp|tiff?)$/i;
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
@@ -73701,18 +73700,18 @@ var init_upload = __esm({
           return res.status(400).json({ error: "No file uploaded" });
         }
         const tempPath = req.file.path;
-        const originalName = req.file.originalname || import_path61.default.basename(tempPath);
+        const originalName = req.file.originalname || import_path62.default.basename(tempPath);
         const timestamp = Date.now();
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const rawFileName = `${timestamp}-${sanitizedName}`;
-        const rawPath = import_path61.default.join(RAW_DIR, rawFileName);
-        import_fs56.default.copyFileSync(tempPath, rawPath);
+        const rawPath = import_path62.default.join(RAW_DIR, rawFileName);
+        import_fs57.default.copyFileSync(tempPath, rawPath);
         try {
-          import_fs56.default.unlinkSync(tempPath);
+          import_fs57.default.unlinkSync(tempPath);
         } catch (err) {
           console.warn("Failed to delete temporary upload file:", err);
         }
-        const ext = import_path61.default.extname(originalName).toLowerCase();
+        const ext = import_path62.default.extname(originalName).toLowerCase();
         if (![".csv", ".xlsx", ".xls", ".pdf"].includes(ext)) {
           return res.status(400).json({ error: "Unsupported file format. Please upload a CSV, PDF, or Excel file." });
         }
@@ -74235,12 +74234,12 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express45, import_fs57, router45, catalog_default;
+var import_express45, import_fs58, router45, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
     import_express45 = __toESM(require("express"), 1);
-    import_fs57 = __toESM(require("fs"), 1);
+    import_fs58 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
     router45 = import_express45.default.Router();
@@ -74447,9 +74446,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs57.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs58.default.existsSync(job.file_path)) {
           try {
-            import_fs57.default.unlinkSync(job.file_path);
+            import_fs58.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -75829,13 +75828,13 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express47, import_fs58, import_path62, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router47, upload4, enrichment_default;
+var import_express47, import_fs59, import_path63, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router47, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
     import_express47 = __toESM(require("express"), 1);
-    import_fs58 = __toESM(require("fs"), 1);
-    import_path62 = __toESM(require("path"), 1);
+    import_fs59 = __toESM(require("fs"), 1);
+    import_path63 = __toESM(require("path"), 1);
     import_url47 = require("url");
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
@@ -75843,9 +75842,9 @@ var init_enrichment = __esm({
     init_onlineDataEnricher();
     init_config();
     __filename45 = (0, import_url47.fileURLToPath)(import_meta_url);
-    __dirname45 = import_path62.default.dirname(__filename45);
-    DATA_DIR2 = import_path62.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path62.default.join(DATA_DIR2, "reference_medicines.csv");
+    __dirname45 = import_path63.default.dirname(__filename45);
+    DATA_DIR2 = import_path63.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path63.default.join(DATA_DIR2, "reference_medicines.csv");
     router47 = import_express47.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
     router47.get("/enrichment/status", async (_req, res) => {
@@ -75926,8 +75925,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs58.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs58.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs59.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs59.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -76431,12 +76430,12 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express49, import_fs59, router49, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express49, import_fs60, router49, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
     import_express49 = __toESM(require("express"), 1);
-    import_fs59 = __toESM(require("fs"), 1);
+    import_fs60 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
@@ -76537,9 +76536,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs59.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs60.default.existsSync(f.file_path)) {
               try {
-                import_fs59.default.unlinkSync(f.file_path);
+                import_fs60.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -76818,15 +76817,15 @@ var init_notifications2 = __esm({
       }
     });
     router50.get("/notifications/download-apk", (req, res) => {
-      const fs61 = require("fs");
-      const path64 = require("path");
+      const fs62 = require("fs");
+      const path65 = require("path");
       const candidatePaths = [
-        path64.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path64.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path64.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path64.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path65.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path65.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path65.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path65.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs61.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs62.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -78073,9 +78072,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path63.default.resolve(__dirname46, "..", "telegramBot.ts");
-    if (import_fs60.default.existsSync(botPath)) {
-      const src = import_fs60.default.readFileSync(botPath, "utf8");
+    const botPath = import_path64.default.resolve(__dirname46, "..", "telegramBot.ts");
+    if (import_fs61.default.existsSync(botPath)) {
+      const src = import_fs61.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -78292,12 +78291,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path63.default.resolve(__dirname46, "..", "..", "package.json"),
-    import_path63.default.resolve(process.cwd(), "package.json")
+    import_path64.default.resolve(__dirname46, "..", "..", "package.json"),
+    import_path64.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg2 = JSON.parse(import_fs60.default.readFileSync(p, "utf8"));
+      const pkg2 = JSON.parse(import_fs61.default.readFileSync(p, "utf8"));
       if (pkg2?.version) return String(pkg2.version);
     } catch (_e) {
     }
@@ -78348,17 +78347,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs60, import_path63, import_url48, import_child_process8, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs61, import_path64, import_url48, import_child_process8, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs60 = __toESM(require("fs"), 1);
-    import_path63 = __toESM(require("path"), 1);
+    import_fs61 = __toESM(require("fs"), 1);
+    import_path64 = __toESM(require("path"), 1);
     import_url48 = require("url");
     import_child_process8 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
-    __dirname46 = import_path63.default.dirname(__filename46);
+    __dirname46 = import_path64.default.dirname(__filename46);
     BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
@@ -78874,9 +78873,9 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path64.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path64.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs61.default.existsSync(pythonExecutable) || !import_fs61.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path65.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path65.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs62.default.existsSync(pythonExecutable) || !import_fs62.default.existsSync(scriptPath)) {
       return resolve([]);
     }
     const pythonProcess = (0, import_child_process9.spawn)(pythonExecutable, [scriptPath, messageText]);
@@ -79032,7 +79031,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express54, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path64, import_child_process9, import_url49, import_fs61, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express54, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path65, import_child_process9, import_url49, import_fs62, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -79042,10 +79041,10 @@ var init_server = __esm({
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path64 = __toESM(require("path"), 1);
+    import_path65 = __toESM(require("path"), 1);
     import_child_process9 = require("child_process");
     import_url49 = require("url");
-    import_fs61 = __toESM(require("fs"), 1);
+    import_fs62 = __toESM(require("fs"), 1);
     import_axios3 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -79057,7 +79056,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
-    __dirname47 = import_path64.default.dirname(__filename47);
+    __dirname47 = import_path65.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
     import_axios3.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -79095,15 +79094,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path64.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs61.default.existsSync(UPLOAD_DIR2)) {
-      import_fs61.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path65.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs62.default.existsSync(UPLOAD_DIR2)) {
+      import_fs62.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs61.default.existsSync(TEMP_DIR5)) {
-      import_fs61.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs62.default.existsSync(TEMP_DIR5)) {
+      import_fs62.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs61.default.existsSync(RAW_DIR2)) {
-      import_fs61.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs62.default.existsSync(RAW_DIR2)) {
+      import_fs62.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
@@ -79157,10 +79156,10 @@ var init_server = __esm({
       next(err);
     });
     app.use("/uploads", import_express54.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express54.default.static(import_path64.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express54.default.static(import_path64.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express54.default.static(import_path64.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express54.default.static(import_path64.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/products", import_express54.default.static(import_path65.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express54.default.static(import_path65.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express54.default.static(import_path65.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express54.default.static(import_path65.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -79228,14 +79227,14 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path64.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path64.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path64.default.resolve(__dirname47, "..", "frontend", "dist"),
-      import_path64.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
-      import_path64.default.resolve(process.cwd(), "dist"),
-      import_path64.default.resolve(appDataDir2, "dist")
+      import_path65.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path65.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path65.default.resolve(__dirname47, "..", "frontend", "dist"),
+      import_path65.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
+      import_path65.default.resolve(process.cwd(), "dist"),
+      import_path65.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs61.default.existsSync(import_path64.default.join(dir, "index.html"))) || frontendCandidates[0];
+    frontendDist = frontendCandidates.find((dir) => import_fs62.default.existsSync(import_path65.default.join(dir, "index.html"))) || frontendCandidates[0];
     app.use(import_express54.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
@@ -79251,8 +79250,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path64.default.join(frontendDist, "index.html");
-      if (import_fs61.default.existsSync(indexPath)) {
+      const indexPath = import_path65.default.join(frontendDist, "index.html");
+      if (import_fs62.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }

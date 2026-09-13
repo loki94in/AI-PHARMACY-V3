@@ -1,7 +1,10 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
+import { config } from '../config/index.js';
 
 export interface TunnelStatus {
   isRunning: boolean;
@@ -73,6 +76,40 @@ class CloudflareTunnelService {
   }
 
   /**
+   * Resolves the best available cloudflared binary on the current OS
+   */
+  private resolveBinary(): { binary: string; spawnArgsPrefix: string[]; useShell: boolean } {
+    const isWindows = process.platform === 'win32';
+    if (isWindows) {
+      const candidates = [
+        path.join(process.cwd(), 'node_modules', '.bin', 'cloudflared.exe'),
+        path.join(process.cwd(), 'cloudflared.exe')
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
+      }
+
+      const localAppData = process.env.LOCALAPPDATA;
+      if (localAppData) {
+        const npxDir = path.join(localAppData, 'npm-cache', '_npx');
+        if (fs.existsSync(npxDir)) {
+          try {
+            const dirs = fs.readdirSync(npxDir);
+            for (const d of dirs) {
+              const binPath = path.join(npxDir, d, 'node_modules', 'cloudflared', 'bin', 'cloudflared.exe');
+              if (fs.existsSync(binPath)) {
+                return { binary: binPath, spawnArgsPrefix: [], useShell: false };
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      return { binary: 'npx.cmd', spawnArgsPrefix: ['-y', 'cloudflared'], useShell: true };
+    }
+    return { binary: 'cloudflared', spawnArgsPrefix: [], useShell: false };
+  }
+
+  /**
    * Initializes the service on server boot.
    * Auto-starts the tunnel if cloudflare_tunnel_autostart === '1'
    */
@@ -121,15 +158,24 @@ class CloudflareTunnelService {
       // Quick tunnel mode
       // Always target the backend server (port 5174 / 5175) which serves the production frontend build,
       // API endpoints, product images (/products), and uploads (/uploads) reliably without Vite dev server restrictions.
-      const targetPort = parseInt(process.env.PORT || '5174', 10);
+      let targetPort = config.port || parseInt(process.env.PORT || '5175', 10);
+      const isTargetActive = await this.checkPort(targetPort);
+      if (!isTargetActive) {
+        const is5175 = await this.checkPort(5175);
+        if (is5175) {
+          targetPort = 5175;
+        } else {
+          const is5174 = await this.checkPort(5174);
+          if (is5174) targetPort = 5174;
+        }
+      }
       const localTarget = `http://127.0.0.1:${targetPort}`;
       const hostHeader = `127.0.0.1:${targetPort}`;
 
       args = [
         'tunnel',
         '--url', localTarget,
-        '--http-host-header', hostHeader,
-        '--metrics', '127.0.0.1:20241'
+        '--http-host-header', hostHeader
       ];
     }
 
@@ -139,15 +185,16 @@ class CloudflareTunnelService {
         execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
       } catch (_) {}
     }
-    const binary = isWindows ? 'npx.cmd' : 'npx';
-    const spawnArgs = ['-y', 'cloudflared', ...args];
 
-    console.log(`[CloudflareTunnel] Spawning cloudflared in ${this.currentMode} mode...`);
+    const { binary, spawnArgsPrefix, useShell } = this.resolveBinary();
+    const spawnArgs = [...spawnArgsPrefix, ...args];
+
+    console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
 
     try {
       this.childProcess = spawn(binary, spawnArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        shell: isWindows,
+        shell: useShell,
         detached: false
       });
 
@@ -198,48 +245,6 @@ class CloudflareTunnelService {
       });
 
       this.broadcastStatus();
-
-      // Poll metrics endpoint in quick mode as fallback URL discovery
-      if (this.currentMode === 'quick') {
-        let attempts = 0;
-        const probeMetrics = () => {
-          attempts++;
-          if (this.publicUrl || !this.isRunning || attempts > 20) {
-            return;
-          }
-          try {
-            const req = http.get('http://127.0.0.1:20241/metrics', (res) => {
-              let body = '';
-              res.on('data', (d) => { body += d; });
-              res.on('end', () => {
-                const match = body.match(/userHostname="([^"]+)"/);
-                if (match && match[1] && !this.publicUrl) {
-                  this.publicUrl = match[1];
-                  console.log(`[CloudflareTunnel] URL captured from metrics: ${this.publicUrl}`);
-                  this.persistLastUrl(this.publicUrl);
-                  this.broadcastStatus();
-                  return;
-                }
-                if (!this.publicUrl && this.isRunning && attempts <= 20) {
-                  setTimeout(probeMetrics, 1200);
-                }
-              });
-            });
-            req.on('error', () => {
-              if (!this.publicUrl && this.isRunning && attempts <= 20) {
-                setTimeout(probeMetrics, 1200);
-              }
-            });
-            req.setTimeout(800, () => req.destroy());
-          } catch {
-            if (!this.publicUrl && this.isRunning && attempts <= 20) {
-              setTimeout(probeMetrics, 1200);
-            }
-          }
-        };
-
-        setTimeout(probeMetrics, 1200);
-      }
 
       return this.getStatus();
     } catch (err: any) {
