@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Globe, Search, RefreshCw, CheckCircle2, EyeOff, Image,
-  Package, Zap, Filter, ChevronLeft, ChevronRight, X, Sparkles
+  Globe, Search, RefreshCw, CheckCircle2, EyeOff,
+  Package, Zap, Filter, ChevronLeft, ChevronRight, X, Sparkles,
+  Copy, Check, QrCode, ExternalLink, Settings, Radio, Power, ShieldCheck, Save
 } from 'lucide-react';
+import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 
 interface MedicineCatalogItem {
@@ -46,6 +48,92 @@ export default function OnlineCatalog() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [publishInStockLoading, setPublishInStockLoading] = useState(false);
+
+  // Cloudflare Online Store Tunnel State
+  type TunnelState = import('../../services/api').TunnelStatusResponse;
+  const [tunnel, setTunnel] = useState<TunnelState | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const [tokenInput, setTokenInput] = useState('');
+  const [domainInput, setDomainInput] = useState('');
+  const [autostartInput, setAutostartInput] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  const loadTunnel = async () => {
+    try {
+      const res = await api.getTunnelStatus();
+      if (res?.success) {
+        setTunnel(res);
+        setDomainInput(res.customDomain || '');
+        setAutostartInput(res.autostart || false);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadTunnel();
+    const handleTunnelUpdate = (e: any) => {
+      if (e.detail) {
+        setTunnel(e.detail);
+      } else {
+        loadTunnel();
+      }
+    };
+    window.addEventListener('tunnel_status_changed', handleTunnelUpdate);
+    return () => window.removeEventListener('tunnel_status_changed', handleTunnelUpdate);
+  }, []);
+
+  const handleToggleTunnel = async () => {
+    setTunnelLoading(true);
+    try {
+      if (tunnel?.isRunning) {
+        const res = await api.stopTunnel();
+        setTunnel(res);
+        toastEvent.trigger('Online Store Tunnel stopped (Store is now Offline)', 'info');
+      } else {
+        const res = await api.startTunnel();
+        setTunnel(res);
+        toastEvent.trigger('Connecting Online Store to Cloudflare Edge...', 'info');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err.message || 'Failed to toggle tunnel', 'error');
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingConfig(true);
+    try {
+      const res = await api.configureTunnel({
+        token: tokenInput,
+        customDomain: domainInput,
+        autostart: autostartInput
+      });
+      setTunnel(res);
+      setShowConfigModal(false);
+      setTokenInput('');
+      toastEvent.trigger('Cloudflare Tunnel settings saved successfully!', 'success');
+    } catch (err: any) {
+      toastEvent.trigger(err.message || 'Failed to save settings', 'error');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const portalFullUrl = tunnel?.url ? `${tunnel.url.replace(/\/+$/, '')}/portal` : null;
+
+  const handleCopyLink = () => {
+    if (!portalFullUrl) return;
+    navigator.clipboard.writeText(portalFullUrl);
+    setCopiedLink(true);
+    toastEvent.trigger('Online store portal link copied to clipboard!', 'success');
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
 
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -238,6 +326,118 @@ export default function OnlineCatalog() {
           </div>
         </div>
 
+        {/* ── Cloudflare Live Online Store Controller Card ───────────── */}
+        <div className="mt-3.5 p-3.5 rounded-2xl bg-bg3/70 border border-border flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs transition-all">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border transition-all ${
+              tunnel?.isRunning
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-500 shadow-xs'
+                : 'bg-bg border-border text-muted'
+            }`}>
+              <Radio className={`w-4 h-4 ${tunnel?.isRunning ? 'animate-pulse text-emerald-500' : ''}`} />
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black tracking-tight text-text">
+                  Cloudflare Online Store:
+                </span>
+                {tunnel?.isRunning ? (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    LIVE ONLINE WORLDWIDE
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-bg border border-border text-muted">
+                    Offline (In-Store Local Only)
+                  </span>
+                )}
+                {tunnel?.tokenConfigured && (
+                  <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky text-[10px] font-bold border border-sky-500/20">
+                    Permanent Domain
+                  </span>
+                )}
+              </div>
+
+              {tunnel?.isRunning && portalFullUrl ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <a
+                    href={portalFullUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-mono font-bold text-primary hover:underline truncate max-w-sm sm:max-w-md flex items-center gap-1"
+                  >
+                    <span>{portalFullUrl}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted mt-0.5">
+                  Start tunnel to share your medicine catalog & accept patient orders from mobile or home ($0 forever).
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {tunnel?.isRunning && portalFullUrl && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="h-8 px-2.5 rounded-xl bg-bg border border-border hover:border-primary/40 text-text text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Copy patient portal link"
+                >
+                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted" />}
+                  <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQrModal(true)}
+                  className="h-8 px-2.5 rounded-xl bg-bg border border-border hover:border-primary/40 text-text text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Show QR Code for mobile scanning"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-muted" />
+                  <span>QR Code</span>
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              disabled={tunnelLoading}
+              onClick={handleToggleTunnel}
+              className={`h-8 px-3 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 ${
+                tunnel?.isRunning
+                  ? 'bg-bg border border-red-500/40 text-red-500 hover:bg-red-500/10'
+                  : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+              }`}
+            >
+              {tunnelLoading ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Power className="w-3.5 h-3.5" />
+              )}
+              <span>{tunnel?.isRunning ? 'Stop Online Store' : '⚡ Go Online Worldwide'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setDomainInput(tunnel?.customDomain || '');
+                setAutostartInput(tunnel?.autostart || false);
+                setShowConfigModal(true);
+              }}
+              className="h-8 w-8 rounded-xl bg-bg border border-border hover:border-primary/40 text-muted hover:text-text flex items-center justify-center transition-all cursor-pointer shadow-2xs"
+              title="Configure Cloudflare Tunnel Token & Permanent Domain"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
         {/* ── Search & Filter Row ────────────────────────────────────── */}
         <div className="mt-4 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-xl">
@@ -388,21 +588,6 @@ export default function OnlineCatalog() {
                     className="rounded border-border cursor-pointer w-4 h-4 shrink-0"
                   />
 
-                  {/* Image Thumbnail */}
-                  <div className="w-12 h-12 rounded-lg bg-bg3 border border-border shrink-0 flex items-center justify-center overflow-hidden">
-                    {med.primary_image ? (
-                      <img
-                        src={med.primary_image}
-                        alt={cleanName}
-                        className="w-full h-full object-contain p-1"
-                        loading="lazy"
-                        onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
-                      />
-                    ) : (
-                      <Image className="w-5 h-5 text-muted/40" />
-                    )}
-                  </div>
-
                   {/* Medicine Details */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -512,6 +697,149 @@ export default function OnlineCatalog() {
           </>
         )}
       </div>
+
+      {/* ── QR Code Popup Modal ────────────────────────────────────── */}
+      {showQrModal && portalFullUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-bg2 border border-border rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-emerald-500" />
+                <h3 className="text-sm font-bold text-text">Scan Online Store QR Code</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="text-muted hover:text-text cursor-pointer p-1 rounded-lg hover:bg-bg3"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed">
+              Patients can scan this QR code with their smartphone camera to browse your catalog and request refills.
+            </p>
+
+            <div className="p-4 bg-bg3 rounded-2xl inline-block shadow-inner border border-border mx-auto">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(portalFullUrl)}`}
+                alt="Online Store QR Code"
+                className="w-48 h-48 object-contain"
+                loading="lazy"
+              />
+            </div>
+
+            <div className="text-[11px] font-mono text-muted truncate px-2 py-1 bg-bg3 rounded-lg border border-border">
+              {portalFullUrl}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="flex-1 py-2 rounded-xl bg-primary text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="px-4 py-2 rounded-xl bg-bg3 border border-border hover:bg-bg text-text text-xs font-bold transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cloudflare Token & Permanent Domain Modal ─────────────── */}
+      {showConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-bg2 border border-border rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-sky" />
+                <div>
+                  <h3 className="text-sm font-bold text-text">Cloudflare Tunnel Configuration</h3>
+                  <p className="text-[11px] text-muted">Zero-cost permanent domain or free quick tunnel</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConfigModal(false)}
+                className="text-muted hover:text-text cursor-pointer p-1 rounded-lg hover:bg-bg3"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveConfig} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-text block mb-1">
+                  Cloudflare Tunnel Token (Optional for Permanent Domain)
+                </label>
+                <p className="text-[11px] text-muted mb-1.5 leading-relaxed">
+                  From Cloudflare Zero Trust (<code className="text-primary font-mono">dash.cloudflare.com</code> → Networks → Tunnels). 
+                  <strong> Leave blank</strong> to use instant free <code className="text-text">trycloudflare.com</code> tunnels.
+                </p>
+                <textarea
+                  rows={2}
+                  value={tokenInput}
+                  onChange={e => setTokenInput(e.target.value)}
+                  placeholder={tunnel?.tokenConfigured ? '•••••••••••••••••••••••••••• (Token is saved)' : 'Paste eyJhIjoi... token here'}
+                  className="w-full p-2.5 bg-bg3 border border-border rounded-xl text-xs font-mono text-text placeholder:text-muted focus:outline-none focus:border-primary/60 transition-all resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-text block mb-1">
+                  Custom Domain Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={domainInput}
+                  onChange={e => setDomainInput(e.target.value)}
+                  placeholder="e.g. store.mypharmacy.in or catalog.brand.com"
+                  className="w-full px-3 py-2 bg-bg3 border border-border rounded-xl text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary/60 transition-all font-mono"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-bg3/60 border border-border flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-text block">Auto-launch on startup</span>
+                  <span className="text-[10px] text-muted">Automatically start the online store when this app launches</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={autostartInput}
+                  onChange={e => setAutostartInput(e.target.checked)}
+                  className="w-4 h-4 rounded border-border cursor-pointer accent-primary"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigModal(false)}
+                  className="px-4 py-2 rounded-xl bg-bg3 border border-border hover:bg-bg text-text text-xs font-bold transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingConfig}
+                  className="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {savingConfig ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  <span>Save Configuration</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

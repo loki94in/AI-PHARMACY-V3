@@ -12,10 +12,26 @@ import { catalogImageService } from '../services/catalogImageService.js';
 import { paymentQrService } from '../services/paymentQrService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
+import { cloudflareTunnelService } from '../services/cloudflareTunnelService.js';
 
 const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function getLivePortalUrl(db: any, phone?: string): Promise<string> {
+  let base: string | null = null;
+  try {
+    const tunnelStatus = await cloudflareTunnelService.getStatus();
+    base = tunnelStatus.url;
+  } catch (_) {}
+  if (!base) {
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'cloudflare_tunnel_last_url'");
+    base = row?.value || '';
+  }
+  const cleanBase = base ? base.replace(/\/+$/, '') : '';
+  const query = phone ? `?phone=${phone}` : '';
+  return cleanBase ? `${cleanBase}/portal${query}` : `/portal${query}`;
+}
 
 export function normalizePhone(raw: string | number): string {
   const digits = String(raw || '').replace(/\D/g, '');
@@ -221,8 +237,9 @@ router.post('/accounts/generate', async (req, res) => {
         const storeInfo = await storeContextService.getStoreById(storeId);
         const storeName = storeInfo?.name || (await getStoreMedicalNameAndPhone(db));
         const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const portalUrl = await getLivePortalUrl(db, cleanPhone);
 
-        const msg = `*Welcome to ${storeName} Online Portal!*\n\nHello ${cleanName}, your direct refill account is ready:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *4-Digit PIN:* ${pin}\n📍 *Collection Branch:* ${storeName}\n\n*Direct Login Link:* /customer-login?phone=${cleanPhone}\n\nLogin to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
+        const msg = `*Welcome to ${storeName} Online Portal!*\n\nHello ${cleanName}, your direct refill account is ready:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *4-Digit PIN:* ${pin}\n📍 *Collection Branch:* ${storeName}\n\n*Direct Login Link:* ${portalUrl}\n\nLogin to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
 
         await whatsappQueueWorker.enqueue(formattedPhone, msg, 'portal_credentials', cleanName);
         whatsappQueued = true;
@@ -279,8 +296,9 @@ router.post('/accounts/:id/send-credentials', async (req, res) => {
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
     const storeName = account.store_name || (await getStoreMedicalNameAndPhone(db));
     const customerName = formatCustomerName(account.customer_name);
+    const portalUrl = await getLivePortalUrl(db, cleanPhone);
 
-    const msg = `*Your ${storeName} Login Credentials*\n\nHello ${customerName},\nHere are your online refill portal details:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *PIN:* ${pin}\n📍 *Branch:* ${storeName}\n\n*Direct Login Link:* /customer-login?phone=${cleanPhone}\n\nTap the link to login, select medicines from your previous bills, and place your pickup order.`;
+    const msg = `*Your ${storeName} Login Credentials*\n\nHello ${customerName},\nHere are your online refill portal details:\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *PIN:* ${pin}\n📍 *Branch:* ${storeName}\n\n*Direct Login Link:* ${portalUrl}\n\nTap the link to login, select medicines from your previous bills, and place your pickup order.`;
 
     const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, 'portal_credentials_resend', customerName);
 
@@ -349,7 +367,8 @@ router.put('/accounts/:id', async (req, res) => {
           const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
           const storeName = account.store_name || (await getStoreMedicalNameAndPhone(db));
           const customerName = formatCustomerName(account.customer_name);
-          const msg = `*Your ${storeName} PIN Has Been Reset*\n\nHello ${customerName},\nYour online refill portal PIN has been reset by the pharmacy.\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *New PIN:* ${updatedPin}\n📍 *Branch:* ${storeName}\n\n*Website:* /portal`;
+          const portalUrl = await getLivePortalUrl(db, cleanPhone);
+          const msg = `*Your ${storeName} PIN Has Been Reset*\n\nHello ${customerName},\nYour online refill portal PIN has been reset by the pharmacy.\n\n📱 *Login ID:* ${cleanPhone}\n🔑 *New PIN:* ${updatedPin}\n📍 *Branch:* ${storeName}\n\n*Website:* ${portalUrl}`;
           await whatsappQueueWorker.enqueue(formattedPhone, msg, 'portal_pin_override', customerName);
         }
       } catch (_) {}
@@ -473,6 +492,97 @@ router.post('/auth/login', async (req, res) => {
   } catch (err: any) {
     console.error('[CustomerPortal] Login error:', err);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// POST /api/customer-portal/auth/register — Patient Self-Registration
+router.post('/auth/register', async (req, res) => {
+  const { name, phone, address, pin } = req.body;
+  const cleanPhone = normalizePhone(phone);
+  const cleanPin = String(pin || '').trim();
+  const cleanName = formatCustomerName(name || 'Customer');
+  const cleanAddress = String(address || '').trim();
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+  }
+  if (!cleanPin || cleanPin.length < 4) {
+    return res.status(400).json({ error: 'Please choose a 4-digit PIN for your account' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    const hashed = hashPin(cleanPin);
+
+    let customer = await db.get('SELECT * FROM customers WHERE phone = ? LIMIT 1', [cleanPhone]);
+    let customerId: number;
+
+    if (!customer) {
+      const insRes = await db.run(
+        'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        [cleanName, cleanPhone, cleanAddress]
+      );
+      customerId = insRes.lastID as number;
+      customer = await db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
+    } else {
+      customerId = customer.id;
+      if (cleanAddress || (cleanName && cleanName !== 'Customer')) {
+        await db.run(
+          'UPDATE customers SET name = COALESCE(NULLIF(?, "Customer"), name), address = COALESCE(NULLIF(?, ""), address) WHERE id = ?',
+          [cleanName, cleanAddress, customerId]
+        );
+      }
+    }
+
+    let account = await db.get(
+      'SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?',
+      [customerId, cleanPhone]
+    );
+
+    if (account) {
+      await db.run(
+        'UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, status = "active", last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [hashed, cleanPin, account.id]
+      );
+    } else {
+      const accRes = await db.run(
+        `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id, last_login_at)
+         VALUES (?, ?, ?, ?, 'active', 1, CURRENT_TIMESTAMP)`,
+        [customerId, cleanPhone, hashed, cleanPin]
+      );
+      account = await db.get('SELECT * FROM customer_portal_accounts WHERE id = ?', [accRes.lastID]);
+    }
+
+    const stores = await storeContextService.listStores(undefined, false);
+
+    // Enqueue welcome notification on WhatsApp
+    try {
+      const medicalName = await getStoreMedicalNameAndPhone(db);
+      const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+      const welcomeMsg = `🎉 *Welcome to ${medicalName}!* \n\nHello ${cleanName}, your online patient account is now active.\n\n📱 *Login Mobile:* ${cleanPhone}\n🔑 *Your PIN:* ${cleanPin}\n\nYou can now browse medicines, reorder refills, and view your medical bills anytime.`;
+      await whatsappQueueWorker.enqueue(formattedPhone, welcomeMsg, 'portal_welcome', cleanName);
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      message: 'Account registered successfully!',
+      customer: {
+        id: customerId,
+        name: cleanName,
+        phone: cleanPhone,
+        address: cleanAddress || customer.address || '',
+        preferred_store_id: account?.preferred_store_id || 1
+      },
+      stores: stores.map(s => ({
+        id: s.id,
+        name: s.name,
+        address: s.address || '',
+        phone: s.phone || ''
+      }))
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Register error:', err);
+    res.status(500).json({ error: 'Failed to register account' });
   }
 });
 
@@ -1086,6 +1196,41 @@ router.post('/customer/refill-order', async (req, res) => {
   }
 });
 
+// PUT /api/customer-portal/customer/preferred-store — Update customer's default medical store
+router.put('/customer/preferred-store', async (req, res) => {
+  try {
+    const { customer_id, phone, preferred_store_id } = req.body;
+    const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const verified = verifyCustomerToken(authHeader || (req.query.token as string));
+
+    const custId = customer_id || verified?.customerId;
+    const cleanPhone = normalizePhone(phone || verified?.phone);
+    const storeId = parseInt(String(preferred_store_id), 10);
+
+    if (!storeId || isNaN(storeId)) {
+      return res.status(400).json({ error: 'Valid preferred_store_id is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    if (custId) {
+      await db.run(
+        `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
+        [storeId, custId]
+      );
+    } else if (cleanPhone) {
+      await db.run(
+        `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE login_id = ?`,
+        [storeId, cleanPhone]
+      );
+    }
+
+    res.json({ success: true, preferred_store_id: storeId, message: 'Default store preference updated' });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Update preferred store error:', err);
+    res.status(500).json({ error: 'Failed to update preferred store: ' + err.message });
+  }
+});
+
 // ─── Public Website Catalog & Categories Endpoints ────────────────────────────
 
 interface CachedCatalogItem {
@@ -1201,6 +1346,7 @@ router.get('/public-catalog', async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query.page || '1'), 10));
     const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || '40'), 10)));
     const offset = (page - 1) * limit;
+    const storeId = req.query.store_id ? parseInt(String(req.query.store_id), 10) : null;
 
     const { images } = loadCatalogAndImages();
     const db = await dbManager.getConnection();
@@ -1231,14 +1377,14 @@ router.get('/public-catalog', async (req, res) => {
     const rows = await db.all(
       `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
               m.packaging, m.strength, m.pack_size,
-              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id AND (? IS NULL OR im.store_id = ?)), 0) as stock_qty,
               COALESCE(pcv.featured_rank, 0) as featured_rank
        FROM medicines m
        JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
        WHERE ${where}
        ORDER BY pcv.featured_rank DESC, m.name ASC
        LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [storeId, storeId, ...params, limit, offset]
     ).catch(() => []);
 
     const enriched = [];

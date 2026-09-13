@@ -256,6 +256,15 @@ function App() {
     };
   }, []);
 
+  const isLocalOrigin = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '0.0.0.0' ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.endsWith('.local')
+  );
+
   return (
     <ErrorBoundary>
       <StoreProvider>
@@ -263,7 +272,7 @@ function App() {
           <Suspense fallback={<PageLoader />}>
             <Layout>
               <Routes>
-                <Route path="/" element={<Navigate to="/pos" replace />} />
+                <Route path="/" element={<Navigate to={isLocalOrigin ? "/pos" : "/portal"} replace />} />
                 <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
                 <Route path="/automation-center" element={<Navigate to="/crm?tab=messages" replace />} />
                 <Route path="/refills" element={<Navigate to="/crm?tab=refills" replace />} />

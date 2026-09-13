@@ -193,8 +193,16 @@ app.use(cors({
     // Allow server-to-server requests with no origin (e.g., mobile, Postman)
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // Allow Cloudflare tunnel domains (*.trycloudflare.com, *.cloudflare.com)
+    if (origin.endsWith('.trycloudflare.com') || origin.endsWith('.cloudflare.com')) {
+      return callback(null, true);
+    }
     // Allow local network origins (localhost, 127.0.0.1, private IPv4 class A/B/C subnets) on any port
-    if (/^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin)) {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    // Allow any standard HTTP/HTTPS origin for customer portal & online store access
+    if (/^https?:\/\//.test(origin)) {
       return callback(null, true);
     }
     callback(new Error(`CORS blocked: origin ${origin} not allowed`));
@@ -216,6 +224,14 @@ app.use(rateLimit({
   message: { error: 'Too many requests, please try again later' }
 }));
 app.use(express.json({ limit: '15mb' }));
+
+// Handle malformed JSON body payloads cleanly without spewing stack traces to console
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError && 'status' in err && (err as any).status === 400 && 'body' in err) {
+    return res.status(400).json({ success: false, error: 'Invalid or malformed JSON payload' });
+  }
+  next(err);
+});
 
 
 app.use('/uploads', express.static(UPLOAD_DIR));
@@ -285,6 +301,7 @@ app.use('/api/auth', lazyRoute(() => import('./routes/auth.js'), 'hot'));
 app.use('/api/stores', lazyRoute(() => import('./routes/stores.js'), 'hot'));
 app.use('/api/website', lazyRoute(() => import('./routes/websiteOrders.js'), 'hot'));
 app.use('/api/customer-portal', lazyRoute(() => import('./routes/customerPortal.js'), 'hot'));
+app.use('/api/tunnel', lazyRoute(() => import('./routes/tunnel.js'), 'hot'));
 app.use('/api/customer', lazyRoute(() => import('./routes/api/customerRoutes.js'), 'hot'));
 app.use('/api/admin', lazyRoute(() => import('./routes/api/adminRoutes.js'), 'hot'));
 app.use('/api/sync', lazyRoute(() => import('./routes/sync.js')));
@@ -480,6 +497,11 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
       });
     }, 1500);
   }
+
+  // Initialize Cloudflare Online Store Tunnel if configured for autostart
+  import('./services/cloudflareTunnelService.js').then(({ cloudflareTunnelService }) => {
+    cloudflareTunnelService.init().catch(() => {});
+  }).catch(() => {});
 });
 
 server.on('error', (err: any) => {
@@ -897,6 +919,12 @@ async function gracefulShutdown(signal: string) {
     stopScispacySidecar();
   } catch (err) {
     console.error('Error stopping scispaCy sidecar:', err);
+  }
+  try {
+    const { cloudflareTunnelService } = await import('./services/cloudflareTunnelService.js');
+    await cloudflareTunnelService.stop();
+  } catch (err) {
+    console.error('Error stopping cloudflare tunnel:', err);
   }
   await dbManager.close(true);
 

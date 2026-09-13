@@ -1578,13 +1578,43 @@ export class CatalogImageService {
     id: number;
   } | null> {
     const db = await dbManager.getConnection();
-    const row = await db.get(
+    let row = await db.get(
       `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
        FROM catalog_images 
-       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
-       ORDER BY CASE WHEN verification_status = 'APPROVED' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE', 'VERIFIED')
+       ORDER BY CASE WHEN verification_status IN ('APPROVED', 'VERIFIED') THEN 1 ELSE 2 END, id DESC LIMIT 1`,
       [medicineId]
     ).catch(() => null);
+
+    if (!row) {
+      const med = await db.get('SELECT name FROM medicines WHERE id = ?', [medicineId]).catch(() => null);
+      if (med && med.name) {
+        row = await db.get(
+          `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+           FROM catalog_images 
+           WHERE (product_name = ? OR LOWER(product_name) = LOWER(?)) AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE', 'VERIFIED')
+           ORDER BY is_primary DESC, id DESC LIMIT 1`,
+          [med.name, med.name]
+        ).catch(() => null);
+        if (!row) {
+          const cleanSlug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          const candidates = [`${cleanSlug}-combo.jpg`, `${cleanSlug}-front.jpg`, `${cleanSlug}.jpg`, `${cleanSlug}.webp`];
+          for (const cand of candidates) {
+            const diskPath = path.join(process.cwd(), 'frontend', 'public', 'products', cand);
+            if (fs.existsSync(diskPath) && fs.statSync(diskPath).size > 1000) {
+              row = {
+                id: 0,
+                image_path: `/products/${cand}`,
+                thumbnail_path: `/products/${cand}`,
+                verification_status: 'APPROVED',
+                updated_at: new Date().toISOString()
+              };
+              break;
+            }
+          }
+        }
+      }
+    }
 
     if (!row || !row.image_path) {
       return null;
@@ -1623,10 +1653,10 @@ export class CatalogImageService {
     gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }>;
   }> {
     const db = await dbManager.getConnection();
-    const rows = await db.all(
+    const rows: any[] = await db.all(
       `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
        FROM catalog_images 
-       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE')
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE', 'VERIFIED')
        ORDER BY 
          is_primary DESC,
          CASE COALESCE(image_type, 'combined')
@@ -1640,6 +1670,45 @@ export class CatalogImageService {
          id DESC`,
       [medicineId]
     ).catch(() => []);
+
+    if (rows.length === 0) {
+      const med = await db.get('SELECT name FROM medicines WHERE id = ?', [medicineId]).catch(() => null);
+      if (med && med.name) {
+        const nameRows = await db.all(
+          `SELECT id, image_path, thumbnail_path, image_type, is_primary, verification_status, updated_at 
+           FROM catalog_images 
+           WHERE (product_name = ? OR LOWER(product_name) = LOWER(?)) AND is_active = 1 AND verification_status IN ('APPROVED', 'HIGH_CONFIDENCE', 'VERIFIED')
+           ORDER BY is_primary DESC, id DESC`,
+          [med.name, med.name]
+        ).catch(() => []);
+        if (nameRows.length > 0) {
+          rows.push(...nameRows);
+        } else {
+          const cleanSlug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          const candidates = [
+            { file: `${cleanSlug}-combo.jpg`, type: 'combined' },
+            { file: `${cleanSlug}-front.jpg`, type: 'front' },
+            { file: `${cleanSlug}-back.jpg`, type: 'back' },
+            { file: `${cleanSlug}.jpg`, type: 'front' },
+            { file: `${cleanSlug}.webp`, type: 'front' }
+          ];
+          for (const cand of candidates) {
+            const diskPath = path.join(process.cwd(), 'frontend', 'public', 'products', cand.file);
+            if (fs.existsSync(diskPath) && fs.statSync(diskPath).size > 1000) {
+              rows.push({
+                id: 0,
+                image_path: `/products/${cand.file}`,
+                thumbnail_path: `/products/${cand.file}`,
+                image_type: cand.type,
+                is_primary: rows.length === 0 ? 1 : 0,
+                verification_status: 'APPROVED',
+                updated_at: new Date().toISOString()
+              });
+            }
+          }
+        }
+      }
+    }
 
     const gallery: Array<{ url: string; type: string; label: string; is_primary: boolean }> = [];
     const imagesDict: Record<string, { url: string; type: string; is_primary: boolean }> = {};

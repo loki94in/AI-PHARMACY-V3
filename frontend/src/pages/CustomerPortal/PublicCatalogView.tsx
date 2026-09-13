@@ -34,6 +34,10 @@ interface PublicCatalogViewProps {
   onClearCart?: () => void;
   onOpenCartModal: () => void;
   onOpenLogin: () => void;
+  preferredStoreId?: number;
+  isLoggedIn?: boolean;
+  customerName?: string;
+  configuredPharmacyName?: string;
 }
 
 const CATEGORIES = [
@@ -53,7 +57,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
   onUpdateQuantity,
   onClearCart,
   onOpenCartModal,
-  onOpenLogin
+  onOpenLogin,
+  preferredStoreId,
+  isLoggedIn,
+  customerName,
+  configuredPharmacyName: initialPharmacyName
 }) => {
   const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
@@ -80,10 +88,14 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
     return () => clearTimeout(timer);
   }, [search]);
 
-  const [configuredPharmacyName, setConfiguredPharmacyName] = useState<string>('');
+  const [configuredPharmacyName, setConfiguredPharmacyName] = useState<string>(initialPharmacyName || '');
 
-  // Load configured pharmacy name on mount
+  // Sync configured pharmacy name from prop or fetch if missing
   useEffect(() => {
+    if (initialPharmacyName) {
+      setConfiguredPharmacyName(initialPharmacyName);
+      return;
+    }
     api.getSettings()
       .then((s: any) => {
         const name = s?.medical_name || s?.pharmacy_name || s?.shop_name || s?.store_name;
@@ -92,7 +104,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
         }
       })
       .catch(() => {});
-  }, []);
+  }, [initialPharmacyName]);
 
   // Load category summary counts on mount
   useEffect(() => {
@@ -105,14 +117,15 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       .catch(() => {});
   }, []);
 
-  // Fetch catalog medicines
+  // Fetch catalog medicines (dynamically filtered by activeStoreId)
   useEffect(() => {
     setLoading(true);
     api.getPublicCatalog({
       category: category === 'all' ? undefined : category,
       search: debouncedSearch || undefined,
       page,
-      limit: 24
+      limit: 24,
+      store_id: activeStoreId
     })
       .then(res => {
         if (res?.success) {
@@ -127,7 +140,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
       .finally(() => {
         setLoading(false);
       });
-  }, [category, debouncedSearch, page]);
+  }, [category, debouncedSearch, page, activeStoreId]);
 
   const activeStore = stores.find(s => s.id === activeStoreId) || stores[0];
   const displayStoreName = (activeStore?.name && activeStore.name.toLowerCase() !== 'main store')
@@ -156,7 +169,7 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
 
   return (
     <div className="space-y-2.5">
-      {/* Compact Store Banner (Redesigned & space-efficient) */}
+      {/* Compact Store Banner with Live Store Inventory & Switcher */}
       <div className="bg-bg2 border border-border rounded-xl px-3.5 py-2 sm:py-2.5 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
@@ -166,13 +179,27 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             <h1 className="text-xs sm:text-sm font-bold text-text truncate">
               {displayStoreName}
             </h1>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[10px] font-semibold shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Live Store Inventory</span>
-            </span>
-            <span className="hidden xl:inline text-[11px] text-muted">
-              • Verified Chronic & Refill Medicines
-            </span>
+            {isLoggedIn && preferredStoreId === activeStoreId ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[10px] font-semibold shrink-0">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                <span>Your Default Store</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[10px] font-semibold shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Live Branch Catalog</span>
+              </span>
+            )}
+            {activeStore?.address && (
+              <span className="hidden md:inline text-[11px] text-muted truncate max-w-xs" title={activeStore.address}>
+                • 📍 {activeStore.address}
+              </span>
+            )}
+            {activeStore?.phone && (
+              <span className="hidden xl:inline text-[11px] text-emerald-600 font-medium">
+                • 📞 {activeStore.phone}
+              </span>
+            )}
           </div>
         </div>
 
@@ -190,11 +217,11 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
             <span>Upload Rx</span>
           </button>
 
-          <div className="flex items-center gap-1 bg-bg border border-border rounded-lg px-2 py-1 shrink-0">
+          <div className="flex items-center gap-1 bg-bg border border-border rounded-lg px-2 py-1 shrink-0 shadow-2xs" title="Switch between pharmacy branches">
             <MapPin className="w-3 h-3 text-primary shrink-0" />
             <select
               id="pickup-branch-select"
-              aria-label="Pickup Branch"
+              aria-label="Select Pharmacy Branch"
               value={activeStoreId}
               onChange={e => onChangeStore(parseInt(e.target.value, 10))}
               className="bg-transparent text-xs font-semibold text-text focus:outline-none cursor-pointer pr-1"
@@ -203,9 +230,10 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                 const optName = (st.name && st.name.toLowerCase() !== 'main store')
                   ? st.name
                   : (configuredPharmacyName || 'Main Store');
+                const isDefault = isLoggedIn && st.id === preferredStoreId;
                 return (
                   <option key={st.id} value={st.id}>
-                    {optName}
+                    {optName} {isDefault ? '★ (Your Default)' : ''}
                   </option>
                 );
               })}

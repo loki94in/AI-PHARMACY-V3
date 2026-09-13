@@ -959,6 +959,19 @@ export interface HistoryPrefillResult {
   provenance?: string;
 }
 
+export interface TunnelStatusResponse {
+  success: boolean;
+  isRunning: boolean;
+  url: string | null;
+  mode: 'quick' | 'token';
+  customDomain: string | null;
+  tokenConfigured: boolean;
+  autostart: boolean;
+  startedAt?: number | null;
+  error?: string | null;
+  message?: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // API methods mapping
@@ -1741,6 +1754,8 @@ export const api = {
     apiClient.put<{ success: boolean; message: string }>(`/customer-portal/accounts/${accountId}`, data).then(res => res.data),
   customerLogin: (data: { login_id: string; pin: string }) =>
     apiClient.post<{ success: boolean; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/login', data).then(res => res.data),
+  customerRegister: (data: { name: string; phone: string; address?: string; pin: string }) =>
+    apiClient.post<{ success: boolean; message: string; customer: { id: number; name: string; phone: string; address: string; preferred_store_id: number }; stores: Array<{ id: number; name: string; address: string; phone: string }> }>('/customer-portal/auth/register', data).then(res => res.data),
   customerRequestOtp: (data: { login_id: string; name?: string }) =>
     apiClient.post<{ success: boolean; message: string; login_id: string }>('/customer-portal/auth/request-otp', data).then(res => res.data),
   customerVerifyOtp: (data: { login_id: string; otp_code: string }) =>
@@ -1807,7 +1822,7 @@ export const api = {
       pharmacy_phone: string;
       pharmacy_name: string;
     }>('/website/prescription-request', data).then(res => res.data),
-  getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number }) =>
+  getPublicCatalog: (params: { category?: string; search?: string; page?: number; limit?: number; store_id?: number }) =>
     apiClient.get<{
       success: boolean;
       category: string;
@@ -1832,6 +1847,10 @@ export const api = {
         gallery?: Array<{ url: string; type: string; label: string; is_primary?: boolean }>;
       }>;
     }>('/customer-portal/public-catalog', { params }).then(res => res.data),
+  updateCustomerPreferredStore: (data: { customer_id?: number; phone?: string; preferred_store_id: number; token?: string }) =>
+    apiClient.put<{ success: boolean; preferred_store_id: number; message: string }>('/customer-portal/customer/preferred-store', data, {
+      headers: data.token ? { Authorization: `Bearer ${data.token}` } : undefined
+    }).then(res => res.data),
   getPublicCatalogSummary: () =>
     apiClient.get<{
       success: boolean;
@@ -1845,6 +1864,14 @@ export const api = {
         bp_cardiac: number;
       };
     }>('/customer-portal/categories-summary').then(res => res.data),
+
+  // Cloudflare Online Store Tunnel APIs
+  getTunnelStatus: () => apiClient.get<TunnelStatusResponse>('/tunnel/status').then(res => res.data),
+  startTunnel: () => apiClient.post<TunnelStatusResponse>('/tunnel/start').then(res => res.data),
+  stopTunnel: () => apiClient.post<TunnelStatusResponse>('/tunnel/stop').then(res => res.data),
+  configureTunnel: (data: { token?: string; customDomain?: string; autostart?: boolean }) =>
+    apiClient.post<TunnelStatusResponse>('/tunnel/configure', data).then(res => res.data),
+
   getCatalogImages: (params?: { status?: string; search?: string; medicine_id?: number; group_by_medicine?: boolean; page?: number; limit?: number }) =>
     apiClient.get<{ success: boolean; images: CatalogImageItem[]; totalCount: number; totalPages: number; page: number }>('/catalog/images', { params }).then(res => res.data),
   getCatalogImageCounts: () =>

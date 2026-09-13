@@ -6,7 +6,8 @@ import {
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
   CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera,
-  LayoutGrid, Eye, EyeOff, Star, Image, Filter, ChevronLeft
+  LayoutGrid, Eye, EyeOff, Star, Image, Filter, ChevronLeft,
+  UserPlus, Sparkles, BadgeCheck, Truck, Info, HelpCircle, Lock, User
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { authApi } from '../../api/authApi';
@@ -76,6 +77,15 @@ export default function CustomerPortal() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  const isLocalOrigin = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '0.0.0.0' ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.endsWith('.local')
+  );
+
   // ─── Portal Navigation Tab ──────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'catalog' | 'portal' | 'manager'>('catalog');
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
@@ -107,7 +117,7 @@ export default function CustomerPortal() {
       if (params.get('otp') === '1') {
         setIsOtpMode(true);
       }
-    } catch (_) {}
+    } catch (_) { }
   }, [location]);
 
   // ─── Authentication States ──────────────────────────────────────────────────
@@ -120,16 +130,33 @@ export default function CustomerPortal() {
     }
   });
 
+  const [authMode, setAuthMode] = useState<'pin' | 'otp' | 'register'>('pin');
   const [phoneInput, setPhoneInput] = useState('');
   const [pinInput, setPinInput] = useState('');
+  const [showPinPassword, setShowPinPassword] = useState(false);
   const [otpInput, setOtpInput] = useState('');
   const [isOtpMode, setIsOtpMode] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
+  // New Patient Registration States
+  const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regAddress, setRegAddress] = useState('');
+  const [regPin, setRegPin] = useState('');
+  const [regConfirmPin, setRegConfirmPin] = useState('');
+
   const [stores, setStores] = useState<StoreItem[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<number>(1);
+  const [selectedStoreId, setSelectedStoreId] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('customer_portal_selected_store_id');
+      return saved ? parseInt(saved, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [portalPharmacyName, setPortalPharmacyName] = useState<string>('');
   const [refills, setRefills] = useState<RefillItem[]>([]);
   const [bills, setBills] = useState<PastBill[]>([]);
@@ -205,9 +232,16 @@ export default function CustomerPortal() {
           };
         });
         setStores(mapped);
-        setSelectedStoreId(prev => (mapped.some((st: StoreItem) => st.id === prev) ? prev : mapped[0].id));
+        setSelectedStoreId(prev => {
+          try {
+            const saved = localStorage.getItem('customer_portal_selected_store_id');
+            const savedId = saved ? parseInt(saved, 10) : null;
+            if (savedId && mapped.some((st: StoreItem) => st.id === savedId)) return savedId;
+          } catch {}
+          return mapped.some((st: StoreItem) => st.id === prev) ? prev : mapped[0].id;
+        });
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     api.getDeliveryConfig().then(res => {
       if (res?.success) {
@@ -216,13 +250,43 @@ export default function CustomerPortal() {
           setDeliveryMode('pickup');
         }
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
+
+  // Handler for user-initiated pharmacy store/branch switching
+  const handleStoreChange = (newStoreId: number) => {
+    setSelectedStoreId(newStoreId);
+    try {
+      localStorage.setItem('customer_portal_selected_store_id', String(newStoreId));
+    } catch {}
+
+    // If customer is logged in, persist as their default store in session & backend profile
+    if (session && session.id) {
+      const updatedSession = { ...session, preferred_store_id: newStoreId };
+      setSession(updatedSession);
+      try {
+        localStorage.setItem('customer_portal_session', JSON.stringify(updatedSession));
+      } catch {}
+
+      api.updateCustomerPreferredStore({
+        customer_id: session.id,
+        phone: session.phone,
+        preferred_store_id: newStoreId,
+        token: localStorage.getItem('customer_portal_token') || undefined
+      }).catch(err => {
+        console.warn('[CustomerPortal] Failed to save preferred store to profile:', err);
+      });
+    }
+  };
 
   // Fetch customer bills and refills on login or session load
   useEffect(() => {
     if (!session) return;
-    setSelectedStoreId(session.preferred_store_id || 1);
+    const defaultStore = session.preferred_store_id || 1;
+    setSelectedStoreId(defaultStore);
+    try {
+      localStorage.setItem('customer_portal_selected_store_id', String(defaultStore));
+    } catch {}
     loadCustomerData(session.id, session.phone);
   }, [session]);
 
@@ -338,12 +402,59 @@ export default function CustomerPortal() {
     }
   };
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+
+    const cleanP = regPhone.replace(/\D/g, '');
+    if (cleanP.length < 10) {
+      setAuthError('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    if (!regName.trim()) {
+      setAuthError('Please enter your full name');
+      return;
+    }
+    if (regPin.length < 4) {
+      setAuthError('Please choose a 4-digit PIN for your account');
+      return;
+    }
+    if (regConfirmPin && regPin !== regConfirmPin) {
+      setAuthError('PINs do not match. Please re-enter.');
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      const res = await api.customerRegister({
+        name: regName.trim(),
+        phone: cleanP,
+        address: regAddress.trim(),
+        pin: regPin.trim(),
+      });
+
+      if (res.success && res.customer) {
+        setSession(res.customer);
+        if (res.stores) setStores(res.stores);
+        localStorage.setItem('customer_portal_session', JSON.stringify(res.customer));
+        setAuthSuccess('Account registered successfully! Welcome to our pharmacy.');
+      } else {
+        setAuthError(res.message || 'Registration failed');
+      }
+    } catch (err: any) {
+      setAuthError(err.response?.data?.error || 'Registration failed. Please check your details.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   // Periodic session heartbeat (every 60s while active tab)
   useEffect(() => {
     if (!session) return;
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        authApi.heartbeat().catch(() => {});
+        authApi.heartbeat().catch(() => { });
       }
     }, 60000);
     return () => clearInterval(interval);
@@ -351,8 +462,8 @@ export default function CustomerPortal() {
 
   const handleLogout = () => {
     try {
-      authApi.logout().catch(() => {});
-    } catch (_) {}
+      authApi.logout().catch(() => { });
+    } catch (_) { }
     setSession(null);
     localStorage.removeItem('customer_portal_session');
     localStorage.removeItem('customer_portal_token');
@@ -717,11 +828,10 @@ export default function CustomerPortal() {
           <div className="flex items-center bg-bg border border-border rounded-xl p-1 gap-1 w-full sm:w-auto">
             <button
               onClick={() => setActiveTab('catalog')}
-              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'catalog'
+              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${activeTab === 'catalog'
                   ? 'bg-primary text-white shadow-xs'
                   : 'text-muted hover:text-text'
-              }`}
+                }`}
             >
               <Activity className="w-3.5 h-3.5" />
               <span>Browse Catalog &amp; Refills</span>
@@ -729,43 +839,42 @@ export default function CustomerPortal() {
 
             <button
               onClick={() => setActiveTab('portal')}
-              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'portal'
+              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${activeTab === 'portal'
                   ? 'bg-primary text-white shadow-xs'
                   : 'text-muted hover:text-text'
-              }`}
+                }`}
             >
               <FileText className="w-3.5 h-3.5" />
               <span>{session ? 'My Prescriptions &amp; Bills' : 'My Account / Login'}</span>
             </button>
 
-            <button
-              onClick={() => {
-                setActiveTab('manager');
-                if (!cmData) {
-                  setCmLoading(true);
-                  fetch('/api/customer-portal/admin/catalog-visibility?limit=50&page=1&filter=in_stock')
-                    .then(r => r.json())
-                    .then(d => { setCmData(d); setCmLoading(false); })
-                    .catch(() => setCmLoading(false));
-                }
-              }}
-              className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
-                activeTab === 'manager'
-                  ? 'bg-primary text-white shadow-xs'
-                  : 'text-muted hover:text-text'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Catalog Manager</span>
-              {cmData?.stats?.portal_enabled != null && (
-                <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
-                  activeTab === 'manager' ? 'bg-white/20 text-white' : 'bg-primary/15 text-primary'
-                }`}>
-                  {cmData.stats.portal_enabled}
-                </span>
-              )}
-            </button>
+            {isLocalOrigin && (
+              <button
+                onClick={() => {
+                  setActiveTab('manager');
+                  if (!cmData) {
+                    setCmLoading(true);
+                    fetch('/api/customer-portal/admin/catalog-visibility?limit=50&page=1&filter=in_stock')
+                      .then(r => r.json())
+                      .then(d => { setCmData(d); setCmLoading(false); })
+                      .catch(() => setCmLoading(false));
+                  }
+                }}
+                className={`flex-1 sm:flex-initial px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${activeTab === 'manager'
+                    ? 'bg-primary text-white shadow-xs'
+                    : 'text-muted hover:text-text'
+                  }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Catalog Manager</span>
+                {cmData?.stats?.portal_enabled != null && (
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${activeTab === 'manager' ? 'bg-white/20 text-white' : 'bg-primary/15 text-primary'
+                    }`}>
+                    {cmData.stats.portal_enabled}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Desktop User Actions */}
@@ -801,13 +910,15 @@ export default function CustomerPortal() {
               </button>
             )}
 
-            <button
-              onClick={() => navigate('/website-orders')}
-              className="text-xs text-muted hover:text-primary px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 transition-colors flex items-center gap-1.5 font-medium"
-              title="Return to Pharmacy Staff Workspace"
-            >
-              <span>← Staff Workspace</span>
-            </button>
+            {isLocalOrigin && (
+              <button
+                onClick={() => navigate('/website-orders')}
+                className="text-xs text-muted hover:text-primary px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 transition-colors flex items-center gap-1.5 font-medium"
+                title="Return to Pharmacy Staff Workspace"
+              >
+                <span>← Staff Workspace</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -818,13 +929,17 @@ export default function CustomerPortal() {
           <PublicCatalogView
             stores={stores}
             activeStoreId={selectedStoreId}
-            onChangeStore={setSelectedStoreId}
+            onChangeStore={handleStoreChange}
             selectedItems={selectedItems}
             onToggleItem={toggleItem}
             onUpdateQuantity={updateQuantity}
             onClearCart={clearCart}
             onOpenCartModal={() => setIsCartModalOpen(true)}
             onOpenLogin={() => setActiveTab('portal')}
+            preferredStoreId={session?.preferred_store_id}
+            isLoggedIn={!!session}
+            customerName={session?.name}
+            configuredPharmacyName={portalPharmacyName}
           />
         )}
 
@@ -905,11 +1020,10 @@ export default function CustomerPortal() {
                         .then(d => { setCmData(d); setCmLoading(false); })
                         .catch(() => setCmLoading(false));
                     }}
-                    className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-all ${
-                      cmFilter === f.key
+                    className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-all ${cmFilter === f.key
                         ? 'bg-primary text-white border-primary'
                         : 'bg-bg2 text-muted border-border hover:border-primary/40 hover:text-text'
-                    }`}
+                      }`}
                   >
                     {f.label}
                   </button>
@@ -1004,13 +1118,12 @@ export default function CustomerPortal() {
                 {cmData?.medicines.map((med: any) => (
                   <div
                     key={med.id}
-                    className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                      cmSelected.has(med.id)
+                    className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${cmSelected.has(med.id)
                         ? 'border-primary/50 bg-primary/5'
                         : med.is_portal_visible
                           ? 'border-emerald-500/30 bg-emerald-500/5'
                           : 'border-border bg-bg2 hover:border-border/80'
-                    }`}
+                      }`}
                   >
                     {/* Checkbox */}
                     <input
@@ -1074,26 +1187,23 @@ export default function CustomerPortal() {
                           setCmTogglingId(null);
                         }).catch(() => setCmTogglingId(null));
                       }}
-                      className={`shrink-0 relative w-11 h-6 rounded-full border transition-all ${
-                        med.is_portal_visible
+                      className={`shrink-0 relative w-11 h-6 rounded-full border transition-all ${med.is_portal_visible
                           ? 'bg-emerald-500 border-emerald-600'
                           : 'bg-bg3 border-border'
-                      } ${cmTogglingId === med.id ? 'opacity-50' : ''}`}
+                        } ${cmTogglingId === med.id ? 'opacity-50' : ''}`}
                       title={med.is_portal_visible ? 'Online — click to take offline' : 'Offline — click to make online'}
                     >
                       {cmTogglingId === med.id ? (
                         <RefreshCw className="w-3 h-3 animate-spin absolute top-1.5 left-1.5" style={{ color: 'white' }} />
                       ) : (
-                        <span className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${
-                          med.is_portal_visible ? 'left-5' : 'left-0.5'
-                        }`} style={{ backgroundColor: 'white' }} />
+                        <span className={`absolute top-0.5 w-5 h-5 rounded-full shadow transition-all ${med.is_portal_visible ? 'left-5' : 'left-0.5'
+                          }`} style={{ backgroundColor: 'white' }} />
                       )}
                     </button>
 
                     {/* Status label */}
-                    <span className={`text-[10px] font-bold shrink-0 w-16 text-right ${
-                      med.is_portal_visible ? 'text-emerald-500' : 'text-muted'
-                    }`}>
+                    <span className={`text-[10px] font-bold shrink-0 w-16 text-right ${med.is_portal_visible ? 'text-emerald-500' : 'text-muted'
+                      }`}>
                       {med.is_portal_visible ? 'ONLINE' : 'OFFLINE'}
                     </span>
                   </div>
@@ -1138,41 +1248,167 @@ export default function CustomerPortal() {
           </div>
         )}
 
-        {/* VIEW 2: PERSONAL PORTAL & LOGIN */}
+        {/* VIEW 2: PERSONAL PORTAL, TRANSPARENT GUIDE & LOGIN */}
         {activeTab === 'portal' && !session && (
-          <div className="flex flex-col justify-center items-center py-8">
-            <div className="w-full max-w-md bg-bg2 border border-border rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
-              <div className="text-center space-y-2">
-                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-2">
-                  <StoreIcon className="w-7 h-7" />
-                </div>
-                <h1 className="text-2xl font-bold text-text">Customer Web Login</h1>
-                <p className="text-sm text-muted">
-                  Directly connected to your in-store sales history & bills. Login to view past invoices and reorder medicines.
+          <div className="space-y-8 py-4 sm:py-6">
+            {/* Step-by-Step Transparency & Conditions Hero Banner */}
+            <div className="bg-gradient-to-br from-primary/10 via-bg2 to-bg3 border border-border rounded-3xl p-5 sm:p-8 shadow-sm">
+              <div className="max-w-3xl mx-auto text-center space-y-2.5 mb-6 sm:mb-8">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/15 text-primary text-xs font-bold border border-primary/20">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Transparent Pharmacy Guide</span>
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-text tracking-tight">
+                  How Patient Login &amp; Registration Work
+                </h2>
+                <p className="text-xs sm:text-sm text-muted max-w-2xl mx-auto leading-relaxed">
+                  Fast and secure access to your pharmacy records. Select your patient status below:
                 </p>
               </div>
 
+              {/* 2 Clear Path Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 max-w-4xl mx-auto">
+                {/* Path 1: Existing Counter Patient */}
+                <div className="bg-bg border border-border/80 hover:border-emerald-500/40 rounded-2xl p-5 space-y-3.5 transition-all shadow-xs flex flex-col justify-between">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold">
+                        <UserCheck className="w-5 h-5" />
+                      </div>
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                        Already in System
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-text">1. Have You Purchased at Our Pharmacy?</h3>
+                    <p className="text-xs text-muted leading-relaxed">
+                      If you already have a bill or bought medicines from our pharmacy counter, your mobile number is <strong>already registered</strong>! Do not create a new account. Simply click <strong>Forgot PIN / WhatsApp OTP</strong> to get an instant login OTP on your WhatsApp!
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); }}
+                    className="w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-600 hover:text-white text-emerald-600 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Get Instant WhatsApp OTP</span>
+                    <MessageSquare className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Path 2: Brand New Patient */}
+                <div className="bg-bg border border-border/80 hover:border-primary/40 rounded-2xl p-5 space-y-3.5 transition-all shadow-xs flex flex-col justify-between">
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+                        <UserPlus className="w-5 h-5" />
+                      </div>
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                        First-Time Patient
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-text">2. Brand New Online Patient</h3>
+                    <p className="text-xs text-muted leading-relaxed">
+                      Never purchased medicines at our pharmacy before? Register your profile in 10 seconds. Enjoy 1-click refills for routine medicines, view past doctor invoices, and receive WhatsApp delivery updates.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode('register'); setIsOtpMode(false); }}
+                    className="w-full py-2.5 bg-primary/10 hover:bg-primary hover:text-white text-primary font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Register New Account</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Authentication Form Box */}
+            <div className="max-w-xl mx-auto bg-bg2 border border-border rounded-3xl shadow-xl p-6 sm:p-8 space-y-6">
+              {/* Header */}
+              <div className="text-center space-y-1.5">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-primary/10 text-primary mb-1">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-text">
+                  {authMode === 'register' ? 'Create Patient Account' : 'Patient Portal Access'}
+                </h3>
+                <p className="text-xs text-muted">
+                  {authMode === 'register'
+                    ? 'Register once to manage all prescriptions, bills & refills online'
+                    : 'Secure access to your medical bills, prescriptions & delivery history'}
+                </p>
+              </div>
+
+              {/* Segmented Auth Selector Tabs */}
+              <div className="grid grid-cols-3 gap-1 p-1 bg-bg border border-border rounded-2xl text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('pin'); setIsOtpMode(false); setAuthError(''); setAuthSuccess(''); }}
+                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'pin' && !isOtpMode
+                      ? 'bg-primary text-white shadow-xs'
+                      : 'text-muted hover:text-text'
+                    }`}
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span className="truncate">PIN Login</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setAuthError(''); setAuthSuccess(''); }}
+                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'otp' || isOtpMode
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-muted hover:text-text'
+                    }`}
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span className="truncate">WhatsApp OTP</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { setAuthMode('register'); setIsOtpMode(false); setAuthError(''); setAuthSuccess(''); }}
+                  className={`py-2 px-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${authMode === 'register'
+                      ? 'bg-primary text-white shadow-xs'
+                      : 'text-muted hover:text-text'
+                    }`}
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span className="truncate">Register</span>
+                </button>
+              </div>
+
+              {/* Alert feedback */}
               {authError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-sm text-red-600">
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-xs font-semibold text-red-600">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{authError}</span>
                 </div>
               )}
 
-              {!isOtpMode ? (
+              {authSuccess && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-2 text-xs font-semibold text-emerald-600">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{authSuccess}</span>
+                </div>
+              )}
+
+              {/* FORM 1: PIN Login */}
+              {authMode === 'pin' && !isOtpMode && (
                 <form onSubmit={handleLoginWithPin} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                      Mobile Number (Login ID)
+                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1.5">
+                      Registered Mobile Number
                     </label>
                     <div className="relative">
-                      <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
                       <input
                         type="tel"
-                        placeholder="e.g. 9876543210"
+                        maxLength={10}
+                        placeholder="9876543210"
                         value={phoneInput}
-                        onChange={e => setPhoneInput(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
+                        onChange={e => setPhoneInput(e.target.value.replace(/\D/g, ''))}
+                        className="w-full pl-12 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
                         required
                       />
                     </div>
@@ -1180,74 +1416,100 @@ export default function CustomerPortal() {
 
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-semibold text-text uppercase tracking-wider">
-                        4-Digit PIN / Password
+                      <label className="text-[11px] font-bold text-text uppercase tracking-wider">
+                        4-Digit Security PIN
                       </label>
                       <button
                         type="button"
-                        onClick={handleRequestOtp}
-                        className="text-xs text-primary hover:underline font-medium"
+                        onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
+                        className="text-xs text-primary hover:underline font-bold cursor-pointer flex items-center gap-1"
                       >
-                        Forgot / WhatsApp OTP
+                        <span>Forgot PIN? Get WhatsApp OTP →</span>
                       </button>
                     </div>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
                       <input
-                        type="password"
+                        type={showPinPassword ? 'text' : 'password'}
                         maxLength={6}
                         placeholder="Enter 4-digit PIN"
                         value={pinInput}
                         onChange={e => setPinInput(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium tracking-widest"
+                        className="w-full pl-10 pr-10 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest"
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPinPassword(!showPinPassword)}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer"
+                      >
+                        {showPinPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
                     </div>
                   </div>
 
                   <button
                     type="submit"
                     disabled={authLoading}
-                    className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    className="w-full py-3 bg-primary hover:opacity-95 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer"
                   >
                     {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                    <span>Login to My Portal</span>
+                    <span>Login to My Patient Portal</span>
                   </button>
 
-                  <div className="pt-2 text-center">
+                  <div className="p-2.5 bg-bg border border-border rounded-xl text-[11px] text-muted text-center leading-relaxed">
+                    💡 Visited our pharmacy counter before? If you don't know your PIN, click{' '}
                     <button
                       type="button"
-                      onClick={() => { setIsOtpMode(true); setOtpSent(false); }}
-                      className="text-xs text-muted hover:text-text transition-colors flex items-center justify-center gap-1.5 mx-auto"
+                      onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
+                      className="text-primary font-bold hover:underline cursor-pointer inline"
                     >
-                      <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Login with WhatsApp OTP instead</span>
+                      Forgot PIN / WhatsApp OTP
+                    </button>{' '}
+                    to receive an instant code on WhatsApp.
+                  </div>
+
+                  <div className="pt-1 text-center text-xs text-muted">
+                    <span>New to our pharmacy? </span>
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('register')}
+                      className="text-primary font-bold hover:underline cursor-pointer"
+                    >
+                      Register your account in 10 seconds →
                     </button>
                   </div>
                 </form>
-              ) : (
+              )}
+
+              {/* FORM 2: WhatsApp OTP Login */}
+              {(authMode === 'otp' || isOtpMode) && (
                 <form onSubmit={handleVerifyOtp} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                      Mobile Number
+                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1.5">
+                      WhatsApp Mobile Number
                     </label>
                     <div className="relative">
-                      <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
                       <input
                         type="tel"
+                        maxLength={10}
                         placeholder="9876543210"
                         value={phoneInput}
-                        onChange={e => setPhoneInput(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
+                        onChange={e => setPhoneInput(e.target.value.replace(/\D/g, ''))}
+                        className="w-full pl-12 pr-4 py-2.5 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
                         required
                       />
                     </div>
+                    <p className="text-[11px] text-muted mt-1">
+                      We will send a 6-digit verification code directly to your WhatsApp.
+                    </p>
                   </div>
 
                   {otpSent ? (
-                    <div>
-                      <label className="block text-xs font-semibold text-text uppercase tracking-wider mb-1.5">
-                        6-Digit OTP (Sent to WhatsApp)
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider">
+                        6-Digit WhatsApp Verification Code
                       </label>
                       <input
                         type="text"
@@ -1255,45 +1517,209 @@ export default function CustomerPortal() {
                         placeholder="123456"
                         value={otpInput}
                         onChange={e => setOtpInput(e.target.value)}
-                        className="w-full text-center tracking-widest py-2.5 bg-bg border border-border rounded-xl text-text text-lg font-bold focus:outline-none focus:border-primary"
+                        className="w-full text-center tracking-widest py-3 bg-bg border-2 border-emerald-500/50 rounded-xl text-text text-xl font-bold focus:outline-none focus:border-emerald-500 font-mono"
                         required
+                        autoFocus
                       />
-                      <p className="text-[11px] text-emerald-600 mt-1">✓ OTP sent to your WhatsApp number</p>
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>OTP sent to WhatsApp!</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleRequestOtp}
+                          disabled={authLoading}
+                          className="text-primary hover:underline font-bold cursor-pointer"
+                        >
+                          Resend Code
+                        </button>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={authLoading}
+                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer"
+                      >
+                        {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                        <span>Verify &amp; Enter Portal</span>
+                      </button>
                     </div>
                   ) : (
                     <button
                       type="button"
                       onClick={handleRequestOtp}
-                      disabled={authLoading}
-                      className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-medium text-sm hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                      disabled={authLoading || phoneInput.length < 10}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                     >
-                      <MessageSquare className="w-4 h-4" />
-                      <span>Send OTP via WhatsApp</span>
+                      {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+                      <span>Send 6-Digit OTP via WhatsApp</span>
                     </button>
                   )}
 
-                  {otpSent && (
-                    <button
-                      type="submit"
-                      disabled={authLoading}
-                      className="w-full py-3 bg-primary text-white rounded-xl font-semibold shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2"
-                    >
-                      {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                      <span>Verify & Login</span>
-                    </button>
-                  )}
-
-                  <div className="pt-2 text-center">
+                  <div className="pt-1 text-center text-xs text-muted">
                     <button
                       type="button"
-                      onClick={() => setIsOtpMode(false)}
-                      className="text-xs text-muted hover:text-text transition-colors"
+                      onClick={() => { setAuthMode('pin'); setIsOtpMode(false); }}
+                      className="hover:text-text transition-colors cursor-pointer"
                     >
                       ← Back to PIN Login
                     </button>
                   </div>
                 </form>
               )}
+
+              {/* FORM 3: Patient Registration */}
+              {authMode === 'register' && (
+                <form onSubmit={handleRegister} className="space-y-3.5">
+                  {/* Notice for existing counter bill patients */}
+                  <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-2.5 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                    <div className="space-y-1">
+                      <p className="font-bold">Already purchased from our pharmacy counter?</p>
+                      <p className="text-[11px] leading-relaxed opacity-95">
+                        If you have a past bill from our store, your mobile number is <strong>already registered</strong>! You don't need to create a new account. Simply click{' '}
+                        <button
+                          type="button"
+                          onClick={() => { setAuthMode('otp'); setIsOtpMode(true); setOtpSent(false); setAuthError(''); setAuthSuccess(''); }}
+                          className="font-bold underline text-amber-800 dark:text-amber-300 hover:opacity-80 cursor-pointer inline"
+                        >
+                          Forgot PIN / WhatsApp OTP
+                        </button>{' '}
+                        to receive an instant OTP code on WhatsApp and access all your past pharmacy bills immediately.
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
+                      Patient Full Name <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+                      <input
+                        type="text"
+                        placeholder="e.g. Rajesh Kumar"
+                        value={regName}
+                        onChange={e => setRegName(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-medium"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
+                      WhatsApp Mobile Number <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">+91</span>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        placeholder="9876543210"
+                        value={regPhone}
+                        onChange={e => setRegPhone(e.target.value.replace(/\D/g, ''))}
+                        className="w-full pl-12 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-wider"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
+                      Delivery Address / Landmark (Optional)
+                    </label>
+                    <div className="relative">
+                      <MapPin className="w-4 h-4 absolute left-3.5 top-3 text-muted" />
+                      <textarea
+                        rows={2}
+                        placeholder="House/Flat number, building, street, landmark, pincode"
+                        value={regAddress}
+                        onChange={e => setRegAddress(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-xs resize-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
+                        Set 4-Digit PIN <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                        <input
+                          type="password"
+                          maxLength={6}
+                          placeholder="e.g. 1234"
+                          value={regPin}
+                          onChange={e => setRegPin(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest text-center"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-text uppercase tracking-wider mb-1">
+                        Confirm PIN <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                        <input
+                          type="password"
+                          maxLength={6}
+                          placeholder="Confirm PIN"
+                          value={regConfirmPin}
+                          onChange={e => setRegConfirmPin(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 bg-bg border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-primary text-sm font-semibold tracking-widest text-center"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-3 bg-primary hover:opacity-95 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm cursor-pointer mt-1"
+                  >
+                    {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                    <span>Register Account &amp; Log In</span>
+                  </button>
+
+                  <div className="pt-1 text-center text-xs text-muted">
+                    <span>Already registered? </span>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode('pin'); setIsOtpMode(false); }}
+                      className="text-primary font-bold hover:underline cursor-pointer"
+                    >
+                      Login with your PIN here →
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Patient Trust Guarantees */}
+              <div className="pt-4 border-t border-border/70 grid grid-cols-2 gap-2 text-[11px] text-muted">
+                <div className="flex items-center gap-1.5">
+                  <BadgeCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>100% Genuine Pharmacy Supply</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <span>Free Pickup or Fast Delivery</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                  <span>Digital Prescription History</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>WhatsApp Delivery Updates</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1303,446 +1729,442 @@ export default function CustomerPortal() {
           <div className="space-y-6">
             {/* Dynamic Branch / Store Selector Card */}
             <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-bold flex items-center gap-2 text-text">
-                <MapPin className="w-4 h-4 text-primary" />
-                <span>Select Collection Pharmacy Branch</span>
-              </h2>
-              <p className="text-xs text-muted">
-                Choose the branch where you would like to pick up your packaged refill or submit prescriptions
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:w-auto">
-              <button
-                type="button"
-                onClick={() => setIsPortalRxModalOpen(true)}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>Upload Prescription / Photos</span>
-              </button>
-
-              <div className="sm:w-72">
-                <select
-                  value={selectedStoreId}
-                  onChange={e => setSelectedStoreId(parseInt(e.target.value, 10))}
-                  className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm font-semibold text-text focus:outline-none focus:border-primary"
-                >
-                  {stores.map(st => (
-                    <option key={st.id} value={st.id}>
-                      Store #{st.id} - {st.name} {st.address ? `(${st.address})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {activeStore && (
-            <div className="p-2.5 bg-bg rounded-xl border border-border/60 text-xs flex flex-wrap items-center justify-between gap-2 text-muted">
-              <span>📍 <strong>Address:</strong> {activeStore.address || 'Main Market Location'}</span>
-              {activeStore.phone && <span>📞 <strong>Contact:</strong> {activeStore.phone}</span>}
-              <span className="text-emerald-500 font-semibold">● Ready in ~30 mins</span>
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left / Middle: Regular Medicines, Online Orders & Past Bills */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Section 0: Active & Recent Online Orders */}
-            {customerOrders.length > 0 && (
-              <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-base font-bold text-text flex items-center gap-2">
-                      <ShoppingBag className="w-4 h-4 text-primary" />
-                      <span>Your Online Orders & Live Status</span>
-                    </h3>
-                    <p className="text-xs text-muted">Track fulfilment and payment status for orders placed online</p>
-                  </div>
-                  <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
-                    {customerOrders.length} {customerOrders.length === 1 ? 'Online Order' : 'Online Orders'}
-                  </span>
-                </div>
-
-                <div className="space-y-3">
-                  {customerOrders.map(order => {
-                    const isPendingVerification = order.payment_status === 'PENDING_VERIFICATION';
-                    const isPaid = order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED';
-                    const isUnpaid = !isPendingVerification && !isPaid;
-
-                    return (
-                      <div key={order.id} className="bg-bg border border-border rounded-xl p-4 space-y-3 shadow-xs">
-                        {/* Header: Order ID, Store, Time, Badges */}
-                        <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-border/60 flex-wrap">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-black text-primary">#{order.id}</span>
-                              <span className="text-xs font-bold text-text">{order.store_name || 'Pharmacy Branch'}</span>
-                              <span className="text-[10px] text-muted">
-                                {order.created_at ? new Date(order.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'}
-                              </span>
-                            </div>
-                            {order.estimated_delivery_start && order.estimated_delivery_end && (
-                              <div className="text-[11px] text-muted flex items-center gap-1 mt-1">
-                                <Clock className="w-3 h-3 text-primary" />
-                                <span>Expected Delivery: <strong className="text-text">{new Date(order.estimated_delivery_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(order.estimated_delivery_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong></span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Payment & Fulfilment Badges */}
-                          <div className="flex flex-col items-end gap-1">
-                            {isPendingVerification ? (
-                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1 animate-pulse">
-                                <Clock className="w-3 h-3" />
-                                <span>Payment Confirmation Pending</span>
-                              </span>
-                            ) : isPaid ? (
-                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Payment Confirmed</span>
-                              </span>
-                            ) : (
-                              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center gap-1">
-                                <CreditCard className="w-3 h-3" />
-                                <span>Payment Pending</span>
-                              </span>
-                            )}
-
-                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
-                              order.status === 'Fulfilled' || order.status === 'ORDER_READY_FOR_PICKUP' || order.status === 'Ready'
-                                ? 'bg-blue-500/10 text-blue-500 border-blue-500/30'
-                                : 'bg-bg3 text-muted border-border'
-                            }`}>
-                              Status: {order.status === 'ORDER_READY_FOR_PICKUP' ? 'Ready for Pickup' : (order.status || 'Pending')}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Order Items */}
-                        <div className="space-y-1 bg-bg2/40 p-2.5 rounded-xl border border-border/50">
-                          {order.items?.map((item: any, idx: number) => (
-                            <div key={idx} className="flex items-center justify-between text-xs py-0.5">
-                              <span className="text-text font-medium">{item.product_name || item.product || order.product}</span>
-                              <span className="text-muted font-mono">Qty: {item.requested_qty || item.qty || order.qty || 1}</span>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Payment & Re-open QR CTA */}
-                        <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2 flex-wrap text-xs">
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted">Total:</span>
-                            <span className="font-bold text-primary font-mono text-sm">₹{Number(order.total_amount || 0).toFixed(2)}</span>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            {isPendingVerification && (
-                              <span className="text-[11px] text-amber-500 font-medium">
-                                ⏳ Awaiting pharmacy verification. Please share your screenshot on WhatsApp.
-                              </span>
-                            )}
-
-                            {order.payment_screenshot_path && (
-                              <span className="text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md font-semibold flex items-center gap-1">
-                                <span>📸 Screenshot Received</span>
-                              </span>
-                            )}
-
-                            {isUnpaid && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenOrderPaymentQr(order)}
-                                className="px-3 py-1.5 bg-primary text-white rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition-all flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <QrCode className="w-3.5 h-3.5" />
-                                <span>Pay via UPI QR</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Section 1: Active Refills */}
-            <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-base font-bold text-text">Your Regular Prescriptions</h3>
-                  <p className="text-xs text-muted">Select medicines and adjust quantities for your refill</p>
+                  <h2 className="text-sm font-bold flex items-center gap-2 text-text">
+                    <MapPin className="w-4 h-4 text-primary" />
+                    <span>Select Collection Pharmacy Branch</span>
+                  </h2>
+                  <p className="text-xs text-muted">
+                    Choose the branch where you would like to pick up your packaged refill or submit prescriptions
+                  </p>
                 </div>
-                <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
-                  {refills.length} Regular Items
-                </span>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setIsPortalRxModalOpen(true)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Upload Prescription / Photos</span>
+                  </button>
+
+                  <div className="sm:w-72">
+                    <select
+                      value={selectedStoreId}
+                      onChange={e => handleStoreChange(parseInt(e.target.value, 10))}
+                      className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm font-semibold text-text focus:outline-none focus:border-primary"
+                    >
+                      {stores.map(st => (
+                        <option key={st.id} value={st.id}>
+                          Store #{st.id} - {st.name} {st.address ? `(${st.address})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
 
-              {loadingData ? (
-                <div className="py-12 flex flex-col items-center justify-center gap-2 text-muted text-xs">
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>Loading regular medicines...</span>
-                </div>
-              ) : refills.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted border border-dashed border-border rounded-xl">
-                  No regular refills registered yet. Select items from your previous store bills below!
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {refills.map(r => {
-                    const isSelected = Boolean(selectedItems[r.medicine_name]);
-                    const currentQty = selectedItems[r.medicine_name]?.qty || r.quantity_needed || 1;
-                    const price = r.sell_price || r.mrp || 0;
-
-                    return (
-                      <div
-                        key={r.id}
-                        className={`p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                          isSelected
-                            ? 'bg-primary/5 border-primary/40 shadow-sm'
-                            : 'bg-bg border-border opacity-70 hover:opacity-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 cursor-pointer select-none" onClick={() => toggleItem(r.medicine_name, price, r.quantity_needed || 1)}>
-                          <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${
-                            isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
-                          }`}>
-                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
-                              {r.status === 'paused' && (
-                                <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 font-bold">
-                                  Paused
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-xs text-muted">
-                              {r.generic_name ? `${r.generic_name} • ` : ''}₹{price.toFixed(2)} / pack
-                              {r.next_refill_date && (
-                                <span className="ml-1.5 text-[11px] text-primary font-medium">
-                                  • Next Refill: {new Date(r.next_refill_date).toLocaleDateString()}
-                                </span>
-                              )}
-                            </span>
-                          </div>
-                        </div>
-
-                        {isSelected && (
-                          <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
-                            <button
-                              onClick={() => updateQuantity(r.medicine_name, -1)}
-                              title={currentQty === 1 ? 'Remove from refill' : 'Decrease quantity'}
-                              className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
-                            >
-                              {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
-                            </button>
-                            <span className="text-xs font-bold w-6 text-center">{currentQty}</span>
-                            <button
-                              onClick={() => updateQuantity(r.medicine_name, 1)}
-                              className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+              {activeStore && (
+                <div className="p-2.5 bg-bg rounded-xl border border-border/60 text-xs flex flex-wrap items-center justify-between gap-2 text-muted">
+                  <span>📍 <strong>Address:</strong> {activeStore.address || 'Main Market Location'}</span>
+                  {activeStore.phone && <span>📞 <strong>Contact:</strong> {activeStore.phone}</span>}
+                  <span className="text-emerald-500 font-semibold">● Ready in ~30 mins</span>
                 </div>
               )}
             </div>
 
-            {/* Section 2: Reorder from Previous In-Store Bills & Sell History */}
-            <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-text flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-primary" />
-                    <span>Past Store Purchases & Invoices</span>
-                    {bills.length > 0 && (
-                      <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold">
-                        {bills.length} {bills.length === 1 ? 'bill' : 'bills'}
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-xs text-muted">
-                    In-store POS counter purchases directly connected to your account ({session.phone})
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => loadCustomerData(session.id, session.phone)}
-                  className="p-1.5 hover:bg-bg rounded-lg text-muted hover:text-text transition-colors flex items-center gap-1 text-xs"
-                  title="Refresh bills"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingData ? 'animate-spin' : ''}`} />
-                  <span className="hidden sm:inline">Refresh</span>
-                </button>
-              </div>
-
-              {bills.length === 0 ? (
-                <div className="py-8 text-center border border-dashed border-border rounded-xl text-xs text-muted space-y-1.5 p-4">
-                  <Receipt className="w-8 h-8 text-muted/50 mx-auto mb-2" />
-                  <p className="font-semibold text-text text-sm">No in-store bills found for this phone number yet</p>
-                  <p className="max-w-sm mx-auto">
-                    When you purchase medicines at our pharmacy counter, your invoices and medicine history will appear here automatically.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {bills.map(bill => (
-                    <div key={bill.id} className="bg-bg border border-border rounded-xl p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs pb-2 border-b border-border/60 text-muted gap-2 flex-wrap">
-                        <div>
-                          <span className="font-semibold text-text">Bill #{bill.invoice_number || bill.id}</span>
-                          <span className="ml-2">{bill.store_name || 'Main Branch'} • {new Date(bill.created_at).toLocaleDateString()}</span>
-                          <span className="ml-2 font-bold text-text">₹{Number(bill.total_amount || 0).toFixed(2)}</span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={refillingInvoiceId === bill.id}
-                          onClick={() => handleRefillEntireBill(bill.id)}
-                          className="px-2.5 py-1 text-[11px] font-bold bg-primary text-white rounded-lg hover:bg-primary/90 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                          title="Reorder all items in this bill using current prices"
-                        >
-                          <RefreshCw size={11} className={refillingInvoiceId === bill.id ? 'animate-spin' : ''} />
-                          <span>{refillingInvoiceId === bill.id ? 'Refilling…' : 'Refill Entire Bill'}</span>
-                        </button>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left / Middle: Regular Medicines, Online Orders & Past Bills */}
+              <div className="lg:col-span-2 space-y-6">
+                {/* Section 0: Active & Recent Online Orders */}
+                {customerOrders.length > 0 && (
+                  <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-bold text-text flex items-center gap-2">
+                          <ShoppingBag className="w-4 h-4 text-primary" />
+                          <span>Your Online Orders & Live Status</span>
+                        </h3>
+                        <p className="text-xs text-muted">Track fulfilment and payment status for orders placed online</p>
                       </div>
+                      <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
+                        {customerOrders.length} {customerOrders.length === 1 ? 'Online Order' : 'Online Orders'}
+                      </span>
+                    </div>
 
-                      <div className="space-y-1.5">
-                        {bill.items?.map(it => {
-                          const isSelected = Boolean(selectedItems[it.medicine_name]);
-                          const price = it.unit_price || 0;
+                    <div className="space-y-3">
+                      {customerOrders.map(order => {
+                        const isPendingVerification = order.payment_status === 'PENDING_VERIFICATION';
+                        const isPaid = order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED';
+                        const isUnpaid = !isPendingVerification && !isPaid;
 
-                          return (
-                            <div key={it.id} className="flex items-center justify-between text-xs py-1">
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleItem(it.medicine_name, price, it.quantity || 1)}
-                                  className={`w-4 h-4 rounded flex items-center justify-center border ${
-                                    isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
-                                  }`}
-                                >
-                                  {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                                </button>
-                                <span className="font-medium text-text">{it.medicine_name}</span>
-                                {it.quantity && it.quantity > 1 && (
-                                  <span className="text-[10px] text-muted bg-bg2 px-1.5 py-0.5 rounded">×{it.quantity}</span>
+                        return (
+                          <div key={order.id} className="bg-bg border border-border rounded-xl p-4 space-y-3 shadow-xs">
+                            {/* Header: Order ID, Store, Time, Badges */}
+                            <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-border/60 flex-wrap">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-primary">#{order.id}</span>
+                                  <span className="text-xs font-bold text-text">{order.store_name || 'Pharmacy Branch'}</span>
+                                  <span className="text-[10px] text-muted">
+                                    {order.created_at ? new Date(order.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                                  </span>
+                                </div>
+                                {order.estimated_delivery_start && order.estimated_delivery_end && (
+                                  <div className="text-[11px] text-muted flex items-center gap-1 mt-1">
+                                    <Clock className="w-3 h-3 text-primary" />
+                                    <span>Expected Delivery: <strong className="text-text">{new Date(order.estimated_delivery_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {new Date(order.estimated_delivery_end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong></span>
+                                  </div>
                                 )}
                               </div>
-                              <span className="text-muted font-medium">₹{price.toFixed(2)}</span>
+
+                              {/* Payment & Fulfilment Badges */}
+                              <div className="flex flex-col items-end gap-1">
+                                {isPendingVerification ? (
+                                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-500/15 text-amber-500 border border-amber-500/30 flex items-center gap-1 animate-pulse">
+                                    <Clock className="w-3 h-3" />
+                                    <span>Payment Confirmation Pending</span>
+                                  </span>
+                                ) : isPaid ? (
+                                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    <span>Payment Confirmed</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                                    <CreditCard className="w-3 h-3" />
+                                    <span>Payment Pending</span>
+                                  </span>
+                                )}
+
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${order.status === 'Fulfilled' || order.status === 'ORDER_READY_FOR_PICKUP' || order.status === 'Ready'
+                                    ? 'bg-blue-500/10 text-blue-500 border-blue-500/30'
+                                    : 'bg-bg3 text-muted border-border'
+                                  }`}>
+                                  Status: {order.status === 'ORDER_READY_FOR_PICKUP' ? 'Ready for Pickup' : (order.status || 'Pending')}
+                                </span>
+                              </div>
                             </div>
-                          );
-                        })}
-                      </div>
+
+                            {/* Order Items */}
+                            <div className="space-y-1 bg-bg2/40 p-2.5 rounded-xl border border-border/50">
+                              {order.items?.map((item: any, idx: number) => (
+                                <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                                  <span className="text-text font-medium">{item.product_name || item.product || order.product}</span>
+                                  <span className="text-muted font-mono">Qty: {item.requested_qty || item.qty || order.qty || 1}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Payment & Re-open QR CTA */}
+                            <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2 flex-wrap text-xs">
+                              <div className="flex items-center gap-1">
+                                <span className="text-muted">Total:</span>
+                                <span className="font-bold text-primary font-mono text-sm">₹{Number(order.total_amount || 0).toFixed(2)}</span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {isPendingVerification && (
+                                  <span className="text-[11px] text-amber-500 font-medium">
+                                    ⏳ Awaiting pharmacy verification. Please share your screenshot on WhatsApp.
+                                  </span>
+                                )}
+
+                                {order.payment_screenshot_path && (
+                                  <span className="text-[10px] text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md font-semibold flex items-center gap-1">
+                                    <span>📸 Screenshot Received</span>
+                                  </span>
+                                )}
+
+                                {isUnpaid && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenOrderPaymentQr(order)}
+                                    className="px-3 py-1.5 bg-primary text-white rounded-xl text-xs font-bold shadow-sm hover:opacity-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <QrCode className="w-3.5 h-3.5" />
+                                    <span>Pay via UPI QR</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+                  </div>
+                )}
 
-          {/* Right: Checkout & Collection Summary */}
-          <div className="space-y-6">
-            <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-md space-y-5 sticky top-20">
-              <h3 className="text-base font-bold text-text flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-primary" />
-                <span>Collection Order Summary</span>
-              </h3>
+                {/* Section 1: Active Refills */}
+                <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-text">Your Regular Prescriptions</h3>
+                      <p className="text-xs text-muted">Select medicines and adjust quantities for your refill</p>
+                    </div>
+                    <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary font-semibold rounded-lg">
+                      {refills.length} Regular Items
+                    </span>
+                  </div>
 
-              {selectedList.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted border border-dashed border-border rounded-xl">
-                  Select at least one medicine from the left to proceed
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {selectedList.map(item => (
-                      <div key={item.product} className="flex items-center justify-between text-xs text-text bg-bg p-2 rounded-lg border border-border/50">
-                        <div className="max-w-[60%]">
-                          <span className="font-semibold block truncate">{item.product}</span>
-                          <span className="text-muted">Qty: {item.qty} × ₹{item.price.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-primary">₹{(item.price * item.qty).toFixed(2)}</span>
-                          <button
-                            type="button"
-                            onClick={() => toggleItem(item.product, item.price)}
-                            title={`Remove ${item.product}`}
-                            className="p-1 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                  {loadingData ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-2 text-muted text-xs">
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <span>Loading regular medicines...</span>
+                    </div>
+                  ) : refills.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-muted border border-dashed border-border rounded-xl">
+                      No regular refills registered yet. Select items from your previous store bills below!
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {refills.map(r => {
+                        const isSelected = Boolean(selectedItems[r.medicine_name]);
+                        const currentQty = selectedItems[r.medicine_name]?.qty || r.quantity_needed || 1;
+                        const price = r.sell_price || r.mrp || 0;
+
+                        return (
+                          <div
+                            key={r.id}
+                            className={`p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3 ${isSelected
+                                ? 'bg-primary/5 border-primary/40 shadow-sm'
+                                : 'bg-bg border-border opacity-70 hover:opacity-100'
+                              }`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                            <div className="flex items-center gap-3 cursor-pointer select-none" onClick={() => toggleItem(r.medicine_name, price, r.quantity_needed || 1)}>
+                              <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
+                                }`}>
+                                {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold text-text block leading-snug">{r.medicine_name}</span>
+                                  {r.status === 'paused' && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30 font-bold">
+                                      Paused
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-muted">
+                                  {r.generic_name ? `${r.generic_name} • ` : ''}₹{price.toFixed(2)} / pack
+                                  {r.next_refill_date && (
+                                    <span className="ml-1.5 text-[11px] text-primary font-medium">
+                                      • Next Refill: {new Date(r.next_refill_date).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
 
-                  <div className="pt-3 border-t border-border space-y-2 text-xs">
-                    <div className="flex justify-between text-muted">
-                      <span>Pickup Branch:</span>
-                      <span className="font-semibold text-text">{activeStore?.name}</span>
-                    </div>
-                    <div className="flex justify-between text-muted">
-                      <span>Total Items:</span>
-                      <span className="font-semibold text-text">{selectedList.length} Medicines</span>
-                    </div>
-                    <div className="flex justify-between text-base font-bold text-text pt-2 border-t border-border">
-                      <span>Grand Total:</span>
-                      <span className="text-primary font-mono">₹{totalAmount.toFixed(2)}</span>
-                    </div>
-                  </div>
-
-                  {/* Payment Mode Selection */}
-                  <div className="space-y-1.5 pt-2">
-                    <label className="text-xs font-semibold text-text uppercase tracking-wider block">
-                      Payment Mode
-                    </label>
-                    <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <QrCode className="w-5 h-5 text-primary" />
-                        <div>
-                          <span className="text-xs font-bold text-text block">Dynamic UPI QR</span>
-                          <span className="text-[10px] text-muted">Scan & pay with any UPI app</span>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-black uppercase px-2 py-0.5 bg-primary text-white rounded-md">UPI</span>
-                    </div>
-                  </div>
-
-                  {orderError && (
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-600 flex items-center gap-1.5">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>{orderError}</span>
+                            {isSelected && (
+                              <div className="flex items-center gap-2 bg-bg2 border border-border rounded-lg p-1">
+                                <button
+                                  onClick={() => updateQuantity(r.medicine_name, -1)}
+                                  title={currentQty === 1 ? 'Remove from refill' : 'Decrease quantity'}
+                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text hover:text-red-500 transition-colors cursor-pointer"
+                                >
+                                  {currentQty === 1 ? <Trash2 className="w-3 h-3 text-red-500" /> : <Minus className="w-3 h-3" />}
+                                </button>
+                                <span className="text-xs font-bold w-6 text-center">{currentQty}</span>
+                                <button
+                                  onClick={() => updateQuantity(r.medicine_name, 1)}
+                                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-bg text-text"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-
-                  <button
-                    onClick={handlePlaceOrder}
-                    disabled={isSubmitting || selectedList.length === 0}
-                    className="w-full py-3.5 bg-primary text-white rounded-xl font-bold shadow-lg hover:opacity-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
-                  >
-                    {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>Place In-Store Pickup Order</span>
-                  </button>
                 </div>
-              )}
+
+                {/* Section 2: Reorder from Previous In-Store Bills & Sell History */}
+                <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-text flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-primary" />
+                        <span>Past Store Purchases & Invoices</span>
+                        {bills.length > 0 && (
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold">
+                            {bills.length} {bills.length === 1 ? 'bill' : 'bills'}
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-muted">
+                        In-store POS counter purchases directly connected to your account ({session.phone})
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadCustomerData(session.id, session.phone)}
+                      className="p-1.5 hover:bg-bg rounded-lg text-muted hover:text-text transition-colors flex items-center gap-1 text-xs"
+                      title="Refresh bills"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingData ? 'animate-spin' : ''}`} />
+                      <span className="hidden sm:inline">Refresh</span>
+                    </button>
+                  </div>
+
+                  {bills.length === 0 ? (
+                    <div className="py-8 text-center border border-dashed border-border rounded-xl text-xs text-muted space-y-1.5 p-4">
+                      <Receipt className="w-8 h-8 text-muted/50 mx-auto mb-2" />
+                      <p className="font-semibold text-text text-sm">No in-store bills found for this phone number yet</p>
+                      <p className="max-w-sm mx-auto">
+                        When you purchase medicines at our pharmacy counter, your invoices and medicine history will appear here automatically.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {bills.map(bill => (
+                        <div key={bill.id} className="bg-bg border border-border rounded-xl p-3.5 space-y-2.5">
+                          <div className="flex items-center justify-between text-xs pb-2 border-b border-border/60 text-muted gap-2 flex-wrap">
+                            <div>
+                              <span className="font-semibold text-text">Bill #{bill.invoice_number || bill.id}</span>
+                              <span className="ml-2">{bill.store_name || 'Main Branch'} • {new Date(bill.created_at).toLocaleDateString()}</span>
+                              <span className="ml-2 font-bold text-text">₹{Number(bill.total_amount || 0).toFixed(2)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={refillingInvoiceId === bill.id}
+                              onClick={() => handleRefillEntireBill(bill.id)}
+                              className="px-2.5 py-1 text-[11px] font-bold bg-primary text-white rounded-lg hover:bg-primary/90 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title="Reorder all items in this bill using current prices"
+                            >
+                              <RefreshCw size={11} className={refillingInvoiceId === bill.id ? 'animate-spin' : ''} />
+                              <span>{refillingInvoiceId === bill.id ? 'Refilling…' : 'Refill Entire Bill'}</span>
+                            </button>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            {bill.items?.map(it => {
+                              const isSelected = Boolean(selectedItems[it.medicine_name]);
+                              const price = it.unit_price || 0;
+
+                              return (
+                                <div key={it.id} className="flex items-center justify-between text-xs py-1">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleItem(it.medicine_name, price, it.quantity || 1)}
+                                      className={`w-4 h-4 rounded flex items-center justify-center border ${isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-bg2'
+                                        }`}
+                                    >
+                                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                    </button>
+                                    <span className="font-medium text-text">{it.medicine_name}</span>
+                                    {it.quantity && it.quantity > 1 && (
+                                      <span className="text-[10px] text-muted bg-bg2 px-1.5 py-0.5 rounded">×{it.quantity}</span>
+                                    )}
+                                  </div>
+                                  <span className="text-muted font-medium">₹{price.toFixed(2)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Checkout & Collection Summary */}
+              <div className="space-y-6">
+                <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-6 shadow-md space-y-5 sticky top-20">
+                  <h3 className="text-base font-bold text-text flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4 text-primary" />
+                    <span>Collection Order Summary</span>
+                  </h3>
+
+                  {selectedList.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-muted border border-dashed border-border rounded-xl">
+                      Select at least one medicine from the left to proceed
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                        {selectedList.map(item => (
+                          <div key={item.product} className="flex items-center justify-between text-xs text-text bg-bg p-2 rounded-lg border border-border/50">
+                            <div className="max-w-[60%]">
+                              <span className="font-semibold block truncate">{item.product}</span>
+                              <span className="text-muted">Qty: {item.qty} × ₹{item.price.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-primary">₹{(item.price * item.qty).toFixed(2)}</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleItem(item.product, item.price)}
+                                title={`Remove ${item.product}`}
+                                className="p-1 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-3 border-t border-border space-y-2 text-xs">
+                        <div className="flex justify-between text-muted">
+                          <span>Pickup Branch:</span>
+                          <span className="font-semibold text-text">{activeStore?.name}</span>
+                        </div>
+                        <div className="flex justify-between text-muted">
+                          <span>Total Items:</span>
+                          <span className="font-semibold text-text">{selectedList.length} Medicines</span>
+                        </div>
+                        <div className="flex justify-between text-base font-bold text-text pt-2 border-t border-border">
+                          <span>Grand Total:</span>
+                          <span className="text-primary font-mono">₹{totalAmount.toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      {/* Payment Mode Selection */}
+                      <div className="space-y-1.5 pt-2">
+                        <label className="text-xs font-semibold text-text uppercase tracking-wider block">
+                          Payment Mode
+                        </label>
+                        <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <QrCode className="w-5 h-5 text-primary" />
+                            <div>
+                              <span className="text-xs font-bold text-text block">Dynamic UPI QR</span>
+                              <span className="text-[10px] text-muted">Scan & pay with any UPI app</span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 bg-primary text-white rounded-md">UPI</span>
+                        </div>
+                      </div>
+
+                      {orderError && (
+                        <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-600 flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{orderError}</span>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handlePlaceOrder}
+                        disabled={isSubmitting || selectedList.length === 0}
+                        className="w-full py-3.5 bg-primary text-white rounded-xl font-bold shadow-lg hover:opacity-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+                      >
+                        {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                        <span>Place In-Store Pickup Order</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-      )}
-    </main>
+        )}
+      </main>
 
       {/* Public Catalog Cart Checkout Modal */}
       {isCartModalOpen && (
@@ -1840,22 +2262,20 @@ export default function CustomerPortal() {
                   <button
                     type="button"
                     onClick={() => setDeliveryMode('pickup')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
-                      deliveryMode === 'pickup'
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${deliveryMode === 'pickup'
                         ? 'border-primary bg-primary/10 text-primary'
                         : 'border-border bg-bg text-muted'
-                    }`}
+                      }`}
                   >
                     🏢 In-Store Pickup
                   </button>
                   <button
                     type="button"
                     onClick={() => setDeliveryMode('delivery')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${
-                      deliveryMode === 'delivery'
+                    className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all ${deliveryMode === 'delivery'
                         ? 'border-primary bg-primary/10 text-primary'
                         : 'border-border bg-bg text-muted'
-                    }`}
+                      }`}
                   >
                     🚚 Home Delivery
                   </button>
@@ -1884,7 +2304,7 @@ export default function CustomerPortal() {
               </label>
               <select
                 value={selectedStoreId}
-                onChange={e => setSelectedStoreId(parseInt(e.target.value, 10))}
+                onChange={e => handleStoreChange(parseInt(e.target.value, 10))}
                 className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-xs font-semibold text-text focus:outline-none focus:border-primary"
               >
                 {stores.length > 0 ? (
@@ -2199,7 +2619,7 @@ export default function CustomerPortal() {
         prefillCustomerPhone={session?.phone}
         activeStore={activeStore}
         stores={stores}
-        onSelectStoreId={setSelectedStoreId}
+        onSelectStoreId={handleStoreChange}
       />
     </div>
   );

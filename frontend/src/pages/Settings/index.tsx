@@ -52,7 +52,9 @@ import {
   ShoppingCart,
   Layers,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Globe,
+  Copy
 } from 'lucide-react';
 import { toastEvent } from '../../services/events';
 import { BackupCenterContent } from '../../components/BackupCenterModal';
@@ -1717,6 +1719,67 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     }).catch(() => {});
   }, []);
 
+  // Cloudflare Tunnel State
+  const [cfAutostart, setCfAutostart] = useState(
+    rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true'
+  );
+  const [cfToken, setCfToken] = useState(rawSettings.cloudflare_tunnel_token || '');
+  const [cfCustomDomain, setCfCustomDomain] = useState(rawSettings.cloudflare_tunnel_custom_domain || '');
+  const [showCfToken, setShowCfToken] = useState(false);
+  const [cfTunnelStatus, setCfTunnelStatus] = useState<import('../../services/api').TunnelStatusResponse | null>(null);
+  const [cfLoading, setCfLoading] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const fetchCfStatus = useCallback(async () => {
+    try {
+      const res = await api.getTunnelStatus();
+      if (res?.success) {
+        setCfTunnelStatus(res);
+      }
+    } catch (err) {
+      console.error('Failed to get tunnel status:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isVisible) {
+      fetchCfStatus();
+      const handleStatus = () => fetchCfStatus();
+      window.addEventListener('sse-tunnel-status-changed', handleStatus);
+      return () => {
+        window.removeEventListener('sse-tunnel-status-changed', handleStatus);
+      };
+    }
+  }, [isVisible, fetchCfStatus]);
+
+  const handleToggleTunnel = async () => {
+    setCfLoading(true);
+    try {
+      if (cfTunnelStatus?.isRunning) {
+        await api.stopTunnel();
+        toastEvent.trigger('Cloudflare Tunnel stopped', 'info');
+      } else {
+        await api.startTunnel();
+        toastEvent.trigger('Starting Cloudflare Tunnel...', 'info');
+      }
+      setTimeout(fetchCfStatus, 1500);
+    } catch (err: any) {
+      toastEvent.trigger('Tunnel operation failed: ' + (err.message || 'Unknown error'), 'error');
+    } finally {
+      setCfLoading(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (cfTunnelStatus?.url) {
+      const storeUrl = `${cfTunnelStatus.url}/portal`;
+      navigator.clipboard.writeText(storeUrl);
+      setCopiedLink(true);
+      toastEvent.trigger('Store portal link copied to clipboard!', 'success');
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
+  };
+
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1782,6 +1845,9 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
     setGeminiApiKey(rawSettings.gemini_api_key || '');
+    setCfAutostart(rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true');
+    setCfToken(rawSettings.cloudflare_tunnel_token || '');
+    setCfCustomDomain(rawSettings.cloudflare_tunnel_custom_domain || '');
     toastEvent.trigger('Integration credentials reset to saved parameters', 'info');
   };
 
@@ -1856,13 +1922,21 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
         pharmarack_reorder_window_months: reorderWindowMonths,
         whatsapp_idle_sleep_min: waIdleSleepMin,
         combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false',
-        gemini_api_key: geminiApiKey
+        gemini_api_key: geminiApiKey,
+        cloudflare_tunnel_autostart: cfAutostart ? '1' : '0',
+        cloudflare_tunnel_token: cfToken.trim(),
+        cloudflare_tunnel_custom_domain: cfCustomDomain.trim()
       };
 
       await apiClient.post('/settings/save', payload);
       await Promise.all([
         api.savePaymentQrs(paymentQrs),
-        api.saveDeliveryConfig(deliveryEnabled)
+        api.saveDeliveryConfig(deliveryEnabled),
+        api.configureTunnel({
+          token: cfToken.trim(),
+          customDomain: cfCustomDomain.trim(),
+          autostart: cfAutostart
+        }).catch(() => {})
       ]);
       toastEvent.trigger('Integrations, 3-QR pool & API credentials saved successfully', 'success');
       updateSettingsCache(queryClient, payload);
@@ -2365,6 +2439,152 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
               <span className="font-semibold">{geminiStatus.message}</span>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Cloudflare Tunnel & Live Online Store Section */}
+      <div className="space-y-4 pt-4 border-t border-border">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+            <Globe size={16} /> Cloudflare Tunnel — Zero-Cost Online Store
+          </h2>
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
+            $0 Cloud Bills • Unlimited Local Storage • Auto HTTPS
+          </span>
+        </div>
+
+        <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-text">Tunnel Service Status:</span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                  cfTunnelStatus?.isRunning
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-bg border border-border text-muted'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${cfTunnelStatus?.isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+                  {cfTunnelStatus?.isRunning ? 'LIVE & ACCESSIBLE' : 'OFFLINE'}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted">
+                Securely tunnels patient store traffic and product images from this computer to the public internet via Cloudflare edge network.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleToggleTunnel}
+                disabled={cfLoading}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm ${
+                  cfTunnelStatus?.isRunning
+                    ? 'bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25'
+                    : 'bg-primary text-white hover:bg-primary/90'
+                }`}
+              >
+                {cfLoading ? <RefreshCw size={13} className="animate-spin" /> : <Globe size={13} />}
+                <span>{cfLoading ? 'Processing...' : cfTunnelStatus?.isRunning ? 'Stop Tunnel' : 'Start Tunnel'}</span>
+              </button>
+
+              {cfTunnelStatus?.url && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all cursor-pointer"
+                    title="Copy patient store link"
+                  >
+                    {copiedLink ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    <span>{copiedLink ? 'Copied' : 'Copy Store Link'}</span>
+                  </button>
+                  <a
+                    href={`${cfTunnelStatus.url}/portal`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all"
+                  >
+                    <ExternalLink size={13} />
+                    <span>Open Store</span>
+                  </a>
+                </>
+              )}
+            </div>
+          </div>
+
+          {cfTunnelStatus?.url && (
+            <div className="p-3 bg-bg border border-emerald-500/20 rounded-xl flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <span className="font-semibold text-text shrink-0">Live URL:</span>
+                <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/portal</span>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                Encrypted HTTPS
+              </span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="cfAutostartToggle"
+                  checked={cfAutostart}
+                  onChange={(e) => setCfAutostart(e.target.checked)}
+                  className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                />
+                <label htmlFor="cfAutostartToggle" className="text-xs font-bold text-text cursor-pointer">
+                  Auto-start Tunnel on Server Boot
+                </label>
+              </div>
+              <p className="text-[11px] text-muted pl-6">
+                When enabled, Cloudflare Tunnel starts automatically whenever you run the pharmacy application.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-text">
+                Custom Domain (Optional)
+              </label>
+              <input
+                type="text"
+                value={cfCustomDomain}
+                onChange={(e) => setCfCustomDomain(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                placeholder="e.g. store.mypharmacy.com"
+              />
+              <p className="text-[10px] text-muted">
+                Leave empty for automatic free <code className="text-primary">trycloudflare.com</code> address.
+              </p>
+            </div>
+
+            <div className="md:col-span-2 space-y-1">
+              <label className="block text-xs font-bold text-text">
+                Cloudflare Tunnel Token (Optional - Required for Custom Permanent Domains)
+              </label>
+              <div className="relative">
+                <input
+                  type={showCfToken ? 'text' : 'password'}
+                  value={cfToken}
+                  onChange={(e) => setCfToken(e.target.value)}
+                  className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                  placeholder="eyJhIjoi... (from Cloudflare Zero Trust Dashboard)"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCfToken(!showCfToken)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
+                  title={showCfToken ? 'Hide token' : 'Show token'}
+                >
+                  <Eye size={14} />
+                </button>
+              </div>
+              <p className="text-[10px] text-muted">
+                If you have your own domain on Cloudflare Zero Trust, paste your tunnel run token here. If empty, the app runs in Quick Tunnel mode with zero configuration needed.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

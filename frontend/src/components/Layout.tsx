@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard,
@@ -4104,6 +4104,14 @@ export const Layout = ({
   const queryClient = useQueryClient();
   const isPortalPage = ['/portal', '/refill-portal', '/customer-login', '/customer/login', '/my-bills', '/customer-bills'].includes(location.pathname);
   const isFitPage = ['/pos', '/inventory', '/database', '/returns', '/purchases', '/manual-purchase', '/sells', '/purchase-history', '/crm', '/reports', '/settings', '/pharmarack-cart', '/investigation', '/phone-sales', '/migration', '/online-catalog'].includes(location.pathname);
+  const isLocalOrigin = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '0.0.0.0' ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.endsWith('.local')
+  );
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
@@ -4568,6 +4576,10 @@ export const Layout = ({
     refetchSpecialOrders();
     refetchRefills();
   }, [fetchStagedNotifications, refetchSpecialOrders, refetchRefills]);
+
+  if (!isLocalOrigin && !isPortalPage) {
+    return <Navigate to="/portal" replace />;
+  }
 
   if (isPortalPage) {
     return (

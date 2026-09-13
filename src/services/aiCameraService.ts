@@ -664,6 +664,7 @@ class AICameraService {
     // Packaging cross-check and confirmation gate
     const detectedDrugStrength = extractDrugStrength(localOcrResult.text);
     const detectedVolume = extractVolumeOrWeight(localOcrResult.text);
+    const detectedDosageForm = detectDosageFormFromText(localOcrResult.text);
 
     if (matches.length > 0) {
       // Re-sort matches to ensure exact packaging dosage form, strength match AND formulation alignment is #1
