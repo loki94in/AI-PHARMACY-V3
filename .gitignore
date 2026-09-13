@@ -10,6 +10,8 @@ node_modules/
 .env.*
 .env*.local
 !.env.example
+data/*keys*.json
+data/working_gemini_keys.json
 
 # ─── SQLite Databases & Backups ──────────────────────────────────────────────
 data/*.db

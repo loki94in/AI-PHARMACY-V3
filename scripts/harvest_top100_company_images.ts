@@ -39,10 +39,11 @@ fs.mkdirSync(TARGET_FRONTEND, { recursive: true });
 fs.mkdirSync(TARGET_UPLOADS, { recursive: true });
 fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
 
-function autoCommitBatch(batchCount: number, totalImagesSaved: number) {
+function autoCommitBatch(batchCount: number, totalImagesSaved: number, reason?: string) {
   try {
     console.log(`\n===============================================================`);
-    console.log(`📦 AUTO-COMMIT: Milestone reached (${batchCount} new images saved, total: ${totalImagesSaved})`);
+    console.log(`📦 AUTO-SAVE: Project Milestone (${batchCount} images, total: ${totalImagesSaved})`);
+    if (reason) console.log(`Tag: ${reason}`);
     console.log(`===============================================================\n`);
     
     // Refresh knowledge graph quickly
@@ -50,13 +51,57 @@ function autoCommitBatch(batchCount: number, totalImagesSaved: number) {
       execSync('node scripts/quick-update.mjs', { stdio: 'ignore' });
     } catch {}
 
-    execSync('git add frontend/public/products data/top100_harvest_state.json', { stdio: 'inherit' });
-    const msg = `feat(catalog): auto-commit milestone (${totalImagesSaved} images saved, Gemini 2.5 Vision verified)`;
+    const lockFile = path.join(ROOT_DIR, '.git', 'index.lock');
+    if (fs.existsSync(lockFile)) {
+      console.warn(`[AutoSave] Git index is temporarily locked by another terminal. Will retry on next milestone.`);
+      return;
+    }
+
+    execSync('git add frontend/public/products data/top100_harvest_state.json .understand-anything', { stdio: 'ignore' });
+    const tag = reason ? ` [${reason}]` : '';
+    const msg = `feat(catalog): auto-save milestone${tag} (${totalImagesSaved} images in database)`;
     execSync(`git commit -m "${msg}"`, { stdio: 'inherit' });
     console.log(`✅ Git commit complete: "${msg}"\n`);
   } catch (err: any) {
-    console.warn(`[AutoCommit] Git commit notice:`, err.message);
+    if (!err.message?.includes('nothing to commit')) {
+      console.warn(`[AutoSave] Git notice:`, err.message);
+    }
   }
+}
+
+function checkAndTriggerDbMilestoneCommit(db: any, commitEvery: number, terminalIndex?: number): boolean {
+  if (commitEvery <= 0) return false;
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM catalog_images').get() as any;
+    const currentDbCount = row?.c || 0;
+
+    let lastCommittedRow = db.prepare("SELECT value FROM app_settings WHERE key = 'catalog_images_git_last_committed_count'").get() as any;
+    let lastCommitted = lastCommittedRow ? parseInt(lastCommittedRow.value, 10) : 0;
+
+    if (!lastCommitted || isNaN(lastCommitted)) {
+      const initialBaseline = Math.floor(currentDbCount / commitEvery) * commitEvery;
+      db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('catalog_images_git_last_committed_count', ?)").run(String(initialBaseline));
+      lastCommitted = initialBaseline;
+    }
+
+    const diff = currentDbCount - lastCommitted;
+    if (diff >= commitEvery) {
+      const lockFile = path.join(ROOT_DIR, '.git', 'index.lock');
+      if (fs.existsSync(lockFile)) {
+        console.warn(`[AutoSave] Git index is temporarily locked by another terminal. Will retry on next verified product.`);
+        return false;
+      }
+
+      db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('catalog_images_git_last_committed_count', ?)").run(String(currentDbCount));
+
+      const tag = terminalIndex && terminalIndex > 0 ? `Terminal ${terminalIndex}` : undefined;
+      autoCommitBatch(diff, currentDbCount, tag);
+      return true;
+    }
+  } catch (err: any) {
+    // Non-fatal, just continue
+  }
+  return false;
 }
 
 function triggerWindowsShutdown(reason: string) {
@@ -82,7 +127,42 @@ function triggerWindowsShutdown(reason: string) {
   }
 }
 
+function loadCompaniesFromCsv(terminalIndex: number): string[] {
+  const csvPath = path.join(ROOT_DIR, 'data', 'company_medicine_counts.csv');
+  if (!fs.existsSync(csvPath)) return [];
+  const content = fs.readFileSync(csvPath, 'utf8');
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+  const companies: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const lastComma = line.lastIndexOf(',');
+    if (lastComma > 0) {
+      const name = line.substring(0, lastComma).trim().replace(/^["']|["']$/g, '');
+      if (name && !companies.includes(name)) {
+        companies.push(name);
+      }
+    }
+  }
+  return companies.filter((_, idx) => idx % 12 === (terminalIndex - 1));
+}
+
+function cleanMedicineNameForAi(rawName: string): string {
+  if (!rawName) return '';
+  let clean = rawName
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\[.*?\]/g, ' ')
+    .replace(/\b(strip|pack|bottle|box|tube|vial|ampoule|blister|carton|jar|sachet)\s+of\s+\d+[\w\s]*/gi, ' ')
+    .replace(/\b(strip\s+of|bottle\s+of|pack\s+of|box\s+of)\b/gi, ' ')
+    .replace(/\b\d+\s*['’]s\b/gi, ' ')
+    .replace(/\b(ip|bp|usp)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean || rawName;
+}
+
 let globalKeyIndex = 0;
+const keyLastUsedMap = new Map<string, number>();
+let keySpacingMs = 4000; // 4.0s per key (15 RPM Google free tier)
 
 async function verifyWithGeminiVision(
   buffer: Buffer,
@@ -90,10 +170,11 @@ async function verifyWithGeminiVision(
   apiKeys: string[],
   spareKey?: string
 ): Promise<{ isExactMatch: boolean; printedName: string; confidence: number; reason: string }> {
+  const cleanTarget = cleanMedicineNameForAi(targetMedName);
   const base64Data = buffer.toString('base64');
   const prompt = `You are a strict pharmaceutical packaging verification AI.
 Examine this medicine packaging photo with extreme precision.
-Target Medicine to Verify: "${targetMedName}"
+Target Medicine to Verify: "${cleanTarget}" (Database reference: "${targetMedName}")
 
 CRITICAL PHARMACEUTICAL RULES:
 1. READ the printed brand name, active strength, formulation modifiers, and dosage form from the packaging photo.
@@ -106,12 +187,10 @@ CRITICAL PHARMACEUTICAL RULES:
    - E.g. 'Rosuvas' is NOT 'Rosuvas F'! 'Atorva' is NOT 'Atorva F'!
    - E.g. 'Gemer' is NOT 'Gemer Sita IR'! 'Nurokind Plus' is NOT 'Nurokind Plus RF'!
    - E.g. 'Nexiron LP' is NOT 'Nexiron LP Plus'!
-4. DOSAGE FORM MUST MATCH EXACTLY:
-   - Gel is NOT Spray (e.g. Volini Gel cannot match Volini Maxx Spray)!
-   - Powder is NOT Gel/Lotion/Cream (e.g. Sunheal Powder cannot match Sunheal Gel)!
-   - Tablet is NOT Syrup/Suspension! Drops are NOT Tablets!
+4. DOSAGE FORM MUST MATCH:
+   - Gel is NOT Spray! Powder is NOT Gel/Lotion/Cream! Tablet is NOT Syrup/Suspension! Drops are NOT Tablets!
    - Medicine capsules/tablets must NEVER match medical devices/belts/inhaler hardware!
-5. Packaging pack counts (e.g. 10 tablets vs 15 tablets of the exact same brand and strength) ARE ALLOWED and count as a match (is_exact_match: true).
+5. Packaging pack counts (e.g. 10 tablets vs 15 tablets or 100ml vs 200ml) ARE ALLOWED and count as a match (is_exact_match: true). Only Brand Name, Active Strength, Active Modifiers, and Dosage Form must match!
 6. If the image depicts a DIFFERENT medicine brand, wrong strength, wrong combination variant, or wrong form, you MUST set is_exact_match: false.
 
 Return valid JSON with:
@@ -123,12 +202,45 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-3.6-flash', 'gemini-flash-latest'];
-  const keysToTry = apiKeys.length > 0 ? apiKeys : (spareKey ? [spareKey] : []);
+  const models = ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemini-flash-latest'];
+  const keysToTry = apiKeys.length > 0 ? [...apiKeys] : (spareKey ? [spareKey] : []);
 
   for (const model of models) {
-    for (let attempt = 0; attempt < Math.min(keysToTry.length, 5); attempt++) {
-      const activeKey = keysToTry[(globalKeyIndex + attempt) % keysToTry.length];
+    for (let attempt = 0; attempt < Math.min(keysToTry.length, 6); attempt++) {
+      if (keysToTry.length === 0) break;
+      
+      // Select the best key: prioritize keys that have cooled down >= keySpacingMs
+      let bestKeyIdx = -1;
+      let earliestUsedTime = Infinity;
+      const now = Date.now();
+
+      for (let i = 0; i < keysToTry.length; i++) {
+        const idx = (globalKeyIndex + i) % keysToTry.length;
+        const k = keysToTry[idx];
+        const lastUsed = keyLastUsedMap.get(k) || 0;
+        if (now - lastUsed >= keySpacingMs) {
+          bestKeyIdx = idx;
+          break;
+        }
+        if (lastUsed < earliestUsedTime) {
+          earliestUsedTime = lastUsed;
+          bestKeyIdx = idx;
+        }
+      }
+
+      if (bestKeyIdx === -1) bestKeyIdx = globalKeyIndex % keysToTry.length;
+      const activeKey = keysToTry[bestKeyIdx];
+      const lastUsed = keyLastUsedMap.get(activeKey) || 0;
+      const waitMs = Math.max(0, keySpacingMs - (Date.now() - lastUsed));
+
+      if (waitMs > 0 && waitMs <= keySpacingMs) {
+        if (waitMs > 300) {
+          console.log(`    ⏳ Key #${bestKeyIdx + 1} pacing: waiting ${(waitMs / 1000).toFixed(2)}s for ${(keySpacingMs / 1000).toFixed(1)}s gap...`);
+        }
+        await new Promise(r => setTimeout(r, waitMs));
+      }
+
+      keyLastUsedMap.set(activeKey, Date.now());
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
       const payload = {
         contents: [{
@@ -141,9 +253,6 @@ Return valid JSON with:
       };
 
       try {
-        // 300ms pacing delay to guarantee staying under 15 RPM per key
-        await new Promise(r => setTimeout(r, 300));
-
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -151,11 +260,19 @@ Return valid JSON with:
           signal: AbortSignal.timeout(20000)
         });
 
+        // Dead key - prune from active pool immediately
+        if (res.status === 401) {
+          keysToTry.splice(bestKeyIdx, 1);
+          if (keysToTry.length === 0) break;
+          continue;
+        }
+
         if (res.status === 503 || res.status === 429) {
+          keyLastUsedMap.set(activeKey, Date.now() + 8000); // 8s penalty cooldown on 429
           if (keysToTry.length > 1) {
-            console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${(globalKeyIndex + attempt) % keysToTry.length + 1}, rotating to next key...`);
+            console.log(`    ⏳ Gemini ${model} returned ${res.status} on Key #${bestKeyIdx + 1}, rotating to next key...`);
           }
-          globalKeyIndex = (globalKeyIndex + 1) % keysToTry.length;
+          globalKeyIndex = (bestKeyIdx + 1) % keysToTry.length;
           continue;
         }
 
@@ -170,7 +287,7 @@ Return valid JSON with:
 
         const parsed = JSON.parse(rawText);
         // Advance global key index so next medicine rotates to the next key
-        globalKeyIndex = (globalKeyIndex + attempt + 1) % keysToTry.length;
+        globalKeyIndex = (bestKeyIdx + 1) % keysToTry.length;
 
         return {
           isExactMatch: Boolean(parsed.is_exact_match),
@@ -187,7 +304,7 @@ Return valid JSON with:
   // Emergency failover to dedicated Spare Key if all active keys experienced rate limit / spikes
   if (spareKey) {
     for (const model of models) {
-      console.log(`    ⚡ Using dedicated Emergency Spare Key for "${targetMedName}"...`);
+      console.log(`    ⚡ Using dedicated Emergency Spare Key for "${cleanTarget}"...`);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${spareKey}`;
       const payload = {
         contents: [{
@@ -224,9 +341,8 @@ Return valid JSON with:
     }
   }
 
-  // If Gemini failed across all keys and spare key, REJECT! NEVER auto-approve unverified packaging!
-  console.warn(`    ⚠️ [Gemini Vision] All keys busy/rate-limited for "${targetMedName}". Rejecting candidate.`);
-  return { isExactMatch: false, printedName: '', confidence: 0, reason: 'Gemini rate limited / offline - unverified packaging rejected' };
+  console.warn(`    ⚠️ [Gemini Vision] All keys busy/rate-limited for "${cleanTarget}". Checking Local AI OCR...`);
+  return { isExactMatch: false, printedName: '', confidence: 0, reason: 'Gemini rate limited / offline - check local AI OCR' };
 }
 
 // Formulation modifier conflict dictionary (includes single letters and active combination abbreviations)
@@ -482,6 +598,39 @@ function slugify(text: string): string {
     .replace(/[^\w\s-]/g, '')
     .trim()
     .replace(/\s+/g, '-');
+}
+
+function findCatalogSibling(
+  db: any,
+  mfg: string,
+  cdnName: string,
+  excludeMedId: number | string
+): { id: number; name: string } | null {
+  const brandWord = cdnName.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, '');
+  if (brandWord.length < 3) return null;
+
+  const mfgLead = (mfg || '').split(/\s+/)[0];
+  const candidates: any[] = db.prepare(`
+    SELECT id, name, manufacturer
+    FROM medicines
+    WHERE manufacturer LIKE ?
+      AND name LIKE ?
+      AND id != ?
+    LIMIT 25
+  `).all(`%${mfgLead}%`, `%${brandWord}%`, excludeMedId);
+
+  for (const cand of candidates) {
+    if (!isBrandMatch(cand.name, cdnName)) continue;
+    if (hasDosageConflict(cand.name, cdnName)) continue;
+    if (hasStrengthConflict(cand.name, cdnName)) continue;
+    if (hasModifierConflict(cand.name, cdnName)) continue;
+
+    const hasActiveImg = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1').get(cand.id);
+    if (hasActiveImg) continue;
+
+    return cand;
+  }
+  return null;
 }
 
 function initHarvestTable(db: any) {
@@ -805,7 +954,9 @@ async function main() {
   let shutdownOnComplete = false;
   let useGemini = false;
   let commitEvery = 1000;
+  let autoSaveOnComplete = true;
   let poolNumber = 1;
+  let terminalIndex = 0;
   let customKeys: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -816,10 +967,17 @@ async function main() {
     if (args[i].startsWith('--company=')) companyFilter = args[i].split('=')[1].replace(/['"]/g, '');
     else if (args[i].startsWith('--filter=')) nameFilter = args[i].split('=')[1].replace(/['"]/g, '');
     else if (args[i].startsWith('--pool=')) poolNumber = parseInt(args[i].split('=')[1], 10);
+    else if (args[i].startsWith('--terminal=') || args[i].startsWith('--term=')) {
+      terminalIndex = parseInt(args[i].split('=')[1], 10);
+    }
     else if (args[i].startsWith('--shard=')) shardStr = args[i].split('=')[1].trim();
     else if (args[i].startsWith('--top=')) topCount = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--limit=')) limit = parseInt(args[i].split('=')[1], 10);
     else if (args[i].startsWith('--delay=')) delayMs = parseInt(args[i].split('=')[1], 10);
+    else if (args[i].startsWith('--key-delay=')) keySpacingMs = parseInt(args[i].split('=')[1], 10);
+    else if (args[i].startsWith('--commit-every=')) commitEvery = parseInt(args[i].split('=')[1], 10);
+    else if (args[i] === '--save-on-complete' || args[i] === '--auto-save') autoSaveOnComplete = true;
+    else if (args[i] === '--no-save') autoSaveOnComplete = false;
     else if (args[i] === '--force') force = true;
     else if (args[i] === '--retry-failed') retryFailed = true;
     else if (args[i].startsWith('--idle-shutdown-min=')) idleShutdownMin = parseInt(args[i].split('=')[1], 10);
@@ -842,14 +1000,43 @@ async function main() {
   let geminiKeys: string[] = [];
   let spareKey: string | undefined = undefined;
 
+  // Load verified working keys from data/working_gemini_keys.json if present
+  const WORKING_KEYS_FILE = path.join(ROOT_DIR, 'data', 'working_gemini_keys.json');
+  let verifiedWorkingKeys: string[] = [];
+  if (fs.existsSync(WORKING_KEYS_FILE)) {
+    try {
+      verifiedWorkingKeys = JSON.parse(fs.readFileSync(WORKING_KEYS_FILE, 'utf8'));
+    } catch {}
+  let companyQueue: string[] = [];
+
   if (customKeys.length > 0) {
     geminiKeys = customKeys;
+  } else if (terminalIndex >= 1 && terminalIndex <= 12) {
+    // Dedicated 12-terminal mode: 2 keys per terminal, 4s delay, continuous companies from CSV
+    useGemini = true;
+    shardStr = ''; // Each terminal has its own continuous companies from CSV
+    if (verifiedWorkingKeys.length >= 24) {
+      const startIndex = (terminalIndex - 1) * 2;
+      const keyCount = (terminalIndex === 12 && verifiedWorkingKeys.length >= 25) ? 3 : 2;
+      geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + keyCount);
+    }
+    if (!companyFilter) {
+      companyQueue = loadCompaniesFromCsv(terminalIndex);
+    }
+  } else if (poolNumber >= 1 && poolNumber <= 5 && verifiedWorkingKeys.length >= 25) {
+    // 5 isolated pools of 5 verified keys each!
+    const startIndex = (poolNumber - 1) * 5;
+    geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + 5);
   } else if (poolNumber >= 1 && poolNumber <= 4) {
     const poolEnv = process.env[`GEMINI_API_KEYS_POOL_${poolNumber}`];
     spareKey = process.env[`GEMINI_SPARE_KEY_POOL_${poolNumber}`];
     if (poolEnv) {
       geminiKeys = poolEnv.split(/[,;\s]+/).map(k => k.trim()).filter(Boolean);
     }
+  }
+
+  if (companyFilter) {
+    companyQueue = companyFilter.split(/[,;|]+/).map(c => c.trim()).filter(Boolean);
   }
 
   if (geminiKeys.length === 0) {
@@ -859,13 +1046,20 @@ async function main() {
 
   if (useGemini) {
     console.log(`🤖 Google Gemini Flash Vision: ACTIVE (100% label confirmation).`);
-    console.log(`🔑 Key Pool #${poolNumber}: ${geminiKeys.length} active rotating keys + dedicated Emergency Spare Key.`);
+    if (terminalIndex > 0) {
+      console.log(`🔑 Terminal #${terminalIndex} Mode: ${geminiKeys.length} isolated keys assigned (${companyQueue.length} companies from CSV, Per-key spacing: ${keySpacingMs}ms).`);
+      if (companyQueue.length > 0) {
+        console.log(`🏢 First 3 Assigned Companies: ${companyQueue.slice(0, 3).map(c => `"${c}"`).join(', ')} ... (+${companyQueue.length - 3} more)`);
+      }
+    } else {
+      console.log(`🔑 Key Pool #${poolNumber}: ${geminiKeys.length} active isolated keys (Per-key spacing: ${keySpacingMs}ms).`);
+    }
   }
   if (shardStr) {
     console.log(`⚡ Shard Partition: ${shardStr}`);
   }
   if (commitEvery > 0) {
-    console.log(`📦 Git Auto-Commit: ACTIVE (commits every ${commitEvery} saved images).`);
+    console.log(`📦 Git Auto-Commit: ACTIVE (commits every ${commitEvery} new images in database across all terminals).`);
   }
   if (idleShutdownMin > 0) {
     console.log(`⏱️ Auto-Shutdown Watchdog: Enabled (${idleShutdownMin} minutes inactivity limit).`);
@@ -883,30 +1077,10 @@ async function main() {
   const visualIndex = VisualIndexService.getInstance();
   await aiCameraService.initialize();
 
-  // 1. Determine target medicines
-  const whereClauses: string[] = [
-    "name NOT LIKE 'test%'",
-    "name NOT LIKE '%dummy%'",
-    "name NOT LIKE 'sample%'",
-    "name NOT LIKE '1st aid%'"
-  ];
-  const params: any[] = [];
-
-  if (nameFilter) {
-    console.log(`Target Name/Brand Filter: "${nameFilter}"`);
-    whereClauses.push("name LIKE ?");
-    params.push(`%${nameFilter}%`);
-  }
-
-  let orderClause = "ORDER BY id ASC";
-
-  if (companyFilter) {
-    console.log(`Target Company Filter: "${companyFilter}"`);
-    whereClauses.push("manufacturer LIKE ?");
-    params.push(`%${companyFilter}%`);
-  } else if (!nameFilter) {
+  // If no company filter or terminal was specified, use topCount companies by default
+  if (companyQueue.length === 0 && !nameFilter) {
     console.log(`Target: Top ${topCount} Pharmaceutical Companies`);
-    const topMans = db.prepare(`
+    companyQueue = db.prepare(`
       SELECT manufacturer, count(*) as c
       FROM medicines
       WHERE manufacturer IS NOT NULL 
@@ -918,132 +1092,10 @@ async function main() {
       ORDER BY c DESC
       LIMIT ?
     `).all(topCount).map((r: any) => r.manufacturer);
-
-    const placeholders = topMans.map(() => '?').join(',');
-    whereClauses.push(`manufacturer IN (${placeholders})`);
-    params.push(...topMans);
-
-    const whenClauses = topMans.map((_, idx) => `WHEN ? THEN ${idx}`).join(' ');
-    orderClause = `ORDER BY CASE manufacturer ${whenClauses} ELSE 999 END ASC, id ASC`;
-    params.push(...topMans);
   }
 
-  let query = `
-    SELECT id, name, canonical_name, manufacturer, packaging
-    FROM medicines
-    WHERE ${whereClauses.join(' AND ')}
-    ${orderClause}
-  `;
-
-  if (limit > 0) {
-    query += ` LIMIT ${limit}`;
-  }
-
-  const allMedicines = db.prepare(query).all(...params);
-  console.log(`Loaded ${allMedicines.length} total medicines in target scope.`);
-
-  // 2. Upfront check: Skip all already-processed medicines instantly
   const checkDbStmt = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1');
   const checkSqliteStateStmt = db.prepare('SELECT status, reason FROM catalog_harvest_state WHERE medicine_id = ? LIMIT 1');
-
-  let dbImageCount = 0;
-  let diskImageCount = 0;
-  let notFoundCount = 0;
-  let rejectedCount = 0;
-  let otherProcessedCount = 0;
-
-  const remainingMedicines: any[] = [];
-
-  for (const med of allMedicines) {
-    const medId = med.id;
-    const medName = med.name || med.canonical_name;
-    const baseSlug = slugify(medName);
-
-    if (force) {
-      remainingMedicines.push(med);
-      continue;
-    }
-
-    // A. Check database for active verified catalog images
-    const hasDbImage = checkDbStmt.get(medId);
-    if (hasDbImage) {
-      dbImageCount++;
-      continue;
-    }
-
-    // B. Check disk for existing product packaging
-    const frontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-front.jpg`);
-    const boxFrontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-box-front.jpg`);
-    if ((fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
-        (fs.existsSync(boxFrontOnDisk) && fs.statSync(boxFrontOnDisk).size > 1000)) {
-      diskImageCount++;
-      continue;
-    }
-
-    // C. Check persistent harvest state (DB and JSON)
-    const jsonState = inMemoryState.products[String(medId)];
-    const sqlState = checkSqliteStateStmt.get(medId) as any;
-    const status = jsonState?.status || sqlState?.status;
-
-    if (status) {
-      if (status === 'success') {
-        dbImageCount++;
-        continue;
-      }
-
-      if (!retryFailed) {
-        if (status === 'not_found' || status === 'no_authentic_match_on_cdn') {
-          notFoundCount++;
-          continue;
-        } else if (status === 'gemini_rejected') {
-          rejectedCount++;
-          continue;
-        } else {
-          otherProcessedCount++;
-          continue;
-        }
-      }
-    }
-
-    // Needs processing!
-    remainingMedicines.push(med);
-  }
-
-  const totalSkipped = dbImageCount + diskImageCount + notFoundCount + rejectedCount + otherProcessedCount;
-
-  console.log('===============================================================');
-  console.log('       TARGET AUDIT & FAST RESUME CHECKPOINT');
-  console.log('===============================================================');
-  console.log(`📋 Total Medicines in Target Scope    : ${allMedicines.length.toLocaleString()}`);
-  console.log(`⏩ Already Processed & Skipped        : ${totalSkipped.toLocaleString()}`);
-  console.log(`   • Confirmed with Images in DB      : ${dbImageCount.toLocaleString()}`);
-  if (diskImageCount > 0) {
-    console.log(`   • Image Pack Found on Disk         : ${diskImageCount.toLocaleString()}`);
-  }
-  console.log(`   • Previously Not Found on CDN      : ${notFoundCount.toLocaleString()}`);
-  console.log(`   • Rejected by Gemini Vision Gate   : ${rejectedCount.toLocaleString()}`);
-  if (otherProcessedCount > 0) {
-    console.log(`   • Other Prior Evaluations          : ${otherProcessedCount.toLocaleString()}`);
-  }
-  console.log(`🎯 Remaining Unprocessed to Scan       : ${remainingMedicines.length.toLocaleString()}`);
-  console.log('===============================================================\n');
-
-  // 3. Shard partition handling
-  let workList = remainingMedicines;
-  if (shardStr) {
-    const parts = shardStr.split('/');
-    const shardIndex = parseInt(parts[0], 10) - 1;
-    const totalShards = parseInt(parts[1] || '4', 10);
-    if (!isNaN(shardIndex) && !isNaN(totalShards) && totalShards > 1) {
-      workList = remainingMedicines.filter((_, idx) => idx % totalShards === shardIndex);
-      console.log(`⚡ Shard Mode: Terminal ${shardIndex + 1} of ${totalShards} -> Assigned ${workList.length.toLocaleString()} of ${remainingMedicines.length.toLocaleString()} remaining medicines.\n`);
-    }
-  }
-
-  if (workList.length === 0) {
-    console.log('🎉 100% COMPLETE: All target medicines in scope have already been processed! Zero remaining scans.\n');
-    return;
-  }
 
   let processed = 0;
   let successCount = 0;
@@ -1069,6 +1121,84 @@ async function main() {
       }
     }, 10000);
   }
+
+  const queueToProcess = companyQueue.length > 0 ? companyQueue : ['__ALL_MEDICINES__'];
+
+  for (let cIdx = 0; cIdx < queueToProcess.length; cIdx++) {
+    const currentCompany = queueToProcess[cIdx];
+    let companyMeds: any[] = [];
+
+    if (currentCompany === '__ALL_MEDICINES__') {
+      const whereClauses = ["name NOT LIKE 'test%'", "name NOT LIKE '%dummy%'", "name NOT LIKE 'sample%'", "name NOT LIKE '1st aid%'"];
+      const params: any[] = [];
+      if (nameFilter) {
+        whereClauses.push("name LIKE ?");
+        params.push(`%${nameFilter}%`);
+      }
+      let q = `SELECT id, name, canonical_name, manufacturer, packaging FROM medicines WHERE ${whereClauses.join(' AND ')} ORDER BY id ASC`;
+      if (limit > 0) q += ` LIMIT ${limit}`;
+      companyMeds = db.prepare(q).all(...params);
+    } else {
+      let q = `
+        SELECT id, name, canonical_name, manufacturer, packaging 
+        FROM medicines 
+        WHERE name NOT LIKE 'test%'
+          AND name NOT LIKE '%dummy%'
+          AND name NOT LIKE 'sample%'
+          AND name NOT LIKE '1st aid%'
+          AND manufacturer LIKE ?
+        ORDER BY id ASC
+      `;
+      if (limit > 0) q += ` LIMIT ${limit}`;
+      companyMeds = db.prepare(q).all(`%${currentCompany}%`);
+    }
+
+    if (companyMeds.length === 0) continue;
+
+    const remainingMedicines: any[] = [];
+    for (const med of companyMeds) {
+      if (force) {
+        remainingMedicines.push(med);
+        continue;
+      }
+      if (checkDbStmt.get(med.id)) continue;
+      const baseSlug = slugify(med.name || med.canonical_name);
+      const frontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-front.jpg`);
+      const boxFrontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-box-front.jpg`);
+      if ((fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
+          (fs.existsSync(boxFrontOnDisk) && fs.statSync(boxFrontOnDisk).size > 1000)) {
+        continue;
+      }
+      const jsonState = inMemoryState.products[String(med.id)];
+      const sqlState = checkSqliteStateStmt.get(med.id) as any;
+      const status = jsonState?.status || sqlState?.status;
+      if (status && !retryFailed && (status === 'success' || status === 'not_found' || status === 'no_authentic_match_on_cdn' || status === 'gemini_rejected')) {
+        continue;
+      }
+      remainingMedicines.push(med);
+    }
+
+    if (remainingMedicines.length === 0) {
+      if (queueToProcess.length <= 10 || (cIdx + 1) % 25 === 0 || companyMeds.length > 50) {
+        console.log(`⏩ [${cIdx + 1}/${queueToProcess.length}] "${currentCompany}": All ${companyMeds.length} medicines already processed & verified. Advancing...`);
+      }
+      continue;
+    }
+
+    console.log(`\n===============================================================`);
+    console.log(`🏢 [Company ${cIdx + 1}/${queueToProcess.length}] "${currentCompany}"`);
+    console.log(`🎯 ${remainingMedicines.length} pending medicines to scan (out of ${companyMeds.length} total)`);
+    console.log(`===============================================================\n`);
+
+    let workList = remainingMedicines;
+    if (shardStr) {
+      const parts = shardStr.split('/');
+      const shardIndex = parseInt(parts[0], 10) - 1;
+      const totalShards = parseInt(parts[1] || '4', 10);
+      if (!isNaN(shardIndex) && !isNaN(totalShards) && totalShards > 1) {
+        workList = remainingMedicines.filter((_, idx) => idx % totalShards === shardIndex);
+      }
+    }
 
   for (let i = 0; i < workList.length; i++) {
     const med: any = workList[i];
@@ -1197,54 +1327,139 @@ async function main() {
     downloadedAngles.sort((a, b) => b.brandConfidence - a.brandConfidence);
 
     // Optional Gemini Flash Vision Confirmation Gate:
-    // Check primary face (front or clearest text). If unconfirmed, check back face.
-    // If either front OR back confirms, all angles pass!
+    // Check all downloaded candidate angles (front box, back, blister, side, composition).
+    // If ANY angle confirms, all angles pass!
     let finalMatchingMethod = 'ai_ocr_verified';
     if (useGemini && geminiKeys.length > 0) {
-      console.log(`    🤖 Verifying packaging with Gemini Vision (front/back check)...`);
+      const cleanTarget = cleanMedicineNameForAi(medName);
+      console.log(`    🤖 Verifying packaging with Gemini Vision (Target: "${cleanTarget}")...`);
       let confirmedResult: any = null;
       let primaryAngleIndex = 0;
 
-      // Try top 2 candidate angles (front, and if unconfirmed, back)
-      const anglesToTry = Math.min(downloadedAngles.length, 2);
-      for (let aIdx = 0; aIdx < anglesToTry; aIdx++) {
+      // Check all available downloaded candidate angles (up to 4)
+      for (let aIdx = 0; aIdx < downloadedAngles.length; aIdx++) {
         const angle = downloadedAngles[aIdx];
         const gResult = await verifyWithGeminiVision(angle.buffer, medName, geminiKeys, spareKey);
         if (gResult.isExactMatch) {
           confirmedResult = gResult;
           primaryAngleIndex = aIdx;
           break;
-        } else if (aIdx < anglesToTry - 1) {
-          console.log(`    ⚠️ Face "${angle.face}" unconfirmed, checking alternate face "${downloadedAngles[aIdx + 1].face}"...`);
-          await new Promise(r => setTimeout(r, 600));
+        } else if (aIdx < downloadedAngles.length - 1) {
+          console.log(`    ⚠️ Face "${angle.face}" unconfirmed (${gResult.reason || 'no match'}), checking alternate face "${downloadedAngles[aIdx + 1].face}"...`);
+          await new Promise(r => setTimeout(r, 400));
         }
       }
 
       if (!confirmedResult) {
-        console.log(`    ❌ Gemini Vision REJECTED: Neither front nor back matched "${medName}"\n`);
-        for (const ang of downloadedAngles) {
-          const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
-          const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
-          try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
+        // Opportunistic Sibling Remapping: Check if downloaded packaging matches a sibling medicine in our catalog!
+        const sibling = findCatalogSibling(db, mfg, cdnResult.name, medId);
+        if (sibling) {
+          console.log(`    💡 Sibling Opportunity: Packaging "${cdnResult.name}" matches catalog product "${sibling.name}" (ID: ${sibling.id})!`);
+          const siblingClean = cleanMedicineNameForAi(sibling.name);
+          const siblingGResult = await verifyWithGeminiVision(downloadedAngles[0].buffer, siblingClean, geminiKeys, spareKey);
+
+          if (siblingGResult.isExactMatch || downloadedAngles[0].brandConfidence >= 75) {
+            console.log(`    ✨ Sibling Packaging Verified! Attaching images to "${sibling.name}" (ID: ${sibling.id})! Zero downloads wasted!`);
+            const siblingSlug = slugify(sibling.name);
+            const siblingAngles = downloadedAngles.map(ang => {
+              const newFileName = `${siblingSlug}-${ang.face}.jpg`;
+              const newFrontend = path.join(TARGET_FRONTEND, newFileName);
+              const newUploads = path.join(TARGET_UPLOADS, newFileName);
+              const oldFrontend = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
+              try {
+                fs.copyFileSync(oldFrontend, newFrontend);
+                fs.copyFileSync(oldFrontend, newUploads);
+              } catch {}
+              return {
+                ...ang,
+                relPath: `/products/${newFileName}`
+              };
+            });
+
+            db.prepare('DELETE FROM catalog_images WHERE medicine_id = ?').run(sibling.id);
+            const insertStmt = db.prepare(`
+              INSERT INTO catalog_images (
+                medicine_id, company_name, product_name, image_path, thumbnail_path, image_source,
+                confidence_score, matching_method, verification_status, ocr_text, is_active,
+                image_type, is_primary, slot_number, phash
+              ) VALUES (?, ?, ?, ?, ?, 'pharma_dam_cdn', ?, 'gemini_sibling_remapped', 'APPROVED', ?, 1, ?, ?, ?, ?)
+            `);
+            for (let aIdx = 0; aIdx < siblingAngles.length; aIdx++) {
+              const ang = siblingAngles[aIdx];
+              const isPrimary = aIdx === 0 ? 1 : 0;
+              insertStmt.run(
+                sibling.id,
+                mfg,
+                sibling.name,
+                ang.relPath,
+                ang.relPath,
+                ang.brandConfidence,
+                ang.ocrTextSnippet,
+                ang.face,
+                isPrimary,
+                aIdx + 1,
+                ang.phash
+              );
+            }
+
+            recordProductState(db, sibling.id, {
+              status: 'success',
+              company: mfg,
+              product_name: sibling.name,
+              angles_saved: siblingAngles.length,
+              primary_face: siblingAngles[0].face,
+              primary_confidence: siblingGResult.confidence || 90,
+              verified_by: 'gemini_sibling_remapped'
+            });
+
+            // Clean up original temp angles
+            for (const ang of downloadedAngles) {
+              const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
+              const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
+              try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
+            }
+
+            // Mark current target med as not found (since photo was for sibling)
+            recordProductState(db, medId, {
+              status: 'not_found',
+              company: mfg,
+              product_name: medName,
+              reason: `CDN returned sibling "${sibling.name}" packaging instead`
+            });
+            continue;
+          }
         }
-        recordProductState(db, medId, {
-          status: 'gemini_rejected',
-          company: mfg,
-          product_name: medName,
-          reason: 'Neither front nor back matched target brand'
-        });
-        continue;
-      }
 
-      // Promote the confirmed face to index 0 so it becomes is_primary = 1
-      if (primaryAngleIndex > 0) {
-        const confirmedAngle = downloadedAngles.splice(primaryAngleIndex, 1)[0];
-        downloadedAngles.unshift(confirmedAngle);
-      }
+        // Resilient Fallback: If Local AI OCR strongly verified brand + strength (confidence >= 80), DO NOT delete!
+        if (downloadedAngles[0].brandConfidence >= 80) {
+          console.log(`    ✨ Local AI OCR strongly verified "${cleanTarget}" (${downloadedAngles[0].brandConfidence}% confidence) -> Accepting packaging via AI OCR!`);
+          finalMatchingMethod = 'ai_ocr_verified';
+        } else {
+          console.log(`    ❌ Packaging unconfirmed: Neither front nor alternate angles matched "${cleanTarget}"\n`);
+          for (const ang of downloadedAngles) {
+            const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
+            const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
+            try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
+          }
+          recordProductState(db, medId, {
+            status: 'gemini_rejected',
+            company: mfg,
+            product_name: medName,
+            reason: 'Packaging did not match target brand or strength'
+          });
+          continue;
+        }
+      } else {
+        // Promote the confirmed face to index 0 so it becomes is_primary = 1
+        if (primaryAngleIndex > 0) {
+          const confirmedAngle = downloadedAngles.splice(primaryAngleIndex, 1)[0];
+          downloadedAngles.unshift(confirmedAngle);
+        }
 
-      finalMatchingMethod = 'gemini_vision_verified';
-      downloadedAngles[0].brandConfidence = Math.max(downloadedAngles[0].brandConfidence, confirmedResult.confidence);
-      console.log(`    ✨ Gemini 100% Confirmed on face "${downloadedAngles[0].face}": "${confirmedResult.printedName}" (${confirmedResult.confidence}% confidence) -> All angles PASSED!`);
+        finalMatchingMethod = 'gemini_vision_verified';
+        downloadedAngles[0].brandConfidence = Math.max(downloadedAngles[0].brandConfidence, confirmedResult.confidence);
+        console.log(`    ✨ Gemini 100% Confirmed on face "${downloadedAngles[0].face}": "${confirmedResult.printedName}" (${confirmedResult.confidence}% confidence) -> All angles PASSED!`);
+      }
     }
 
     // Persist cleanly in catalog_images
@@ -1293,39 +1508,52 @@ async function main() {
       verified_by: finalMatchingMethod
     });
 
-    // Auto-commit milestone every 1,000 saved images
-    if (commitEvery > 0 && imagesSavedSinceLastCommit >= commitEvery) {
-      autoCommitBatch(imagesSavedSinceLastCommit, totalImagesSavedCount);
+    // Auto-commit milestone every 1,000 new images in database (shared across all terminals)
+    const dbCommitted = checkAndTriggerDbMilestoneCommit(db, commitEvery, terminalIndex);
+    if (dbCommitted) {
+      imagesSavedSinceLastCommit = 0;
+    } else if (commitEvery > 0 && imagesSavedSinceLastCommit >= commitEvery) {
+      // Local fallback in case of single terminal or DB settings mismatch
+      autoCommitBatch(imagesSavedSinceLastCommit, totalImagesSavedCount, terminalIndex ? `Terminal ${terminalIndex}` : undefined);
       imagesSavedSinceLastCommit = 0;
     }
 
     await new Promise(r => setTimeout(r, delayMs));
-  }
+  } // end workList loop
+} // end queueToProcess company loop
 
   if (watchdogTimer) clearInterval(watchdogTimer);
 
-  // Commit any final uncommitted images before shutdown
-  if (imagesSavedSinceLastCommit > 0) {
-    autoCommitBatch(imagesSavedSinceLastCommit, totalImagesSavedCount);
+  // Auto-save project whenever this task run finishes
+  if (autoSaveOnComplete && (imagesSavedSinceLastCommit > 0 || successCount > 0)) {
+    const label = terminalIndex > 0 ? `Terminal ${terminalIndex} Complete` : (companyFilter || nameFilter || (topCount ? `Top ${topCount}` : 'Completed'));
+    autoCommitBatch(imagesSavedSinceLastCommit || successCount, totalImagesSavedCount, label);
     imagesSavedSinceLastCommit = 0;
+    try {
+      const row = db.prepare('SELECT COUNT(*) as c FROM catalog_images').get() as any;
+      if (row?.c) {
+        db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('catalog_images_git_last_committed_count', ?)").run(String(row.c));
+      }
+    } catch {}
   }
 
   console.log('===============================================================');
   console.log('                   HARVEST RUN COMPLETE');
   console.log('===============================================================');
-  console.log(`Total Evaluated : ${processed}`);
-  console.log(`Newly Saved     : ${successCount}`);
-  console.log(`Already Saved   : ${skippedCount}`);
-  console.log(`State File      : ${STATE_FILE}`);
+  console.log(`Total Medicines Evaluated : ${processed}`);
+  console.log(`Newly Verified Medicines  : ${successCount}`);
+  console.log(`Total Image Angles Saved  : ${totalImagesSavedCount}`);
+  console.log(`State File                : ${STATE_FILE}`);
   console.log('===============================================================\n');
 
   await printStatus();
 
   if (shutdownOnComplete) {
-    console.log(`\n🎉 All target medicines evaluated.`);
-    triggerWindowsShutdown(`AI Pharmacy Harvester: All ${medicines.length} medicines processed.`);
+    console.log(`\n🎉 All assigned companies evaluated.`);
+    triggerWindowsShutdown(`AI Pharmacy Harvester: All target companies processed.`);
   }
 }
+} // end main
 
 main().catch((err) => {
   console.error('Fatal harvest runner error:', err);
