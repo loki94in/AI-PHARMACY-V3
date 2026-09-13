@@ -1,0 +1,168 @@
+import { dbManager } from '../database/connection.js';
+
+const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-license.vercel.app';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
+
+export interface CloudSyncResult {
+  success: boolean;
+  message: string;
+  count?: number;
+  ordersImported?: number;
+}
+
+/**
+ * Pushes in-stock and portal-visible medicines from local SQLite to the 24/7 Upstash Cloud Catalog.
+ */
+export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
+  const db = await dbManager.getConnection();
+
+  // Query medicines that are in stock or portal-visible
+  const rows = await db.all(`
+    SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
+           m.mrp, m.sell_price, m.packaging as pack,
+           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+    FROM medicines m
+    LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+    WHERE (pcv.is_portal_visible = 1 OR pcv.is_website_visible = 1 OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0)
+    ORDER BY m.name ASC
+    LIMIT 1000
+  `);
+
+  if (!rows || rows.length === 0) {
+    return { success: false, message: 'No medicines found to publish to cloud.' };
+  }
+
+  // Get Store Information from app_settings
+  const storeRows = await db.all(`SELECT key, value FROM app_settings WHERE key LIKE 'pharmacy_%'`);
+  const storeMap: Record<string, string> = {};
+  storeRows.forEach((r: any) => { storeMap[r.key] = r.value; });
+
+  const storeInfo = {
+    name: storeMap['pharmacy_name'] || 'Pune City Pharmacy',
+    tagline: storeMap['pharmacy_tagline'] || 'Genuine Medicines & 24/7 Online Refill Store',
+    phone: storeMap['pharmacy_phone'] || '+91 98765 43210',
+    whatsapp: storeMap['pharmacy_whatsapp'] || '919876543210',
+    address: storeMap['pharmacy_address'] || 'Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001',
+    hours: 'Open 8:00 AM – 11:00 PM (Orders accepted 24/7)',
+    deliveryAvailable: true,
+  };
+
+  const medicines = rows.map((r: any) => ({
+    id: r.id,
+    name: r.name,
+    composition: r.composition || '',
+    category: r.category || 'General',
+    manufacturer: r.manufacturer || 'Pharmacy Stock',
+    pack: r.pack || 'Standard Pack',
+    mrp: Number(r.mrp || 0),
+    sell_price: Number(r.sell_price || r.mrp || 0),
+    in_stock: Number(r.stock_qty || 0) > 0,
+    stock_qty: Number(r.stock_qty || 0),
+  }));
+
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': ADMIN_SECRET,
+      },
+      body: JSON.stringify({ storeInfo, medicines }),
+    });
+
+    const data: any = await res.json();
+    if (res.ok && data.success) {
+      return {
+        success: true,
+        message: `Successfully synchronized ${medicines.length} medicines to 24/7 Cloud Shop!`,
+        count: medicines.length,
+      };
+    }
+    return { success: false, message: data.error || 'Failed to sync to cloud' };
+  } catch (err: any) {
+    console.error('[CloudCatalogSync] push error:', err);
+    return { success: false, message: err.message };
+  }
+}
+
+/**
+ * Fetches pending orders placed by customers on the 24/7 Cloud Shop and imports them into local SQLite `special_orders`.
+ */
+export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
+  const db = await dbManager.getConnection();
+
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+      headers: { 'x-admin-secret': ADMIN_SECRET },
+    });
+
+    const data: any = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, message: data.error || 'Failed to fetch cloud orders' };
+    }
+
+    const orders = data.orders || [];
+    if (orders.length === 0) {
+      return { success: true, message: 'Zero pending orders in cloud queue.', ordersImported: 0 };
+    }
+
+    const importedIds: string[] = [];
+
+    for (const o of orders) {
+      // Check if already imported
+      const exists = await db.get(`SELECT id FROM special_orders WHERE sync_id = ?`, [o.orderId]);
+      if (!exists) {
+        const itemsSummary = (o.items || [])
+          .map((it: any) => `${it.name} (x${it.qty})`)
+          .join(', ');
+
+        const addressNotes = o.address ? `Delivery Address: ${o.address}` : 'Counter Store Pickup';
+        const fullNotes = o.notes ? `${addressNotes} | Notes: ${o.notes}` : addressNotes;
+
+        await db.run(
+          `INSERT INTO special_orders (
+            store_id, requester, phone, notes, product, medicine_name, qty,
+            status, priority, customer_order_source, order_type, total_amount, sync_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            1,
+            o.customerName || 'Online Customer',
+            o.phone || '',
+            fullNotes,
+            itemsSummary,
+            itemsSummary,
+            o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
+            'Pending',
+            'High',
+            'website_247',
+            o.orderType || 'DELIVERY',
+            o.totalAmount || 0,
+            o.orderId,
+          ]
+        );
+      }
+      importedIds.push(o.orderId);
+    }
+
+    // Acknowledge imported orders on cloud server
+    if (importedIds.length > 0) {
+      await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': ADMIN_SECRET,
+        },
+        body: JSON.stringify({ orderIds: importedIds }),
+      });
+    }
+
+    return {
+      success: true,
+      message: `Successfully imported ${importedIds.length} new online order(s) into counter queue!`,
+      ordersImported: importedIds.length,
+    };
+  } catch (err: any) {
+    console.error('[CloudCatalogSync] pull error:', err);
+    return { success: false, message: err.message };
+  }
+}

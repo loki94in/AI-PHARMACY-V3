@@ -2023,5 +2023,26 @@ router.post('/admin/catalog-visibility/publish-in-stock', async (req, res) => {
   }
 });
 
+// ─── 24/7 Cloud Catalog & Orders Sync ──────────────────────────────
+router.post('/cloud/sync-catalog', async (req, res) => {
+  try {
+    const { pushLocalCatalogToCloud } = await import('../services/cloudCatalogSyncService.js');
+    const result = await pushLocalCatalogToCloud();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/cloud/pull-orders', async (req, res) => {
+  try {
+    const { pullCloudOrdersToLocal } = await import('../services/cloudCatalogSyncService.js');
+    const result = await pullCloudOrdersToLocal();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
 

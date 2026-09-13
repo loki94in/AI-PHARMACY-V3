@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Pune City Pharmacy — 24/7 Live Medicine Store & Quick Refills</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              100: '#d1fae5',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+              800: '#065f46',
+              900: '#064e3b'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .glass-header {
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased">
+
+  <!-- ================= TOP HEADER ================= -->
+  <header class="sticky top-0 z-40 glass-header border-b border-slate-200/90 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="h-16 flex items-center justify-between gap-3">
+        <!-- Brand / Store Info -->
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center font-extrabold text-lg shadow-md shadow-brand-600/20 shrink-0">
+            Rx
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h1 id="storeNameHeader" class="text-base sm:text-lg font-extrabold text-slate-900 leading-tight truncate">
+                Pune City Pharmacy
+              </h1>
+              <span class="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                24/7 Ready
+              </span>
+            </div>
+            <p id="storeTagline" class="text-xs text-slate-500 truncate">Genuine Medicines & Instant Home Refills</p>
+          </div>
+        </div>
+
+        <!-- Right Header: Store Hotline & Cart Button -->
+        <div class="flex items-center gap-2.5 shrink-0">
+          <a id="storeWaBtn" href="https://wa.me/919876543210" target="_blank"
+             class="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors">
+            <i data-lucide="message-circle" class="w-4 h-4 text-emerald-600"></i>
+            <span>WhatsApp</span>
+          </a>
+
+          <button onclick="openCart()" class="relative flex items-center gap-2 px-3.5 py-2 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md shadow-brand-600/20 transition-all">
+            <i data-lucide="shopping-bag" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">My Cart</span>
+            <span id="cartCountBadge" class="hidden px-1.5 py-0.2 text-[10px] font-extrabold bg-white text-brand-700 rounded-full">0</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= HERO SEARCH & HIGHLIGHTS ================= -->
+  <section class="bg-gradient-to-b from-white to-slate-50/50 border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+    <div class="max-w-4xl mx-auto text-center space-y-3 sm:space-y-4">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-50 border border-brand-200/60 text-brand-800 text-xs font-semibold">
+        <span class="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
+        <span>Live Counter Inventory · Free Home Delivery &gt; ₹199</span>
+      </div>
+
+      <h2 class="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+        Order Genuine Medicines 24/7
+      </h2>
+      <p class="text-xs sm:text-sm text-slate-600 max-w-2xl mx-auto leading-relaxed">
+        Search authentic prescription medicines, chronic care supplies, and OTC wellness products. Verified pricing, genuine expiry dates, and contactless delivery.
+      </p>
+
+      <!-- Instant Search Bar -->
+      <div class="max-w-2xl mx-auto pt-2">
+        <div class="relative flex items-center">
+          <i data-lucide="search" class="w-5 h-5 text-slate-400 absolute left-4 pointer-events-none"></i>
+          <input type="text" id="searchInput" oninput="handleSearch(this.value)"
+            placeholder="Search medicine name, salt/generic composition (e.g. Telma, Metformin)..."
+            class="w-full pl-12 pr-10 py-3.5 bg-white border border-slate-300 focus:border-brand-500 rounded-2xl text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-4 focus:ring-brand-500/10 transition-all">
+          <button id="clearSearchBtn" onclick="clearSearch()" class="hidden absolute right-3.5 p-1 text-slate-400 hover:text-slate-600">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category Pill Filter Carousel -->
+    <div class="max-w-7xl mx-auto mt-6">
+      <div id="categoryPillList" class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <button onclick="setCategory('all')" data-category="all" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white shadow-xs transition-all">
+          All Medicines
+        </button>
+        <button onclick="setCategory('diabetic')" data-category="diabetic" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          🩸 Diabetic Care
+        </button>
+        <button onclick="setCategory('cardiac')" data-category="cardiac" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          ❤️ BP & Cardiac
+        </button>
+        <button onclick="setCategory('respiratory')" data-category="respiratory" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          🫁 Inhalers & Asthma
+        </button>
+        <button onclick="setCategory('thyroid')" data-category="thyroid" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          🦋 Thyroid
+        </button>
+        <button onclick="setCategory('antibiotics')" data-category="antibiotics" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          💊 Antibiotics
+        </button>
+        <button onclick="setCategory('pain')" data-category="pain" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          ⚡ Pain & Fever
+        </button>
+        <button onclick="setCategory('vitamins')" data-category="vitamins" class="cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all">
+          🌿 Vitamins & Minerals
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= MAIN MEDICINES PRODUCT GRID ================= -->
+  <main class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1">
+    <div class="flex items-center justify-between mb-5">
+      <div id="resultsCount" class="text-xs sm:text-sm font-semibold text-slate-600">
+        Loading live catalog...
+      </div>
+      <div class="text-[11px] text-slate-400">
+        Prices include GST
+      </div>
+    </div>
+
+    <!-- Product Grid -->
+    <div id="medicinesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+      <div class="col-span-full py-16 text-center text-slate-400">
+        Loading available medicines...
+      </div>
+    </div>
+  </main>
+
+  <!-- ================= FLOATING MOBILE CART BAR ================= -->
+  <div id="mobileCartBar" class="fixed bottom-4 left-4 right-4 z-30 sm:hidden hidden">
+    <button onclick="openCart()" class="w-full py-3.5 px-5 bg-brand-600 text-white rounded-2xl font-bold text-sm shadow-xl shadow-brand-600/30 flex items-center justify-between active:scale-[0.99] transition-transform">
+      <div class="flex items-center gap-2">
+        <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+        <span id="mobileCartItemSummary">0 Items</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="mobileCartPriceTotal" class="text-base font-extrabold">₹0</span>
+        <span class="text-xs bg-white/20 px-2 py-0.5 rounded-lg">View Cart &rarr;</span>
+      </div>
+    </button>
+  </div>
+
+  <!-- ================= SLIDE-OUT / MODAL CART DRAWER ================= -->
+  <div id="cartModal" class="fixed inset-0 z-50 hidden flex items-center justify-end bg-black/60 backdrop-blur-xs">
+    <div class="bg-white w-full max-w-md h-full flex flex-col shadow-2xl animate-slide-left">
+      <!-- Cart Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
+        <div class="flex items-center gap-2">
+          <i data-lucide="shopping-bag" class="w-5 h-5 text-brand-600"></i>
+          <h3 class="text-base font-bold text-slate-900">Your Medicine Order</h3>
+        </div>
+        <button onclick="closeCart()" class="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Cart Items List (Scrollable) -->
+      <div id="cartItemsList" class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 custom-scroll">
+        <div class="text-center py-12 text-slate-400 text-xs">Your cart is currently empty.</div>
+      </div>
+
+      <!-- Checkout Form & Summary Container -->
+      <div class="border-t border-slate-200 p-4 sm:p-5 bg-slate-50/50 space-y-4">
+        <!-- Bill Details -->
+        <div class="space-y-1.5 text-xs text-slate-600">
+          <div class="flex justify-between">
+            <span>Items Subtotal:</span>
+            <span id="cartSubtotal" class="font-bold text-slate-900 font-mono">₹0</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Home Delivery:</span>
+            <span id="cartDeliveryFee" class="font-bold text-emerald-600">FREE</span>
+          </div>
+          <div class="flex justify-between text-sm font-extrabold text-slate-900 pt-1.5 border-t border-slate-200">
+            <span>Total Payable:</span>
+            <span id="cartTotal" class="text-brand-700 font-mono text-base">₹0</span>
+          </div>
+        </div>
+
+        <!-- Customer Details Accordion / Form -->
+        <form id="checkoutForm" onsubmit="handlePlaceOrder(event)" class="space-y-3 pt-1">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">Your Full Name *</label>
+            <input type="text" id="custName" required placeholder="e.g. Rajesh Sharma"
+              class="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">WhatsApp / Phone Number *</label>
+            <input type="tel" id="custPhone" required placeholder="10-digit mobile number"
+              class="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-brand-500">
+          </div>
+
+          <!-- Order Type Choice -->
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">Fulfillment Mode</label>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-2 p-2 rounded-xl border border-slate-200 bg-white text-xs cursor-pointer hover:border-brand-500">
+                <input type="radio" name="custOrderType" value="DELIVERY" checked onchange="toggleAddressField(true)" class="text-brand-600">
+                <span class="font-semibold text-slate-800">🛵 Delivery</span>
+              </label>
+              <label class="flex items-center gap-2 p-2 rounded-xl border border-slate-200 bg-white text-xs cursor-pointer hover:border-brand-500">
+                <input type="radio" name="custOrderType" value="PICKUP" onchange="toggleAddressField(false)" class="text-brand-600">
+                <span class="font-semibold text-slate-800">🏪 Pickup</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Address Field -->
+          <div id="addressContainer">
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">Delivery Address *</label>
+            <textarea id="custAddress" rows="2" placeholder="House/Flat No, Building, Landmark, Pincode"
+              class="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-brand-500"></textarea>
+          </div>
+
+          <!-- Submit Order Button -->
+          <button type="submit" id="placeOrderBtn"
+            class="w-full py-3 bg-brand-600 hover:bg-brand-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold shadow-md shadow-brand-600/20 transition-all flex items-center justify-center gap-2">
+            <span>Confirm & Place Order</span>
+            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ORDER SUCCESS CONFIRMATION MODAL ================= -->
+  <div id="successModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+    <div class="bg-white p-6 sm:p-8 rounded-3xl max-w-md w-full text-center space-y-4 shadow-2xl border border-emerald-100 animate-scale-up">
+      <div class="w-14 h-14 mx-auto rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
+        <i data-lucide="check" class="w-8 h-8"></i>
+      </div>
+      <div>
+        <h3 class="text-xl font-extrabold text-slate-900">Order Placed Successfully!</h3>
+        <p class="text-xs text-slate-500 mt-1">Your order has been queued in the pharmacy system.</p>
+      </div>
+
+      <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left text-xs space-y-2 font-mono">
+        <div class="flex justify-between"><span class="text-slate-500 font-sans">Order ID:</span> <strong id="successOrderId" class="text-brand-700">#ORD-XXXX</strong></div>
+        <div class="flex justify-between"><span class="text-slate-500 font-sans">Total Amount:</span> <strong id="successOrderTotal" class="text-slate-900">₹0</strong></div>
+        <div class="flex justify-between"><span class="text-slate-500 font-sans">Status:</span> <span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 font-bold font-sans">Pending Confirmation</span></div>
+      </div>
+
+      <div class="space-y-2 pt-2">
+        <a id="successWaLink" href="#" target="_blank"
+           class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all">
+          <i data-lucide="message-circle" class="w-4 h-4"></i>
+          <span>Send Confirmation via WhatsApp</span>
+        </a>
+        <button onclick="closeSuccessModal()" class="w-full py-2.5 text-xs text-slate-500 hover:text-slate-800 font-semibold">
+          Continue Browsing Store
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="border-t border-slate-200 bg-white py-8 px-4 sm:px-8 text-center text-xs text-slate-500 space-y-2 mt-auto">
+    <p><strong id="storeFooterName">Pune City Pharmacy</strong> — Official 24/7 Verified Medicine Refill Portal</p>
+    <p id="storeFooterAddress">Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001</p>
+    <p class="text-[11px] text-slate-400">All Schedule H & H1 prescription drugs dispensed under valid medical practitioner prescription per pharmacy law.</p>
+  </footer>
+
+  <!-- ================= CLIENT JAVASCRIPT ================= -->
+  <script>
+    let catalog = [];
+    let cart = {}; // { [medicineId]: { item, qty } }
+    let activeCategory = 'all';
+    let searchQuery = '';
+
+    async function loadCatalog() {
+      try {
+        const res = await fetch('/api/catalog/list');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.medicines)) {
+          catalog = data.medicines;
+          if (data.storeInfo) {
+            updateStoreInfo(data.storeInfo);
+          }
+          renderProducts();
+          return;
+        }
+      } catch (err) {
+        console.warn('Could not fetch catalog:', err);
+      }
+    }
+
+    function updateStoreInfo(info) {
+      if (info.name) {
+        document.getElementById('storeNameHeader').innerText = info.name;
+        document.getElementById('storeFooterName').innerText = info.name;
+        document.title = `${info.name} — 24/7 Live Medicine Store`;
+      }
+      if (info.tagline) {
+        document.getElementById('storeTagline').innerText = info.tagline;
+      }
+      if (info.address) {
+        document.getElementById('storeFooterAddress').innerText = info.address;
+      }
+      if (info.whatsapp) {
+        document.getElementById('storeWaBtn').href = `https://wa.me/${String(info.whatsapp).replace(/\D/g, '')}`;
+      }
+    }
+
+    function setCategory(cat) {
+      activeCategory = cat;
+      document.querySelectorAll('.cat-pill').forEach(btn => {
+        const isSelected = btn.getAttribute('data-category') === cat;
+        btn.className = isSelected
+          ? 'cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white shadow-xs transition-all'
+          : 'cat-pill shrink-0 px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-all';
+      });
+      renderProducts();
+    }
+
+    function handleSearch(val) {
+      searchQuery = (val || '').toLowerCase().trim();
+      document.getElementById('clearSearchBtn').classList.toggle('hidden', !searchQuery);
+      renderProducts();
+    }
+
+    function clearSearch() {
+      document.getElementById('searchInput').value = '';
+      searchQuery = '';
+      document.getElementById('clearSearchBtn').classList.add('hidden');
+      renderProducts();
+    }
+
+    function renderProducts() {
+      const grid = document.getElementById('medicinesGrid');
+      const countEl = document.getElementById('resultsCount');
+
+      let list = catalog;
+
+      if (activeCategory !== 'all') {
+        list = list.filter(m => {
+          const c = (m.category || '').toLowerCase();
+          if (activeCategory === 'diabetic') return c.includes('diabet');
+          if (activeCategory === 'cardiac') return c.includes('cardiac') || c.includes('bp') || c.includes('pressure');
+          if (activeCategory === 'respiratory') return c.includes('asthma') || c.includes('respir') || c.includes('inhal');
+          if (activeCategory === 'thyroid') return c.includes('thyroid');
+          if (activeCategory === 'antibiotics') return c.includes('antibiotic') || c.includes('infect');
+          if (activeCategory === 'pain') return c.includes('pain') || c.includes('fever');
+          if (activeCategory === 'vitamins') return c.includes('vitamin') || c.includes('mineral') || c.includes('supplement');
+          return c.includes(activeCategory);
+        });
+      }
+
+      if (searchQuery) {
+        list = list.filter(m =>
+          (m.name || '').toLowerCase().includes(searchQuery) ||
+          (m.composition || '').toLowerCase().includes(searchQuery) ||
+          (m.manufacturer || '').toLowerCase().includes(searchQuery)
+        );
+      }
+
+      countEl.innerHTML = `Showing <strong>${list.length}</strong> available medicines`;
+
+      if (list.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full py-16 text-center text-slate-400 bg-white border border-dashed border-slate-300 rounded-3xl p-6 space-y-2">
+            <i data-lucide="package-search" class="w-8 h-8 mx-auto text-slate-300"></i>
+            <p class="font-bold text-slate-700 text-sm">No medicines found</p>
+            <p class="text-xs text-slate-500">Can't find your prescription? Contact the pharmacy via WhatsApp for a custom order.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+      grid.innerHTML = list.map(m => {
+        const inCartQty = cart[m.id]?.qty || 0;
+        const price = Number(m.sell_price || m.mrp || 0);
+        const mrp = Number(m.mrp || 0);
+        const discount = mrp > price ? Math.round(((mrp - price) / mrp) * 100) : 0;
+
+        return `
+          <div class="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-xs hover:shadow-md hover:border-brand-500/50 transition-all flex flex-col justify-between group">
+            <div class="p-4 space-y-2.5">
+              <!-- Category Pill & Stock Status -->
+              <div class="flex items-center justify-between text-[10px] font-bold">
+                <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 truncate max-w-[150px]">${m.category || 'General'}</span>
+                <span class="px-2 py-0.5 rounded-md ${m.in_stock ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}">
+                  ${m.in_stock ? '● In Stock' : 'On Request'}
+                </span>
+              </div>
+
+              <!-- Title & Packaging -->
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 leading-snug line-clamp-2 group-hover:text-brand-700 transition-colors" title="${m.name}">
+                  ${m.name}
+                </h3>
+                <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Pack: ${m.pack || 'Standard Pack'}</span>
+              </div>
+
+              <!-- Composition & Manufacturer -->
+              ${m.composition ? `<p class="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 line-clamp-2 font-mono leading-tight">${m.composition}</p>` : ''}
+              <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider block truncate">By ${m.manufacturer || 'Pharmacy Stock'}</span>
+            </div>
+
+            <!-- Price & Add Button Footer -->
+            <div class="p-4 pt-3 border-t border-slate-100 bg-slate-50/40 flex items-center justify-between gap-2">
+              <div>
+                <div class="flex items-baseline gap-1.5">
+                  <span class="text-base font-extrabold text-brand-700 font-mono">₹${price.toFixed(2)}</span>
+                  ${mrp > price ? `<span class="text-[11px] text-slate-400 line-through">₹${mrp.toFixed(2)}</span>` : ''}
+                </div>
+                ${discount > 0 ? `<span class="text-[10px] font-bold text-emerald-600">${discount}% OFF</span>` : ''}
+              </div>
+
+              <!-- Add to Cart or Quantity Selector -->
+              ${inCartQty === 0 ? `
+                <button onclick="addToCart(${m.id})" class="px-3.5 py-1.5 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5">
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>Add</span>
+                </button>
+              ` : `
+                <div class="flex items-center gap-2 bg-brand-50 border border-brand-200 rounded-xl px-2 py-1">
+                  <button onclick="changeQty(${m.id}, -1)" class="w-5 h-5 flex items-center justify-center font-bold text-brand-700 hover:bg-brand-200/60 rounded text-xs">-</button>
+                  <span class="text-xs font-bold text-brand-900 font-mono">${inCartQty}</span>
+                  <button onclick="changeQty(${m.id}, 1)" class="w-5 h-5 flex items-center justify-center font-bold text-brand-700 hover:bg-brand-200/60 rounded text-xs">+</button>
+                </div>
+              `}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
+    }
+
+    // ================= CART OPERATIONS =================
+    function addToCart(medId) {
+      const item = catalog.find(m => m.id === medId);
+      if (!item) return;
+      if (!cart[medId]) {
+        cart[medId] = { item, qty: 1 };
+      } else {
+        cart[medId].qty += 1;
+      }
+      updateCartUI();
+      renderProducts();
+    }
+
+    function changeQty(medId, delta) {
+      if (!cart[medId]) return;
+      cart[medId].qty += delta;
+      if (cart[medId].qty <= 0) {
+        delete cart[medId];
+      }
+      updateCartUI();
+      renderProducts();
+    }
+
+    function updateCartUI() {
+      const items = Object.values(cart);
+      const totalCount = items.reduce((acc, curr) => acc + curr.qty, 0);
+      let subtotal = items.reduce((acc, curr) => acc + (Number(curr.item.sell_price || curr.item.mrp || 0) * curr.qty), 0);
+
+      // Update badge
+      const badge = document.getElementById('cartCountBadge');
+      if (totalCount > 0) {
+        badge.innerText = totalCount;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+
+      // Mobile floating bar
+      const mobileBar = document.getElementById('mobileCartBar');
+      if (totalCount > 0) {
+        mobileBar.classList.remove('hidden');
+        document.getElementById('mobileCartItemSummary').innerText = `${totalCount} Item${totalCount > 1 ? 's' : ''}`;
+        document.getElementById('mobileCartPriceTotal').innerText = `₹${subtotal.toFixed(2)}`;
+      } else {
+        mobileBar.classList.add('hidden');
+      }
+
+      // Update drawer items
+      const drawerList = document.getElementById('cartItemsList');
+      if (items.length === 0) {
+        drawerList.innerHTML = `<div class="text-center py-12 text-slate-400 text-xs">Your cart is currently empty. Select medicines to order!</div>`;
+      } else {
+        drawerList.innerHTML = items.map(({ item, qty }) => {
+          const price = Number(item.sell_price || item.mrp || 0);
+          return `
+            <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+              <div class="min-w-0 flex-1 pr-2">
+                <h4 class="text-xs font-bold text-slate-900 truncate">${item.name}</h4>
+                <div class="text-[10px] text-slate-500 font-mono">₹${price.toFixed(2)} &times; ${qty} = ₹${(price * qty).toFixed(2)}</div>
+              </div>
+              <div class="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shrink-0">
+                <button onclick="changeQty(${item.id}, -1)" class="w-4 h-4 flex items-center justify-center font-bold text-slate-600 hover:text-slate-900">-</button>
+                <span class="text-xs font-bold text-slate-900 font-mono">${qty}</span>
+                <button onclick="changeQty(${item.id}, 1)" class="w-4 h-4 flex items-center justify-center font-bold text-slate-600 hover:text-slate-900">+</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // Update bill summary
+      const deliveryFee = subtotal > 0 && subtotal < 199 ? 30 : 0;
+      document.getElementById('cartSubtotal').innerText = `₹${subtotal.toFixed(2)}`;
+      document.getElementById('cartDeliveryFee').innerText = deliveryFee === 0 ? 'FREE' : `₹${deliveryFee}`;
+      document.getElementById('cartTotal').innerText = `₹${(subtotal + deliveryFee).toFixed(2)}`;
+    }
+
+    function openCart() {
+      document.getElementById('cartModal').classList.remove('hidden');
+      updateCartUI();
+    }
+    function closeCart() {
+      document.getElementById('cartModal').classList.add('hidden');
+    }
+
+    function toggleAddressField(isDelivery) {
+      document.getElementById('addressContainer').classList.toggle('hidden', !isDelivery);
+      document.getElementById('custAddress').required = isDelivery;
+    }
+
+    async function handlePlaceOrder(e) {
+      e.preventDefault();
+      const items = Object.values(cart).map(({ item, qty }) => ({
+        id: item.id,
+        name: item.name,
+        pack: item.pack,
+        price: Number(item.sell_price || item.mrp || 0),
+        qty,
+      }));
+
+      if (items.length === 0) {
+        alert('Please add at least one medicine to your cart.');
+        return;
+      }
+
+      const customerName = document.getElementById('custName').value.trim();
+      const phone = document.getElementById('custPhone').value.trim();
+      const address = document.getElementById('custAddress').value.trim();
+      let orderType = 'DELIVERY';
+      document.getElementsByName('custOrderType').forEach(r => { if (r.checked) orderType = r.value; });
+
+      const btn = document.getElementById('placeOrderBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span>Placing Order...</span>';
+
+      try {
+        const res = await fetch('/api/catalog/order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerName, phone, address, orderType, items }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          // Clear cart
+          cart = {};
+          updateCartUI();
+          renderProducts();
+          closeCart();
+
+          // Show success modal
+          document.getElementById('successOrderId').innerText = `#${data.orderId}`;
+          document.getElementById('successOrderTotal').innerText = `₹${data.order.totalAmount}`;
+          document.getElementById('successWaLink').href = data.whatsappUrl;
+          document.getElementById('successModal').classList.remove('hidden');
+          lucide.createIcons();
+        } else {
+          alert(data.error || 'Failed to place order. Please try again.');
+        }
+      } catch (err) {
+        alert(`Connection error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>Confirm & Place Order</span><i data-lucide="arrow-right" class="w-4 h-4"></i>';
+        lucide.createIcons();
+      }
+    }
+
+    function closeSuccessModal() {
+      document.getElementById('successModal').classList.add('hidden');
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      loadCatalog();
+    });
+  </script>
+</body>
+</html>

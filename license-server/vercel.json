@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "name": "ai-pharmacy-license",
   "functions": {
     "api/**/*.js": {
       "maxDuration": 10
@@ -17,6 +16,14 @@
     }
   ],
   "rewrites": [
-    { "source": "/admin", "destination": "/index.html" }
+    { "source": "/api/catalog/list", "destination": "/api/catalog.js?action=list" },
+    { "source": "/api/catalog/order", "destination": "/api/catalog.js?action=order" },
+    { "source": "/api/catalog/sync", "destination": "/api/catalog.js?action=sync" },
+    { "source": "/api/catalog/orders", "destination": "/api/catalog.js?action=orders" },
+    { "source": "/api/catalog", "destination": "/api/catalog.js" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/catalog", "destination": "/catalog.html" },
+    { "source": "/shop", "destination": "/catalog.html" },
+    { "source": "/", "destination": "/catalog.html" }
   ]
 }
