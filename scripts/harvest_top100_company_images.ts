@@ -178,17 +178,18 @@ Target Medicine to Verify: "${cleanTarget}" (Database reference: "${targetMedNam
 
 CRITICAL PHARMACEUTICAL RULES:
 1. READ the printed brand name, active strength, formulation modifiers, and dosage form from the packaging photo.
-2. STRENGTH MUST MATCH EXACTLY:
+2. STRENGTH MUST MATCH:
+   - Target total combination strength matches split strengths (e.g. target "625" or "625 Duo" matches photo showing "500 mg + 125 mg" or "500/125"; target "1000" matches "500/500").
    - If target is 8 mg and packaging photo is 20 mg, is_exact_match: false!
    - If target is 800 mg and photo is 400 mg, is_exact_match: false!
    - If target is 100 mg and photo is 1 mg, is_exact_match: false!
-3. ACTIVE FORMULATION MODIFIERS MUST MATCH EXACTLY:
-   - Single-ingredient products must NEVER match combination products.
-   - E.g. 'Rosuvas' is NOT 'Rosuvas F'! 'Atorva' is NOT 'Atorva F'!
+3. ACTIVE FORMULATION MODIFIERS:
+   - Release modifiers (SR, ER, CR, PR, MR, TR, XR, XL, LA) are equivalent formulation standards and count as a match!
+   - Single-ingredient products must NEVER match combination products (e.g. 'Rosuvas' is NOT 'Rosuvas F'! 'Atorva' is NOT 'Atorva F'!).
    - E.g. 'Gemer' is NOT 'Gemer Sita IR'! 'Nurokind Plus' is NOT 'Nurokind Plus RF'!
-   - E.g. 'Nexiron LP' is NOT 'Nexiron LP Plus'!
 4. DOSAGE FORM MUST MATCH:
    - Gel is NOT Spray! Powder is NOT Gel/Lotion/Cream! Tablet is NOT Syrup/Suspension! Drops are NOT Tablets!
+   - Eye/Ear Drops can be formulated as Ophthalmic Solution or Ophthalmic Suspension (counts as a match for Drops).
    - Medicine capsules/tablets must NEVER match medical devices/belts/inhaler hardware!
 5. Packaging pack counts (e.g. 10 tablets vs 15 tablets or 100ml vs 200ml) ARE ALLOWED and count as a match (is_exact_match: true). Only Brand Name, Active Strength, Active Modifiers, and Dosage Form must match!
 6. If the image depicts a DIFFERENT medicine brand, wrong strength, wrong combination variant, or wrong form, you MUST set is_exact_match: false.
@@ -347,28 +348,49 @@ Return valid JSON with:
 
 // Formulation modifier conflict dictionary (includes single letters and active combination abbreviations)
 const FORMULATION_MODIFIERS = new Set([
-  'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
+  'PLUS', 'FORTE', 'FORT', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
-  'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF',
+  'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF', 'DF', 'DM', 'XT', 'PF', 'PD',
   'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
   'DT', 'MD', 'SL', 'OD',
-  'F', 'RF', 'IR', 'SITA', 'CF', 'TC', 'P', 'M', 'G'
+  'F', 'RF', 'IR', 'SITA', 'CF', 'TC', 'P', 'M', 'G',
+  'Z', 'T', 'A', 'L', 'C', 'K', 'N', 'S', 'B', 'X'
 ]);
+
+const RELEASE_MODIFIERS = new Set(['SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA']);
+
+function areModifiersEquivalent(mod1: string, mod2: string): boolean {
+  if (mod1 === mod2) return true;
+  if ((mod1 === 'FORT' && mod2 === 'FORTE') || (mod1 === 'FORTE' && mod2 === 'FORT')) return true;
+  if (RELEASE_MODIFIERS.has(mod1) && RELEASE_MODIFIERS.has(mod2)) return true;
+  return false;
+}
 
 function normalizeTokens(text: string): string {
   if (!text) return '';
   return text
+    .replace(/['’]s\b/gi, ' ')
+    .replace(/\b\d+\s*x\s*\d+\b/gi, ' ')
     .replace(/([a-zA-Z])(\d+)/g, '$1 $2')
     .replace(/(\d+)(mg|mcg|ml|gm|iu|%)\b/gi, '$1 $2');
 }
 
 function extractModifiers(name: string): Set<string> {
   if (!name) return new Set();
-  const clean = normalizeTokens(name).toUpperCase().replace(/[-_.,/()\[\]+]/g, ' ');
+  const clean = normalizeTokens(name).toUpperCase().replace(/[-_.,/()\[\]+|'"]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
-  for (const w of words) {
-    if (FORMULATION_MODIFIERS.has(w)) found.add(w);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (['D', 'C', 'A', 'B'].includes(w) && i > 0 && (words[i - 1] === 'VITAMIN' || words[i - 1] === 'VIT')) continue;
+    if (w === 'E' && (words[i + 1] === 'E' || words[i + 1] === 'D')) continue;
+    if (w === 'G' && (words[i - 1] === 'OF' || /^\d+$/.test(words[i - 1]) || words[i + 1] === 'POWDER')) continue;
+    if (w === 'S' && i > 0 && /^\d+$/.test(words[i - 1])) continue; // e.g. "15 S"
+    if (w === 'X' && ((i > 0 && /^\d+$/.test(words[i - 1])) || (i < words.length - 1 && /^\d+$/.test(words[i + 1])))) continue; // e.g. "10 X 15"
+    if (['S', 'M', 'L', 'XL'].includes(w) && ((i > 0 && words[i - 1] === 'SIZE') || (i < words.length - 1 && words[i + 1] === 'SIZE') || /\b(BELT|SUPPORT|KNEE|ANKLE|ELBOW|WRIST|COLLAR|BANDAGE|GLOVES?)\b/i.test(name))) continue;
+    if (FORMULATION_MODIFIERS.has(w)) {
+      found.add(w);
+    }
   }
   return found;
 }
@@ -377,17 +399,27 @@ function hasModifierConflict(name1: string, name2: string): boolean {
   const m1 = extractModifiers(name1);
   const m2 = extractModifiers(name2);
   if (m1.size === 0 && m2.size === 0) return false;
-  // If one has combination modifiers that the other lacks -> strict conflict!
-  if (m1.size === 0 && m2.size > 0) return true;
-  if (m2.size === 0 && m1.size > 0) return true;
-  for (const m of m1) {
-    if (!m2.has(m)) return true;
+  // If one has release modifiers and the other doesn't, allow it
+  if (m1.size === 0 && m2.size > 0) {
+    const nonRelease = Array.from(m2).filter(m => !RELEASE_MODIFIERS.has(m));
+    return nonRelease.length > 0;
   }
-  for (const m of m2) {
-    if (!m1.has(m)) return true;
+  if (m2.size === 0 && m1.size > 0) {
+    const nonRelease = Array.from(m1).filter(m => !RELEASE_MODIFIERS.has(m));
+    return nonRelease.length > 0;
+  }
+  for (const mod1 of m1) {
+    const hasMatch = Array.from(m2).some(mod2 => areModifiersEquivalent(mod1, mod2));
+    if (!hasMatch) return true;
+  }
+  for (const mod2 of m2) {
+    const hasMatch = Array.from(m1).some(mod1 => areModifiersEquivalent(mod1, mod2));
+    if (!hasMatch) return true;
   }
   return false;
 }
+
+const PACK_QUANTITIES = new Set([2, 4, 5, 6, 7, 8, 10, 14, 15, 20, 21, 24, 28, 30, 50, 60, 90, 100, 120, 150, 180, 200]);
 
 function extractStrengthTokens(name: string): Array<{ val: number; unit?: string }> {
   const norm = normalizeTokens(name).toUpperCase();
@@ -406,6 +438,10 @@ function extractStrengthTokens(name: string): Array<{ val: number; unit?: string
     const val = parseFloat(match[1]);
     const prevText = norm.slice(Math.max(0, match.index - 12), match.index);
     if (!/STRIP\s+OF|PACK\s+OF|BOX\s+OF/i.test(prevText)) {
+      // If we already found explicit unit tokens (like 500mg), don't treat 10 or 15 or 120 as a strength!
+      if (tokens.length > 0 && PACK_QUANTITIES.has(val)) {
+        continue;
+      }
       if (!tokens.some(t => Math.abs(t.val - val) < 0.001)) {
         tokens.push({ val });
       }
@@ -421,9 +457,25 @@ function hasStrengthConflict(name1: string, name2: string): boolean {
 
   if (s1.length === 0 || s2.length === 0) return false;
 
+  // Direct sum / combination equivalence (e.g. 625 === 500 + 125, or 1000 === 500 + 500)
+  const sum1 = s1.reduce((acc, t) => acc + t.val, 0);
+  const sum2 = s2.reduce((acc, t) => acc + t.val, 0);
+  if (Math.abs(sum1 - sum2) <= 0.01) {
+    return false;
+  }
+  if (s1.length === 1 && s2.length > 1 && Math.abs(s1[0].val - sum2) <= 0.01) {
+    return false;
+  }
+  if (s2.length === 1 && s1.length > 1 && Math.abs(s2[0].val - sum1) <= 0.01) {
+    return false;
+  }
+
   for (const t1 of s1) {
     const matching = s2.find(t2 => Math.abs(t2.val - t1.val) <= 0.001);
-    if (!matching) return true; // Value mismatch (e.g. 8 vs 20, 800 vs 400)
+    if (!matching) {
+      if (s2.length > 1 && Math.abs(t1.val - sum2) <= 0.01) continue;
+      return true; // Value mismatch (e.g. 8 vs 20, 800 vs 400)
+    }
     if (t1.unit && matching.unit && t1.unit !== matching.unit) return true; // Unit clash
   }
   return false;
@@ -457,7 +509,7 @@ function hasDosageConflict(q: string, c: string): boolean {
   if (isQInhaler && (isCTab || isCCap || isCSyp || isCInj || isCTop || isCDrops)) return true;
   if (isCInhaler && (isQTab || isQCap || isQSyrup || isQInj || isQTop || isQDrops)) return true;
 
-  // Specific Topical Clashes (Gel vs Spray, Powder vs Gel, Cream vs Ointment)
+  // Specific Topical Clashes (Gel vs Spray, Powder vs Gel)
   const isQCream = /\b(cream|crm)\b/.test(qLower);
   const isCCream = /\b(cream|crm)\b/.test(cLower);
   const isQOint = /\b(oint|ointment)\b/.test(qLower);
@@ -472,13 +524,18 @@ function hasDosageConflict(q: string, c: string): boolean {
   if (isQPowder && (isCGel || isCCream || isCLotion || isCSpray)) return true;
   if (isCPowder && (isQGel || isQCream || isQLotion || isQSpray)) return true;
 
-  if (isQCream && (isCOint || isCGel || isCLotion)) return true;
-  if (isQOint && (isCCream || isCGel || isCLotion)) return true;
+  if (isQCream && (isCGel || isCLotion)) return true;
+  if (isQOint && (isCGel || isCLotion)) return true;
   if (isQGel && (isCCream || isCOint || isCLotion)) return true;
   if (isQLotion && (isCCream || isCOint || isCGel)) return true;
 
-  if (isQDrops && (isCTab || isCCap || isCSyp || isCInj || isCTop)) return true;
-  if (isCDrops && (isQTab || isQCap || isQSyrup || isQInj || isQTop)) return true;
+  // Ophthalmic suspension vs eye drops are compatible
+  const isQOphthalmic = /\b(ophthalmic|eye|ear|e\/e|nasal)\b/.test(qLower);
+  const isCOphthalmic = /\b(ophthalmic|eye|ear|e\/e|nasal)\b/.test(cLower);
+  const isBothOphthalmic = isQOphthalmic && isCOphthalmic;
+
+  if (isQDrops && (isCTab || isCCap || (isCSyp && !isBothOphthalmic) || isCInj || isCTop)) return true;
+  if (isCDrops && (isQTab || isQCap || (isQSyrup && !isBothOphthalmic) || isQInj || isQTop)) return true;
   if (isQSyrup && (isCTab || isCCap || isCInj)) return true;
   if (isQTab && (isCSyp || isCInj || isCTop || isCDrops)) return true;
   if (isQCap && (isCSyp || isCInj || isCTop || isCDrops)) return true;
@@ -515,7 +572,7 @@ function isBrandMatch(query: string, candidateName: string): boolean {
     'natural', 'naturals', 'cook', 'bake', 'box', 'pouch', 'jar', 'tube'
   ]);
 
-  const qBrandWords = cleanQ.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w) && !/^\d+$/.test(w));
+  const qBrandWords = cleanQ.split(/\s+/).filter(w => (w.length >= 2 || FORMULATION_MODIFIERS.has(w.toUpperCase())) && !stopWords.has(w) && !/^\d+$/.test(w));
   if (qBrandWords.length === 0) return false;
 
   const candWords = cleanCand.split(/\s+/).filter(Boolean);
@@ -527,7 +584,36 @@ function isBrandMatch(query: string, candidateName: string): boolean {
     return false;
   }
 
-  // 2. Multi-word brand: check first 2 core brand tokens
+  // 2. Strict Formulation Modifier Conflict Check:
+  // Rejects candidate if either target or candidate has a variant modifier (e.g. D, LP, LS, KT, FORTE/FORT, PF, DM, Z, T, PLUS)
+  // that is missing or conflicting in the other.
+  if (hasModifierConflict(query, candidateName)) {
+    return false;
+  }
+
+  // 3. Strict Variant Modifier Guard:
+  // If candidate has a formulation modifier right after brand (e.g. "Lupitros Z", "Dolo D", "Augmentin Duo"),
+  // but target query does NOT have this modifier, it is a DIFFERENT product variant!
+  const candNextWord = candWords[brandIndex + 1]?.toUpperCase();
+  if (candNextWord && FORMULATION_MODIFIERS.has(candNextWord)) {
+    const qTokensUpper = cleanQ.toUpperCase().split(/\s+/);
+    if (!qTokensUpper.includes(candNextWord)) {
+      return false; // Plain medicine or different variant must NEVER match candidate with a variant modifier!
+    }
+  }
+
+  // Vice versa: if target query has a modifier (e.g. "Lupitros T") but candidate lacks it:
+  for (let i = 1; i < qBrandWords.length; i++) {
+    const qw = qBrandWords[i].toUpperCase();
+    if (FORMULATION_MODIFIERS.has(qw)) {
+      const candTokensUpper = candWords.map(w => w.toUpperCase());
+      if (!candTokensUpper.includes(qw)) {
+        return false; // Modified query must NOT match candidate lacking that modifier!
+      }
+    }
+  }
+
+  // 3. Multi-word brand: check first 2 core brand tokens
   const coreWords = qBrandWords.slice(0, 2);
   for (const bw of coreWords) {
     const found = candWords.some(cw => cw === bw || cw.startsWith(bw));
@@ -949,6 +1035,7 @@ async function main() {
   let delayMs = 500;
   let force = false;
   let retryFailed = false;
+  let retryRejected = false;
   let shardStr = '';
   let idleShutdownMin = 0;
   let shutdownOnComplete = false;
@@ -980,6 +1067,7 @@ async function main() {
     else if (args[i] === '--no-save') autoSaveOnComplete = false;
     else if (args[i] === '--force') force = true;
     else if (args[i] === '--retry-failed') retryFailed = true;
+    else if (args[i] === '--retry-rejected') retryRejected = true;
     else if (args[i].startsWith('--idle-shutdown-min=')) idleShutdownMin = parseInt(args[i].split('=')[1], 10);
     else if (args[i] === '--shutdown-on-complete') shutdownOnComplete = true;
     else if (args[i] === '--gemini') useGemini = true;
@@ -1172,8 +1260,13 @@ async function main() {
       const jsonState = inMemoryState.products[String(med.id)];
       const sqlState = checkSqliteStateStmt.get(med.id) as any;
       const status = jsonState?.status || sqlState?.status;
-      if (status && !retryFailed && (status === 'success' || status === 'not_found' || status === 'no_authentic_match_on_cdn' || status === 'gemini_rejected')) {
-        continue;
+      if (status && !force && !retryFailed) {
+        if (status === 'success' || status === 'not_found' || status === 'no_authentic_match_on_cdn') {
+          continue;
+        }
+        if (status === 'gemini_rejected' && !retryRejected) {
+          continue;
+        }
       }
       remainingMedicines.push(med);
     }
@@ -1208,7 +1301,10 @@ async function main() {
 
     processed++;
     const searchQueries = generateSearchQueries(medName);
-    console.log(`[${i + 1}/${workList.length}] ID ${medId}: "${medName}" (${mfg})`);
+    const termTag = terminalIndex > 0 ? `Terminal #${terminalIndex}` : 'Main Harvester';
+    console.log(`\n───────────────────────────────────────────────────────────────`);
+    console.log(`⚡ [${termTag}] [Co ${cIdx + 1}/${queueToProcess.length}: "${currentCompany}"] [Med ${i + 1}/${workList.length}]`);
+    console.log(`🎯 ID ${medId}: "${medName}" (${mfg})`);
     console.log(`    Querying CDN for: "${searchQueries[0]}"...`);
 
     const cdnResult = await fetchCdnImages(searchQueries, medName);
@@ -1261,9 +1357,9 @@ async function main() {
       const compBuf = fs.readFileSync(frontendPath);
       const phash = await visualIndex.computePhashFromBuffer(compBuf);
 
-      // Deduplication check: skip identical images (Hamming distance <= 3)
+      // Deduplication check: skip identical images (Hamming distance <= 1)
       if (phash) {
-        const isDuplicate = seenPhashes.some(sp => hammingDistance(sp, phash) <= 3);
+        const isDuplicate = seenPhashes.some(sp => hammingDistance(sp, phash) <= 1);
         if (isDuplicate) {
           console.log(`    ⏩ Skipping duplicate visual angle for face "${face}"`);
           try { fs.unlinkSync(frontendPath); fs.unlinkSync(uploadsPath); } catch {}
@@ -1433,6 +1529,10 @@ async function main() {
         // Resilient Fallback: If Local AI OCR strongly verified brand + strength (confidence >= 80), DO NOT delete!
         if (downloadedAngles[0].brandConfidence >= 80) {
           console.log(`    ✨ Local AI OCR strongly verified "${cleanTarget}" (${downloadedAngles[0].brandConfidence}% confidence) -> Accepting packaging via AI OCR!`);
+          finalMatchingMethod = 'ai_ocr_verified';
+        } else if (downloadedAngles[0].brandConfidence >= 30 && isBrandMatch(medName, cdnResult.name)) {
+          // RESCUED: CDN product passed strict brand/form/strength filter + Local OCR detected readable packaging
+          console.log(`    ✨ Rescued Packaging: Verified CDN Match "${cdnResult.name}" + Local OCR (${downloadedAngles[0].brandConfidence}% confidence) -> Accepted!`);
           finalMatchingMethod = 'ai_ocr_verified';
         } else {
           console.log(`    ❌ Packaging unconfirmed: Neither front nor alternate angles matched "${cleanTarget}"\n`);

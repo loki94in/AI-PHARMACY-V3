@@ -97,9 +97,11 @@ export function extractVolumeOrWeight(text: string): { amount: string | null; nu
 
 export const FORMULATION_MODIFIERS = new Set([
   // Combinations & Active Additions
-  'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
+  'PLUS', 'FORTE', 'FORT', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
-  'LP', 'CV', 'KT', 'COLD', 'FLU',
+  'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF', 'DF', 'DM', 'XT', 'PF', 'PD',
+  'F', 'RF', 'IR', 'SITA', 'CF', 'TC', 'P', 'M', 'G',
+  'Z', 'T', 'A', 'L', 'C', 'K', 'N', 'S', 'B', 'X',
   // Release Modifiers
   'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
   // Form / Dispersibility
@@ -113,20 +115,38 @@ export function stripPharmacopoeiaMarkers(text: string): string {
              .trim();
 }
 
+export function areFormulationModifiersEquivalent(mod1: string, mod2: string): boolean {
+  if (mod1 === mod2) return true;
+  if ((mod1 === 'FORT' && mod2 === 'FORTE') || (mod1 === 'FORTE' && mod2 === 'FORT')) return true;
+  const releaseMods = new Set(['SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA']);
+  if (releaseMods.has(mod1) && releaseMods.has(mod2)) return true;
+  return false;
+}
+
 export function extractFormulationModifiers(name: string): Set<string> {
   if (!name) return new Set();
-  const clean = name.toUpperCase().replace(/[-_.,/()\[\]+|]/g, ' ');
+  const clean = name
+    .replace(/['’]s\b/gi, ' ')
+    .replace(/\b\d+\s*x\s*\d+\b/gi, ' ')
+    .toUpperCase()
+    .replace(/[-_.,/()\[\]+|'"]/g, ' ');
   const words = clean.split(/\s+/).filter(Boolean);
   const found = new Set<string>();
 
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    // Skip single letter 'D' if preceded by 'VITAMIN' or 'VIT' (e.g. Vitamin D3)
-    if (w === 'D' && i > 0 && (words[i - 1] === 'VITAMIN' || words[i - 1] === 'VIT')) {
+    // Skip single letter vitamins if preceded by 'VITAMIN' or 'VIT' (e.g. Vitamin D3, Vitamin C)
+    if (['D', 'C', 'A', 'B'].includes(w) && i > 0 && (words[i - 1] === 'VITAMIN' || words[i - 1] === 'VIT')) {
       continue;
     }
-    // Skip 'XL' if it is a physical device/orthopedic size (e.g. Size-XL, XL Knee Cap, XL Elbow Support)
-    if (w === 'XL' && ((i > 0 && words[i - 1] === 'SIZE') || (i < words.length - 1 && words[i + 1] === 'SIZE') || /\b(BELT|SUPPORT|KNEE|ANKLE|ELBOW|WRIST|COLLAR|BANDAGE|GLOVES?)\b/i.test(name))) {
+    // Skip 'E' if part of 'E E' or 'E D' (eye/ear drops)
+    if (w === 'E' && (words[i + 1] === 'E' || words[i + 1] === 'D')) continue;
+    // Skip 'G' if followed by or preceded by weight (e.g. 200 G, 400 G, G POWDER)
+    if (w === 'G' && (words[i - 1] === 'OF' || /^\d+$/.test(words[i - 1]) || words[i + 1] === 'POWDER')) continue;
+    if (w === 'S' && i > 0 && /^\d+$/.test(words[i - 1])) continue; // e.g. "15 S"
+    if (w === 'X' && ((i > 0 && /^\d+$/.test(words[i - 1])) || (i < words.length - 1 && /^\d+$/.test(words[i + 1])))) continue; // e.g. "10 X 15"
+    // Skip orthopedic sizes (S, M, L, XL)
+    if (['S', 'M', 'L', 'XL'].includes(w) && ((i > 0 && words[i - 1] === 'SIZE') || (i < words.length - 1 && words[i + 1] === 'SIZE') || /\b(BELT|SUPPORT|KNEE|ANKLE|ELBOW|WRIST|COLLAR|BANDAGE|GLOVES?)\b/i.test(name))) {
       continue;
     }
     if (FORMULATION_MODIFIERS.has(w)) {
@@ -148,12 +168,14 @@ export function hasFormulationModifierConflict(name1: string, name2: string): bo
   if (mods1.size === 0 && mods2.size > 0) return true;
   if (mods2.size === 0 && mods1.size > 0) return true;
 
-  // Both have modifiers -> ensure identical modifier set (e.g. TELMA H vs TELMA AM)
-  for (const m of mods1) {
-    if (!mods2.has(m)) return true;
+  // Both have modifiers -> ensure equivalent/matching modifier set (e.g. TELMA H vs TELMA AM)
+  for (const m1 of mods1) {
+    const matched = Array.from(mods2).some(m2 => areFormulationModifiersEquivalent(m1, m2));
+    if (!matched) return true;
   }
-  for (const m of mods2) {
-    if (!mods1.has(m)) return true;
+  for (const m2 of mods2) {
+    const matched = Array.from(mods1).some(m1 => areFormulationModifiersEquivalent(m1, m2));
+    if (!matched) return true;
   }
 
   return false;
