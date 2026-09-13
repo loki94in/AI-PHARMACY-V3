@@ -472,6 +472,9 @@
           headers: { 'x-admin-secret': secret }
         });
         const data = await res.json();
+        if (data.warning) {
+          showToast(data.warning, 'error');
+        }
         allLicenses = data.licenses || [];
         renderLicenses(allLicenses);
         updateKPIs(allLicenses);

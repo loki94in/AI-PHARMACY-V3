@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -7,6 +7,10 @@ export default async function handler(req, res) {
   const secret = req.headers['x-admin-secret'];
   if (!secret || secret !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!isKvConfigured) {
+    return res.status(500).json({ error: 'Upstash Redis is not connected yet in Vercel.' });
   }
 
   const { licenseId, isPilot } = req.body || {};

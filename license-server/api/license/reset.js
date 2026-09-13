@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 
 // Admin: reset machine binding so license can be activated on a new PC
 export default async function handler(req, res) {
@@ -8,6 +8,10 @@ export default async function handler(req, res) {
   const secret = req.headers['x-admin-secret'];
   if (!secret || secret !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!isKvConfigured) {
+    return res.status(500).json({ error: 'Upstash Redis not configured on server' });
   }
 
   const { licenseId, action } = req.body || {};

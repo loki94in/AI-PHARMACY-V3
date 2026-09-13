@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -8,7 +8,12 @@ export default async function handler(req, res) {
     if (!secret || secret !== process.env.ADMIN_SECRET) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-    const release = await kv.get('update_release');
+    let release = null;
+    if (isKvConfigured) {
+      try {
+        release = await kv.get('update_release');
+      } catch (_) {}
+    }
     return res.status(200).json(release || {
       latestVersion: '1.0.0',
       downloadUrl: process.env.DOWNLOAD_URL || '',

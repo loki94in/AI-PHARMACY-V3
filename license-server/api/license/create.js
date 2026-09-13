@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 import crypto from 'crypto';
 
 // --- helpers ---
@@ -60,7 +60,19 @@ export default async function handler(req, res) {
     lastValidatedAt: null,
   };
 
-  await kv.set(`license:${licenseId}`, record);
+  if (!isKvConfigured) {
+    return res.status(500).json({
+      error: 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel Environment Variables.'
+    });
+  }
+
+  try {
+    await kv.set(`license:${licenseId}`, record);
+  } catch (err) {
+    return res.status(500).json({
+      error: `Storage error: ${err.message}. Check Upstash Redis credentials in Vercel.`
+    });
+  }
 
   // Return key only once — never stored in plain text
   return res.status(200).json({

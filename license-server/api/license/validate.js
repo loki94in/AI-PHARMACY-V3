@@ -1,8 +1,12 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (!isKvConfigured) {
+    return res.status(500).json({ valid: false, error: 'Upstash Redis not configured on server' });
+  }
 
   const { licenseId, machineId } = req.query;
 

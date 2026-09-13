@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { kv, isKvConfigured } from '../_db.js';
 
 const DEFAULT_LATEST_VERSION = '1.0.0';
 const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://your-tunnel.trycloudflare.com/download/ai-pharmacy-setup.exe';
@@ -19,10 +19,12 @@ export default async function handler(req, res) {
 
   // Retrieve active release from KV (or fallback to defaults)
   let release = null;
-  try {
-    release = await kv.get('update_release');
-  } catch (err) {
-    // KV unavailable, proceed with defaults
+  if (isKvConfigured) {
+    try {
+      release = await kv.get('update_release');
+    } catch (err) {
+      // KV unavailable, proceed with defaults
+    }
   }
 
   const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
