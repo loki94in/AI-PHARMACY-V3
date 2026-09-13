@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// [HARVESTER_HOT_RELOAD_TRIGGER]: 2026-09-13T08:22:53.069Z
+
 /**
  * scripts/harvest_top100_company_images.ts
  *
@@ -432,8 +434,8 @@ function extractStrengthTokens(name: string): Array<{ val: number; unit?: string
     tokens.push({ val: parseFloat(match[1]), unit: match[2].toLowerCase() });
   }
 
-  // 2. Standalone dosage number before dosage form (e.g. "Ciplar-LA 20 Tablet", "Norflox 400 Tablet", "Sizodon 1 Tablet")
-  const regexForm = /\b(\d+(?:\.\d+)?)\s*(?:TABLET|TABLETS|TAB|TABS|CAPSULE|CAPSULES|CAP|CAPS|STRIP|SUSPENSION|SYRUP|INJECTION|INJ|CREAM|GEL|OINTMENT|OINT)\b/gi;
+  // 2. Standalone dosage number before dosage form (e.g. "Ciplar-LA 20 Tablet", "Norflox 400 Tablet", "Derinide 200 Respicaps")
+  const regexForm = /\b(\d+(?:\.\d+)?)\s*(?:TABLET|TABLETS|TAB|TABS|CAPSULE|CAPSULES|CAP|CAPS|STRIP|SUSPENSION|SYRUP|INJECTION|INJ|CREAM|GEL|OINTMENT|OINT|RESPICAP|RESPICAPS|RESPULE|RESPULES|ROTACAP|ROTACAPS|INHALER|TRANSHALER|NEOHALER|PUFFS?|DOSE|DOSES|DROPS?|SOLUTION|SACHET|SACHETS)\b/gi;
   while ((match = regexForm.exec(norm)) !== null) {
     const val = parseFloat(match[1]);
     const prevText = norm.slice(Math.max(0, match.index - 12), match.index);
@@ -443,6 +445,18 @@ function extractStrengthTokens(name: string): Array<{ val: number; unit?: string
         continue;
       }
       if (!tokens.some(t => Math.abs(t.val - val) < 0.001)) {
+        tokens.push({ val });
+      }
+    }
+  }
+
+  // 3. Standalone number right after brand token (e.g. "Derinide 200", "Dolo 650", "Pan 40")
+  const words = norm.split(/\s+/).filter(Boolean);
+  if (words.length >= 2 && /^\d+(?:\.\d+)?$/.test(words[1])) {
+    const prevWord = words[0].toUpperCase();
+    if (!/^(PACK|STRIP|BOX|BOTTLE|TAB|CAP|SYP|INJ|\d+)$/i.test(prevWord)) {
+      const val = parseFloat(words[1]);
+      if (!isNaN(val) && val >= 0.5 && val <= 5000 && !tokens.some(t => Math.abs(t.val - val) < 0.001)) {
         tokens.push({ val });
       }
     }
@@ -540,6 +554,36 @@ function hasDosageConflict(q: string, c: string): boolean {
   if (isQTab && (isCSyp || isCInj || isCTop || isCDrops)) return true;
   if (isQCap && (isCSyp || isCInj || isCTop || isCDrops)) return true;
   if (isQInj && (isCTab || isCCap || isCSyp)) return true;
+
+  // Shampoos, Soaps/Bars, Face Washes, and Oils
+  const isQShampoo = /\b(shampoo|hair\s*wash)\b/.test(qLower);
+  const isCShampoo = /\b(shampoo|hair\s*wash)\b/.test(cLower);
+  const isQSoap = /\b(soap|bar|bathing\s*bar|syndet\s*bar|cleansing\s*bar)\b/.test(qLower);
+  const isCSoap = /\b(soap|bar|bathing\s*bar|syndet\s*bar|cleansing\s*bar)\b/.test(cLower);
+  const isQFaceWash = /\b(face\s*wash|facewash|body\s*wash|scrub)\b/.test(qLower);
+  const isCFaceWash = /\b(face\s*wash|facewash|body\s*wash|scrub)\b/.test(cLower);
+  const isQOil = /\b(hair\s*oil|massage\s*oil)\b/.test(qLower);
+  const isCOil = /\b(hair\s*oil|massage\s*oil)\b/.test(cLower);
+
+  // Shampoo vs Soap / Bar
+  if (isQShampoo && isCSoap) return true;
+  if (isCShampoo && isQSoap) return true;
+
+  // Shampoo vs Topical (Cream/Ointment/Gel/Lotion) / Oral / Inj / Drops / Powder / Spray
+  if (isQShampoo && (isCTop || isCTab || isCCap || isCSyp || isCInj || isCDrops || isCPowder || isCSpray)) return true;
+  if (isCShampoo && (isQTop || isQTab || isQCap || isQSyrup || isQInj || isQDrops || isQPowder || isQSpray)) return true;
+
+  // Soap vs Topical (Cream/Ointment/Gel/Lotion) / Face Wash / Oral / Inj / Drops / Spray / Powder / Inhaler
+  if (isQSoap && (isCTop || isCFaceWash || isCTab || isCCap || isCSyp || isCInj || isCDrops || isCSpray || isCPowder || isCInhaler)) return true;
+  if (isCSoap && (isQTop || isQFaceWash || isQTab || isQCap || isQSyrup || isQInj || isQDrops || isQSpray || isQPowder || isQInhaler)) return true;
+
+  // Face wash vs Oral / Inj / Drops / Inhaler
+  if (isQFaceWash && (isCTab || isCCap || isCSyp || isCInj || isCDrops || isCInhaler)) return true;
+  if (isCFaceWash && (isQTab || isQCap || isQSyrup || isQInj || isQDrops || isQInhaler)) return true;
+
+  // Oil vs Shampoo / Cream / Gel / Oral / Inj
+  if (isQOil && (isCShampoo || isCTop || isCTab || isCCap || isCSyp || isCInj || isCDrops)) return true;
+  if (isCOil && (isQShampoo || isQTop || isQTab || isQCap || isQSyrup || isQInj || isQDrops)) return true;
 
   // Medical device & accessory conflict gate: tablets/capsules/syrups must NEVER match devices/belts/binders
   const isMedForm = /\b(tab|tablet|tablets|dt|cap|capsule|capsules|syp|syrup|susp|suspension|inj|injection|gel|cream|ointment|drops?|inhaler)\b/.test(qLower);
@@ -1454,7 +1498,7 @@ async function main() {
           const siblingClean = cleanMedicineNameForAi(sibling.name);
           const siblingGResult = await verifyWithGeminiVision(downloadedAngles[0].buffer, siblingClean, geminiKeys, spareKey);
 
-          if (siblingGResult.isExactMatch || downloadedAngles[0].brandConfidence >= 75) {
+          if (siblingGResult.isExactMatch || (downloadedAngles[0].brandConfidence >= 75 && !hasStrengthConflict(sibling.name, cdnResult.name))) {
             console.log(`    ✨ Sibling Packaging Verified! Attaching images to "${sibling.name}" (ID: ${sibling.id})! Zero downloads wasted!`);
             const siblingSlug = slugify(sibling.name);
             const siblingAngles = downloadedAngles.map(ang => {
@@ -1659,3 +1703,5 @@ main().catch((err) => {
   console.error('Fatal harvest runner error:', err);
   process.exit(1);
 });
+// Hot-reload sync timestamp: 2026-09-13T13:28:00
+

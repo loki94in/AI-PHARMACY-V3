@@ -34,7 +34,7 @@ echo  6. Database Auto-Commit: Automatically commits Git milestone every 1,000 n
 echo.
 echo Launching all 12 harvester terminals with Hot-Reload (watch) & Auto-Resume now...
 
-set WATCH_CMD=npx tsx watch --clear-screen=false --exclude data/** --exclude frontend/public/products/** --exclude uploads/** scripts/harvest_top100_company_images.ts --retry-rejected
+set WATCH_CMD=npx tsx watch --clear-screen=false --exclude "data/**" --exclude "frontend/**" --exclude "uploads/**" --exclude ".understand-anything/**" --exclude "scratch/**" --exclude "*.html" --exclude "*.json" --exclude "*.log" scripts/harvest_top100_company_images.ts --retry-rejected
 
 start "Harvester T1 [ZYDUS/EMCURE]" /D "%~dp0\.." cmd /k "%WATCH_CMD% --terminal=1"
 start "Harvester T2 [CIPLA/GLENMARK]" /D "%~dp0\.." cmd /k "%WATCH_CMD% --terminal=2"

@@ -71,14 +71,66 @@ export function extractUmbrellaFormulation(name: string): { brand: string | null
 
 export function extractDrugStrength(text: string): { strength: string | null; numericVal: number | null; unit: string | null } {
   if (!text) return { strength: null, numericVal: null, unit: null };
+  // 1. Explicit unit match (e.g. 500mg, 20mcg, 5%, 100iu)
   const m = text.match(/\b(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*(MG|MCG|IU|%)\b/i);
-  if (!m) return { strength: null, numericVal: null, unit: null };
-  const numericVal = parseFloat(m[1]);
-  return {
-    strength: `${m[1]}${m[2].toUpperCase()}`,
-    numericVal: isNaN(numericVal) ? null : numericVal,
-    unit: m[2].toUpperCase()
-  };
+  if (m) {
+    const numericVal = parseFloat(m[1]);
+    return {
+      strength: `${m[1]}${m[2].toUpperCase()}`,
+      numericVal: isNaN(numericVal) ? null : numericVal,
+      unit: m[2].toUpperCase()
+    };
+  }
+  // 2. Standalone number before dosage form (e.g. "Derinide 200 Respicaps", "Budecort 200 Rotacaps", "Foracort 400 Inhaler")
+  const formMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(?:RESPICAP|RESPICAPS|RESPULE|RESPULES|ROTACAP|ROTACAPS|INHALER|TRANSHALER|NEOHALER|PUFFS?|DOSE|DOSES|TABLET|TABLETS|TAB|TABS|CAPSULE|CAPSULES|CAP|CAPS|SUSPENSION|SYRUP|INJECTION|INJ|CREAM|GEL|OINTMENT|OINT)\b/i);
+  if (formMatch) {
+    const prevText = text.slice(Math.max(0, (formMatch.index || 0) - 12), formMatch.index || 0);
+    if (!/STRIP\s+OF|PACK\s+OF|BOX\s+OF/i.test(prevText)) {
+      const nVal = parseFloat(formMatch[1]);
+      if (!isNaN(nVal)) {
+        return { strength: String(nVal), numericVal: nVal, unit: null };
+      }
+    }
+  }
+  // 3. Standalone number right after brand token (e.g. "Derinide 200", "Dolo 650", "Pan 40")
+  const words = text.trim().split(/\s+/);
+  if (words.length >= 2 && /^\d+(?:\.\d+)?$/.test(words[1])) {
+    const prevWord = words[0].toUpperCase();
+    if (!/^(PACK|STRIP|BOX|BOTTLE|TAB|CAP|SYP|INJ|\d+)$/i.test(prevWord)) {
+      const nVal = parseFloat(words[1]);
+      if (!isNaN(nVal) && nVal >= 0.5 && nVal <= 5000) {
+        return { strength: String(nVal), numericVal: nVal, unit: null };
+      }
+    }
+  }
+  return { strength: null, numericVal: null, unit: null };
+}
+
+export function areStrengthsEqual(
+  s1: { strength: string | null; numericVal: number | null; unit: string | null },
+  s2: { strength: string | null; numericVal: number | null; unit: string | null }
+): boolean {
+  if (!s1.strength || !s2.strength) return false;
+  if (s1.numericVal !== null && s2.numericVal !== null) {
+    if (Math.abs(s1.numericVal - s2.numericVal) <= 0.001) {
+      if (!s1.unit || !s2.unit || s1.unit === s2.unit) return true;
+    }
+    return false;
+  }
+  return s1.strength === s2.strength;
+}
+
+export function areStrengthsConflicting(
+  s1: { strength: string | null; numericVal: number | null; unit: string | null },
+  s2: { strength: string | null; numericVal: number | null; unit: string | null }
+): boolean {
+  if (!s1.strength || !s2.strength) return false;
+  if (s1.numericVal !== null && s2.numericVal !== null) {
+    if (Math.abs(s1.numericVal - s2.numericVal) > 0.001) return true;
+    if (s1.unit && s2.unit && s1.unit !== s2.unit) return true;
+    return false;
+  }
+  return s1.strength !== s2.strength;
 }
 
 export function extractVolumeOrWeight(text: string): { amount: string | null; numericVal: number | null; unit: string | null } {
@@ -246,6 +298,72 @@ export function isItemTypeCompatible(dosageForm?: string, itemType?: string): bo
   return compatible.some(c => it.includes(c) || c.includes(it));
 }
 
+export function detectDosageFormFromText(text: string): string | null {
+  if (!text) return null;
+  const t = text.trim();
+
+  // Injections & Infusions (check first to avoid 'solution for injection' matching syrup)
+  if (/\b(?:injections?|injs?|infusions?|vials?|ampoules?|pre-?filled\s*syringes?|pfs|solution\s+for\s+(?:injection|infusion))\b/i.test(t)) {
+    return 'INJECTION';
+  }
+
+  // Eye / Ear Drops (check before generic solutions)
+  if (/\b(?:eye\s*drops?|ear\s*drops?|e\/e|ophthalmic(?:\s*solutions?)?)\b/i.test(t)) {
+    return 'DROPS';
+  }
+  if (/\b(?:drops?)\b/i.test(t) && !/\b(?:cough\s*drops?|throat\s*drops?)\b/i.test(t)) {
+    return 'DROPS';
+  }
+
+  // Respiratory / Inhaler
+  if (/\b(?:inhalers?|respicaps?|respules?|rotacaps?|transhalers?|neohalers?|inhalations?|synchrobreathe|multihaler)\b/i.test(t)) {
+    return 'INHALER';
+  }
+
+  // Oral liquids (Syrup, Suspension, Oral Solution)
+  if (/\b(?:syrups?|syps?|suspensions?|susps?|oral\s*liquids?|oral\s*solutions?|elixirs?)\b/i.test(t)) {
+    return 'SYRUP';
+  }
+
+  // Shampoo (strictly before soap/topical)
+  if (/\b(?:shampoos?|hair\s*wash(?:es)?)\b/i.test(t)) {
+    return 'SHAMPOO';
+  }
+
+  // Soap (strictly bathing bar / cleansing bar / soap)
+  if (/\b(?:soaps?|bathing\s*bars?|syndet\s*bars?|cleansing\s*bars?)\b/i.test(t)) {
+    return 'SOAP';
+  }
+
+  // Face wash
+  if (/\b(?:face\s*wash(?:es)?|facewash(?:es)?|cleansers?|body\s*wash(?:es)?)\b/i.test(t)) {
+    return 'FACE WASH';
+  }
+
+  // Topicals
+  if (/\b(?:gels?)\b/i.test(t)) return 'GEL';
+  if (/\b(?:creams?)\b/i.test(t)) return 'CREAM';
+  if (/\b(?:ointments?|oints?)\b/i.test(t)) return 'OINTMENT';
+  if (/\b(?:lotions?)\b/i.test(t)) return 'LOTION';
+  if (/\b(?:balms?|vaporubs?)\b/i.test(t)) return 'BALM';
+
+  // Solid orals
+  if (/\b(?:tabs?|tablets?|dt|dispersible\s*tablets?|caplets?)\b/i.test(t)) {
+    return 'TABLET';
+  }
+  if (/\b(?:caps?|capsules?)\b/i.test(t)) {
+    return 'CAPSULE';
+  }
+
+  // Others
+  if (/\b(?:powders?|dusting\s*powders?)\b/i.test(t)) return 'POWDER';
+  if (/\b(?:sprays?|nasal\s*sprays?)\b/i.test(t)) return 'SPRAY';
+  if (/\b(?:sachets?|granules?)\b/i.test(t)) return 'SACHET';
+  if (/\b(?:hair\s*oils?|massage\s*oils?|taila?)\b/i.test(t)) return 'OIL';
+
+  return null;
+}
+
 export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: string): boolean {
   if (!dosageForm || !itemTypeOrName) return false;
   const df = dosageForm.toUpperCase().trim();
@@ -257,20 +375,37 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   const isTopical = df === 'CREAM' || df === 'OINTMENT' || df === 'GEL' || df === 'LOTION' || df === 'BALM';
   const isInhaler = df === 'INHALER';
   const isDrops = df === 'DROPS';
+  const isShampoo = df === 'SHAMPOO';
+  const isSoap = df === 'SOAP' || df === 'BAR';
+  const isFaceWash = df === 'FACE WASH' || df === 'FACEWASH';
 
   const itIsSolidOral = /\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES|CAPLET)\b/.test(it);
   const itIsLiquidOral = /\b(SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|ORAL SOLUTION)\b/.test(it);
   const itIsInjectable = /\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(it);
-  const itIsTopical = /\b(CREAM|OINT|OINTMENT|GEL|LOTION|BALM)\b/.test(it);
-  const itIsInhaler = /\b(INHALER|RESPULE|ROTACAP)\b/.test(it);
-  const itIsDrops = /\b(DROPS?|EYE DROP|EAR DROP)\b/.test(it);
+  const itIsFaceWash = /\b(FACE WASH|FACEWASH|CLEANSER|BODY WASH)\b/.test(it);
+  const itIsTopical = /\b(CREAM|OINT|OINTMENT|GEL|LOTION|BALM)\b/.test(it) && !itIsFaceWash;
+  const itIsInhaler = /\b(INHALER|RESPULE|ROTACAP|RESPICAP)\b/.test(it);
+  const itIsDrops = /\b(DROPS?|EYE DROP|EAR DROP|OPHTHALMIC)\b/.test(it);
+  const itIsShampoo = /\b(SHAMPOO|HAIR WASH)\b/.test(it);
+  const itIsSoap = /\b(SOAP|BAR|BATHING BAR|SYNDET BAR)\b/.test(it);
 
-  if (isSolidOral && (itIsLiquidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
-  if (isLiquidOral && (itIsSolidOral || itIsInjectable || itIsTopical || itIsInhaler)) return true;
-  if (isInjectable && (itIsSolidOral || itIsLiquidOral || itIsTopical || itIsInhaler)) return true;
-  if (isTopical && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsInhaler)) return true;
-  if (isInhaler && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsTopical || itIsDrops)) return true;
-  if (isDrops && (itIsSolidOral || itIsLiquidOral || itIsInjectable || isInhaler)) return true;
+  // Allow Face Wash Gel / Foaming Face Wash to match Face Wash
+  if (isFaceWash && itIsFaceWash) return false;
+
+  // Allow oral antacid gels (e.g. Digene Gel, Mucaine Gel) in bottles/ML to match suspension/liquid
+  if ((df === 'GEL' || df === 'SYRUP') && /\b(ML|BOTTLE|SUSP|SUSPENSION|ANTACID)\b/.test(it) && !/\b(TUBE)\b/.test(it)) {
+    return false;
+  }
+
+  if (isSolidOral && (itIsLiquidOral || itIsInjectable || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;
+  if (isLiquidOral && (itIsSolidOral || itIsInjectable || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;
+  if (isInjectable && (itIsSolidOral || itIsLiquidOral || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;
+  if (isTopical && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;
+  if (isInhaler && (itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsTopical || itIsDrops || itIsShampoo || itIsSoap || itIsFaceWash)) return true;
+  if (isDrops && (itIsSolidOral || itIsLiquidOral || itIsInjectable || isInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsTopical)) return true;
+  if (isShampoo && (itIsSoap || itIsTopical || itIsFaceWash || itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsDrops || itIsInhaler)) return true;
+  if (isSoap && (itIsShampoo || itIsTopical || itIsFaceWash || itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsDrops || itIsInhaler)) return true;
+  if (isFaceWash && (itIsSoap || itIsShampoo || itIsTopical || itIsSolidOral || itIsLiquidOral || itIsInjectable || itIsDrops || itIsInhaler)) return true;
 
   return false;
 }
@@ -459,9 +594,9 @@ export function enhancedSimilarity(s1: string, s2: string): number {
   const str2 = extractDrugStrength(s2);
 
   if (str1.strength && str2.strength) {
-    if (str1.strength === str2.strength) {
+    if (areStrengthsEqual(str1, str2)) {
       score = Math.min(1.0, score + 0.15); // Matching active dosage strength boost
-    } else {
+    } else if (areStrengthsConflicting(str1, str2)) {
       score = Math.max(0.0, score - 0.35); // Penalize conflicting dosage strength (e.g. 500mg vs 250mg)
     }
   } else {
@@ -684,6 +819,8 @@ export class ProductNameFilterService {
       rawOcrText
     } = options;
 
+    const effectiveDosageForm = dosageForm || detectDosageFormFromText(rawOcrText || ocrText) || undefined;
+
     if (!ocrText || ocrText.trim() === '') {
       return {
         matches: [],
@@ -704,7 +841,7 @@ export class ProductNameFilterService {
     const rawVolume = rawOcrText ? (extractVolumeOrWeight(rawOcrText).amount || '') : '';
     const rawMods = rawOcrText ? Array.from(extractFormulationModifiers(rawOcrText)).sort().join(',') : '';
     const cacheKey = !enableInternetFallback
-      ? `${normalizedOcr}|${dosageForm || ''}|${mrp || ''}|${rawStrength}|${rawVolume}|${rawMods}|${minConfidenceThreshold}`
+      ? `${normalizedOcr}|${effectiveDosageForm || ''}|${mrp || ''}|${rawStrength}|${rawVolume}|${rawMods}|${minConfidenceThreshold}`
       : null;
     if (cacheKey && this.filterCache.has(cacheKey)) {
       const cached = this.filterCache.get(cacheKey)!;
@@ -748,9 +885,9 @@ export class ProductNameFilterService {
         fts5Used = true;
         for (const row of ftsRows) {
           const nameSim = enhancedSimilarity(normalizedOcr, row.name.toLowerCase());
-          const dosageConflict = isItemTypeConflicting(dosageForm, row.item_type || row.name);
-          const dosageMatch = dosageForm && row.item_type
-            ? (isItemTypeCompatible(dosageForm, row.item_type) ? 1.0 : (dosageConflict ? -0.5 : 0.2))
+          const dosageConflict = isItemTypeConflicting(effectiveDosageForm, row.item_type || row.name);
+          const dosageMatch = effectiveDosageForm && row.item_type
+            ? (isItemTypeCompatible(effectiveDosageForm, row.item_type) ? 1.0 : (dosageConflict ? -0.5 : 0.2))
             : null;
           const mrpMatch = mrp && row.mrp ? (1 - Math.abs(mrp - row.mrp) / Math.max(mrp, row.mrp)) : null;
           
@@ -768,9 +905,9 @@ export class ProductNameFilterService {
             const ocrStr = extractDrugStrength(rawOcrText);
             const medStr = extractDrugStrength(row.name);
             if (ocrStr.strength && medStr.strength) {
-              if (ocrStr.strength === medStr.strength) {
+              if (areStrengthsEqual(ocrStr, medStr)) {
                 strengthMatch = true;
-              } else {
+              } else if (areStrengthsConflicting(ocrStr, medStr)) {
                 strengthConflict = true;
               }
             }
@@ -846,7 +983,7 @@ export class ProductNameFilterService {
     // the O(n) scan over ~286k names is expensive, so only pay for it when FTS5 has nothing)
     if (!fts5Used || scoredMatches.length < 1) {
       for (const medicineName of this.medicineNames) {
-        if (dosageForm && isItemTypeConflicting(dosageForm, medicineName)) {
+        if (effectiveDosageForm && isItemTypeConflicting(effectiveDosageForm, medicineName)) {
           continue; // Clinical conflict: e.g. tablet vs syrup in medicine title
         }
         let similarityScore = enhancedSimilarity(normalizedOcr, medicineName.toLowerCase());
@@ -854,9 +991,9 @@ export class ProductNameFilterService {
           const ocrStr = extractDrugStrength(rawOcrText);
           const medStr = extractDrugStrength(medicineName);
           if (ocrStr.strength && medStr.strength) {
-            if (ocrStr.strength === medStr.strength) {
+            if (areStrengthsEqual(ocrStr, medStr)) {
               similarityScore = Math.min(1.0, similarityScore + 0.20);
-            } else {
+            } else if (areStrengthsConflicting(ocrStr, medStr)) {
               similarityScore = Math.max(0.0, similarityScore - 0.50);
             }
           }

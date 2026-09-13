@@ -4,9 +4,13 @@ import { Jimp } from 'jimp';
 import {
   productNameFilterService,
   extractDrugStrength,
+  areStrengthsEqual,
+  areStrengthsConflicting,
   extractVolumeOrWeight,
   extractFormulationModifiers,
-  hasFormulationModifierConflict
+  hasFormulationModifierConflict,
+  detectDosageFormFromText,
+  isItemTypeConflicting
 } from './productNameFilterService.js';
 import { isPlausibleMedicineName } from './intentKeywords.js';
 import { onnxOcrService } from './onnxOcrService.js';
@@ -381,31 +385,7 @@ class AICameraService {
    */
   detectDosageForm(text: string): string | null {
     if (!text) return null;
-    const patterns: [RegExp, string][] = [
-      [/\b(?:tab(?:let)?s?|caplets?)\b/i, 'Tablet'],
-      [/\b(?:cap(?:sule)?s?)\b/i, 'Capsule'],
-      [/\b(?:liquid|oral\s*solution|solution|syrup|syp|elixir)\b/i, 'Syrup'],
-      [/\b(?:susp(?:ension)?|oral\s*suspension)\b/i, 'Suspension'],
-      [/\b(?:inj(?:ection)?|infusion)\b/i, 'Injection'],
-      [/\b(?:gel)\b/i, 'Gel'],
-      [/\b(?:cream)\b/i, 'Cream'],
-      [/\b(?:drops?|eye\s*drops?|ear\s*drops?|ophthalmic(?:\s*solution)?)\b/i, 'Drops'],
-      [/\b(?:oint(?:ment)?)\b/i, 'Ointment'],
-      [/\b(?:lotion)\b/i, 'Lotion'],
-      [/\b(?:powder|dusting\s*powder)\b/i, 'Powder'],
-      [/\b(?:spray)\b/i, 'Spray'],
-      [/\b(?:inh(?:aler)?|respules?|rotacaps?)\b/i, 'Inhaler'],
-      [/\b(?:sachet|granules)\b/i, 'Sachet'],
-      [/\b(?:balm|vaporub|rub)\b/i, 'Balm'],
-      [/\b(?:soap|bar|facewash|bodywash)\b/i, 'Soap'],
-      [/\b(?:oil|tail|taila)\b/i, 'Oil'],
-      [/\b(?:shampoo)\b/i, 'Shampoo'],
-      [/\b(?:serum)\b/i, 'Serum'],
-    ];
-    for (const [regex, form] of patterns) {
-      if (regex.test(text)) return form;
-    }
-    return null;
+    return detectDosageFormFromText(text);
   }
 
   /**
@@ -686,12 +666,18 @@ class AICameraService {
     const detectedVolume = extractVolumeOrWeight(localOcrResult.text);
 
     if (matches.length > 0) {
-      // Re-sort matches to ensure exact packaging strength match AND formulation alignment is #1
+      // Re-sort matches to ensure exact packaging dosage form, strength match AND formulation alignment is #1
       matches.sort((a, b) => {
+        const aDosageConflict = detectedDosageForm && isItemTypeConflicting(detectedDosageForm, a) ? 1 : 0;
+        const bDosageConflict = detectedDosageForm && isItemTypeConflicting(detectedDosageForm, b) ? 1 : 0;
+        if (aDosageConflict !== bDosageConflict) {
+          return aDosageConflict - bDosageConflict; // non-conflicting candidates come first!
+        }
+
         const aStr = extractDrugStrength(a);
         const bStr = extractDrugStrength(b);
-        const aStrengthMatch = detectedDrugStrength.strength && aStr.strength === detectedDrugStrength.strength ? 1 : 0;
-        const bStrengthMatch = detectedDrugStrength.strength && bStr.strength === detectedDrugStrength.strength ? 1 : 0;
+        const aStrengthMatch = areStrengthsEqual(detectedDrugStrength, aStr) ? 1 : 0;
+        const bStrengthMatch = areStrengthsEqual(detectedDrugStrength, bStr) ? 1 : 0;
         if (aStrengthMatch !== bStrengthMatch) {
           return bStrengthMatch - aStrengthMatch;
         }
@@ -712,12 +698,17 @@ class AICameraService {
       const topMed = matches[0];
       const topMedStrength = extractDrugStrength(topMed);
       const topMedModConflict = hasFormulationModifierConflict(localOcrResult.text, topMed);
+      const topMedDosageConflict = detectedDosageForm ? isItemTypeConflicting(detectedDosageForm, topMed) : false;
 
-      if (detectedDrugStrength.strength) {
-        if (topMedStrength.strength === detectedDrugStrength.strength && !topMedModConflict) {
+      if (topMedDosageConflict) {
+        finalInfo.strengthConfirmed = false;
+        finalInfo.dosageConflict = true;
+        finalInfo.confirmationNote = `Dosage Form Conflict: Scanned packaging shows ${detectedDosageForm}, but candidate is ${topMed}.`;
+      } else if (detectedDrugStrength.strength) {
+        if (areStrengthsEqual(detectedDrugStrength, topMedStrength) && !topMedModConflict) {
           finalInfo.strengthConfirmed = true;
           finalInfo.confirmationNote = `Verified: packaging strength (${detectedDrugStrength.strength}) confirmed.`;
-        } else if (topMedStrength.strength !== detectedDrugStrength.strength) {
+        } else if (areStrengthsConflicting(detectedDrugStrength, topMedStrength)) {
           finalInfo.strengthConfirmed = false;
           finalInfo.strengthConflict = true;
           finalInfo.confirmationNote = `Packaging shows ${detectedDrugStrength.strength}, candidate is ${topMedStrength.strength || 'unspecified'}.`;
@@ -736,6 +727,9 @@ class AICameraService {
 
       if (topMedModConflict) {
         finalInfo.modifierConflict = true;
+      }
+      if (topMedDosageConflict) {
+        finalInfo.dosageConflict = true;
       }
     }
 
