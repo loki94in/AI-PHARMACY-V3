@@ -64,6 +64,15 @@ for (const cand of isccCandidates) {
 
 const issPath = path.join(root, 'installer.iss');
 if (isccExe && fs.existsSync(issPath)) {
+  // Ensure no local product images are accidentally included in the build distribution (per spec: images load online via web)
+  const distProductsDir = path.join(root, 'frontend', 'dist', 'products');
+  if (fs.existsSync(distProductsDir)) {
+    console.log('[build-sea] Stripping local product images from build distribution (images load via web)...');
+    try {
+      fs.rmSync(distProductsDir, { recursive: true, force: true });
+    } catch (_) {}
+  }
+
   console.log('[build-sea] Found Inno Setup compiler! Building standalone installer setup package...');
   try {
     execSync(`"${isccExe}" "${issPath}"`, { cwd: root, stdio: 'inherit' });

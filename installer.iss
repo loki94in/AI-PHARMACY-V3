@@ -77,8 +77,8 @@ Source: "dist\PharmacyOS.exe"; DestDir: "{app}"; Flags: ignoreversion nocompress
 ; Required anchor for createRequire() beside the exe
 Source: "sea-entry.cjs"; DestDir: "{app}"; Flags: ignoreversion
 
-; Built web frontend
-Source: "frontend\dist\*"; DestDir: "{app}\frontend\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Built web frontend (local images excluded — images are dynamically fetched online via web)
+Source: "frontend\dist\*"; DestDir: "{app}\frontend\dist"; Excludes: "products\*,products"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Full node_modules (SEA does not embed third-party packages)
 Source: "node_modules\*"; DestDir: "{app}\node_modules"; Flags: ignoreversion recursesubdirs createallsubdirs
