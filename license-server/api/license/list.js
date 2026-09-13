@@ -16,19 +16,31 @@ export default async function handler(req, res) {
 
   const records = await kv.mget(...keys);
 
+  const nowMs = Date.now();
   const licenses = records
     .filter(Boolean)
-    .map(r => ({
-      licenseId: r.licenseId,
-      pharmacyName: r.pharmacyName,
-      notes: r.notes,
-      status: r.status,
-      machineId: r.machineId ? `${r.machineId.substring(0, 8)}...` : null, // partial for privacy
-      machineName: r.machineName,
-      activatedAt: r.activatedAt,
-      createdAt: r.createdAt,
-      lastValidatedAt: r.lastValidatedAt,
-    }))
+    .map(r => {
+      let daysUntilExpiry = null;
+      if (r.expiresAt) {
+        const diffMs = new Date(r.expiresAt).getTime() - nowMs;
+        daysUntilExpiry = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+      }
+      return {
+        licenseId: r.licenseId,
+        pharmacyName: r.pharmacyName,
+        notes: r.notes,
+        status: r.status,
+        machineId: r.machineId ? `${r.machineId.substring(0, 8)}...` : null, // partial for display
+        rawMachineId: r.machineId || null,
+        machineName: r.machineName,
+        activatedAt: r.activatedAt,
+        expiresAt: r.expiresAt || null,
+        daysUntilExpiry,
+        isPilot: Boolean(r.isPilot),
+        createdAt: r.createdAt,
+        lastValidatedAt: r.lastValidatedAt,
+      };
+    })
     .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
   return res.status(200).json({ licenses, total: licenses.length });

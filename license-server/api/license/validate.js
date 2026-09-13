@@ -22,6 +22,23 @@ export default async function handler(req, res) {
     return res.status(403).json({ valid: false, error: 'Machine mismatch', code: 'MACHINE_MISMATCH' });
   }
 
+  // Check license expiration
+  const nowMs = Date.now();
+  let daysUntilExpiry = null;
+  if (record.expiresAt) {
+    const expiresMs = new Date(record.expiresAt).getTime();
+    if (nowMs > expiresMs) {
+      return res.status(403).json({
+        valid: false,
+        error: 'License has expired. Please renew your license.',
+        code: 'EXPIRED',
+        expiresAt: record.expiresAt,
+        daysUntilExpiry: 0,
+      });
+    }
+    daysUntilExpiry = Math.max(0, Math.floor((expiresMs - nowMs) / (24 * 60 * 60 * 1000)));
+  }
+
   // Update heartbeat timestamp (non-blocking)
   kv.set(`license:${licenseId}`, {
     ...record,
@@ -33,5 +50,8 @@ export default async function handler(req, res) {
     pharmacyName: record.pharmacyName,
     licenseId,
     activatedAt: record.activatedAt,
+    expiresAt: record.expiresAt || null,
+    daysUntilExpiry,
+    isPilot: Boolean(record.isPilot),
   });
 }

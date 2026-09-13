@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { pharmacyName, notes } = req.body || {};
+  const { pharmacyName, notes, validityDays = 365, isPilot = false } = req.body || {};
   if (!pharmacyName?.trim()) {
     return res.status(400).json({ error: 'pharmacyName is required' });
   }
@@ -40,6 +40,10 @@ export default async function handler(req, res) {
   const licenseId = generateLicenseId();
   const licenseKey = generateLicenseKey();
   const keyHash = crypto.createHash('sha256').update(licenseKey).digest('hex');
+
+  const nowMs = Date.now();
+  const expiresMs = nowMs + Number(validityDays) * 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(expiresMs).toISOString();
 
   const record = {
     licenseId,
@@ -50,7 +54,9 @@ export default async function handler(req, res) {
     machineId: null,       // null = not yet activated
     machineName: null,
     activatedAt: null,
-    createdAt: new Date().toISOString(),
+    expiresAt,
+    isPilot: Boolean(isPilot),
+    createdAt: new Date(nowMs).toISOString(),
     lastValidatedAt: null,
   };
 
@@ -61,6 +67,8 @@ export default async function handler(req, res) {
     licenseId,
     licenseKey,
     pharmacyName: record.pharmacyName,
+    expiresAt: record.expiresAt,
+    isPilot: record.isPilot,
     createdAt: record.createdAt,
     _note: 'Store the licenseKey safely — it is shown ONCE and not stored in plain text.',
   });

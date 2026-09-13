@@ -105,20 +105,39 @@ export async function checkLicense(): Promise<LicenseStatus> {
     });
 
     if (resp.data.valid) {
+      const expiresAt = resp.data.expiresAt || null;
       await db.run(
-        'UPDATE app_license SET last_validated_at = ?, status = ? WHERE id = 1',
-        [new Date().toISOString(), 'licensed']
+        'UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ? WHERE id = 1',
+        [new Date().toISOString(), 'licensed', expiresAt]
       );
+      const daysLeft = resp.data.daysUntilExpiry ?? null;
       return {
         valid: true,
         mode: 'licensed',
         pharmacyName: resp.data.pharmacyName,
         licenseId: row.license_id,
-        daysUntilExpiry: null,
-        message: `Licensed to ${resp.data.pharmacyName}`,
+        daysUntilExpiry: daysLeft,
+        message: daysLeft !== null && daysLeft <= 30
+          ? `⚠️ License expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Please renew.`
+          : `Licensed to ${resp.data.pharmacyName}`,
       };
     }
-  } catch {
+  } catch (err: any) {
+    // If server specifically returned EXPIRED, lock immediately without grace
+    if (err.response?.data?.code === 'EXPIRED') {
+      await db.run(
+        'UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1',
+        ['expired', new Date().toISOString()]
+      );
+      return {
+        valid: false,
+        mode: 'expired',
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: 0,
+        message: 'License has expired. Please renew your license.',
+      };
+    }
     // Offline — apply grace period logic
   }
 
@@ -209,8 +228,15 @@ export async function checkForUpdate(): Promise<{
     const row = await db.get<any>('SELECT current_version FROM update_checks WHERE id = 1');
     const currentVersion = row?.current_version || APP_VERSION;
 
+    const licRow = await db.get<any>('SELECT license_id FROM app_license WHERE id = 1');
+    const machineId = getMachineId();
+
     const resp = await axios.get(`${LICENSE_SERVER}/api/updates/check`, {
-      params: { version: currentVersion },
+      params: {
+        version: currentVersion,
+        licenseId: licRow?.license_id || undefined,
+        machineId,
+      },
       timeout: 8000,
     });
 
@@ -230,3 +256,27 @@ export async function checkForUpdate(): Promise<{
     return null; // Offline or server error — silently ignore
   }
 }
+
+/** Report anonymous, technical crash/error telemetry (strictly zero business/patient data) */
+export async function reportCrashTelemetry(errorData: {
+  errorType: string;
+  message: string;
+  stack?: string;
+}): Promise<void> {
+  try {
+    const db = await dbManager.getConnection();
+    const licRow = await db.get<any>('SELECT license_id FROM app_license WHERE id = 1');
+    const machineId = getMachineId();
+    await axios.post(`${LICENSE_SERVER}/api/telemetry/report`, {
+      machineId,
+      licenseId: licRow?.license_id || null,
+      appVersion: APP_VERSION,
+      errorType: errorData.errorType,
+      message: errorData.message,
+      stack: errorData.stack,
+    }, { timeout: 4000 });
+  } catch {
+    // Non-blocking telemetry
+  }
+}
+

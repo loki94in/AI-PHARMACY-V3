@@ -23,6 +23,11 @@ async function writeCrashLog(message: string, stack: string): Promise<void> {
       [message, stack, appVersion]
     );
     await db.close();
+
+    // Asynchronously send anonymous crash telemetry (non-blocking)
+    import('../services/licenseService.js').then(m => {
+      m.reportCrashTelemetry({ errorType: 'PROCESS_CRASH', message, stack }).catch(() => {});
+    }).catch(() => {});
   } catch (err) {
     // Last resort — we cannot do anything if the DB itself is unavailable here
     console.error('[ProcessGuardian] Failed to write crash_log entry:', err);

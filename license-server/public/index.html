@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Pharmacy OS — License & Update Command Center</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#10b981',
+              600: '#059669',
+              700: '#047857',
+            },
+            darkBg: '#090d16',
+            cardBg: '#111827',
+            borderCol: '#1f2937',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #090d16; color: #f3f4f6; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .glass-panel { background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #374151; border-radius: 9999px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col custom-scroll">
+
+  <!-- ================= AUTH MODAL ================= -->
+  <div id="authModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md">
+    <div class="glass-panel p-8 rounded-2xl max-w-md w-full mx-4 shadow-2xl border border-emerald-500/20">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+          <i data-lucide="shield-check" class="w-7 h-7"></i>
+        </div>
+        <div>
+          <h2 class="text-xl font-bold text-white tracking-tight">Admin Command Center</h2>
+          <p class="text-xs text-gray-400">AI Pharmacy OS · Private Control</p>
+        </div>
+      </div>
+      <form id="authForm" onsubmit="handleLogin(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Admin Secret Key</label>
+          <input type="password" id="adminSecretInput" required placeholder="Enter ADMIN_SECRET..."
+            class="w-full px-4 py-3 bg-gray-900/90 border border-gray-700 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white placeholder-gray-500">
+        </div>
+        <div class="flex items-center justify-between pt-1">
+          <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none">
+            <input type="checkbox" id="rememberMeCheckbox" checked class="rounded border-gray-700 text-emerald-600 focus:ring-emerald-500 bg-gray-900">
+            <span>Remember me on this browser</span>
+          </label>
+        </div>
+        <div id="authError" class="text-xs text-rose-400 hidden flex items-center gap-1.5">
+          <i data-lucide="alert-circle" class="w-4 h-4"></i> Invalid secret key. Access denied.
+        </div>
+        <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2">
+          <span>Authenticate & Access</span>
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MAIN APP SHELL ================= -->
+  <div id="appShell" class="hidden flex-1 flex flex-col">
+    <!-- Topbar -->
+    <header class="border-b border-gray-800/80 bg-gray-950/60 sticky top-0 z-30 backdrop-blur-xl">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h1 class="text-base font-bold text-white leading-tight">AI Pharmacy OS</h1>
+            <p class="text-[11px] text-gray-400">License & Rollout Manager</p>
+          </div>
+        </div>
+
+        <!-- Nav Tabs -->
+        <div class="flex items-center gap-1 bg-gray-900/80 p-1 rounded-xl border border-gray-800">
+          <button onclick="switchTab('licenses')" id="tabBtn-licenses" class="tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 shadow-sm flex items-center gap-1.5">
+            <i data-lucide="key" class="w-3.5 h-3.5"></i> Licenses
+          </button>
+          <button onclick="switchTab('rollout')" id="tabBtn-rollout" class="tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5">
+            <i data-lucide="upload-cloud" class="w-3.5 h-3.5"></i> Software Releases
+          </button>
+          <button onclick="switchTab('telemetry')" id="tabBtn-telemetry" class="tab-btn px-4 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5">
+            <i data-lucide="terminal" class="w-3.5 h-3.5"></i> Error Telemetry
+          </button>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button onclick="openCreateModal()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i> Issue License
+          </button>
+          <button onclick="handleLogout()" class="p-2 text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors" title="Logout">
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 space-y-6">
+
+      <!-- ================= KPI CARDS ================= -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="glass-panel p-5 rounded-2xl border border-gray-800/80">
+          <div class="flex items-center justify-between text-gray-400 mb-2">
+            <span class="text-xs font-medium uppercase tracking-wider">Total Issued</span>
+            <i data-lucide="database" class="w-4 h-4 text-emerald-400"></i>
+          </div>
+          <div class="text-2xl font-bold text-white" id="kpi-total">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">All generated client licenses</p>
+        </div>
+        <div class="glass-panel p-5 rounded-2xl border border-gray-800/80">
+          <div class="flex items-center justify-between text-gray-400 mb-2">
+            <span class="text-xs font-medium uppercase tracking-wider">Active PCs</span>
+            <i data-lucide="monitor" class="w-4 h-4 text-cyan-400"></i>
+          </div>
+          <div class="text-2xl font-bold text-emerald-400" id="kpi-active">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">Hardware bound & validated</p>
+        </div>
+        <div class="glass-panel p-5 rounded-2xl border border-gray-800/80">
+          <div class="flex items-center justify-between text-gray-400 mb-2">
+            <span class="text-xs font-medium uppercase tracking-wider">Expiring &le;30 Days</span>
+            <i data-lucide="clock" class="w-4 h-4 text-amber-400"></i>
+          </div>
+          <div class="text-2xl font-bold text-amber-400" id="kpi-expiring">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">Renewal required soon</p>
+        </div>
+        <div class="glass-panel p-5 rounded-2xl border border-gray-800/80">
+          <div class="flex items-center justify-between text-gray-400 mb-2">
+            <span class="text-xs font-medium uppercase tracking-wider">Pilot / Testers</span>
+            <i data-lucide="flask-conical" class="w-4 h-4 text-purple-400"></i>
+          </div>
+          <div class="text-2xl font-bold text-purple-400" id="kpi-pilots">0</div>
+          <p class="text-[11px] text-gray-500 mt-1">Receive beta test updates first</p>
+        </div>
+      </div>
+
+      <!-- ================= TAB 1: LICENSES & RENEWALS ================= -->
+      <section id="tabContent-licenses" class="space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-bold text-white">Registered Pharmacies & PCs</h2>
+            <p class="text-xs text-gray-400">Manage 1-Year renewals, pilot status, and hardware locks.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="licenseSearchInput" oninput="filterLicenses()" placeholder="Search pharmacy or license ID..."
+              class="px-3 py-1.5 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 w-64">
+            <button onclick="loadLicenses()" class="p-1.5 bg-gray-900 border border-gray-700 hover:bg-gray-800 text-gray-300 rounded-lg transition-colors" title="Refresh List">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="glass-panel rounded-2xl border border-gray-800 overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-300">
+              <thead class="bg-gray-900/80 text-gray-400 text-[11px] uppercase tracking-wider border-b border-gray-800">
+                <tr>
+                  <th class="py-3 px-4">Pharmacy / Store</th>
+                  <th class="py-3 px-4">License ID</th>
+                  <th class="py-3 px-4">Machine Lock</th>
+                  <th class="py-3 px-4">Expiry Date</th>
+                  <th class="py-3 px-4">Remaining</th>
+                  <th class="py-3 px-4">Testing Pilot</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="licensesTableBody" class="divide-y divide-gray-800/60">
+                <tr>
+                  <td colspan="7" class="py-8 text-center text-gray-500">Loading licenses...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TAB 2: UPDATE ROLLOUT MANAGER ================= -->
+      <section id="tabContent-rollout" class="hidden space-y-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-white">Software Update & Targeted Rollout</h2>
+            <p class="text-xs text-gray-400">Deploy updates to Pilot test counters first, then release to all 100+ pharmacies.</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Release Editor Card -->
+          <div class="lg:col-span-2 glass-panel p-6 rounded-2xl border border-gray-800 space-y-5">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-4">
+              <div class="flex items-center gap-2 text-emerald-400">
+                <i data-lucide="package" class="w-5 h-5"></i>
+                <h3 class="text-sm font-bold text-white">Active Software Release</h3>
+              </div>
+              <span id="currentRolloutBadge" class="px-2.5 py-1 text-[11px] font-semibold rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                Loading...
+              </span>
+            </div>
+
+            <form id="releaseForm" onsubmit="handlePublishRelease(event)" class="space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-semibold text-gray-400 mb-1">Latest Version (e.g. 1.2.0)</label>
+                  <input type="text" id="releaseVersion" required placeholder="1.2.0"
+                    class="w-full px-3.5 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-gray-400 mb-1">Download URL (R2 / S3 / GitHub)</label>
+                  <input type="url" id="releaseUrl" required placeholder="https://pub-xxx.r2.dev/AI-Pharmacy-Setup-v1.2.0.exe"
+                    class="w-full px-3.5 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
+                </div>
+              </div>
+
+              <!-- Rollout Target Selection -->
+              <div>
+                <label class="block text-xs font-semibold text-gray-400 mb-2">Target Rollout Audience</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label class="flex items-start gap-3 p-3.5 rounded-xl border border-gray-700 bg-gray-900/50 cursor-pointer hover:border-emerald-500/50 transition-colors">
+                    <input type="radio" name="rolloutMode" value="PILOT" checked class="mt-0.5 text-emerald-600 focus:ring-emerald-500">
+                    <div>
+                      <span class="block text-xs font-bold text-white">1. Pilot / Tester PCs Only (Safe)</span>
+                      <span class="block text-[11px] text-gray-400 mt-0.5">Only pharmacies tagged with the "Pilot" badge receive this update prompt.</span>
+                    </div>
+                  </label>
+                  <label class="flex items-start gap-3 p-3.5 rounded-xl border border-gray-700 bg-gray-900/50 cursor-pointer hover:border-emerald-500/50 transition-colors">
+                    <input type="radio" name="rolloutMode" value="ALL" class="mt-0.5 text-emerald-600 focus:ring-emerald-500">
+                    <div>
+                      <span class="block text-xs font-bold text-white">2. Select All (General Production)</span>
+                      <span class="block text-[11px] text-gray-400 mt-0.5">All 100+ production pharmacy PCs receive the update notification.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-gray-400 mb-1">Release Notes & Changelog</label>
+                <textarea id="releaseChangelog" rows="4" placeholder="• Added automatic WhatsApp arrival notification&#10;• Faster medicine barcode lookup&#10;• Thermal printer alignment fix"
+                  class="w-full px-3.5 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono leading-relaxed"></textarea>
+              </div>
+
+              <div class="pt-2 flex items-center justify-end">
+                <button type="submit" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all">
+                  <i data-lucide="send" class="w-4 h-4"></i>
+                  <span>Publish & Broadcast Release</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Safety & Instructions Info Card -->
+          <div class="glass-panel p-6 rounded-2xl border border-gray-800 space-y-4">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i data-lucide="shield-alert" class="w-4 h-4 text-emerald-400"></i>
+              Safe Rollout Best Practices
+            </h3>
+            <div class="space-y-3 text-xs text-gray-300 leading-relaxed">
+              <p class="p-3 bg-gray-900/60 rounded-xl border border-gray-800">
+                <strong class="text-emerald-400">Step 1: Test with Pilot Store</strong><br>
+                Always select <em>"Pilot / Tester PCs Only"</em> first. Test the update on your own store counter for 24-48 hours.
+              </p>
+              <p class="p-3 bg-gray-900/60 rounded-xl border border-gray-800">
+                <strong class="text-cyan-400">Step 2: Verify Telemetry</strong><br>
+                Check the <em>Error Telemetry</em> tab to ensure zero unhandled crashes occurred during live sales.
+              </p>
+              <p class="p-3 bg-gray-900/60 rounded-xl border border-gray-800">
+                <strong class="text-purple-400">Step 3: Rollout to Everyone</strong><br>
+                Switch to <em>"Select All"</em> and click Publish. Every client pharmacy will seamlessly see the update prompt!
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TAB 3: ERROR TELEMETRY ================= -->
+      <section id="tabContent-telemetry" class="hidden space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-white">Anonymous Error & Crash Telemetry</h2>
+            <p class="text-xs text-gray-400">Purely technical errors reported by PCs. Zero medicine, patient, or sales data.</p>
+          </div>
+          <button onclick="loadTelemetry()" class="px-3 py-1.5 bg-gray-900 border border-gray-700 hover:bg-gray-800 text-gray-300 rounded-lg text-xs flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh Logs
+          </button>
+        </div>
+
+        <div class="glass-panel rounded-2xl border border-gray-800 overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-gray-300">
+              <thead class="bg-gray-900/80 text-gray-400 text-[11px] uppercase tracking-wider border-b border-gray-800">
+                <tr>
+                  <th class="py-3 px-4">Time</th>
+                  <th class="py-3 px-4">App Version</th>
+                  <th class="py-3 px-4">Error Type</th>
+                  <th class="py-3 px-4">Error Message</th>
+                  <th class="py-3 px-4">Machine ID</th>
+                  <th class="py-3 px-4">Stack Snippet</th>
+                </tr>
+              </thead>
+              <tbody id="telemetryTableBody" class="divide-y divide-gray-800/60 font-mono text-[11px]">
+                <tr>
+                  <td colspan="6" class="py-8 text-center text-gray-500 font-sans">Loading telemetry...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ================= CREATE LICENSE MODAL ================= -->
+  <div id="createLicenseModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/80 backdrop-blur-md">
+    <div class="glass-panel p-6 rounded-2xl max-w-lg w-full mx-4 shadow-2xl border border-emerald-500/20 space-y-4">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i data-lucide="key" class="w-4 h-4 text-emerald-400"></i>
+          Issue New License
+        </h3>
+        <button onclick="closeCreateModal()" class="text-gray-400 hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+
+      <form id="createLicenseForm" onsubmit="handleCreateLicense(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1">Pharmacy / Client Name *</label>
+          <input type="text" id="newPharmacyName" required placeholder="e.g. Apollo Pharmacy #104"
+            class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1">Notes / Counter Reference</label>
+          <input type="text" id="newNotes" placeholder="e.g. Billing Counter 1, Mumbai branch"
+            class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 mb-1">Validity Period</label>
+            <select id="newValidityDays" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+              <option value="365" selected>1 Year (365 Days)</option>
+              <option value="180">6 Months (180 Days)</option>
+              <option value="30">1 Month (30 Days)</option>
+              <option value="730">2 Years (730 Days)</option>
+            </select>
+          </div>
+          <div class="flex items-center pt-5">
+            <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+              <input type="checkbox" id="newIsPilot" class="rounded text-emerald-600 focus:ring-emerald-500">
+              <span>Mark as Pilot Tester</span>
+            </label>
+          </div>
+        </div>
+
+        <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md">
+          Generate & Save License
+        </button>
+      </form>
+
+      <!-- Created License Success Details Box -->
+      <div id="createdLicenseResult" class="hidden p-4 bg-emerald-950/40 border border-emerald-500/30 rounded-xl space-y-2">
+        <div class="text-xs font-bold text-emerald-400 flex items-center justify-between">
+          <span>🎉 License Created Successfully!</span>
+          <button onclick="copyLicenseInfo()" class="px-2 py-1 bg-emerald-600 text-white rounded text-[10px] font-bold hover:bg-emerald-500">
+            Copy for WhatsApp
+          </button>
+        </div>
+        <div class="text-xs space-y-1 font-mono text-gray-300">
+          <div><span class="text-gray-500">License ID:</span> <span id="resLicenseId" class="text-white font-bold"></span></div>
+          <div><span class="text-gray-500">License Key:</span> <span id="resLicenseKey" class="text-emerald-400 font-bold"></span></div>
+          <div><span class="text-gray-500">Expires:</span> <span id="resExpiresAt" class="text-gray-400"></span></div>
+        </div>
+        <p class="text-[10px] text-gray-400 italic">⚠️ Save the License Key now. It is shown once and hashed on the server.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 hidden px-4 py-3 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 border"></div>
+
+  <!-- ================= JAVASCRIPT LOGIC ================= -->
+  <script>
+    let allLicenses = [];
+    let currentTab = 'licenses';
+
+    function getAdminSecret() {
+      return localStorage.getItem('admin_secret') || sessionStorage.getItem('admin_secret');
+    }
+
+    function showToast(msg, type = 'success') {
+      const el = document.getElementById('toast');
+      el.innerText = msg;
+      el.className = `fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 border ${
+        type === 'success' ? 'bg-emerald-900/90 border-emerald-500 text-white' : 'bg-rose-900/90 border-rose-500 text-white'
+      }`;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-600', 'text-white', 'shadow-sm');
+        btn.classList.add('text-gray-400');
+      });
+      const activeBtn = document.getElementById(`tabBtn-${tab}`);
+      activeBtn.classList.add('bg-emerald-600', 'text-white', 'shadow-sm');
+      activeBtn.classList.remove('text-gray-400');
+
+      document.getElementById('tabContent-licenses').classList.toggle('hidden', tab !== 'licenses');
+      document.getElementById('tabContent-rollout').classList.toggle('hidden', tab !== 'rollout');
+      document.getElementById('tabContent-telemetry').classList.toggle('hidden', tab !== 'telemetry');
+
+      if (tab === 'licenses') loadLicenses();
+      if (tab === 'rollout') loadReleaseConfig();
+      if (tab === 'telemetry') loadTelemetry();
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const secret = document.getElementById('adminSecretInput').value.trim();
+      const errEl = document.getElementById('authError');
+      errEl.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/license/list', {
+          headers: { 'x-admin-secret': secret }
+        });
+        if (res.ok) {
+          const remember = document.getElementById('rememberMeCheckbox').checked;
+          if (remember) {
+            localStorage.setItem('admin_secret', secret);
+          } else {
+            sessionStorage.setItem('admin_secret', secret);
+            localStorage.removeItem('admin_secret');
+          }
+          document.getElementById('authModal').classList.add('hidden');
+          document.getElementById('appShell').classList.remove('hidden');
+          loadLicenses();
+          loadReleaseConfig();
+        } else {
+          errEl.classList.remove('hidden');
+        }
+      } catch (err) {
+        errEl.innerText = 'Connection error. Check URL.';
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function handleLogout() {
+      sessionStorage.removeItem('admin_secret');
+      localStorage.removeItem('admin_secret');
+      location.reload();
+    }
+
+    async function loadLicenses() {
+      const secret = getAdminSecret();
+      const tbody = document.getElementById('licensesTableBody');
+      try {
+        const res = await fetch('/api/license/list', {
+          headers: { 'x-admin-secret': secret }
+        });
+        const data = await res.json();
+        allLicenses = data.licenses || [];
+        renderLicenses(allLicenses);
+        updateKPIs(allLicenses);
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-rose-400">Failed to load licenses: ${err.message}</td></tr>`;
+      }
+    }
+
+    function updateKPIs(licenses) {
+      document.getElementById('kpi-total').innerText = licenses.length;
+      document.getElementById('kpi-active').innerText = licenses.filter(l => l.machineId).length;
+      document.getElementById('kpi-expiring').innerText = licenses.filter(l => l.daysUntilExpiry !== null && l.daysUntilExpiry >= 0 && l.daysUntilExpiry <= 30).length;
+      document.getElementById('kpi-pilots').innerText = licenses.filter(l => l.isPilot).length;
+    }
+
+    function renderLicenses(list) {
+      const tbody = document.getElementById('licensesTableBody');
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-gray-500">No licenses found. Click "Issue License" above to create one.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.map(l => {
+        let badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-gray-800 text-gray-400">Inactive</span>';
+        if (l.status === 'active' && l.machineId) {
+          if (l.daysUntilExpiry !== null && l.daysUntilExpiry <= 0) {
+            badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold">Expired</span>';
+          } else if (l.daysUntilExpiry !== null && l.daysUntilExpiry <= 30) {
+            badge = `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold">${l.daysUntilExpiry}d left</span>`;
+          } else {
+            badge = `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">${l.daysUntilExpiry !== null ? l.daysUntilExpiry + 'd left' : 'Active'}</span>`;
+          }
+        }
+
+        const pilotTag = l.isPilot
+          ? `<button onclick="togglePilot('${l.licenseId}')" class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30">🧪 Pilot</button>`
+          : `<button onclick="togglePilot('${l.licenseId}')" class="px-2 py-0.5 rounded text-[10px] text-gray-500 hover:text-gray-300 border border-gray-800 hover:border-gray-700">+ Set Pilot</button>`;
+
+        const expiryStr = l.expiresAt ? l.expiresAt.split('T')[0] : '1 Year Default';
+
+        return `
+          <tr class="hover:bg-gray-900/40 transition-colors">
+            <td class="py-3 px-4 font-semibold text-white">
+              <div>${l.pharmacyName}</div>
+              ${l.notes ? `<div class="text-[10px] text-gray-500 font-normal">${l.notes}</div>` : ''}
+            </td>
+            <td class="py-3 px-4 font-mono font-bold text-emerald-400">${l.licenseId}</td>
+            <td class="py-3 px-4 font-mono text-gray-400 text-[11px]">${l.machineId || '<span class="text-gray-600">Unbound</span>'}</td>
+            <td class="py-3 px-4 font-mono text-gray-300">${expiryStr}</td>
+            <td class="py-3 px-4">${badge}</td>
+            <td class="py-3 px-4">${pilotTag}</td>
+            <td class="py-3 px-4 text-right space-x-1.5">
+              <button onclick="renewLicense('${l.licenseId}', 365)" class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded text-[11px] font-bold transition-all border border-emerald-500/30">
+                🔄 Renew +1 Yr
+              </button>
+              ${l.machineId ? `
+                <button onclick="resetMachine('${l.licenseId}')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[11px] transition-all" title="Unbind hardware ID if client changed PC">
+                  Unbind
+                </button>
+              ` : ''}
+            </td>
+          </tr>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    function filterLicenses() {
+      const q = document.getElementById('licenseSearchInput').value.toLowerCase();
+      const filtered = allLicenses.filter(l =>
+        l.pharmacyName.toLowerCase().includes(q) ||
+        l.licenseId.toLowerCase().includes(q) ||
+        (l.notes && l.notes.toLowerCase().includes(q))
+      );
+      renderLicenses(filtered);
+    }
+
+    async function renewLicense(licenseId, days) {
+      if (!confirm(`Confirm extending License ${licenseId} by ${days} days (+1 Year)?`)) return;
+      const secret = getAdminSecret();
+      try {
+        const res = await fetch('/api/license/renew', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ licenseId, days }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`🎉 ${data.message}`, 'success');
+          loadLicenses();
+        } else {
+          showToast(data.error || 'Failed to renew', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function togglePilot(licenseId) {
+      const secret = getAdminSecret();
+      try {
+        const res = await fetch('/api/license/toggle-pilot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ licenseId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(data.message, 'success');
+          loadLicenses();
+        } else {
+          showToast(data.error || 'Failed to toggle pilot', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function resetMachine(licenseId) {
+      if (!confirm(`Unbind machine hardware ID from ${licenseId}? The user can now activate on a new PC.`)) return;
+      const secret = getAdminSecret();
+      try {
+        const res = await fetch('/api/license/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ licenseId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Machine unbind successful!', 'success');
+          loadLicenses();
+        } else {
+          showToast(data.error || 'Failed to reset', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Modal
+    function openCreateModal() {
+      document.getElementById('createLicenseModal').classList.remove('hidden');
+      document.getElementById('createdLicenseResult').classList.add('hidden');
+      document.getElementById('createLicenseForm').reset();
+    }
+    function closeCreateModal() {
+      document.getElementById('createLicenseModal').classList.add('hidden');
+    }
+
+    let lastCreatedData = null;
+    async function handleCreateLicense(e) {
+      e.preventDefault();
+      const secret = getAdminSecret();
+      const pharmacyName = document.getElementById('newPharmacyName').value;
+      const notes = document.getElementById('newNotes').value;
+      const validityDays = document.getElementById('newValidityDays').value;
+      const isPilot = document.getElementById('newIsPilot').checked;
+
+      try {
+        const res = await fetch('/api/license/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ pharmacyName, notes, validityDays, isPilot }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          lastCreatedData = data;
+          document.getElementById('resLicenseId').innerText = data.licenseId;
+          document.getElementById('resLicenseKey').innerText = data.licenseKey;
+          document.getElementById('resExpiresAt').innerText = data.expiresAt ? data.expiresAt.split('T')[0] : '1 Year';
+          document.getElementById('createdLicenseResult').classList.remove('hidden');
+          loadLicenses();
+          showToast('License issued successfully!', 'success');
+        } else {
+          showToast(data.error || 'Failed to create license', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function copyLicenseInfo() {
+      if (!lastCreatedData) return;
+      const text = `🏥 *AI Pharmacy OS — Activation Credentials*\n\n` +
+        `• *Pharmacy:* ${lastCreatedData.pharmacyName}\n` +
+        `• *License ID:* ${lastCreatedData.licenseId}\n` +
+        `• *License Key:* ${lastCreatedData.licenseKey}\n` +
+        `• *Valid Until:* ${lastCreatedData.expiresAt ? lastCreatedData.expiresAt.split('T')[0] : '1 Year'}\n\n` +
+        `Please open the setup installer on your PC, paste your License ID & Key, and click Activate!`;
+      navigator.clipboard.writeText(text);
+      showToast('Copied activation text for WhatsApp!', 'success');
+    }
+
+    // Release Rollout
+    async function loadReleaseConfig() {
+      const secret = getAdminSecret();
+      try {
+        const res = await fetch('/api/updates/publish', {
+          headers: { 'x-admin-secret': secret }
+        });
+        const release = await res.json();
+        document.getElementById('releaseVersion').value = release.latestVersion || '';
+        document.getElementById('releaseUrl').value = release.downloadUrl || '';
+        document.getElementById('releaseChangelog').value = release.changelog || '';
+        const radios = document.getElementsByName('rolloutMode');
+        radios.forEach(r => { r.checked = (r.value === (release.rolloutMode || 'ALL')); });
+
+        const badge = document.getElementById('currentRolloutBadge');
+        if (release.rolloutMode === 'PILOT') {
+          badge.innerText = `Current: v${release.latestVersion} (Pilot Testers Only)`;
+          badge.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20';
+        } else {
+          badge.innerText = `Current: v${release.latestVersion} (All Pharmacies)`;
+          badge.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        }
+      } catch (err) {
+        // quiet fallback
+      }
+    }
+
+    async function handlePublishRelease(e) {
+      e.preventDefault();
+      const secret = getAdminSecret();
+      const latestVersion = document.getElementById('releaseVersion').value.trim();
+      const downloadUrl = document.getElementById('releaseUrl').value.trim();
+      const changelog = document.getElementById('releaseChangelog').value.trim();
+      let rolloutMode = 'ALL';
+      document.getElementsByName('rolloutMode').forEach(r => { if (r.checked) rolloutMode = r.value; });
+
+      try {
+        const res = await fetch('/api/updates/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ latestVersion, downloadUrl, changelog, rolloutMode }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(data.message, 'success');
+          loadReleaseConfig();
+        } else {
+          showToast(data.error || 'Failed to publish release', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Telemetry
+    async function loadTelemetry() {
+      const secret = getAdminSecret();
+      const tbody = document.getElementById('telemetryTableBody');
+      try {
+        const res = await fetch('/api/telemetry/list', {
+          headers: { 'x-admin-secret': secret }
+        });
+        const data = await res.json();
+        const list = data.errors || [];
+        if (!list.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-gray-500 font-sans">🎉 Zero errors reported! All PCs running smoothly.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = list.map(e => `
+          <tr class="hover:bg-gray-900/40 transition-colors">
+            <td class="py-2.5 px-4 text-gray-400">${new Date(e.timestamp).toLocaleTimeString()}</td>
+            <td class="py-2.5 px-4 text-emerald-400">v${e.appVersion}</td>
+            <td class="py-2.5 px-4 text-rose-400 font-semibold">${e.errorType}</td>
+            <td class="py-2.5 px-4 text-gray-200 max-w-xs truncate" title="${e.message}">${e.message}</td>
+            <td class="py-2.5 px-4 text-gray-500">${e.machineId}</td>
+            <td class="py-2.5 px-4 text-gray-400 text-[10px] max-w-sm truncate" title="${e.stackSnippet || ''}">${e.stackSnippet || 'None'}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-rose-400 font-sans">Failed to load telemetry: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Auto login if already authenticated in session
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      if (getAdminSecret()) {
+        document.getElementById('authModal').classList.add('hidden');
+        document.getElementById('appShell').classList.remove('hidden');
+        loadLicenses();
+        loadReleaseConfig();
+      }
+    });
+  </script>
+</body>
+</html>

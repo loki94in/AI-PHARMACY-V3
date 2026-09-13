@@ -15,5 +15,8 @@
         { "key": "Access-Control-Allow-Headers", "value": "Content-Type,x-admin-secret" }
       ]
     }
+  ],
+  "rewrites": [
+    { "source": "/admin", "destination": "/index.html" }
   ]
 }

@@ -1,13 +1,8 @@
-// Update this file whenever you release a new version.
-// Push to GitHub → Vercel auto-deploys in ~30 seconds.
+import { kv } from '@vercel/kv';
 
-const LATEST_VERSION = '1.0.0';
-
-// Cloudflare tunnel URL to download the full installer.
-// Update this when you move to a stable domain.
-const DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://your-tunnel.trycloudflare.com/download/ai-pharmacy-setup.exe';
-
-const CHANGELOG = `
+const DEFAULT_LATEST_VERSION = '1.0.0';
+const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://your-tunnel.trycloudflare.com/download/ai-pharmacy-setup.exe';
+const DEFAULT_CHANGELOG = `
 v1.0.0 — Initial Release
 • AI-powered pharmacy management
 • Pharmarack integration
@@ -15,19 +10,54 @@ v1.0.0 — Initial Release
 • Customer portal
 `.trim();
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   const clientVersion = req.query.version || '0.0.0';
-  const hasUpdate = compareVersions(LATEST_VERSION, clientVersion) > 0;
+  const clientLicenseId = req.query.licenseId || null;
+
+  // Retrieve active release from KV (or fallback to defaults)
+  let release = null;
+  try {
+    release = await kv.get('update_release');
+  } catch (err) {
+    // KV unavailable, proceed with defaults
+  }
+
+  const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
+  const downloadUrl = release?.downloadUrl || DEFAULT_DOWNLOAD_URL;
+  const changelog = release?.changelog || DEFAULT_CHANGELOG;
+  const rolloutMode = release?.rolloutMode || 'ALL'; // 'ALL' or 'PILOT'
+
+  let isTargetEligible = true;
+
+  // If release is in PILOT mode, only clients marked as pilot get the update
+  if (rolloutMode === 'PILOT') {
+    isTargetEligible = false;
+    if (clientLicenseId) {
+      try {
+        const licenseRecord = await kv.get(`license:${clientLicenseId}`);
+        if (licenseRecord?.isPilot === true) {
+          isTargetEligible = true;
+        }
+      } catch {
+        // Fallback to false if lookup fails
+      }
+    }
+  }
+
+  const hasNewerVersion = compareVersions(latestVersion, clientVersion) > 0;
+  const hasUpdate = hasNewerVersion && isTargetEligible;
 
   return res.status(200).json({
     hasUpdate,
-    latestVersion: LATEST_VERSION,
+    latestVersion,
     currentVersion: clientVersion,
-    downloadUrl: hasUpdate ? DOWNLOAD_URL : null,
-    changelog: hasUpdate ? CHANGELOG : null,
+    rolloutMode,
+    isPilot: isTargetEligible && rolloutMode === 'PILOT',
+    downloadUrl: hasUpdate ? downloadUrl : null,
+    changelog: hasUpdate ? changelog : null,
     checkedAt: new Date().toISOString(),
   });
 }
