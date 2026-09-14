@@ -3803,6 +3803,60 @@ const SpecialOrdersSection: React.FC = () => {
   const [convertingId, setConvertingId] = useState<number | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
 
+  interface CartAdjustmentNotice {
+    productName: string;
+    action: 'removed' | 'adjusted';
+    previousQty?: number;
+    deductedQty?: number;
+    remainingQty?: number;
+    storeName?: string;
+  }
+  const [cartAdjustmentNotice, setCartAdjustmentNotice] = useState<CartAdjustmentNotice | null>(null);
+
+  useEffect(() => {
+    if (!cartAdjustmentNotice) return;
+    const timer = setTimeout(() => {
+      setCartAdjustmentNotice(null);
+    }, 6500);
+    return () => clearTimeout(timer);
+  }, [cartAdjustmentNotice]);
+
+  const handleCartAdjustmentFeedback = (adjustment: any, fallbackName: string) => {
+    if (!adjustment || adjustment.action === 'none') return;
+    const prodName = adjustment.productName || fallbackName;
+    if (adjustment.action === 'adjusted') {
+      setCartAdjustmentNotice({
+        productName: prodName,
+        action: 'adjusted',
+        previousQty: adjustment.previousQty,
+        deductedQty: adjustment.deductedQty,
+        remainingQty: adjustment.remainingQty,
+        storeName: adjustment.storeName
+      });
+      toastEvent.trigger(
+        `Live cart adjusted: "${prodName}" qty reduced to ${adjustment.remainingQty} (shelf stock preserved)`,
+        'info',
+        '/crm'
+      );
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+    } else if (adjustment.action === 'removed') {
+      setCartAdjustmentNotice({
+        productName: prodName,
+        action: 'removed',
+        previousQty: adjustment.previousQty,
+        deductedQty: adjustment.deductedQty,
+        remainingQty: 0,
+        storeName: adjustment.storeName
+      });
+      toastEvent.trigger(
+        `Removed "${prodName}" from Pharmarack live cart`,
+        'success',
+        '/crm'
+      );
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+    }
+  };
+
   // New Request Form State
   const [product, setProduct] = useState('');
   const [orderSalutation, setOrderSalutation] = useState('Mr.');
@@ -4023,6 +4077,10 @@ const SpecialOrdersSection: React.FC = () => {
     setUpdatingId(id);
     try {
       const res = await api.updateOrder(id, { status: newStatus });
+      if (newStatus === 'Cancelled') {
+        const ord = orders.find(o => o.id === id);
+        handleCartAdjustmentFeedback(res?.cartAdjustment, ord?.product || 'Medicine');
+      }
       toastEvent.trigger(
         res?.whatsapp_queued
           ? `Status updated to ${newStatus} & arrival WhatsApp queued!`
@@ -4097,7 +4155,8 @@ const SpecialOrdersSection: React.FC = () => {
     if (!window.confirm(`Are you sure you want to cancel and delete the special order request for "${product}"?`)) return;
     setDeletingId(id);
     try {
-      await api.deleteOrder(id);
+      const res = await api.deleteOrder(id);
+      handleCartAdjustmentFeedback(res?.cartAdjustment, product);
       toastEvent.trigger(`Special order for "${product}" cancelled & deleted`, 'success', '/crm');
       await loadOrders();
       specialOrdersEvent.triggerUpdated();
@@ -4333,6 +4392,9 @@ const SpecialOrdersSection: React.FC = () => {
         );
       } else {
         toastEvent.trigger(`Special request for "${editProduct.trim()}" updated successfully!`, 'success', '/crm');
+      }
+      if (editStatus === 'Cancelled') {
+        handleCartAdjustmentFeedback(res?.cartAdjustment, editProduct.trim());
       }
       setShowEditModal(false);
       setEditingOrder(null);
@@ -5333,6 +5395,66 @@ const SpecialOrdersSection: React.FC = () => {
             loadOrders();
           }}
         />
+      )}
+
+      {/* Live Cart Quantity Auto-Adjustment Animated Notification Card */}
+      {cartAdjustmentNotice && createPortal(
+        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-5 duration-300 pointer-events-auto">
+          <div className="bg-bg2/95 backdrop-blur-md border border-glass-border shadow-2xl rounded-2xl p-4 max-w-sm w-88 flex flex-col gap-2.5 transition-all">
+            <div className="flex items-center justify-between gap-2 border-b border-glass-border/40 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                  <ShoppingCart size={13} />
+                </div>
+                <span className="text-xs font-bold text-text uppercase tracking-wider">
+                  Live Cart {cartAdjustmentNotice.action === 'adjusted' ? 'Auto-Adjusted' : 'Item Removed'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCartAdjustmentNotice(null)}
+                className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="font-extrabold text-sm text-text truncate">
+                {cartAdjustmentNotice.productName}
+              </span>
+              {cartAdjustmentNotice.storeName && (
+                <span className="text-[11px] text-muted">
+                  Distributor: <span className="text-text font-medium">{cartAdjustmentNotice.storeName}</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              {cartAdjustmentNotice.action === 'adjusted' ? (
+                <>
+                  <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1">
+                    Special Req: -{cartAdjustmentNotice.deductedQty}
+                  </span>
+                  <span className="text-[10px] font-extrabold px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                    ✓ Ordering {cartAdjustmentNotice.remainingQty} for Shelf
+                  </span>
+                </>
+              ) : (
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  Entire {cartAdjustmentNotice.deductedQty} qty removed from cart
+                </span>
+              )}
+            </div>
+
+            <p className="text-[10px] text-muted leading-relaxed">
+              {cartAdjustmentNotice.action === 'adjusted'
+                ? 'Special order cancelled. Your pharmacy shelf quantity has been preserved in the live cart.'
+                : 'Item has been deleted from your Pharmarack live cart.'}
+            </p>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

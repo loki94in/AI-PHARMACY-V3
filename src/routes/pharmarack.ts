@@ -1402,6 +1402,261 @@ router.post('/delete-cart-item', async (req, res) => {
   }
 });
 
+export interface SpecialOrderCartAdjustmentResult {
+  action: 'removed' | 'adjusted' | 'none';
+  productName: string;
+  previousQty?: number;
+  deductedQty?: number;
+  remainingQty?: number;
+  storeName?: string;
+  message?: string;
+}
+
+/**
+ * Smart Auto-Adjustment / Removal for Special Orders:
+ * - If cart quantity <= requested special order quantity: completely delete the item from live cart.
+ * - If cart quantity > requested special order quantity (user added extra shelf stock):
+ *   deduct requested quantity and update the live cart to keep the remaining shelf stock.
+ */
+export async function adjustSpecialOrderInLiveCart(order: {
+  product: string;
+  qty?: number;
+  distributor?: string | null;
+}): Promise<SpecialOrderCartAdjustmentResult> {
+  try {
+    const rawProd = (order.product || '').trim();
+    if (!rawProd) return { action: 'none', productName: '', message: 'No product name specified' };
+
+    const requestedQty = Math.max(1, Number(order.qty) || 1);
+    const cart = await loadLiveCartCore();
+    if (!cart || !Array.isArray(cart.distributors) || cart.distributors.length === 0) {
+      return { action: 'none', productName: rawProd, message: 'Live cart is empty' };
+    }
+
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetNorm = normalize(rawProd);
+    const targetDistNorm = order.distributor ? normalize(order.distributor) : '';
+
+    let matchedItem: any = null;
+    let matchedDist: any = null;
+
+    // Pass 1: Match by distributor + exact normalized product name
+    for (const dist of cart.distributors) {
+      const distNorm = normalize(dist.storeName || '');
+      const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
+      for (const it of dist.items || []) {
+        const itNorm = normalize(it.productName || '');
+        if (itNorm === targetNorm && distMatches) {
+          matchedItem = it;
+          matchedDist = dist;
+          break;
+        }
+      }
+      if (matchedItem) break;
+    }
+
+    // Pass 2: Match by exact normalized product name across any distributor
+    if (!matchedItem) {
+      for (const dist of cart.distributors) {
+        for (const it of dist.items || []) {
+          const itNorm = normalize(it.productName || '');
+          if (itNorm === targetNorm) {
+            matchedItem = it;
+            matchedDist = dist;
+            break;
+          }
+        }
+        if (matchedItem) break;
+      }
+    }
+
+    // Pass 3: Match prefix / contains if product name is distinct enough
+    if (!matchedItem && targetNorm.length >= 4) {
+      for (const dist of cart.distributors) {
+        for (const it of dist.items || []) {
+          const itNorm = normalize(it.productName || '');
+          if (itNorm.startsWith(targetNorm) || targetNorm.startsWith(itNorm)) {
+            matchedItem = it;
+            matchedDist = dist;
+            break;
+          }
+        }
+        if (matchedItem) break;
+      }
+    }
+
+    if (!matchedItem) {
+      return { action: 'none', productName: rawProd, message: 'Item not found in current live cart' };
+    }
+
+    const currentCartQty = Number(matchedItem.qty) || 1;
+    const storeName = matchedDist?.storeName || matchedItem.storeName || '';
+
+    // Branch A: Entire requested quantity or more is cancelled -> Remove item completely from live cart
+    if (currentCartQty <= requestedQty) {
+      const deleteItem: PharmarackDeleteQueueItem = {
+        storeId: Number(matchedItem.storeId),
+        productId: matchedItem.productId,
+        productCode: matchedItem.productCode,
+        productName: matchedItem.productName,
+        company: matchedItem.company,
+        packaging: matchedItem.packaging,
+        ptr: matchedItem.ptr,
+        mrp: matchedItem.mrp,
+        storeName: storeName
+      };
+
+      const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
+      pharmarackDeleteChain = task;
+      await task;
+
+      return {
+        action: 'removed',
+        productName: matchedItem.productName,
+        previousQty: currentCartQty,
+        deductedQty: currentCartQty,
+        remainingQty: 0,
+        storeName,
+        message: `Removed "${matchedItem.productName}" from Pharmarack live cart`
+      };
+    }
+
+    // Branch B: Cart has extra shelf stock -> Deduct requestedQty and update live cart with remainingQty
+    const remainingQty = currentCartQty - requestedQty;
+    const rateVal = Number(matchedItem.ptr || 0);
+
+    const payload = {
+      StoreId: Number(matchedItem.storeId) || 0,
+      StoreName: storeName,
+      ProductCode: matchedItem.productCode || '',
+      Quantity: remainingQty,
+      PTR: rateVal,
+      Free: 0,
+      HiddenPTR: rateVal,
+      NetRate: rateVal,
+      Scheme: matchedItem.scheme || '',
+      SchemeType: '',
+      GSTPercentage: 0,
+      ItemGSTValue: 0,
+      CartSource: 'MOVP',
+      DeliveryOption: '',
+      RemarkForStore: '',
+      ProductAddedBy: 0,
+      Priority: '',
+      OrderPlaced: 0,
+      OrderPlacedBy: 0,
+      CreatedBy: 0,
+      ProductName: matchedItem.productName,
+      StoreProductName: matchedItem.productName,
+      StoreWiseAmount: 0,
+      StoreWiseGSTAmount: 0,
+      IsDeleted: 0,
+      AllowMinQty: 0,
+      AllowMaxQty: 0,
+      StepUpValue: 1,
+      AllowMOQ: true,
+      MinItemLimit: 0,
+      MaxItemLimit: 0,
+      MinAmountLimit: 0,
+      MaxAmountLimit: 0,
+      DODIsPrefenceSet: 0,
+      IsDODPreferenceSet: 0,
+      DisplayHalfSchemeOn: '',
+      DisplayHalfScheme: '0',
+      RetailerSchemePreference: 1,
+      HalfSchemeValueToRetailer: 0,
+      RoundOffDisplayHS: '',
+      MinOrderQuantity: 0,
+      MaxOrderQuantity: 0,
+      IsDODProduct: 0,
+      IsDODProductCheck: 0,
+      IsDODProductSelected: 0,
+      OrderDeliveryModeStatus: 1,
+      OrderRemarks: 1,
+      SpecialRate: 0,
+      Stock: 999,
+      RShowPtr: 1,
+      IsPartyLocked: 0,
+      RewardSchemeId: 0,
+      IsProductChecked: 1,
+      DeliveryPerson: '',
+      DeliveryPersonCode: '',
+      RShowPtrForAllCompanies: 1,
+      Company: matchedItem.company || '',
+      IsGroupWisePTR: 0,
+      IsGroupWisePTRRetailer: 0,
+      RateValidity: null,
+      IsShowNonMappedOrderStock: 1,
+      RStockVisibility: 0,
+      IsMapped: 1,
+      ProductId: (() => {
+        const v = matchedItem.productId;
+        if (!v) return 0;
+        const n = Number(v);
+        if (!isNaN(n) && n > 0) return n;
+        const stripped = String(v).replace(/^PR/i, '');
+        const sn = Number(stripped);
+        return (!isNaN(sn) && sn > 0) ? sn : 0;
+      })(),
+      MRP: String(matchedItem.mrp || 0),
+      ProductWiseAmount: 0,
+      ProductWiseGSTAmount: 0,
+      ProductWiseSchemeAmount: 0,
+      ProductWiseSchemeGSTAmount: 0,
+      StoreWiseSchemeAmount: 0,
+      StoreWiseSchemeGSTAmount: 0,
+      ProductLock: 0,
+      BoxPacking: '0',
+      CasePacking: matchedItem.packaging || '1 strip',
+      Packing: matchedItem.packaging || '1 strip'
+    };
+
+    const response = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (response.ok) {
+      invalidatePharmarackCartCache();
+      eventService.broadcast('pharmarack_cart_changed', { action: 'update', at: Date.now(), productName: matchedItem.productName });
+      return {
+        action: 'adjusted',
+        productName: matchedItem.productName,
+        previousQty: currentCartQty,
+        deductedQty: requestedQty,
+        remainingQty,
+        storeName,
+        message: `Decreased "${matchedItem.productName}" in Pharmarack cart from ${currentCartQty} to ${remainingQty} (deducted ${requestedQty} special order)`
+      };
+    } else {
+      const errTxt = await response.text().catch(() => '');
+      console.warn('[Pharmarack] Failed to auto-adjust cart item quantity:', errTxt);
+      return {
+        action: 'none',
+        productName: matchedItem.productName,
+        message: 'Failed to update upstream Pharmarack cart quantity'
+      };
+    }
+  } catch (err: any) {
+    console.error('[adjustSpecialOrderInLiveCart] Error:', err);
+    return { action: 'none', productName: order.product, message: err?.message || 'Error adjusting live cart' };
+  }
+}
+
+router.post('/adjust-special-order', async (req, res) => {
+  const { product, qty, distributor } = req.body;
+  if (!product) {
+    return res.status(400).json({ error: 'product is required' });
+  }
+  try {
+    const result = await adjustSpecialOrderInLiveCart({ product, qty, distributor });
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to adjust special order in live cart' });
+  }
+});
+
 
 // Helper to verify if an order was placed on Pharmarack for a specific store today
 async function verifyOrderPlacedInPharmarack(storeId: number): Promise<boolean> {

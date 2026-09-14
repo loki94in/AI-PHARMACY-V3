@@ -1427,9 +1427,9 @@ export const api = {
   createOrder: (data: Partial<SpecialOrder>) => apiClient.post('/orders', data).then(res => res.data),
   createBatchOrders: (data: { items: readonly unknown[]; requester: string; phone: string; priority?: string; advance_payment?: number; customer_id?: number; language?: string; sendWhatsApp?: boolean }) =>
     apiClient.post('/orders/batch', data).then(res => res.data),
-  updateOrder: (id: number, data: Partial<SpecialOrder>) => apiClient.put<{ success: boolean; message: string; whatsapp_queued?: boolean }>(`/orders/${id}`, data).then(res => res.data),
+  updateOrder: (id: number, data: Partial<SpecialOrder>) => apiClient.put<{ success: boolean; message: string; whatsapp_queued?: boolean; cartAdjustment?: any }>(`/orders/${id}`, data).then(res => res.data),
   updateOrderStatus: (id: number, status: string) => apiClient.post(`/orders/${id}/status`, { status }).then(res => res.data),
-  deleteOrder: (id: number) => apiClient.delete(`/orders/${id}`).then(res => res.data),
+  deleteOrder: (id: number) => apiClient.delete<{ success: boolean; message: string; cartAdjustment?: any }>(`/orders/${id}`).then(res => res.data),
   checkArrivalRecentlyNotified: (phone: string) =>
     apiClient.get<{ recentlyNotified: boolean; minutesAgo?: number; queueId?: number; status?: string }>('/orders/check-arrival-notified', { params: { phone } }).then(res => res.data),
   notifySpecialOrderArrival: (id: number, force_resend?: boolean) => apiClient.post(`/orders/${id}/notify-arrival`, { force_resend }).then(res => res.data),

@@ -869,8 +869,22 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    let cartAdjustment: any = null;
+    if (newStatus === 'Cancelled') {
+      try {
+        const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+        cartAdjustment = await adjustSpecialOrderInLiveCart({
+          product: newProduct || existing.product,
+          qty: newQty || existing.qty,
+          distributor: newDistributor || existing.pharmarack_distributor
+        });
+      } catch (cartErr) {
+        console.warn('[Orders] Could not auto-adjust live cart on order cancel:', cartErr);
+      }
+    }
+
     broadcastOrdersChanged();
-    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount });
+    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
   } catch (err) {
     console.error('Update order error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -928,8 +942,22 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       ).catch(() => {});
     }
 
+    let cartAdjustment: any = null;
+    if (status === 'Cancelled') {
+      try {
+        const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+        cartAdjustment = await adjustSpecialOrderInLiveCart({
+          product: existing.product,
+          qty: existing.qty,
+          distributor: existing.pharmarack_distributor
+        });
+      } catch (cartErr) {
+        console.warn('[Orders] Could not auto-adjust live cart on order status Cancelled:', cartErr);
+      }
+    }
+
     broadcastOrdersChanged();
-    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount });
+    res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
   } catch (err: any) {
     console.error('Update order status error:', err);
     res.status(500).json({ error: 'Internal server error: ' + (err?.message || '') });
@@ -999,8 +1027,21 @@ router.delete('/:id', async (req, res) => {
       [String(id), String(id)]
     ).catch(() => {});
     
+    // Auto-adjust or remove from Pharmarack Live Cart
+    let cartAdjustment: any = null;
+    try {
+      const { adjustSpecialOrderInLiveCart } = await import('./pharmarack.js');
+      cartAdjustment = await adjustSpecialOrderInLiveCart({
+        product: existing.product,
+        qty: existing.qty,
+        distributor: existing.pharmarack_distributor
+      });
+    } catch (cartErr) {
+      console.warn('[Orders] Could not auto-adjust live cart on order delete:', cartErr);
+    }
+
     broadcastOrdersChanged();
-    res.json({ success: true, message: 'Order deleted successfully' });
+    res.json({ success: true, message: 'Order deleted successfully', cartAdjustment });
   } catch (err) {
     console.error('Delete order error:', err);
     res.status(500).json({ error: 'Internal server error' });
