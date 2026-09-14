@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-14T15:19:23.675Z",
+  "last_updated": "2026-09-14T15:41:04.031Z",
   "products": {
     "5": {
       "status": "success",
@@ -315809,7 +315809,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "GLOBUCEL 1000 MG INJECTION 1",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:51:36.719Z"
+      "checked_at": "2026-09-14T15:41:04.031Z"
     },
     "309272": {
       "status": "not_found",
@@ -319553,7 +319553,7 @@
       "company": "MANKIND PHARMACEUTICALS LTD",
       "product_name": "MANFORCE GAME 3IN1 BOX OF 10 CONDOMS",
       "reason": "Zero valid angles downloaded",
-      "checked_at": "2026-09-14T14:51:23.242Z"
+      "checked_at": "2026-09-14T15:40:39.550Z"
     },
     "325863": {
       "status": "not_found",
@@ -323366,11 +323366,14 @@
       "checked_at": "2026-09-14T07:08:00.864Z"
     },
     "337133": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "MACLEODS PHARMACEUTICALS",
-      "product_name": "GEMINOR M 0.5MG TABLET 15'S",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:54:38.904Z"
+      "product_name": "Geminor M 0.5Mg Strip Of 15 Tablets",
+      "angles_saved": 1,
+      "primary_face": "box-front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:41.228Z"
     },
     "337135": {
       "status": "not_found",
@@ -328025,7 +328028,7 @@
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
       "product_name": "BECTOSEPT 5 % OINTMENT 125 GM",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:51:54.450Z"
+      "checked_at": "2026-09-14T15:41:02.259Z"
     },
     "349040": {
       "status": "not_found",
@@ -342395,7 +342398,7 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "product_name": "HEPASAVE CAPSULE",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:37.696Z"
+      "checked_at": "2026-09-14T15:37:14.593Z"
     },
     "381066": {
       "status": "not_found",
@@ -345314,7 +345317,7 @@
       "company": "SUN PHARMA",
       "product_name": "MONTEK LC KID SYP",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:38.321Z"
+      "checked_at": "2026-09-14T15:37:34.985Z"
     },
     "387559": {
       "status": "success",
@@ -347562,7 +347565,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "GABAPIN ME 300MG TABLET",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:42.352Z"
+      "checked_at": "2026-09-14T15:38:13.747Z"
     },
     "392577": {
       "status": "not_found",
@@ -349721,7 +349724,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "ZENSOFT CREAM",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:48.500Z"
+      "checked_at": "2026-09-14T15:38:31.169Z"
     },
     "396810": {
       "status": "not_found",
@@ -349986,11 +349989,14 @@
       "checked_at": "2026-09-14T08:23:08.083Z"
     },
     "397205": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
-      "product_name": "RISORINE KIT TAB",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:55:09.695Z"
+      "product_name": "Risorine Kit",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:27.642Z"
     },
     "397212": {
       "status": "not_found",
@@ -351747,7 +351753,7 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "product_name": "WINBP AM 20MG TABLET 15'S",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:04.381Z"
+      "checked_at": "2026-09-14T15:39:14.738Z"
     },
     "400358": {
       "status": "not_found",
@@ -352611,7 +352617,7 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "product_name": "ESGIPYRIN INSTA GEL 50GM",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:15.231Z"
+      "checked_at": "2026-09-14T15:39:38.770Z"
     },
     "402137": {
       "status": "not_found",
@@ -354788,7 +354794,7 @@
       "company": "MICRO LABS",
       "product_name": "GRAMOCEF O DT 400MG TABLET",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:00.678Z"
+      "checked_at": "2026-09-14T15:38:47.286Z"
     },
     "406792": {
       "status": "not_found",
@@ -355048,11 +355054,14 @@
       "checked_at": "2026-09-14T07:24:01.300Z"
     },
     "407347": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "MANKIND PHARMACEUTICALS LTD",
-      "product_name": "MULTISTAR PET VET SYP",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:05.290Z"
+      "product_name": "Multistar Multivitamin Pet Syrup Chicken Flavour",
+      "angles_saved": 4,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:37:56.131Z"
     },
     "407357": {
       "status": "not_found",
@@ -355174,7 +355183,7 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "REJUNEX FORTE INJ 2ML",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:24.187Z"
+      "checked_at": "2026-09-14T15:40:01.826Z"
     },
     "407619": {
       "status": "not_found",
@@ -356404,7 +356413,7 @@
       "company": "SUN PHARMA",
       "product_name": "TRIGLUCORED FORTE TAB 7.5MG",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:23.100Z"
+      "checked_at": "2026-09-14T15:38:36.616Z"
     },
     "410133": {
       "status": "not_found",
@@ -356840,7 +356849,7 @@
       "company": "CIPLA LIMITED",
       "product_name": "TUGAIN 5% BOTTLE OF 60ML SOLUTION",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:24.234Z"
+      "checked_at": "2026-09-14T15:38:08.371Z"
     },
     "411041": {
       "status": "not_found",
@@ -356903,7 +356912,7 @@
       "company": "ALKEM LABORATORIES LTD",
       "product_name": "ALCIFLOX D EYE DROPS 10 ML",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T11:41:18.922Z"
+      "checked_at": "2026-09-14T15:39:37.932Z"
     },
     "411155": {
       "status": "not_found",
@@ -357629,11 +357638,14 @@
       "checked_at": "2026-09-14T15:16:31.754Z"
     },
     "412543": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "CIPLA LIMITED",
-      "product_name": "OXECAINE MINT FLAV GEL",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:54.083Z"
+      "product_name": "Oxecaine Oral Gel Mint",
+      "angles_saved": 3,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:38:57.134Z"
     },
     "412548": {
       "status": "not_found",
@@ -357754,11 +357766,14 @@
       "checked_at": "2026-09-14T07:31:44.103Z"
     },
     "412788": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "CIPLA LIMITED",
-      "product_name": "NASOWASH SACHET",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:20.993Z"
+      "product_name": "Nasowash Sachet 7.8G",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:52.094Z"
     },
     "412803": {
       "status": "not_found",
@@ -358701,7 +358716,7 @@
       "company": "LUPIN",
       "product_name": "NIZONIDE 100 MG TABLET 10",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:58.065Z"
+      "checked_at": "2026-09-14T15:37:50.181Z"
     },
     "414681": {
       "status": "not_found",
@@ -359293,7 +359308,7 @@
       "company": "SUN PHARMA",
       "product_name": "AB PHYLLINE SYP",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:53.043Z"
+      "checked_at": "2026-09-14T15:39:54.308Z"
     },
     "415786": {
       "status": "not_found",
@@ -364064,7 +364079,7 @@
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
       "product_name": "MINOZ BPO GEL",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:56:17.099Z"
+      "checked_at": "2026-09-14T15:38:05.586Z"
     },
     "426174": {
       "status": "not_found",
@@ -365899,11 +365914,14 @@
       "checked_at": "2026-09-14T15:13:09.900Z"
     },
     "430205": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "MANKIND PHARMACEUTICALS LTD",
-      "product_name": "MOXIFORCE CV 625 STRIP OF 10 TABLETS",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:54:14.959Z"
+      "product_name": "Moxiforce Cv 625Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:38:45.700Z"
     },
     "430223": {
       "status": "not_found",
@@ -366596,11 +366614,14 @@
       "checked_at": "2026-09-14T12:27:15.531Z"
     },
     "431501": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "MANKIND PHARMACEUTICALS LTD",
-      "product_name": "PIOKIND 15MG TABLET",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:54:30.747Z"
+      "product_name": "Piokind 15Mg Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:33.478Z"
     },
     "431509": {
       "status": "not_found",
@@ -376049,11 +376070,14 @@
       "checked_at": "2026-09-14T11:48:15.186Z"
     },
     "460509": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "TORRENT PHARMACEUTICALS LTD",
-      "product_name": "BETACARD 50MG TABLET",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:57.324Z"
+      "product_name": "Betacard 50Mg Strip Of 14 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:37:02.895Z"
     },
     "460542": {
       "status": "not_found",
@@ -380693,7 +380717,7 @@
       "company": "TORRENT PHARMACEUTICALS LTD",
       "product_name": "ENZAR 40000 STRIP OF 10 CAPSULES",
       "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T11:46:20.782Z"
+      "checked_at": "2026-09-14T15:38:25.961Z"
     },
     "478765": {
       "status": "not_found",
@@ -380868,11 +380892,14 @@
       "checked_at": "2026-09-14T08:32:51.493Z"
     },
     "479386": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "TORRENT PHARMACEUTICALS LTD",
-      "product_name": "AZULIX 0.5MG MF TAB 10'S",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:55:06.447Z"
+      "product_name": "Azulix 0.5Mg Mf Strip Of 10 Tablets",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:25.538Z"
     },
     "479405": {
       "status": "not_found",
@@ -381646,11 +381673,14 @@
       "checked_at": "2026-09-14T14:55:44.289Z"
     },
     "482216": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "TORRENT PHARMACEUTICALS LTD",
-      "product_name": "ROZUCOR GOLD 20MG STRIP OF 10 CAPSULES",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:55:33.965Z"
+      "product_name": "Rozucor Gold 20Mg Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "back",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:49.205Z"
     },
     "482230": {
       "status": "not_found",
@@ -395242,11 +395272,14 @@
       "checked_at": "2026-09-14T12:20:28.687Z"
     },
     "534511": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "ZEE LABORATORIES LTD",
-      "product_name": "BIOTICAS STRIP OF 10 CAPSULES",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:29.471Z"
+      "product_name": "Bioticas Capsule",
+      "angles_saved": 3,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:37:24.070Z"
     },
     "534515": {
       "status": "not_found",
@@ -395475,11 +395508,14 @@
       "checked_at": "2026-09-14T08:43:09.446Z"
     },
     "535550": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "ZEE LABORATORIES LTD",
-      "product_name": "CLOPIRIL AS STRIP OF 10 TABLETS",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:52:54.691Z"
+      "product_name": "Clopiril As Strip Of 10 Tablets",
+      "angles_saved": 3,
+      "primary_face": "box-front",
+      "primary_confidence": 95,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:38:10.180Z"
     },
     "535594": {
       "status": "not_found",
@@ -397939,11 +397975,14 @@
       "checked_at": "2026-09-14T08:43:10.011Z"
     },
     "551863": {
-      "status": "gemini_rejected",
+      "status": "success",
       "company": "ZEE LABORATORIES LTD",
-      "product_name": "NERVZONE M STRIP OF 10 CAPSULES",
-      "reason": "Packaging did not match target brand or strength",
-      "checked_at": "2026-09-14T14:53:18.005Z"
+      "product_name": "Nervzone M Strip Of 10 Capsules",
+      "angles_saved": 2,
+      "primary_face": "box-front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T15:39:02.350Z"
     },
     "551864": {
       "status": "not_found",
