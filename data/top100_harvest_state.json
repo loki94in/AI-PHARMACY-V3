@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-14T15:41:04.031Z",
+  "last_updated": "2026-09-14T16:22:03.994Z",
   "products": {
     "5": {
       "status": "success",
@@ -369473,6 +369473,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T15:18:16.214Z"
     },
+    "437851": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ALPRACAD 0.25MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:40.965Z"
+    },
+    "437893": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADITOR F TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:40.100Z"
+    },
     "437920": {
       "status": "success",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -369490,12 +369504,33 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:38:52.703Z"
     },
+    "437950": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "DROXYCAD 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:46.544Z"
+    },
     "437956": {
       "status": "not_found",
       "company": "MACLEODS PHARMACEUTICALS",
       "product_name": "BUNASE 0.5MG RESPULES 5*2ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T15:17:36.707Z"
+    },
+    "437990": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GLISTA PM2 TAB 30`S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:46.138Z"
+    },
+    "438018": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "INSUMET SR TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:43.165Z"
     },
     "438039": {
       "status": "not_found",
@@ -369525,6 +369560,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:43:13.129Z"
     },
+    "438104": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "SPORMAX 125 MG DRY SYRUP 30 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:51.354Z"
+    },
     "438130": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -369545,6 +369587,13 @@
       "product_name": "PIOPOD GM1 TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:34:36.309Z"
+    },
+    "438174": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "BIOPHENICOL 250MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:49.719Z"
     },
     "438199": {
       "status": "not_found",
@@ -369595,6 +369644,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T15:19:22.743Z"
     },
+    "438282": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PROSTODIN 250MG INJ 1ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:49.308Z"
+    },
     "438354": {
       "status": "not_found",
       "company": "MICRO LABS",
@@ -369640,6 +369696,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:43:35.857Z"
     },
+    "438459": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OVIDAC 5000IU INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:55.209Z"
+    },
+    "438517": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ALFA SYNTHOCAL TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:52.066Z"
+    },
     "438519": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -369656,6 +369726,20 @@
       "primary_confidence": 45,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-14T07:44:04.447Z"
+    },
+    "438557": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ALFERON INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:51.030Z"
+    },
+    "438578": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GLUTORVA 20MG TABLET 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:58.938Z"
     },
     "438613": {
       "status": "gemini_rejected",
@@ -369691,6 +369775,20 @@
       "product_name": "NUZEN 200MG TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:39:04.969Z"
+    },
+    "438687": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "BIOCIP 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:56.259Z"
+    },
+    "438691": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VEXOR XR 75MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:57.081Z"
     },
     "438714": {
       "status": "not_found",
@@ -369740,12 +369838,40 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:44:13.488Z"
     },
+    "438830": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "REMEM TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:19:58.082Z"
+    },
+    "438833": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CODECTUSS SYP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:00.155Z"
+    },
+    "438839": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "EEE 200MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:01.853Z"
+    },
     "438840": {
       "status": "gemini_rejected",
       "company": "SUN PHARMA",
       "product_name": "MAXMALA STRIP OF 10 CAPSULES",
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-14T14:59:16.299Z"
+    },
+    "438851": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "DECA NANDROBOL 25MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:00.647Z"
     },
     "438869": {
       "status": "success",
@@ -369802,6 +369928,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:44:16.246Z"
     },
+    "439003": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "TRAMAZAC OD 200MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:04.124Z"
+    },
     "439008": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
@@ -369816,12 +369949,43 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:02:25.672Z"
     },
+    "439077": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Cefoxim 750mg Injection",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T16:20:33.922Z"
+    },
+    "439083": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GENMOX 500MG CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:05.778Z"
+    },
+    "439084": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ACEBROFACT LM TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:08.183Z"
+    },
     "439100": {
       "status": "not_found",
       "company": "SUN PHARMA",
       "product_name": "CARDIVAS 3.125MG STRIP OF 10 TABLETS",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:43:54.155Z"
+    },
+    "439105": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "SUPPLEVITE M GOLD POWDER VET 2.5KG",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:37.223Z"
     },
     "439109": {
       "status": "not_found",
@@ -369836,6 +370000,13 @@
       "product_name": "TOBWEL EYE/EAR DROPS",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:39:18.369Z"
+    },
+    "439140": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PARACTOL TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:06.891Z"
     },
     "439147": {
       "status": "not_found",
@@ -369858,6 +370029,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:58:13.597Z"
     },
+    "439181": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "AMIKACIN (ZYDUS CADILA) 500MG INJECTION 2ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:10.911Z"
+    },
     "439186": {
       "status": "not_found",
       "company": "MACLEODS PHARMACEUTICALS",
@@ -369871,6 +370049,20 @@
       "product_name": "LUPI D3 60K STRIP OF 4 CAPSULES",
       "reason": "Packaging did not match target brand or strength",
       "checked_at": "2026-09-14T14:54:48.821Z"
+    },
+    "439239": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CURAMINTH TAB VET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:40.235Z"
+    },
+    "439262": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "FORMOST 100 RESPICAPS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:08.591Z"
     },
     "439272": {
       "status": "not_found",
@@ -369913,6 +370105,20 @@
       "product_name": "TOLAZ MD 5MG TABLET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:35:28.653Z"
+    },
+    "439390": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CANFEM 200MG VAG SUPPOS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:13.627Z"
+    },
+    "439398": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "RECOCEF 500MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:44.006Z"
     },
     "439410": {
       "status": "not_found",
@@ -369962,6 +370168,20 @@
       "verified_by": "gemini_sibling_remapped",
       "checked_at": "2026-09-14T08:02:54.369Z"
     },
+    "439476": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PSYCHOZAP 5MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:10.300Z"
+    },
+    "439486": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ANZICUM 0.5MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:15.226Z"
+    },
     "439508": {
       "status": "success",
       "company": "ALKEM LABORATORIES LTD",
@@ -369986,6 +370206,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:56:43.156Z"
     },
+    "439527": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VIBZI DROPS 15ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:47.580Z"
+    },
     "439529": {
       "status": "success",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -370009,6 +370236,13 @@
       "product_name": "DENON SHAMPOO 50ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:39:27.843Z"
+    },
+    "439560": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "KINAPLAT 100MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:12.075Z"
     },
     "439582": {
       "status": "not_found",
@@ -370047,6 +370281,13 @@
       "primary_confidence": 80,
       "verified_by": "ai_ocr_verified",
       "checked_at": "2026-09-14T08:03:06.488Z"
+    },
+    "439638": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CATENOL 100MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:54.376Z"
     },
     "439654": {
       "status": "success",
@@ -370103,6 +370344,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T15:18:48.946Z"
     },
+    "439740": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CODOREX DM SYRUP 50 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:14.578Z"
+    },
+    "439804": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NORFEN TZ SUSP 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:30.076Z"
+    },
     "439818": {
       "status": "success",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -370127,12 +370382,40 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:59:42.144Z"
     },
+    "439918": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VOLPHA M 0.2MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:01.573Z"
+    },
     "439950": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
       "product_name": "FAKTU OINT 30GM",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:44:34.244Z"
+    },
+    "439969": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PROGYNON DEPOT INJ 1ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:17.708Z"
+    },
+    "440005": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NAROPIN 7.5 MG INJECTION 20 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:32.052Z"
+    },
+    "440009": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "FAMODIN 40 MG TABLET 14",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:05.811Z"
     },
     "440024": {
       "status": "not_found",
@@ -370155,6 +370438,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:56:55.103Z"
     },
+    "440037": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ELCAPON 50MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:19.358Z"
+    },
     "440051": {
       "status": "not_found",
       "company": "LUPIN",
@@ -370175,6 +370465,13 @@
       "product_name": "SAIMOX DRY SYP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:43:07.221Z"
+    },
+    "440096": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "AXONE 250MG INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:33.556Z"
     },
     "440099": {
       "status": "success",
@@ -370293,6 +370590,13 @@
       "reason": "CDN returned sibling \"NORDYS 550MG TABLET\" packaging instead",
       "checked_at": "2026-09-14T07:57:37.903Z"
     },
+    "440292": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "INSUMET 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:21.119Z"
+    },
     "440299": {
       "status": "success",
       "company": "SUN PHARMA",
@@ -370362,6 +370666,27 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:44:05.546Z"
     },
+    "440420": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADIWIN 500MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:35.005Z"
+    },
+    "440437": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NUDOXA 50 MG INJECTION 1",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:09.555Z"
+    },
+    "440487": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADMENTIN 375MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:22.986Z"
+    },
     "440489": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -370375,6 +370700,13 @@
       "product_name": "SERTAZEST SPRAY 100 ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:39:53.905Z"
+    },
+    "440521": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "R LOC INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:36.150Z"
     },
     "440532": {
       "status": "success",
@@ -370469,6 +370801,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:17:47.529Z"
     },
+    "440749": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "POSID 100 MG CAPSULE 4",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:25.224Z"
+    },
+    "440767": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "COLDOUT DROPS 15ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:37.799Z"
+    },
     "440812": {
       "status": "not_found",
       "company": "MICRO LABS",
@@ -370483,6 +370829,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:40:07.659Z"
     },
+    "440880": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "TORGET INJ 2ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:12.734Z"
+    },
     "440913": {
       "status": "not_found",
       "company": "MICRO LABS",
@@ -370496,6 +370849,13 @@
       "product_name": "FRS CAP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:11:14.066Z"
+    },
+    "440955": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "RECALVIN 500MG STRIP OF 10 TABLETS",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:27.078Z"
     },
     "440960": {
       "status": "not_found",
@@ -370517,6 +370877,41 @@
       "product_name": "TIBIRIM INH DT TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:44:56.405Z"
+    },
+    "440973": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADIXIM 50 MG TABLET DT 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:45.770Z"
+    },
+    "440980": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "LANS DX CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:14.015Z"
+    },
+    "441012": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PACLICAD INJ 20ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:29.155Z"
+    },
+    "441027": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYFLEX 4 MG CAPSULE 5",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:16.013Z"
+    },
+    "441074": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYCAD 4 KIT",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:31.674Z"
     },
     "441101": {
       "status": "not_found",
@@ -370553,6 +370948,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:11:22.375Z"
     },
+    "441264": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADINIB 100MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:58.250Z"
+    },
     "441271": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -370573,6 +370975,13 @@
       "product_name": "NUAVOMIN 2 MG INJECTION 2 ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:00:14.142Z"
+    },
+    "441313": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CHOLINECAD 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:17.745Z"
     },
     "441320": {
       "status": "not_found",
@@ -370598,6 +371007,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:17:59.102Z"
     },
+    "441411": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PEPLOC 150MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:33.156Z"
+    },
     "441421": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -370618,6 +371034,13 @@
       "product_name": "TC PLUS TABLET 10",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:04:23.259Z"
+    },
+    "441477": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "METHOREX 2.5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:02.223Z"
     },
     "441509": {
       "status": "not_found",
@@ -370654,6 +371077,30 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:36:12.564Z"
     },
+    "441608": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Biotax 500mg Injection",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T16:20:48.335Z"
+    },
+    "441609": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "C2Z SYP 200ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:05.369Z"
+    },
+    "441630": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ORITAXIMAX INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:21.418Z"
+    },
     "441690": {
       "status": "not_found",
       "company": "TORRENT PHARMACEUTICALS LTD",
@@ -370689,6 +371136,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:18:47.924Z"
     },
+    "441752": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "BIOFF BOTTLE OF 30ML SUSPENSION",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:20:56.948Z"
+    },
     "441766": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -370703,12 +371157,33 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:23:31.491Z"
     },
+    "441778": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ACTIVA 25 MG/1ML INJECTION 30 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:07.546Z"
+    },
+    "441791": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "COLICEASE 2 MIU INJECTION 1 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:23.238Z"
+    },
     "441797": {
       "status": "not_found",
       "company": "TORRENT PHARMACEUTICALS LTD",
       "product_name": "VASOTRATE 40MG TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:36:17.828Z"
+    },
+    "441809": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZOBID M INJ VET 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:04.274Z"
     },
     "441819": {
       "status": "not_found",
@@ -370776,6 +371251,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:04:45.545Z"
     },
+    "442010": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "LIFEPILL 2/A10 CAP",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:10.318Z"
+    },
     "442014": {
       "status": "not_found",
       "company": "ALKEM LABORATORIES LTD",
@@ -370789,6 +371271,13 @@
       "product_name": "ATEDIL F TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:40:45.939Z"
+    },
+    "442021": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GERCIP 250 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:25.139Z"
     },
     "442056": {
       "status": "not_found",
@@ -370839,6 +371328,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:23:39.811Z"
     },
+    "442285": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "K5 HAIR OIL 100ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:12.223Z"
+    },
     "442292": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -370852,6 +371348,13 @@
       "product_name": "ALTAXEL 300MG INJ",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:19:13.785Z"
+    },
+    "442334": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CADIGRAN INJ 5ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:26.705Z"
     },
     "442358": {
       "status": "success",
@@ -370869,6 +371372,13 @@
       "product_name": "DIAPRIDE 2MG TAB 30'S",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:59:54.895Z"
+    },
+    "442410": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "KMGCIT LIQUID 450 ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:11.174Z"
     },
     "442433": {
       "status": "not_found",
@@ -370891,6 +371401,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:12:09.129Z"
     },
+    "442558": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "VALDEGO 20 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:28.877Z"
+    },
     "442573": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -370905,12 +371422,33 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:12:13.205Z"
     },
+    "442604": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "HYOCIMAX S 0.5MG INJ 1'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:13.516Z"
+    },
     "442655": {
       "status": "not_found",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "product_name": "RAMTEL 2.5MG TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:00:47.215Z"
+    },
+    "442686": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "BIOROX LIQUID 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:15.640Z"
+    },
+    "442714": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GRAVIDIN 5MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:14.911Z"
     },
     "442750": {
       "status": "not_found",
@@ -370982,6 +371520,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:00:51.991Z"
     },
+    "442954": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "CAXYL PEAD NASAL DROPS 10ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:17.215Z"
+    },
     "442982": {
       "status": "not_found",
       "company": "ALKEM LABORATORIES LTD",
@@ -370996,12 +371541,26 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:19:42.621Z"
     },
+    "443010": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "HYOCIMAX PLUS S TAB 10'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:18.928Z"
+    },
     "443019": {
       "status": "not_found",
       "company": "MANKIND PHARMACEUTICALS LTD",
       "product_name": "TOTAGLIPT M FORTE TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:23:43.638Z"
+    },
+    "443063": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NATRIDAC SR TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:29.490Z"
     },
     "443093": {
       "status": "not_found",
@@ -371052,6 +371611,20 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:00:55.410Z"
     },
+    "443216": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ONCOPHOS 1GM INJ",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:20.504Z"
+    },
+    "443261": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PSORIEX OINT 30GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:31.100Z"
+    },
     "443291": {
       "status": "not_found",
       "company": "LUPIN",
@@ -371065,6 +371638,13 @@
       "product_name": "JOYKEM 50MG TAB",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:19:58.836Z"
+    },
+    "443320": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "MEXATE 7.5MG INJ 1ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:33.638Z"
     },
     "443331": {
       "status": "not_found",
@@ -371111,6 +371691,13 @@
       "verified_by": "gemini_vision_verified",
       "checked_at": "2026-09-14T08:20:18.740Z"
     },
+    "443456": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ASA 50MG TAB 14'S",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:24.341Z"
+    },
     "443464": {
       "status": "not_found",
       "company": "SUN PHARMA",
@@ -371134,6 +371721,13 @@
       "primary_confidence": 100,
       "verified_by": "gemini_sibling_remapped",
       "checked_at": "2026-09-14T07:30:21.893Z"
+    },
+    "443502": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OSTISAVE 400MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:35.312Z"
     },
     "443505": {
       "status": "not_found",
@@ -371191,6 +371785,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:05:36.616Z"
     },
+    "443795": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NARIZ 10MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:25.868Z"
+    },
     "443812": {
       "status": "not_found",
       "company": "ALKEM LABORATORIES LTD",
@@ -371215,6 +371816,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:41:53.423Z"
     },
+    "443869": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ILDAMEN 24MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:37.078Z"
+    },
     "443887": {
       "status": "not_found",
       "company": "LUPIN",
@@ -371228,6 +371836,13 @@
       "product_name": "WELZITH SUSP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:41:55.023Z"
+    },
+    "443935": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "DERINIDE 1MG PACKET OF 5*2ML RESPULES",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:28.120Z"
     },
     "443954": {
       "status": "not_found",
@@ -371341,12 +371956,33 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:12:37.990Z"
     },
+    "444229": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "ZYPOVID CREAM 125GM",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:38.749Z"
+    },
+    "444257": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "LIBI 25 MG TABLET 10",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:30.268Z"
+    },
     "444265": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "product_name": "FE-10 100 MG INJECTION 5 ML",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T11:50:25.009Z"
+    },
+    "444297": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "RAZONA 500MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:43.055Z"
     },
     "444310": {
       "status": "success",
@@ -371357,6 +371993,13 @@
       "primary_confidence": 90,
       "verified_by": "gemini_sibling_remapped",
       "checked_at": "2026-09-14T11:48:54.606Z"
+    },
+    "444333": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GLOBAC PM DROPS 15ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:32.441Z"
     },
     "444343": {
       "status": "not_found",
@@ -371385,6 +372028,13 @@
       "product_name": "BUFZONE SACH VET",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:07:21.373Z"
+    },
+    "444441": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "NORMAGLIM 2MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:46.919Z"
     },
     "444444": {
       "status": "not_found",
@@ -371421,6 +372071,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:20:37.156Z"
     },
+    "444575": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PARACETAMOL DROPS 15ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:34.119Z"
+    },
     "444578": {
       "status": "not_found",
       "company": "RANBAXY LABORATORIES (SUN PHARMA)",
@@ -371448,6 +372105,13 @@
       "product_name": "EXRICH L SYP",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:42:16.320Z"
+    },
+    "444679": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PENCIL 100MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:50.222Z"
     },
     "444684": {
       "status": "not_found",
@@ -371484,6 +372148,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:01:35.912Z"
     },
+    "444714": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "OCUVIT 150MG CAPSULE",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:36.183Z"
+    },
     "444734": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -371498,12 +372169,29 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:20:39.038Z"
     },
+    "444754": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "LIGNOCAD ADR INJ 30ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:56.730Z"
+    },
     "444777": {
       "status": "not_found",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "product_name": "ZAPPY 250MG BOTTLE OF 60ML SUSPENSION",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:01:37.833Z"
+    },
+    "444873": {
+      "status": "success",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "Levoff 500mg Tablet",
+      "angles_saved": 1,
+      "primary_face": "front",
+      "primary_confidence": 100,
+      "verified_by": "gemini_vision_verified",
+      "checked_at": "2026-09-14T16:21:46.166Z"
     },
     "444892": {
       "status": "not_found",
@@ -371575,6 +372263,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:42:32.630Z"
     },
+    "445138": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "PHENOXYL KID 125MG TAB",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:22:02.851Z"
+    },
     "445141": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -371606,6 +372301,13 @@
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:01:43.285Z"
     },
+    "445255": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "GABLINCAD SR 75MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:51.663Z"
+    },
     "445258": {
       "status": "not_found",
       "company": "MICRO LABS",
@@ -371633,6 +372335,13 @@
       "product_name": "LEEMAX INJ",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T08:12:54.515Z"
+    },
+    "445351": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "METHOREX 1GM INJ 10ML",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:21:57.727Z"
     },
     "445366": {
       "status": "not_found",
@@ -371675,6 +372384,13 @@
       "product_name": "PREGA NEWS ADVANCE",
       "reason": "No match found on pharma CDN",
       "checked_at": "2026-09-14T07:24:49.539Z"
+    },
+    "445518": {
+      "status": "not_found",
+      "company": "ZYDUS CADILA HEALTHCARE LTD",
+      "product_name": "DILTIME SR 120MG TABLET",
+      "reason": "No match found on pharma CDN",
+      "checked_at": "2026-09-14T16:22:03.994Z"
     },
     "445530": {
       "status": "not_found",

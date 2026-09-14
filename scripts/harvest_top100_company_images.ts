@@ -36,9 +36,11 @@ const DB_PATH = path.join(ROOT_DIR, 'data', 'app.db');
 const STATE_FILE = path.join(ROOT_DIR, 'data', 'top100_harvest_state.json');
 const TARGET_FRONTEND = path.join(ROOT_DIR, 'frontend', 'public', 'products');
 const TARGET_UPLOADS = path.join(ROOT_DIR, 'uploads', 'products');
+const STAGING_DIR = path.join(ROOT_DIR, 'scratch', 'harvester_staging');
 
 fs.mkdirSync(TARGET_FRONTEND, { recursive: true });
 fs.mkdirSync(TARGET_UPLOADS, { recursive: true });
+fs.mkdirSync(STAGING_DIR, { recursive: true });
 fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
 
 function autoCommitBatch(batchCount: number, totalImagesSaved: number, reason?: string) {
@@ -148,6 +150,25 @@ function loadCompaniesFromCsv(terminalIndex: number): string[] {
   return companies.filter((_, idx) => idx % 12 === (terminalIndex - 1));
 }
 
+function loadAllCompaniesFromCsv(): string[] {
+  const csvPath = path.join(ROOT_DIR, 'data', 'company_medicine_counts.csv');
+  if (!fs.existsSync(csvPath)) return [];
+  const content = fs.readFileSync(csvPath, 'utf8');
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+  const companies: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const lastComma = line.lastIndexOf(',');
+    if (lastComma > 0) {
+      const name = line.substring(0, lastComma).trim().replace(/^["']|["']$/g, '');
+      if (name && !companies.includes(name)) {
+        companies.push(name);
+      }
+    }
+  }
+  return companies;
+}
+
 function cleanMedicineNameForAi(rawName: string): string {
   if (!rawName) return '';
   let clean = rawName
@@ -205,7 +226,7 @@ Return valid JSON with:
   "reason": string
 }`;
 
-  const models = ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemini-flash-latest'];
+  const models = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   const keysToTry = apiKeys.length > 0 ? [...apiKeys] : (spareKey ? [spareKey] : []);
 
   for (const model of models) {
@@ -1156,14 +1177,31 @@ async function main() {
     try {
       verifiedWorkingKeys = JSON.parse(fs.readFileSync(WORKING_KEYS_FILE, 'utf8'));
     } catch {}
+  }
   let companyQueue: string[] = [];
 
   if (customKeys.length > 0) {
     geminiKeys = customKeys;
-  } else if (terminalIndex >= 1 && terminalIndex <= 12) {
-    // Dedicated 12-terminal mode: 2 keys per terminal, 4s delay, continuous companies from CSV
+  } else if (terminalIndex >= 1 && terminalIndex <= 3) {
+    // Dedicated 3-terminal mode: 8 keys per terminal, shard 1/3, 2/3, 3/3
     useGemini = true;
-    shardStr = ''; // Each terminal has its own continuous companies from CSV
+    if (!shardStr) {
+      shardStr = `${terminalIndex}/3`;
+    }
+    if (verifiedWorkingKeys.length >= 24) {
+      const startIndex = (terminalIndex - 1) * 8;
+      geminiKeys = verifiedWorkingKeys.slice(startIndex, startIndex + 8);
+      spareKey = verifiedWorkingKeys[24]; // 25th key as spare
+    }
+    if (!companyFilter) {
+      // In 3-terminal mode, all 3 terminals process the same company list together,
+      // sharding the medicines of each company evenly!
+      companyQueue = loadAllCompaniesFromCsv();
+    }
+  } else if (terminalIndex >= 4 && terminalIndex <= 12) {
+    // Legacy 12-terminal mode
+    useGemini = true;
+    shardStr = '';
     if (verifiedWorkingKeys.length >= 24) {
       const startIndex = (terminalIndex - 1) * 2;
       const keyCount = (terminalIndex === 12 && verifiedWorkingKeys.length >= 25) ? 3 : 2;
@@ -1311,10 +1349,15 @@ async function main() {
         continue;
       }
       if (checkDbStmt.get(med.id)) continue;
+      const compSlug = slugify(med.manufacturer || currentCompany || 'general');
       const baseSlug = slugify(med.name || med.canonical_name);
+      const frontInSubfolder = path.join(TARGET_FRONTEND, compSlug, `${baseSlug}-front.jpg`);
+      const boxFrontInSubfolder = path.join(TARGET_FRONTEND, compSlug, `${baseSlug}-box-front.jpg`);
       const frontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-front.jpg`);
       const boxFrontOnDisk = path.join(TARGET_FRONTEND, `${baseSlug}-box-front.jpg`);
-      if ((fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
+      if ((fs.existsSync(frontInSubfolder) && fs.statSync(frontInSubfolder).size > 1000) ||
+          (fs.existsSync(boxFrontInSubfolder) && fs.statSync(boxFrontInSubfolder).size > 1000) ||
+          (fs.existsSync(frontOnDisk) && fs.statSync(frontOnDisk).size > 1000) ||
           (fs.existsSync(boxFrontOnDisk) && fs.statSync(boxFrontOnDisk).size > 1000)) {
         continue;
       }
@@ -1360,6 +1403,12 @@ async function main() {
     const medName = med.name || med.canonical_name;
     const mfg = med.manufacturer || 'Unknown';
 
+    // REAL-TIME SKIP GUARD: If another terminal or earlier run already verified this medicine, skip in <1ms!
+    if (!force && checkDbStmt.get(medId)) {
+      console.log(`⏩ [ID ${medId}] "${medName}" already has active verified images in database. Skipping.`);
+      continue;
+    }
+
     processed++;
     const searchQueries = generateSearchQueries(medName);
     const termTag = terminalIndex > 0 ? `Terminal #${terminalIndex}` : 'Main Harvester';
@@ -1385,7 +1434,8 @@ async function main() {
 
     const downloadedAngles: Array<{
       face: string;
-      relPath: string;
+      fileName: string;
+      stagingPath: string;
       buffer: Buffer;
       phash: string | null;
       brandConfidence: number;
@@ -1408,14 +1458,13 @@ async function main() {
       if (!rawBuf || rawBuf.length < 1000) continue;
 
       const fileName = `${baseSlug}-${face}.jpg`;
-      const frontendPath = path.join(TARGET_FRONTEND, fileName);
-      const uploadsPath = path.join(TARGET_UPLOADS, fileName);
+      const stagingFileName = `stage_${process.pid}_${medId}_${face}_${Date.now()}.jpg`;
+      const stagingPath = path.join(STAGING_DIR, stagingFileName);
 
-      // Smart compression (max 1200px, quality 82%) -> saves 90% disk space
-      await imageCompressionService.compressAndSave(rawBuf, frontendPath, 1200, 82);
-      fs.copyFileSync(frontendPath, uploadsPath);
+      // Smart compression (max 1200px, quality 82%) into isolated staging file
+      await imageCompressionService.compressAndSave(rawBuf, stagingPath, 1200, 82);
 
-      const compBuf = fs.readFileSync(frontendPath);
+      const compBuf = fs.readFileSync(stagingPath);
       const phash = await visualIndex.computePhashFromBuffer(compBuf);
 
       // Deduplication check: skip identical images (Hamming distance <= 1)
@@ -1423,7 +1472,7 @@ async function main() {
         const isDuplicate = seenPhashes.some(sp => hammingDistance(sp, phash) <= 1);
         if (isDuplicate) {
           console.log(`    ⏩ Skipping duplicate visual angle for face "${face}"`);
-          try { fs.unlinkSync(frontendPath); fs.unlinkSync(uploadsPath); } catch {}
+          try { fs.unlinkSync(stagingPath); } catch {}
           continue;
         }
         seenPhashes.push(phash);
@@ -1464,7 +1513,8 @@ async function main() {
 
       downloadedAngles.push({
         face,
-        relPath: `/products/${fileName}`,
+        fileName,
+        stagingPath,
         buffer: compBuf,
         phash,
         brandConfidence,
@@ -1520,29 +1570,36 @@ async function main() {
           const siblingGResult = await verifyWithGeminiVision(downloadedAngles[0].buffer, siblingClean, geminiKeys, spareKey);
 
           if (siblingGResult.isExactMatch || (downloadedAngles[0].brandConfidence >= 75 && !hasStrengthConflict(sibling.name, cdnResult.name))) {
-            console.log(`    ✨ Sibling Packaging Verified! Attaching images to "${sibling.name}" (ID: ${sibling.id})! Zero downloads wasted!`);
-            const siblingSlug = slugify(sibling.name);
-            const siblingAngles = downloadedAngles.map(ang => {
-              const newFileName = `${siblingSlug}-${ang.face}.jpg`;
-              const newFrontend = path.join(TARGET_FRONTEND, newFileName);
-              const newUploads = path.join(TARGET_UPLOADS, newFileName);
-              const oldFrontend = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
-              try {
-                fs.copyFileSync(oldFrontend, newFrontend);
-                fs.copyFileSync(oldFrontend, newUploads);
-              } catch {}
-              return {
-                ...ang,
-                relPath: `/products/${newFileName}`
-              };
-            });
-
             // NEVER overwrite if sibling already has verified active images
             const existingSiblingImg = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1').get(sibling.id);
             if (existingSiblingImg) {
               console.log(`    ⏩ Sibling "${sibling.name}" already has verified active images. Protecting existing images from being overwritten.`);
+              for (const ang of downloadedAngles) {
+                try { fs.unlinkSync(ang.stagingPath); } catch {}
+              }
               continue;
             }
+
+            console.log(`    ✨ Sibling Packaging Verified! Attaching images to "${sibling.name}" (ID: ${sibling.id})! Zero downloads wasted!`);
+            const siblingCompanySlug = slugify(sibling.manufacturer || mfg || 'general');
+            const siblingSlug = slugify(sibling.name);
+            const siblingFrontendDir = path.join(TARGET_FRONTEND, siblingCompanySlug);
+            const siblingUploadsDir = path.join(TARGET_UPLOADS, siblingCompanySlug);
+            fs.mkdirSync(siblingFrontendDir, { recursive: true });
+            fs.mkdirSync(siblingUploadsDir, { recursive: true });
+
+            const siblingAngles = downloadedAngles.map(ang => {
+              const newFileName = `${siblingSlug}-${ang.face}.jpg`;
+              const newFrontend = path.join(siblingFrontendDir, newFileName);
+              const newUploads = path.join(siblingUploadsDir, newFileName);
+              fs.copyFileSync(ang.stagingPath, newFrontend);
+              fs.copyFileSync(ang.stagingPath, newUploads);
+              return {
+                ...ang,
+                relPath: `/products/${siblingCompanySlug}/${newFileName}`
+              };
+            });
+
             db.prepare('DELETE FROM catalog_images WHERE medicine_id = ?').run(sibling.id);
             const insertStmt = db.prepare(`
               INSERT INTO catalog_images (
@@ -1579,11 +1636,9 @@ async function main() {
               verified_by: 'gemini_sibling_remapped'
             });
 
-            // Clean up original temp angles
+            // Clean up staging temp angles
             for (const ang of downloadedAngles) {
-              const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
-              const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
-              try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
+              try { fs.unlinkSync(ang.stagingPath); } catch {}
             }
 
             // Mark current target med as not found (since photo was for sibling)
@@ -1604,9 +1659,7 @@ async function main() {
         } else {
           console.log(`    ❌ Packaging unconfirmed: Neither front nor alternate angles matched "${cleanTarget}"\n`);
           for (const ang of downloadedAngles) {
-            const fp = path.join(ROOT_DIR, 'frontend', 'public', ang.relPath);
-            const up = path.join(ROOT_DIR, 'uploads', ang.relPath.replace('/products/', 'products/'));
-            try { fs.unlinkSync(fp); fs.unlinkSync(up); } catch {}
+            try { fs.unlinkSync(ang.stagingPath); } catch {}
           }
           recordProductState(db, medId, {
             status: 'gemini_rejected',
@@ -1629,6 +1682,24 @@ async function main() {
       }
     }
 
+    const companySlug = slugify(mfg || currentCompany || 'general');
+    const compFrontendDir = path.join(TARGET_FRONTEND, companySlug);
+    const compUploadsDir = path.join(TARGET_UPLOADS, companySlug);
+    fs.mkdirSync(compFrontendDir, { recursive: true });
+    fs.mkdirSync(compUploadsDir, { recursive: true });
+
+    const finalAngles = downloadedAngles.map(ang => {
+      const finalFrontend = path.join(compFrontendDir, ang.fileName);
+      const finalUploads = path.join(compUploadsDir, ang.fileName);
+      fs.copyFileSync(ang.stagingPath, finalFrontend);
+      fs.copyFileSync(ang.stagingPath, finalUploads);
+      try { fs.unlinkSync(ang.stagingPath); } catch {}
+      return {
+        ...ang,
+        relPath: `/products/${companySlug}/${ang.fileName}`
+      };
+    });
+
     // Persist cleanly in catalog_images
     db.prepare('DELETE FROM catalog_images WHERE medicine_id = ?').run(medId);
 
@@ -1640,8 +1711,8 @@ async function main() {
       ) VALUES (?, ?, ?, ?, ?, 'pharma_dam_cdn', ?, ?, 'APPROVED', ?, 1, ?, ?, ?, ?)
     `);
 
-    for (let aIdx = 0; aIdx < downloadedAngles.length; aIdx++) {
-      const ang = downloadedAngles[aIdx];
+    for (let aIdx = 0; aIdx < finalAngles.length; aIdx++) {
+      const ang = finalAngles[aIdx];
       const isPrimary = aIdx === 0 ? 1 : 0;
       insertStmt.run(
         medId,
@@ -1719,7 +1790,6 @@ async function main() {
     console.log(`\n🎉 All assigned companies evaluated.`);
     triggerWindowsShutdown(`AI Pharmacy Harvester: All target companies processed.`);
   }
-}
 } // end main
 
 main().catch((err) => {
