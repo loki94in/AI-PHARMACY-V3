@@ -191,8 +191,9 @@ const GENERIC_CATEGORY_WORDS = new Set([
 // Check if candidate product is a genuine brand match
 function isBrandMatch(query, candidateName) {
   if (!candidateName || !query) return false;
-  const cleanQ = query.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
-  const cleanCand = candidateName.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim();
+  const bridge = s => s.replace(/\b([a-zA-Z0-9])\s*[-/]\s*([a-zA-Z0-9])/g, '$1$2');
+  const cleanQ = bridge(query.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim());
+  const cleanCand = bridge(candidateName.replace(/[^A-Za-z0-9]/g, ' ').toLowerCase().trim());
   const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 2 && !['tab', 'tablet', 'tablets', 'cap', 'capsule', 'capsules', 'syp', 'syrup', 'inj', 'injection', 'drop', 'drops', 'pack', 'bottle', 'strip', 'box'].includes(w));
   if (qWords.length === 0) return false;
 
@@ -209,9 +210,8 @@ function isBrandMatch(query, candidateName) {
   }
 
   const candWords = new Set(cleanCand.split(/\s+/));
-  const compactQ = cleanQ.replace(/\s+/g, '');
-  const compactCand = cleanCand.replace(/\s+/g, '');
-  return candWords.has(brand) || cleanCand.includes(brand) || compactCand.includes(brand);
+  // Exact brand word equality - never allow prefix or substring bleed!
+  return candWords.has(brand);
 }
 
 // Check dosage form conflict
@@ -234,14 +234,16 @@ function hasDosageConflict(query, candidateName) {
   const isCInj = /\b(inj|injection)\b/.test(c);
   const isCTop = /\b(gel|cream|ointment)\b/.test(c);
 
+  // Tablet vs Capsule conflict: tablets must NEVER match capsules
+  if (isQTab && (isCCap || isCSyp || isCInj || isCTop)) return true;
+  if (isQCap && (isCTab || isCSyp || isCInj || isCTop)) return true;
   if (isQSyrup && (isCTab || isCCap || isCInj)) return true;
-  if (isQTab && (isCSyp || isCInj || isCTop)) return true;
-  if (isQCap && (isCSyp || isCInj || isCTop)) return true;
   if (isQInj && (isCTab || isCCap || isCSyp)) return true;
   return false;
 }
 
 const FORMULATION_MODIFIERS = new Set([
+  'KID', 'KIDS', 'JUNIOR', 'JR', 'BABY', 'PAED', 'PAEDIATRIC', 'PEDIATRIC',
   'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU',

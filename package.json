@@ -13,6 +13,7 @@
     "audit:images": "tsx scripts/audit_and_correct_catalog_images.mjs",
     "audit:clean": "tsx scripts/audit_and_clean_catalog_images.ts",
     "audit:all": "tsx scripts/audit_and_clean_catalog_images.ts --all --delay=2000",
+    "audit:downloaded": "tsx scripts/scan_all_downloaded_images.ts --clean",
     "tunnel": "node scripts/start-online-catalog-tunnel.mjs",
     "tunnel:dev": "node scripts/start-online-catalog-tunnel.mjs --port=5173",
     "tunnel:server": "node scripts/start-online-catalog-tunnel.mjs --port=5174",

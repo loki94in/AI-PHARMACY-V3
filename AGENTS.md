@@ -271,6 +271,25 @@ Intentional simplifications must be marked with a `ponytail:` comment.
 
 ---
 
+---
+
+## Medicine Image Accuracy & Packaging Cross-Validation Standard (MANDATORY)
+
+Every medicine image in the catalog must be strictly verified against the complete record in `medicine.csv` / `medicines` table (`name`, `generic_name`, `manufacturer`, `dosage_form`, `strength`, `pack_size`):
+
+1. **Always-On Rule Pointer**: `.agents/rules/medicine-image-accuracy.md`
+2. **Single Salt vs. Combination Gate**: Single-salt records (e.g. `Telmisartan 40mg`) must NEVER attach to combination products (e.g. `Telista-MCL 25`). Extra salts detected in OCR composition trigger an instant hard REJECT.
+3. **Exact Brand Equality & Suffix Protection**: Brand names must match 100% identically without suffix bleed. If target is `TELISTA 40`, packaging with `MCL`, `AM`, `H`, `PLUS`, etc. is strictly blocked. Loose `startsWith` is forbidden.
+4. **Dosage Form Bidirectional Shield**: Tablets NEVER match Capsules, and Capsules NEVER match Tablets. Solid Oral, Liquid Oral, and Topical are strictly separated.
+5. **Multi-Angle Verification**:
+   - `FRONT`: Validates Brand Name & Form.
+   - `BACK`: Validates Constituents (`generic_name`) & exact `strength`.
+   - `SIDE`: Validates Company Name (`manufacturer` / `marketed_by`).
+   - `COMBO`: Outer + inner strip complete context.
+6. **Zero-Tolerance for Guessed Attachments**: If any signal conflicts, the image must be dropped or moved to `catalog_image_rejections`. Never force or fallback to an unverified image.
+
+---
+
 ## UI Development Guidelines
 
 **CRITICAL RULE FOR ALL NEW UI COMPONENTS:**

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// [HARVESTER_HOT_RELOAD_TRIGGER]: 2026-09-13T08:22:53.069Z
+// [HARVESTER_HOT_RELOAD_TRIGGER]: 2026-09-14T08:58:00.000Z
 
 /**
  * scripts/harvest_top100_company_images.ts
@@ -350,6 +350,7 @@ Return valid JSON with:
 
 // Formulation modifier conflict dictionary (includes single letters and active combination abbreviations)
 const FORMULATION_MODIFIERS = new Set([
+  'KID', 'KIDS', 'JUNIOR', 'JR', 'BABY', 'PAED', 'PAEDIATRIC', 'PEDIATRIC',
   'PLUS', 'FORTE', 'FORT', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF', 'DF', 'DM', 'XT', 'PF', 'PD',
@@ -548,12 +549,22 @@ function hasDosageConflict(q: string, c: string): boolean {
   const isCOphthalmic = /\b(ophthalmic|eye|ear|e\/e|nasal)\b/.test(cLower);
   const isBothOphthalmic = isQOphthalmic && isCOphthalmic;
 
-  if (isQDrops && (isCTab || isCCap || (isCSyp && !isBothOphthalmic) || isCInj || isCTop)) return true;
-  if (isCDrops && (isQTab || isQCap || (isQSyrup && !isBothOphthalmic) || isQInj || isQTop)) return true;
-  if (isQSyrup && (isCTab || isCCap || isCInj)) return true;
-  if (isQTab && (isCSyp || isCInj || isCTop || isCDrops)) return true;
-  if (isQCap && (isCSyp || isCInj || isCTop || isCDrops)) return true;
-  if (isQInj && (isCTab || isCCap || isCSyp)) return true;
+  // Strict bidirectional dosage form conflict gate
+  if (isQDrops && (isCTab || isCCap || (isCSyp && !isBothOphthalmic) || isCInj || isCTop || isCPowder)) return true;
+  if (isCDrops && (isQTab || isQCap || (isQSyrup && !isBothOphthalmic) || isQInj || isQTop || isQPowder)) return true;
+  if (isQSyrup && (isCTab || isCCap || isCInj || isCTop || isCPowder)) return true;
+  if (isCSyp && (isQTab || isQCap || isQInj || isQTop || isQPowder)) return true;
+  // Tablet vs Capsule conflict: tablets must NEVER match capsules
+  if (isQTab && (isCCap || isCSyp || isCInj || isCTop || isCDrops || isCPowder)) return true;
+  if (isCTab && (isQCap || isQSyrup || isQInj || isQTop || isQDrops || isQPowder)) return true;
+  if (isQCap && (isCTab || isCSyp || isCInj || isCTop || isCDrops || isCPowder)) return true;
+  if (isCCap && (isQTab || isQSyrup || isQInj || isQTop || isQDrops || isQPowder)) return true;
+  if (isQInj && (isCTab || isCCap || isCSyp || isCTop || isCPowder || isCDrops)) return true;
+  if (isCInj && (isQTab || isQCap || isQSyrup || isQTop || isQPowder || isQDrops)) return true;
+  if (isQTop && (isCTab || isCCap || isCSyp || isCInj || isCPowder || isCDrops)) return true;
+  if (isCTop && (isQTab || isQCap || isQSyrup || isQInj || isQPowder || isQDrops)) return true;
+  if (isQPowder && (isCTab || isCCap || isCSyp || isCInj || isCTop || isCDrops)) return true;
+  if (isCPowder && (isQTab || isQCap || isQSyrup || isQInj || isQTop || isQDrops)) return true;
 
   // Shampoos, Soaps/Bars, Face Washes, and Oils
   const isQShampoo = /\b(shampoo|hair\s*wash)\b/.test(qLower);
@@ -616,15 +627,21 @@ function isBrandMatch(query: string, candidateName: string): boolean {
     'natural', 'naturals', 'cook', 'bake', 'box', 'pouch', 'jar', 'tube'
   ]);
 
-  const qBrandWords = cleanQ.split(/\s+/).filter(w => (w.length >= 2 || FORMULATION_MODIFIERS.has(w.toUpperCase())) && !stopWords.has(w) && !/^\d+$/.test(w));
+  // Bridge hyphenated single-letter brands (D-RISE -> DRISE, T-98 -> T98, 3-D -> 3D)
+  const bridgeHyphens = (str: string) => str.replace(/\b([a-zA-Z0-9])\s*[-/]\s*([a-zA-Z0-9])/g, '$1$2');
+  const bridgedQ = bridgeHyphens(cleanQ);
+  const bridgedCand = bridgeHyphens(cleanCand);
+
+  const qBrandWords = bridgedQ.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w) && !/^\d+$/.test(w));
   if (qBrandWords.length === 0) return false;
 
-  const candWords = cleanCand.split(/\s+/).filter(Boolean);
+  const candWords = bridgedCand.split(/\s+/).filter(Boolean);
   const primaryBrand = qBrandWords[0];
+  if (primaryBrand.length < 2) return false;
 
-  // 1. Primary brand must match lead of candidate or allowed prefix (new, dr, baby, the)
-  const brandIndex = candWords.findIndex(cw => cw === primaryBrand || cw.startsWith(primaryBrand));
-  if (brandIndex === -1 || (brandIndex > 0 && !['new', 'dr', 'baby', 'the'].includes(candWords[0]))) {
+  // 1. Primary brand must match EXACTLY (never allow prefix bleed like 'rabi' matching 'rabihal' or 'ox' matching 'oxidon')
+  const brandIndex = candWords.findIndex(cw => cw === primaryBrand);
+  if (brandIndex === -1 || (brandIndex > 0 && !['new'].includes(candWords[0]))) {
     return false;
   }
 
@@ -660,7 +677,7 @@ function isBrandMatch(query: string, candidateName: string): boolean {
   // 3. Multi-word brand: check first 2 core brand tokens
   const coreWords = qBrandWords.slice(0, 2);
   for (const bw of coreWords) {
-    const found = candWords.some(cw => cw === bw || cw.startsWith(bw));
+    const found = candWords.some(cw => cw === bw);
     if (!found) return false;
   }
 
@@ -1425,7 +1442,11 @@ async function main() {
         const hasMfg = mfg ? lowerOcr.includes(mfg.split(/\s+/)[0].toLowerCase()) : false;
         const textVolume = rawOcr.replace(/[^a-zA-Z0-9]/g, '').length;
 
-        if (hasBrand && hasStrength) {
+        // OCR Strength Conflict Gate: Packaging printed strength must NEVER contradict target medicine
+        const ocrHasStrengthConflict = hasStrengthConflict(medName, rawOcr);
+        if (ocrHasStrengthConflict) {
+          brandConfidence = 0; // Immediate reject: printed strength contradicts target medicine!
+        } else if (hasBrand && hasStrength) {
           brandConfidence = 95; // Clear printed brand + verified strength
         } else if (hasBrand) {
           brandConfidence = 80; // Clear printed brand
@@ -1516,6 +1537,12 @@ async function main() {
               };
             });
 
+            // NEVER overwrite if sibling already has verified active images
+            const existingSiblingImg = db.prepare('SELECT 1 FROM catalog_images WHERE medicine_id = ? AND is_active = 1 LIMIT 1').get(sibling.id);
+            if (existingSiblingImg) {
+              console.log(`    ⏩ Sibling "${sibling.name}" already has verified active images. Protecting existing images from being overwritten.`);
+              continue;
+            }
             db.prepare('DELETE FROM catalog_images WHERE medicine_id = ?').run(sibling.id);
             const insertStmt = db.prepare(`
               INSERT INTO catalog_images (
@@ -1570,13 +1597,9 @@ async function main() {
           }
         }
 
-        // Resilient Fallback: If Local AI OCR strongly verified brand + strength (confidence >= 80), DO NOT delete!
-        if (downloadedAngles[0].brandConfidence >= 80) {
+        // Resilient Fallback: Only accept if Local AI OCR strongly verified brand + strength (confidence >= 85)
+        if (downloadedAngles[0].brandConfidence >= 85) {
           console.log(`    ✨ Local AI OCR strongly verified "${cleanTarget}" (${downloadedAngles[0].brandConfidence}% confidence) -> Accepting packaging via AI OCR!`);
-          finalMatchingMethod = 'ai_ocr_verified';
-        } else if (downloadedAngles[0].brandConfidence >= 30 && isBrandMatch(medName, cdnResult.name)) {
-          // RESCUED: CDN product passed strict brand/form/strength filter + Local OCR detected readable packaging
-          console.log(`    ✨ Rescued Packaging: Verified CDN Match "${cdnResult.name}" + Local OCR (${downloadedAngles[0].brandConfidence}% confidence) -> Accepted!`);
           finalMatchingMethod = 'ai_ocr_verified';
         } else {
           console.log(`    ❌ Packaging unconfirmed: Neither front nor alternate angles matched "${cleanTarget}"\n`);

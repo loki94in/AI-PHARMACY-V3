@@ -45,6 +45,7 @@ let keyIndex = 0;
 
 // Expanded formulation modifiers (includes single-letter modifiers like S, M, G, P to avoid variant mix-ups)
 const FORMULATION_MODIFIERS = new Set([
+  'KID', 'KIDS', 'JUNIOR', 'JR', 'BABY', 'PAED', 'PAEDIATRIC', 'PEDIATRIC',
   'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF',
@@ -227,8 +228,11 @@ function hasDosageConflict(q: string, c: string): boolean {
   if (isQDrops && (isCTab || isCCap || isCSyp || isCInj || isCTop)) return true;
   if (isCDrops && (isQTab || isQCap || isQSyrup || isQInj || isQTop)) return true;
   if (isQSyrup && (isCTab || isCCap || isCInj)) return true;
-  if (isQTab && (isCSyp || isCInj || isCTop || isCDrops)) return true;
-  if (isQCap && (isCSyp || isCInj || isCTop || isCDrops)) return true;
+  // Tablet vs Capsule conflict
+  if (isQTab && (isCCap || isCSyp || isCInj || isCTop || isCDrops)) return true;
+  if (isQCap && (isCTab || isCSyp || isCInj || isCTop || isCDrops)) return true;
+  if (isCCap && isQTab) return true;
+  if (isCTab && isQCap) return true;
   if (isQInj && (isCTab || isCCap || isCSyp)) return true;
 
   // Medical device & accessory conflict gate: tablets/capsules/syrups must NEVER match devices/belts/binders
@@ -272,14 +276,14 @@ function isBrandMatch(query: string, candidateName: string): boolean {
   const candWords = cleanCand.split(/\s+/).filter(Boolean);
   const primaryBrand = qBrandWords[0];
 
-  const brandIndex = candWords.findIndex(cw => cw === primaryBrand || cw.startsWith(primaryBrand));
+  const brandIndex = candWords.findIndex(cw => cw === primaryBrand);
   if (brandIndex === -1 || (brandIndex > 0 && !['new', 'dr', 'baby', 'the'].includes(candWords[0]))) {
     return false;
   }
 
   const coreWords = qBrandWords.slice(0, 2);
   for (const bw of coreWords) {
-    const found = candWords.some(cw => cw === bw || cw.startsWith(bw));
+    const found = candWords.some(cw => cw === bw);
     if (!found) return false;
   }
 

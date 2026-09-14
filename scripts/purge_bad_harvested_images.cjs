@@ -19,6 +19,7 @@ function normalizeTokens(text) {
 }
 
 const FORMULATION_MODIFIERS = new Set([
+  'KID', 'KIDS', 'JUNIOR', 'JR', 'BABY', 'PAED', 'PAEDIATRIC', 'PEDIATRIC',
   'PLUS', 'FORTE', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF',
@@ -105,7 +106,11 @@ function hasDosageConflict(q, c) {
   const isQCream = /\b(cream|crm)\b/.test(qLower);
   const isCOint = /\b(oint|ointment)\b/.test(cLower);
 
-  if (isQSyrup && isCTab) return true;
+  const isQCap = /\b(cap|capsule|capsules)\b/.test(qLower);
+  const isCCap = /\b(cap|capsule|capsules)\b/.test(cLower);
+  if (isQTab && isCCap) return true;
+  if (isQCap && isCTab) return true;
+  if (isQSyrup && (isCTab || isCCap)) return true;
   if (isQTab && isCSyrup) return true;
   if (isQGel && isCSpray) return true;
   if (isQPowder && isCGel) return true;
@@ -126,7 +131,7 @@ function isBrandMatch(query, candidateName) {
   if (qBrandWords.length === 0) return false;
   const candWords = cleanCand.split(/\s+/).filter(Boolean);
   const primaryBrand = qBrandWords[0];
-  const brandIndex = candWords.findIndex(cw => cw === primaryBrand || cw.startsWith(primaryBrand));
+  const brandIndex = candWords.findIndex(cw => cw === primaryBrand);
   if (brandIndex === -1 || (brandIndex > 0 && !['new', 'dr', 'baby', 'the'].includes(candWords[0]))) {
     return false;
   }

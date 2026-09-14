@@ -258,8 +258,11 @@ export function getCompatibleItemTypes(dosageForm?: string): string[] {
   if (df === 'SYRUP' || df === 'LIQUID' || df === 'SUSPENSION') {
     return ['BOTTLE', 'LIQUID', 'SYP', 'SUSP', 'DROP', 'SOLUTION', 'ELIXIR'];
   }
-  if (df === 'TABLET' || df === 'CAPSULE') {
-    return ['STRIP', 'TAB', 'CAP', 'BOX', 'PACK', 'STRIP OF', 'TABLET', 'CAPSULE'];
+  if (df === 'TABLET') {
+    return ['STRIP', 'TAB', 'BOX', 'PACK', 'STRIP OF', 'TABLET', 'TABLETS', 'DT', 'CAPLET'];
+  }
+  if (df === 'CAPSULE') {
+    return ['STRIP', 'CAP', 'BOX', 'PACK', 'STRIP OF', 'CAPSULE', 'CAPSULES', 'SOFGEL', 'SOFTGEL'];
   }
   if (df === 'DROPS') {
     return ['BOTTLE', 'DROP', 'DROPS', 'EYE DROP', 'EAR DROP', 'NASAL DROP'];
@@ -369,7 +372,9 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   const df = dosageForm.toUpperCase().trim();
   const it = itemTypeOrName.toUpperCase().trim();
 
-  const isSolidOral = df === 'TABLET' || df === 'CAPSULE';
+  const isTablet = df === 'TABLET';
+  const isCapsule = df === 'CAPSULE';
+  const isSolidOral = isTablet || isCapsule;
   const isLiquidOral = df === 'SYRUP' || df === 'LIQUID' || df === 'SUSPENSION';
   const isInjectable = df === 'INJECTION' || df === 'INFUSION';
   const isTopical = df === 'CREAM' || df === 'OINTMENT' || df === 'GEL' || df === 'LOTION' || df === 'BALM';
@@ -379,7 +384,9 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   const isSoap = df === 'SOAP' || df === 'BAR';
   const isFaceWash = df === 'FACE WASH' || df === 'FACEWASH';
 
-  const itIsSolidOral = /\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES|CAPLET)\b/.test(it);
+  const itIsTablet = /\b(TAB|TABLET|TABLETS|DT)\b/.test(it);
+  const itIsCapsule = /\b(CAP|CAPSULE|CAPSULES|SOFGEL|SOFTGEL)\b/.test(it);
+  const itIsSolidOral = itIsTablet || itIsCapsule;
   const itIsLiquidOral = /\b(SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|ORAL SOLUTION)\b/.test(it);
   const itIsInjectable = /\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(it);
   const itIsFaceWash = /\b(FACE WASH|FACEWASH|CLEANSER|BODY WASH)\b/.test(it);
@@ -391,6 +398,10 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
 
   // Allow Face Wash Gel / Foaming Face Wash to match Face Wash
   if (isFaceWash && itIsFaceWash) return false;
+
+  // Tablet vs Capsule conflict: tablets must NEVER match capsules
+  if (isTablet && itIsCapsule && !itIsTablet) return true;
+  if (isCapsule && itIsTablet && !itIsCapsule) return true;
 
   // Allow oral antacid gels (e.g. Digene Gel, Mucaine Gel) in bottles/ML to match suspension/liquid
   if ((df === 'GEL' || df === 'SYRUP') && /\b(ML|BOTTLE|SUSP|SUSPENSION|ANTACID)\b/.test(it) && !/\b(TUBE)\b/.test(it)) {
