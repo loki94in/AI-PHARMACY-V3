@@ -1,8 +1,8 @@
 {
-  "name": "ai-pharmacy-license-server",
+  "name": "ai-pharmacy-os",
   "version": "1.0.0",
   "private": true,
-  "description": "License validation server for AI Pharmacy. Deployed to Vercel.",
+  "description": "Cloud Command Center & Universal Customer Health Portal for AI Pharmacy OS. Deployed to Vercel.",
   "dependencies": {
     "@upstash/redis": "^1.34.3",
     "@vercel/kv": "^2.0.0"

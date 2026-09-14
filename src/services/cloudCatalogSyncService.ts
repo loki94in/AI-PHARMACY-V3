@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 
-const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-license.vercel.app';
+const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
 
 export interface CloudSyncResult {
