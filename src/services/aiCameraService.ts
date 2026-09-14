@@ -429,6 +429,19 @@ class AICameraService {
     }
 
     const processedBuffer = await this.preprocess(buffer);
+
+    const isONNXAvailable = await onnxOcrService.checkAvailability();
+    if (isONNXAvailable) {
+      try {
+        const ocrResult = await onnxOcrService.scanImage(processedBuffer);
+        if (ocrResult?.success && ocrResult.text && ocrResult.text.trim().length > 0) {
+          return ocrResult.text;
+        }
+      } catch (err) {
+        console.warn('[AiCamera] ONNX fast OCR extract failed, falling back to Tesseract:', err);
+      }
+    }
+
     if (!this.initialized) {
       await this.initialize();
     }

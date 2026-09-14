@@ -86,6 +86,9 @@ class OnnxOcrService {
       console.log('[ONNX OCR] Idle timeout reached. Unloading models to free memory.');
       this.unloadModel().catch(err => console.error('[ONNX OCR] Error unloading models:', err));
     }, this.IDLE_TIME_MS);
+    if (this.idleTimeout && typeof (this.idleTimeout as any).unref === 'function') {
+      (this.idleTimeout as any).unref();
+    }
   }
 
   /**
