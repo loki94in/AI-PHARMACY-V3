@@ -40,7 +40,7 @@ if (!pharmacyName) {
   process.exit(1);
 }
 if (!serverUrl) {
-  console.error('❌  Set LICENSE_SERVER_URL env var or pass --server https://your-license-server.vercel.app');
+  console.error('❌  Set LICENSE_SERVER_URL env var or pass --server https://ai-pharmacy-os.vercel.app');
   process.exit(1);
 }
 if (!adminSecret) {

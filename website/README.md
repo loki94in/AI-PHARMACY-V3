@@ -1,47 +1,60 @@
-# AI Pharmacy — License Server
+# AI Pharmacy OS — Cloud Website & Portal
 
-Deployed on Vercel as a subfolder of the main AI-PHARMACY-V3 repo.
+The unified cloud website and serverless backend for **AI Pharmacy OS**, deployed on Vercel at `https://ai-pharmacy-os.vercel.app`.
 
-## Setup on Vercel
+Contains both the public customer-facing web services and the remote licensing/update center in a single dedicated folder.
 
-1. Import GitHub repo `AI-PHARMACY-V3` on Vercel
-2. Set **Root Directory** = `license-server`
-3. Add these **Environment Variables** in Vercel dashboard:
-   - `ADMIN_SECRET` = (any strong secret you choose, e.g. a random UUID)
-   - `KV_REST_API_URL` = (auto-filled after you add Vercel KV storage)
-   - `KV_REST_API_TOKEN` = (auto-filled after you add Vercel KV storage)
-4. In Vercel dashboard → Storage → Create KV Store → Link to this project
+---
 
-That's it. Vercel KV fills the env vars automatically.
+## Directory Structure
 
-## API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/license/create` | `x-admin-secret` header | Create a new license |
-| POST | `/api/license/activate` | none | Activate license on a PC |
-| GET | `/api/license/validate` | none | Validate license on boot |
-| POST | `/api/license/reset` | `x-admin-secret` header | Reset machine binding |
-| GET | `/api/license/list` | `x-admin-secret` header | List all licenses |
-| GET | `/api/updates/check` | none | Check for app update |
-
-## Creating a License (Admin)
-
-```bash
-node scripts/createLicense.mjs --pharmacy "Ravi Medicals" --notes "Main counter"
+```
+website/
+├── api/
+│   ├── _db.js                # Upstash Redis / Vercel KV cloud data store
+│   ├── catalog.js            # Consolidated customer portal & store API (refills, bills, orders, stores)
+│   ├── license/              # License validation, activation, creation, resets
+│   │   ├── activate.js
+│   │   ├── create.js
+│   │   ├── list.js
+│   │   ├── renew.js
+│   │   ├── reset.js
+│   │   ├── toggle-pilot.js
+│   │   └── validate.js
+│   ├── telemetry/            # Anonymous health & usage telemetry
+│   └── updates/              # Remote app updates and version checks
+├── public/
+│   ├── catalog.html          # Universal Customer Web Store, Refill & Billing Portal (/shop)
+│   └── index.html            # License Server management console (/license)
+├── package.json              # Lightweight Vercel deployment package
+└── vercel.json               # Clean rewrites, security headers, and edge cache policies
 ```
 
-Output:
-```
-✅ License Created
-   Pharmacy : Ravi Medicals
-   License ID: PHARM-A3B2
-   License Key: X7KP-9QRT-M2LN-4WVZ
-   
-   ⚠️  Store the License Key safely — shown ONCE only.
-```
+---
 
-## Releasing a New Update
+## Public URLs & Features
 
-Edit `license-server/api/updates/check.js` and bump `LATEST_VERSION` + `CHANGELOG`.
-Push to GitHub → Vercel auto-deploys in ~30 seconds.
+| URL | Purpose |
+|-----|---------|
+| `https://ai-pharmacy-os.vercel.app/shop` | **Customer Web Store & Patient Health Portal**: Medicine catalog, 1-click refill requests, prescription orders, customer invoices/bills, and store switching. |
+| `https://ai-pharmacy-os.vercel.app/license` | **License & Software Management Console**: Activate licenses, view telemetry, and push application updates. |
+| `https://ai-pharmacy-os.vercel.app/api/catalog` | Cloud catalog sync, customer auth, refill requests, order dispatch endpoints. |
+| `https://ai-pharmacy-os.vercel.app/api/updates/check` | Desktop application auto-updater check. |
+
+---
+
+## Vercel Deployment Settings
+
+1. **Root Directory**: `website`
+2. **Framework Preset**: Other
+3. **Environment Variables**:
+   - `KV_REST_API_URL` (or Upstash Redis URL)
+   - `KV_REST_API_TOKEN` (or Upstash Redis Token)
+   - `ADMIN_SECRET` (Secure key for admin license generation and catalog pushing)
+
+---
+
+## Releasing a Desktop Update
+
+Edit `website/api/updates/check.js` and bump `LATEST_VERSION` + `CHANGELOG`.
+Push to GitHub → Vercel deploys immediately.
