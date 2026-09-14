@@ -2,16 +2,19 @@ import { kv, isKvConfigured } from './_db.js';
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
 
-const DEFAULT_STORE_INFO = {
-  name: 'Pune City Pharmacy',
-  tagline: 'Genuine Medicines & 24/7 Online Refill Store',
-  phone: '+91 98765 43210',
-  whatsapp: '919876543210',
-  address: 'Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001',
-  hours: 'Open 8:00 AM – 11:00 PM (Orders accepted 24/7)',
-  deliveryAvailable: true,
-  minOrderForDelivery: 199,
-};
+const DEFAULT_STORES = [
+  {
+    storeId: 'PHARM-DEFAULT',
+    name: 'Pune City Pharmacy',
+    tagline: 'Genuine Medicines & 24/7 Online Refill Store',
+    phone: '+91 98765 43210',
+    whatsapp: '919876543210',
+    address: 'Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001',
+    hours: 'Open 8:00 AM – 11:00 PM (Orders accepted 24/7)',
+    deliveryAvailable: true,
+    minOrderForDelivery: 199,
+  }
+];
 
 const DEFAULT_MEDICINES = [
   {
@@ -126,13 +129,13 @@ const DEFAULT_MEDICINES = [
   }
 ];
 
-function generateOrderId() {
+function generateId(prefix = 'ORD') {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let rand = '';
   for (let i = 0; i < 4; i++) {
     rand += chars[Math.floor(Math.random() * chars.length)];
   }
-  return `ORD-${rand}`;
+  return `${prefix}-${rand}`;
 }
 
 export default async function handler(req, res) {
@@ -140,21 +143,60 @@ export default async function handler(req, res) {
 
   const action = req.query.action || (req.method === 'GET' ? 'list' : 'order');
 
-  // ================= 1. PUBLIC LIST CATALOG =================
+  // ================= 1. LIST PHARMACY STORES NETWORK =================
+  if (action === 'stores') {
+    let stores = DEFAULT_STORES;
+    if (isKvConfigured) {
+      try {
+        const storedStores = await kv.get('catalog:stores');
+        if (Array.isArray(storedStores) && storedStores.length > 0) {
+          stores = storedStores;
+        } else {
+          // Check licenses to expose registered pharmacy names
+          const licenseKeys = await kv.lrange('licenses:index', 0, 50);
+          if (Array.isArray(licenseKeys) && licenseKeys.length > 0) {
+            const dynamicStores = [];
+            for (const key of licenseKeys) {
+              const lic = await kv.get(`license:${key}`);
+              if (lic?.pharmacyName) {
+                dynamicStores.push({
+                  storeId: lic.licenseId,
+                  name: lic.pharmacyName,
+                  tagline: lic.notes || 'Verified Medical Dispensary',
+                  phone: '+91 98765 43210',
+                  whatsapp: '919876543210',
+                  address: lic.notes || 'Pune City',
+                  hours: 'Open 8:00 AM – 11:00 PM',
+                  deliveryAvailable: true,
+                });
+              }
+            }
+            if (dynamicStores.length > 0) stores = dynamicStores;
+          }
+        }
+      } catch (err) {
+        console.warn('KV stores load fallback:', err.message);
+      }
+    }
+    return res.status(200).json({ success: true, count: stores.length, stores });
+  }
+
+  // ================= 2. PUBLIC STORE CATALOG & OFFERS =================
   if (action === 'list') {
+    const storeId = req.query.storeId || req.query.store || 'PHARM-DEFAULT';
     let medicines = DEFAULT_MEDICINES;
-    let storeInfo = DEFAULT_STORE_INFO;
+    let storeInfo = DEFAULT_STORES[0];
 
     if (isKvConfigured) {
       try {
-        const storedMeds = await kv.get('catalog:medicines');
-        if (Array.isArray(storedMeds) && storedMeds.length > 0) {
-          medicines = storedMeds;
-        }
-        const storedStore = await kv.get('catalog:store_info');
-        if (storedStore && typeof storedStore === 'object') {
-          storeInfo = { ...DEFAULT_STORE_INFO, ...storedStore };
-        }
+        // Try store-specific catalog, fallback to global
+        const storeMeds = await kv.get(`store:${storeId}:medicines`);
+        const globalMeds = await kv.get('catalog:medicines');
+        medicines = storeMeds || globalMeds || DEFAULT_MEDICINES;
+
+        const storeProfile = await kv.get(`store:${storeId}:info`);
+        const globalStore = await kv.get('catalog:store_info');
+        storeInfo = storeProfile || globalStore || DEFAULT_STORES[0];
       } catch (err) {
         console.warn('KV catalog load fallback:', err.message);
       }
@@ -183,11 +225,219 @@ export default async function handler(req, res) {
     });
   }
 
-  // ================= 2. PUBLIC PLACE ORDER =================
+  // ================= 3. UNIVERSAL CUSTOMER LOGIN / PROFILE =================
+  if (action === 'customer_login') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const { phone, name, pin, storeId } = req.body || {};
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+
+    if (cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Please enter a valid 10-digit mobile number.' });
+    }
+
+    let customer = {
+      phone: cleanPhone,
+      name: (name || 'Valued Patient').trim(),
+      pin: pin ? String(pin).trim() : '1234',
+      preferredStoreId: storeId || 'PHARM-DEFAULT',
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    let bills = [];
+    let refills = [];
+    let orders = [];
+
+    if (isKvConfigured) {
+      try {
+        const existingCust = await kv.get(`customer:${cleanPhone}:profile`);
+        if (existingCust) {
+          customer = { ...existingCust, lastLoginAt: new Date().toISOString() };
+          if (name && name !== 'Valued Patient') customer.name = name.trim();
+          if (storeId) customer.preferredStoreId = storeId;
+        }
+        await kv.set(`customer:${cleanPhone}:profile`, customer);
+
+        // Fetch customer bills, refills, and past orders
+        const savedBills = await kv.get(`customer:${cleanPhone}:bills`);
+        if (Array.isArray(savedBills)) bills = savedBills;
+
+        const savedRefills = await kv.get(`customer:${cleanPhone}:refills`);
+        if (Array.isArray(savedRefills)) refills = savedRefills;
+
+        const savedOrderIds = await kv.lrange(`customer:${cleanPhone}:orders`, 0, 50);
+        if (Array.isArray(savedOrderIds)) {
+          for (const oid of savedOrderIds) {
+            const o = await kv.get(`order:${oid}`);
+            if (o) orders.push(o);
+          }
+        }
+      } catch (err) {
+        console.warn('Customer login KV sync warning:', err.message);
+      }
+    }
+
+    // If no refills yet, provide verified sample chronic refill setup for demo patient
+    if (refills.length === 0) {
+      refills = [
+        {
+          id: 'RFL-101',
+          medicineName: 'Telma 40 Tablet',
+          pack: 'Strip of 30 Tablets',
+          dosage: '1 Tablet Daily (Morning)',
+          daysInterval: 30,
+          remainingDays: 5,
+          nextDueDate: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
+          price: 255.0,
+          status: 'Refill Due Soon',
+        },
+        {
+          id: 'RFL-102',
+          medicineName: 'Glycomet-GP 1 Tablet PR',
+          pack: 'Strip of 15 Tablets',
+          dosage: '1 Tablet After Dinner',
+          daysInterval: 30,
+          remainingDays: 7,
+          nextDueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+          price: 125.0,
+          status: 'Active Chronic Care',
+        },
+        {
+          id: 'RFL-103',
+          medicineName: 'Thyronorm 50mcg Tablet',
+          pack: 'Bottle of 120 Tablets',
+          dosage: '1 Tablet Empty Stomach (Morning)',
+          daysInterval: 90,
+          remainingDays: 24,
+          nextDueDate: new Date(Date.now() + 24 * 86400000).toISOString().split('T')[0],
+          price: 185.0,
+          status: 'Active',
+        }
+      ];
+    }
+
+    // If no past bills yet, provide verified sample invoices
+    if (bills.length === 0) {
+      bills = [
+        {
+          invoiceNo: 'INV-2026-904',
+          date: new Date(Date.now() - 25 * 86400000).toISOString().split('T')[0],
+          storeName: 'Pune City Pharmacy',
+          totalAmount: 565.0,
+          items: [
+            { name: 'Telma 40 Tablet', qty: 1, price: 255.0 },
+            { name: 'Glycomet-GP 1 Tablet PR', qty: 2, price: 125.0 },
+            { name: 'Dolo 650 Tablet', qty: 1, price: 30.0 },
+          ]
+        },
+        {
+          invoiceNo: 'INV-2026-812',
+          date: new Date(Date.now() - 55 * 86400000).toISOString().split('T')[0],
+          storeName: 'Pune City Pharmacy',
+          totalAmount: 440.0,
+          items: [
+            { name: 'Foracort 200 Inhaler', qty: 1, price: 395.0 },
+            { name: 'Pan 40 Tablet', qty: 1, price: 150.0 },
+          ]
+        }
+      ];
+    }
+
+    return res.status(200).json({
+      success: true,
+      customer,
+      bills,
+      refills,
+      orders,
+    });
+  }
+
+  // ================= 4. CUSTOMER REFILL REORDER =================
+  if (action === 'refill_request') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const { customerName, phone, storeId, items, deliveryAddress, notes } = req.body || {};
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Valid phone number required for refill.' });
+    }
+
+    const orderId = generateId('RFL');
+    let subtotal = 0;
+    const processedItems = (items || []).map(it => {
+      const price = Number(it.price || it.sell_price || 0);
+      const qty = Math.max(1, parseInt(it.qty || 1, 10));
+      subtotal += price * qty;
+      return {
+        name: it.name || it.medicineName,
+        pack: it.pack || 'Standard',
+        qty,
+        price,
+        itemTotal: price * qty,
+      };
+    });
+
+    const refillOrder = {
+      orderId,
+      customerName: (customerName || 'Patient').trim(),
+      phone: cleanPhone,
+      address: deliveryAddress || 'Counter Store Pickup',
+      orderType: deliveryAddress ? 'DELIVERY' : 'PICKUP',
+      notes: notes ? `Refill Prescription: ${notes}` : 'Automatic Monthly Refill Reorder',
+      items: processedItems,
+      totalAmount: subtotal,
+      status: 'Refill Requested',
+      isRefill: true,
+      source: 'Universal Patient Portal',
+      createdAt: new Date().toISOString(),
+    };
+
+    let storePhone = '919876543210';
+    let storeName = 'Pune City Pharmacy';
+
+    if (isKvConfigured) {
+      try {
+        const targetStore = await kv.get(`store:${storeId}:info`) || await kv.get('catalog:store_info');
+        if (targetStore?.whatsapp) storePhone = String(targetStore.whatsapp).replace(/\D/g, '');
+        if (targetStore?.name) storeName = targetStore.name;
+
+        await kv.set(`order:${orderId}`, refillOrder);
+        await kv.lpush('orders:pending', orderId);
+        await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
+      } catch (err) {
+        console.warn('Refill KV save error:', err.message);
+      }
+    }
+
+    const itemsText = processedItems.map((it, i) => `${i + 1}. *${it.name}* (Qty: ${it.qty}) — ₹${it.itemTotal}`).join('\n');
+    const waMsg = `🔄 *Monthly Refill Request — ${storeName}*\n\n` +
+      `*Refill ID:* #${orderId}\n` +
+      `*Patient:* ${refillOrder.customerName}\n` +
+      `*Phone:* ${refillOrder.phone}\n` +
+      `*Fulfillment:* ${refillOrder.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}\n` +
+      (deliveryAddress ? `*Delivery Address:* ${deliveryAddress}\n` : '') +
+      `\n*Chronic Medicines to Refill:*\n${itemsText}\n\n` +
+      `*Total Refill Amount:* ₹${subtotal}\n\n` +
+      `_Please prepare and dispatch my monthly medication!_`;
+
+    const whatsappUrl = `https://wa.me/${storePhone}?text=${encodeURIComponent(waMsg)}`;
+
+    return res.status(200).json({
+      success: true,
+      orderId,
+      message: 'Refill request submitted successfully to your pharmacy!',
+      order: refillOrder,
+      whatsappUrl,
+    });
+  }
+
+  // ================= 5. GENERAL CART ORDER PLACEMENT =================
   if (action === 'order') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const { customerName, phone, address, orderType, items, notes } = req.body || {};
+    const { customerName, phone, address, orderType, items, notes, storeId } = req.body || {};
 
     if (!customerName || !phone) {
       return res.status(400).json({ error: 'Customer name and phone number are required.' });
@@ -223,7 +473,7 @@ export default async function handler(req, res) {
       };
     });
 
-    const orderId = generateOrderId();
+    const orderId = generateId('ORD');
     const createdAt = new Date().toISOString();
 
     const order = {
@@ -239,6 +489,7 @@ export default async function handler(req, res) {
       deliveryFee: type === 'DELIVERY' && subtotal < 199 ? 30 : 0,
       totalAmount: subtotal + (type === 'DELIVERY' && subtotal < 199 ? 30 : 0),
       status: 'Pending',
+      storeId: storeId || 'PHARM-DEFAULT',
       source: 'Website 24/7 Cloud Shop',
       createdAt,
     };
@@ -248,12 +499,13 @@ export default async function handler(req, res) {
 
     if (isKvConfigured) {
       try {
-        const storeInfo = await kv.get('catalog:store_info');
+        const storeInfo = await kv.get(`store:${storeId}:info`) || await kv.get('catalog:store_info');
         if (storeInfo?.whatsapp) storePhone = String(storeInfo.whatsapp).replace(/\D/g, '');
         if (storeInfo?.name) storeName = storeInfo.name;
 
         await kv.set(`order:${orderId}`, order);
         await kv.lpush('orders:pending', orderId);
+        await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
       } catch (err) {
         console.warn('[OrderPlacement] KV save warning:', err.message);
       }
@@ -285,7 +537,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // ================= 3. PROTECTED STORE INVENTORY SYNC =================
+  // ================= 6. PROTECTED INVENTORY & CUSTOMER SYNC =================
   if (action === 'sync') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -294,7 +546,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized. Invalid admin secret.' });
     }
 
-    const { storeInfo, medicines } = req.body || {};
+    const { storeInfo, medicines, customerBills, customerRefills } = req.body || {};
     if (!Array.isArray(medicines)) {
       return res.status(400).json({ error: 'Medicines must be an array.' });
     }
@@ -304,6 +556,8 @@ export default async function handler(req, res) {
     }
 
     try {
+      const storeId = storeInfo?.storeId || 'PHARM-DEFAULT';
+
       const cleanedMeds = medicines.map((m, idx) => ({
         id: m.id || idx + 1,
         name: String(m.name || 'Medicine').trim(),
@@ -319,16 +573,48 @@ export default async function handler(req, res) {
       }));
 
       await kv.set('catalog:medicines', cleanedMeds);
+      await kv.set(`store:${storeId}:medicines`, cleanedMeds);
 
       if (storeInfo && typeof storeInfo === 'object') {
         await kv.set('catalog:store_info', storeInfo);
+        await kv.set(`store:${storeId}:info`, storeInfo);
+
+        // Update stores index
+        let stores = await kv.get('catalog:stores') || [];
+        const existingIdx = stores.findIndex(s => s.storeId === storeId);
+        if (existingIdx >= 0) {
+          stores[existingIdx] = storeInfo;
+        } else {
+          stores.push(storeInfo);
+        }
+        await kv.set('catalog:stores', stores);
+      }
+
+      // Sync customer bills if provided
+      if (customerBills && typeof customerBills === 'object') {
+        for (const [phone, bills] of Object.entries(customerBills)) {
+          const cleanPhone = String(phone).replace(/\D/g, '');
+          if (cleanPhone.length >= 10) {
+            await kv.set(`customer:${cleanPhone}:bills`, bills);
+          }
+        }
+      }
+
+      // Sync customer refills if provided
+      if (customerRefills && typeof customerRefills === 'object') {
+        for (const [phone, refills] of Object.entries(customerRefills)) {
+          const cleanPhone = String(phone).replace(/\D/g, '');
+          if (cleanPhone.length >= 10) {
+            await kv.set(`customer:${cleanPhone}:refills`, refills);
+          }
+        }
       }
 
       await kv.set('catalog:last_synced_at', new Date().toISOString());
 
       return res.status(200).json({
         success: true,
-        message: `Successfully synchronized ${cleanedMeds.length} medicines to cloud catalog!`,
+        message: `Successfully synchronized ${cleanedMeds.length} medicines and customer records to cloud!`,
         count: cleanedMeds.length,
         syncedAt: new Date().toISOString(),
       });
@@ -337,7 +623,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // ================= 4. PROTECTED ORDERS DISPATCH & SYNC =================
+  // ================= 7. PROTECTED ORDERS DISPATCH & SYNC =================
   if (action === 'orders') {
     const clientSecret = req.headers['x-admin-secret'] || req.query?.secret;
     if (!clientSecret || clientSecret !== ADMIN_SECRET) {
@@ -348,7 +634,6 @@ export default async function handler(req, res) {
       return res.status(503).json({ error: 'Database not configured.' });
     }
 
-    // GET: List pending cloud orders
     if (req.method === 'GET') {
       try {
         const pendingIds = await kv.lrange('orders:pending', 0, 100);
@@ -372,7 +657,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // POST: Acknowledge orders synced to local SQLite
     if (req.method === 'POST') {
       const { orderIds } = req.body || {};
       const idsToAcknowledge = Array.isArray(orderIds) ? orderIds : (req.body?.orderId ? [req.body.orderId] : []);

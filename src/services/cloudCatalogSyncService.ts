@@ -60,6 +60,68 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
     stock_qty: Number(r.stock_qty || 0),
   }));
 
+  // Gather recent customer bills grouped by phone number
+  const customerBills: Record<string, any[]> = {};
+  try {
+    const recentSales = await db.all(`
+      SELECT si.id, si.invoice_no, si.total_amount, si.date, c.phone as customer_phone
+      FROM sales_invoices si
+      JOIN customers c ON c.id = si.customer_id
+      WHERE c.phone IS NOT NULL AND (si.status IS NULL OR si.status != 'cancelled')
+      ORDER BY si.date DESC LIMIT 150
+    `);
+
+    for (const s of recentSales) {
+      const cleanPhone = String(s.customer_phone).replace(/\D/g, '');
+      if (cleanPhone.length >= 10) {
+        if (!customerBills[cleanPhone]) customerBills[cleanPhone] = [];
+        if (customerBills[cleanPhone].length < 5) {
+          const items = await db.all(`
+            SELECT sit.quantity as qty, sit.unit_price as price, sit.medicine_name as name
+            FROM sale_items sit WHERE sit.invoice_id = ?
+          `, [s.id]).catch(() => []);
+          customerBills[cleanPhone].push({
+            invoiceNo: s.invoice_no,
+            date: s.date,
+            storeName: storeInfo.name,
+            totalAmount: s.total_amount,
+            items
+          });
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Gather active patient refills grouped by phone number
+  const customerRefills: Record<string, any[]> = {};
+  try {
+    const refills = await db.all(`
+      SELECT pr.id, pr.refill_interval_days, pr.quantity_needed, pr.next_refill_date,
+             m.name as medicineName, m.packaging as pack, m.sell_price as price,
+             c.phone as customer_phone
+      FROM patient_refills pr
+      JOIN medicines m ON m.id = pr.medicine_id
+      JOIN customers c ON c.id = pr.customer_id
+      WHERE pr.is_active = 1 AND c.phone IS NOT NULL
+    `);
+
+    for (const r of refills) {
+      const cleanPhone = String(r.customer_phone).replace(/\D/g, '');
+      if (cleanPhone.length >= 10) {
+        if (!customerRefills[cleanPhone]) customerRefills[cleanPhone] = [];
+        customerRefills[cleanPhone].push({
+          id: `RFL-${r.id}`,
+          medicineName: r.medicineName,
+          pack: r.pack || 'Standard',
+          dosage: 'Prescribed Daily Dosage',
+          daysInterval: r.refill_interval_days || 30,
+          nextDueDate: r.next_refill_date || 'Monthly',
+          price: r.price,
+        });
+      }
+    }
+  } catch (_) {}
+
   try {
     const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/sync`, {
       method: 'POST',
@@ -67,7 +129,7 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
         'Content-Type': 'application/json',
         'x-admin-secret': ADMIN_SECRET,
       },
-      body: JSON.stringify({ storeInfo, medicines }),
+      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills }),
     });
 
     const data: any = await res.json();
