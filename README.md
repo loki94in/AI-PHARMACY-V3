@@ -108,10 +108,13 @@ See [INSTALL.md](INSTALL.md) for full installation instructions.
 ```
 AI PHARMACY v2/
 ├── src/                  # Backend TypeScript source
+│   ├── bootstrap.ts      # Real entry point — starts the HTTP server,
+│   │                     # OR (via WORKER_ROLE env var) runs the catalog
+│   │                     # worker / email poller as a forked copy of itself
+│   ├── server.ts         # The Express app, imported by bootstrap.ts
 │   ├── routes/           # Express API routes
-│   ├── services/         # Business logic
-│   └── server.ts         # Entry point
-├── frontend/             # React + Vite SPA
+│   └── services/         # Business logic
+├── frontend/             # React + Vite SPA (the UI you see in the browser)
 │   └── src/
 │       └── pages/        # Page components (POS, Inventory, etc.)
 ├── data/                 # SQLite databases & reference data
@@ -121,6 +124,13 @@ AI PHARMACY v2/
 ├── INSTALL.md            # End-user install guide
 └── .env                  # Environment config
 ```
+
+> There's also an `electron/` folder in the repo — it's an unused leftover, not part of how the app actually runs. This is a Node SEA (single executable) app, not an Electron app.
+
+This backend + SPA pair is the core desktop product. The full picture has three more pieces living in this same repo — see **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** for how they all fit together:
+- `pharmacy-mobile/` — React Native/Expo mobile app that syncs to this same backend
+- `website/` — customer-facing ordering site, deployed separately (Vercel)
+- `gas/` — Google Apps Script license server
 
 ---
 

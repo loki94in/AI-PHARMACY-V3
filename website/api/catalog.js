@@ -138,6 +138,48 @@ function generateId(prefix = 'ORD') {
   return `${prefix}-${rand}`;
 }
 
+// ================= DDoS DEFENSE & RATE LIMITING ENGINE =================
+const rateLimitMap = new Map();
+const RATE_LIMIT_CLEANUP_INTERVAL = 60 * 1000;
+let lastCleanup = Date.now();
+
+function checkRateLimit(key, maxRequests = 10, windowMs = 60000) {
+  const now = Date.now();
+  if (now - lastCleanup > RATE_LIMIT_CLEANUP_INTERVAL) {
+    for (const [k, record] of rateLimitMap.entries()) {
+      if (now - record.startTime > windowMs) {
+        rateLimitMap.delete(k);
+      }
+    }
+    lastCleanup = now;
+  }
+
+  const record = rateLimitMap.get(key) || { count: 0, startTime: now };
+
+  if (now - record.startTime > windowMs) {
+    record.count = 1;
+    record.startTime = now;
+    rateLimitMap.set(key, record);
+    return { allowed: true, remaining: maxRequests - 1 };
+  }
+
+  record.count += 1;
+  rateLimitMap.set(key, record);
+
+  if (record.count > maxRequests) {
+    return { allowed: false, remaining: 0 };
+  }
+  return { allowed: true, remaining: maxRequests - record.count };
+}
+
+function getClientIp(req) {
+  const xForwardedFor = req.headers['x-forwarded-for'];
+  if (xForwardedFor) {
+    return String(xForwardedFor).split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || req.connection?.remoteAddress || '127.0.0.1';
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -145,6 +187,7 @@ export default async function handler(req, res) {
 
   // ================= 1. LIST PHARMACY STORES NETWORK =================
   if (action === 'stores') {
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     let stores = DEFAULT_STORES;
     if (isKvConfigured) {
       try {
@@ -183,6 +226,7 @@ export default async function handler(req, res) {
 
   // ================= 2. PUBLIC STORE CATALOG & OFFERS =================
   if (action === 'list') {
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     const storeId = req.query.storeId || req.query.store || 'PHARM-DEFAULT';
     let medicines = DEFAULT_MEDICINES;
     let storeInfo = DEFAULT_STORES[0];
@@ -228,6 +272,17 @@ export default async function handler(req, res) {
   // ================= 3. UNIVERSAL CUSTOMER LOGIN / PROFILE =================
   if (action === 'customer_login') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(`login:${clientIp}`, 6, 60000);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: 'Too many login attempts. Please wait 1 minute before trying again.' });
+    }
+
+    // Silent honeypot bot trap
+    if (req.body?.website_url_check || req.body?.hp_check) {
+      return res.status(200).json({ success: true, customer: { name: 'Patient', phone: '0000000000' } });
+    }
 
     const { phone, name, pin, storeId } = req.body || {};
     const cleanPhone = String(phone || '').replace(/\D/g, '');
@@ -357,6 +412,17 @@ export default async function handler(req, res) {
   if (action === 'refill_request') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(`refill:${clientIp}`, 6, 60000);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: 'Too many refill requests submitted rapidly. Please wait 1 minute.' });
+    }
+
+    // Silent honeypot bot trap
+    if (req.body?.website_url_check || req.body?.hp_check) {
+      return res.status(200).json({ success: true, orderId: generateId('RFL'), message: 'Refill request submitted successfully!' });
+    }
+
     const { customerName, phone, storeId, items, deliveryAddress, notes } = req.body || {};
     const cleanPhone = String(phone || '').replace(/\D/g, '');
 
@@ -436,6 +502,17 @@ export default async function handler(req, res) {
   // ================= 5. GENERAL CART ORDER PLACEMENT =================
   if (action === 'order') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(`order:${clientIp}`, 6, 60000);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: 'Too many orders placed rapidly from this address. Please wait 1 minute.' });
+    }
+
+    // Silent honeypot bot trap
+    if (req.body?.website_url_check || req.body?.hp_check) {
+      return res.status(200).json({ success: true, orderId: generateId('ORD'), message: 'Order placed successfully!' });
+    }
 
     const { customerName, phone, address, orderType, items, notes, storeId } = req.body || {};
 

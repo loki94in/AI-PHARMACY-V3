@@ -55,7 +55,7 @@ Note: the ~119 wrapper methods on `api` that duplicate direct `apiClient.*` call
 ### 2. POS / Point of Sale (`/pos`)
 * **Component Path**: [pages/POS/index.tsx](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/POS/index.tsx)
 * **Authoritative Responsibilities**: Real-time sales counter, fast medicine autocomplete, barcode scanning, doctor selection, customer tagging, bill holding, thermal invoice printing.
-* **Authoritative Data Sources**: `POST /api/sales/bill`, `GET /api/sales/recommend-quantity/batch`, `GET /api/medicines/search-fast`, `GET /api/doctors`.
+* **Authoritative Data Sources**: `POST /api/sales` (creates the bill; there is no separate `/api/sales/bill` route — corrected 2026-09-14), `GET /api/sales/recommend-quantity/batch`, `GET /api/medicines/search-fast`, `GET /api/doctors`.
 * **Database Tables**: `inventory_master`, `medicines`, `customers`, `doctors`, `held_bills`.
 * **Identified Legacy Code / Small Gaps**:
   - Uses module-level variable caching for zero layout shift (compliant with SPA contract).

@@ -1,6 +1,7 @@
 {
   "name": "ai-pharmacy-os",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "description": "Cloud Command Center & Universal Customer Health Portal for AI Pharmacy OS. Deployed to Vercel.",
   "dependencies": {

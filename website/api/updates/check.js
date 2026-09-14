@@ -52,6 +52,8 @@ export default async function handler(req, res) {
   const hasNewerVersion = compareVersions(latestVersion, clientVersion) > 0;
   const hasUpdate = hasNewerVersion && isTargetEligible;
 
+  res.setHeader('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=300');
+
   return res.status(200).json({
     hasUpdate,
     latestVersion,

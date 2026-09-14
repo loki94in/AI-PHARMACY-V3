@@ -64,7 +64,7 @@ erDiagram
 A pharmacy system lives and dies by its search speeds during checkout. The application optimizes this with a hybrid strategy:
 
 ### In-Memory Caching
-In [productNameFilterService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY/src/services/productNameFilterService.ts), all active medicine names are preloaded into memory upon server startup:
+In [productNameFilterService.ts](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/productNameFilterService.ts), all active medicine names are preloaded into memory upon server startup:
 ```typescript
 const rows = await db.all('SELECT DISTINCT name FROM medicines WHERE name IS NOT NULL AND name <> ""');
 this.medicineNames = rows.map(row => row.name);
