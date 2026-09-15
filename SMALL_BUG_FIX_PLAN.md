@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P2-07 — Phone WhatsApp Capability Check Fails with Missing Table whatsapp_message_queue
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When typing or checking customer/distributor phone numbers in the UI, the console logged `[WhatsApp] Check phone error: SQLITE_ERROR: no such table: whatsapp_message_queue` and the capability badge failed to recognize previously delivered numbers, falling back to `UNABLE_TO_VERIFY`. |
+| **Root cause** | `GET /api/messaging/check-phone` in `src/routes/messaging.ts` queried `SELECT id FROM whatsapp_message_queue WHERE (phone = ? OR phone = ?) AND status IN ('DELIVERED', 'SENT') LIMIT 1`. The table `whatsapp_message_queue` does not exist; the actual queue and audit tables in SQLite are `whatsapp_send_queue` and `whatsapp_sent_register`. |
+| **How it was fixed** | Updated `src/routes/messaging.ts` to check `whatsapp_sent_register` (`phone_last10 = ? AND delivery_status = 'delivered'`) and fallback to `whatsapp_send_queue` (`(number = ? OR number = ?) AND status = 'sent'`). |
+| **Priority** | P2 |
+| **What not to touch** | WhatsApp queue processing loop; anti-ban pacing delays; client idle-sleep wake gates. |
+| **Verified by** | `npm run guardrails` (PASS, 0 violations); TypeScript compilation clean. |
+
 ### [Fixed] P1-25 — Goods Returns (Wrong Product Delivered & Non-Expired Excess Stock)
 
 | Field | Content |

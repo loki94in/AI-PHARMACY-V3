@@ -617,8 +617,13 @@ router.get('/check-phone', async (req, res) => {
 
     // 2. Check local database history (prior successful sends = confirmed available)
     const prevDelivery = await db.get(
-      `SELECT id FROM whatsapp_message_queue 
-       WHERE (phone = ? OR phone = ?) AND status IN ('DELIVERED', 'SENT') 
+      `SELECT id FROM whatsapp_sent_register 
+       WHERE phone_last10 = ? AND delivery_status = 'delivered'
+       LIMIT 1`,
+      [cleanPhone]
+    ) || await db.get(
+      `SELECT id FROM whatsapp_send_queue 
+       WHERE (number = ? OR number = ?) AND status = 'sent'
        LIMIT 1`,
       [cleanPhone, `91${cleanPhone}`]
     );
