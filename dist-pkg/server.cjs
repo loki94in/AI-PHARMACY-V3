@@ -54851,8 +54851,13 @@ var init_messaging = __esm({
       try {
         const db2 = await dbManager.getConnection();
         const prevDelivery = await db2.get(
-          `SELECT id FROM whatsapp_message_queue 
-       WHERE (phone = ? OR phone = ?) AND status IN ('DELIVERED', 'SENT') 
+          `SELECT id FROM whatsapp_sent_register 
+       WHERE phone_last10 = ? AND delivery_status = 'delivered'
+       LIMIT 1`,
+          [cleanPhone]
+        ) || await db2.get(
+          `SELECT id FROM whatsapp_send_queue 
+       WHERE (number = ? OR number = ?) AND status = 'sent'
        LIMIT 1`,
           [cleanPhone, `91${cleanPhone}`]
         );

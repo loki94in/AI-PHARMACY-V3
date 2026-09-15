@@ -117,21 +117,42 @@ try {
     headers: { 'x-admin-secret': adminSecret },
     timeout: 10000,
   });
-
-  console.log('\n=============================================================');
-  console.log('🎉  RELEASE PUBLISHED SUCCESSFULLY!');
-  if (isPilot) {
-    console.log('🔒  Status: In PILOT MODE.');
-    console.log('    Only licensed PCs marked as "Pilot" will receive this update.');
-    console.log('    All other customer PCs will stay on their current version.');
-    console.log('    Once tested, run \`npm run release\` to roll out to EVERYONE.');
-  } else {
-    console.log('🌍  Status: In PRODUCTION MODE.');
-    console.log('    Every customer PC will auto-detect and update within 24 hours.');
-  }
-  console.log('=============================================================\n');
 } catch (publishErr) {
-  console.warn('\n⚠️  Could not reach Vercel API automatically:', publishErr?.response?.data || publishErr.message);
-  console.log(`   Asset is live on GitHub: ${downloadUrl}`);
-  console.log(`   You can publish directly from https://ai-pharmacy-os.vercel.app/license`);
+  console.error('\n❌ Publish to Vercel/KV FAILED — release is NOT live. No PC will detect this update.');
+  console.error('   Reason:', publishErr?.response?.data || publishErr.message);
+  console.error(`   Asset is on GitHub (${downloadUrl}) but the update-check server was never told about it.`);
+  console.error('   Fix ADMIN_SECRET / LICENSE_SERVER_URL and re-run, or publish manually from https://ai-pharmacy-os.vercel.app/license');
+  process.exit(1);
 }
+
+// 4. Verify the publish actually took effect — never trust a 200 alone.
+console.log('\n🔎 Step 4: Verifying update-check server now reports the new version...');
+try {
+  const verify = await axios.get(`${vercelServer}/api/updates?action=check`, {
+    params: { version: '0.0.0' }, // force hasUpdate=true so latestVersion is always returned
+    timeout: 10000,
+  });
+  if (verify.data.latestVersion !== version) {
+    console.error(`\n❌ Verification FAILED: server reports latestVersion="${verify.data.latestVersion}", expected "${version}".`);
+    console.error('   The publish call returned success but the KV record does not reflect the new version.');
+    console.error('   PCs will keep reporting "up to date" on the OLD version. Do not consider this release done.');
+    process.exit(1);
+  }
+  console.log(`✓ Confirmed: server now reports latestVersion="${verify.data.latestVersion}".`);
+} catch (verifyErr) {
+  console.error('\n❌ Could not verify publish — treat this release as NOT confirmed:', verifyErr?.response?.data || verifyErr.message);
+  process.exit(1);
+}
+
+console.log('\n=============================================================');
+console.log('🎉  RELEASE PUBLISHED & VERIFIED!');
+if (isPilot) {
+  console.log('🔒  Status: In PILOT MODE.');
+  console.log('    Only licensed PCs marked as "Pilot" will receive this update.');
+  console.log('    All other customer PCs will stay on their current version.');
+  console.log('    Once tested, run \`npm run release\` to roll out to EVERYONE.');
+} else {
+  console.log('🌍  Status: In PRODUCTION MODE.');
+  console.log('    Every customer PC will auto-detect and update within 24 hours.');
+}
+console.log('=============================================================\n');

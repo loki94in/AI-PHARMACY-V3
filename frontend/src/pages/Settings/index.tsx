@@ -4661,11 +4661,14 @@ function LicenseManagementCard() {
 // Isolated component so its state doesn't re-render the entire Settings page
 function SoftwareUpdateCard() {
   const [checking, setChecking] = React.useState(false);
+  const [installing, setInstalling] = React.useState(false);
   const [result, setResult] = React.useState<{
     hasUpdate: boolean;
     latestVersion?: string;
     downloadUrl?: string;
     changelog?: string;
+    downloading?: boolean;
+    readyToInstall?: boolean;
   } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [lastChecked, setLastChecked] = React.useState<string | null>(null);
@@ -4682,6 +4685,42 @@ function SoftwareUpdateCard() {
       setError(err?.response?.data?.error || err?.message || 'Could not reach update server. Check internet connection.');
     } finally {
       setChecking(false);
+    }
+  };
+
+  // Live-update the card as the background silent download progresses,
+  // so it never gets stuck showing a stale "Download" link once the
+  // auto-updater has already grabbed the installer for us.
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const raw  = (e as CustomEvent).detail;
+      const data = raw?.payload || raw;
+      if (!data?.latestVersion) return;
+      setResult({
+        hasUpdate:      true,
+        latestVersion:  data.latestVersion,
+        downloadUrl:    data.downloadUrl,
+        changelog:      data.changelog || '',
+        downloading:    !!data.downloading,
+        readyToInstall: !!data.readyToInstall,
+      });
+    };
+    window.addEventListener('sse:update_available', handler);
+    return () => window.removeEventListener('sse:update_available', handler);
+  }, []);
+
+  const handleInstallAndRestart = async () => {
+    setInstalling(true);
+    try {
+      const res  = await fetch('/api/system/apply-update', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
+        setInstalling(false);
+      }
+      // On success the backend kills the process — no need to reset state
+    } catch (_) {
+      // Backend terminates server during install — this catch is expected
     }
   };
 
@@ -4724,7 +4763,22 @@ function SoftwareUpdateCard() {
                 <span className="font-bold text-primary">
                   🎉 Update available — v{result.latestVersion}
                 </span>
-                {result.downloadUrl && (
+                {result.readyToInstall ? (
+                  <button
+                    type="button"
+                    onClick={handleInstallAndRestart}
+                    disabled={installing}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                  >
+                    <RefreshCw size={11} className={installing ? 'animate-spin' : ''} />
+                    {installing ? 'Installing & restarting...' : 'Install & Restart'}
+                  </button>
+                ) : result.downloading ? (
+                  <span className="flex items-center gap-1 px-2.5 py-1 bg-primary/10 text-primary rounded-lg text-[11px] font-bold">
+                    <ArrowDownToLine size={11} className="animate-pulse" />
+                    Downloading in background...
+                  </span>
+                ) : result.downloadUrl && (
                   <a
                     href={result.downloadUrl}
                     target="_blank"

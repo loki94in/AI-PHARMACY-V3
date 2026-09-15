@@ -58,5 +58,18 @@ website/
 
 ## Releasing a Desktop Update
 
-Edit `website/api/updates/check.js` and bump `LATEST_VERSION` + `CHANGELOG`.
-Push to GitHub → Vercel deploys immediately.
+Do **not** edit version numbers in this repo's `website/api/updates.js` directly — that file only
+reads the `update_release` record from KV/Redis; a code edit + git push changes no runtime behavior
+because the KV record is untouched.
+
+Always release via the root project's script:
+
+```
+npm run release          # builds, uploads installer to GitHub, publishes new version to KV (ALL PCs)
+npm run release:pilot     # same, but rollout restricted to Pilot/Test licensed PCs
+```
+
+This bumps `package.json`, builds the installer, uploads it to a GitHub Release, then POSTs the new
+`latestVersion`/`downloadUrl`/`changelog` to `POST /api/updates?action=publish` (KV write) — the same
+value the desktop app's daily update check reads. The script verifies the publish actually took effect
+before reporting success; if it fails, no app will detect the update no matter how many times you `git push`.
