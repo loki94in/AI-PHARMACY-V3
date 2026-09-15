@@ -879,6 +879,22 @@ app.post('/api/system/shutdown', (req, res) => {
   }, 100);
 });
 
+// Client-initiated 1-click silent update install and auto-restart
+app.post('/api/system/apply-update', async (req, res) => {
+  console.log('[System] Received apply-update request. Installing update and restarting...');
+  try {
+    const { autoUpdateService } = await import('./services/autoUpdateService.js');
+    const result = await autoUpdateService.applyUpdate();
+    res.json(result);
+    setTimeout(() => {
+      void gracefulShutdown('APPLY_UPDATE');
+    }, 600);
+  } catch (err: any) {
+    console.error('[System] Failed to apply update:', err.message);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 let isShuttingDown = false;
 
 // Graceful shutdown with auto-backup and complete app termination
@@ -921,6 +937,12 @@ async function gracefulShutdown(signal: string) {
     console.error('Error stopping worker supervisor:', err);
   }
   try {
+    const { destroyClient } = await import('./whatsappClient.js');
+    await destroyClient();
+  } catch (waErr) {
+    console.error('Error destroying WhatsApp client:', waErr);
+  }
+  try {
     const { stopScispacySidecar } = await import('./services/scispacyClient.js');
     stopScispacySidecar();
   } catch (err) {
@@ -939,6 +961,18 @@ async function gracefulShutdown(signal: string) {
     closeAppBrowser();
   } catch (browserErr) {
     console.error('Error closing app browser window:', browserErr);
+  }
+
+  // On Windows client exit: ensure terminal window and child process tree are cleanly killed
+  if (process.platform === 'win32' && signal === 'CLIENT_EXIT') {
+    try {
+      const pid = process.pid;
+      const { spawn } = await import('child_process');
+      spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], {
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    } catch (_) {}
   }
 
   process.exit(0);

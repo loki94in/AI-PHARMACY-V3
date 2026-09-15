@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn, exec, ChildProcess } from 'child_process';
+import { spawn, exec, execSync, ChildProcess } from 'child_process';
 import { getAppDataDir } from '../config/index.js';
 
 /**
@@ -117,6 +117,7 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
       const args = [
         `--app=${url}`,
         `--user-data-dir=${profileDir}`,
+        '--start-fullscreen',
         '--disable-extensions',
         '--disable-background-networking',
         '--disable-sync',
@@ -178,7 +179,7 @@ export function closeAppBrowser(): void {
     console.log(`[ChromeBrowser] Terminating app browser window process (PID: ${pid})...`);
     try {
       if (process.platform === 'win32') {
-        exec(`taskkill /pid ${pid} /t /f`, () => {});
+        execSync(`taskkill /pid ${pid} /t /f`, { stdio: 'ignore' });
       } else {
         activeAppBrowserProcess.kill('SIGTERM');
       }
@@ -192,7 +193,7 @@ export function closeAppBrowser(): void {
   if (process.platform === 'win32') {
     try {
       const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      exec(killCmd, () => {});
+      execSync(killCmd, { stdio: 'ignore', timeout: 5000 });
     } catch (_) {}
   }
 }

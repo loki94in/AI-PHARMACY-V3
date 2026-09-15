@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Download, X, RefreshCw } from 'lucide-react';
+import { toastEvent } from '../services/events';
 
 interface UpdateInfo {
   latestVersion: string;
-  downloadUrl: string;
+  downloadUrl?: string;
   changelog: string;
+  downloading?: boolean;
+  readyToInstall?: boolean;
 }
 
 /**
@@ -16,6 +19,7 @@ export default function UpdateBanner() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [isInstalling, setIsInstalling] = useState(false);
 
   useEffect(() => {
     // Consume SSE via DOM CustomEvent dispatched by the global SSE listener
@@ -27,6 +31,8 @@ export default function UpdateBanner() {
         latestVersion: data.latestVersion,
         downloadUrl:   data.downloadUrl,
         changelog:     data.changelog || '',
+        downloading:   !!data.downloading,
+        readyToInstall: !!data.readyToInstall,
       });
       setDismissed(false);
     };
@@ -35,19 +41,39 @@ export default function UpdateBanner() {
     return () => window.removeEventListener('sse:update_available', handler);
   }, []);
 
+  const handleInstallAndRestart = async () => {
+    setIsInstalling(true);
+    try {
+      const res = await fetch('/api/system/apply-update', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
+        setIsInstalling(false);
+      }
+    } catch (_) {
+      // Backend terminates server during update install — expected behavior
+    }
+  };
+
   if (!update || dismissed) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-between gap-3 px-4 py-2.5 bg-primary text-white shadow-lg text-sm">
+    <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-between gap-3 px-4 py-2.5 bg-primary text-white shadow-lg text-sm animate-fade-in">
       <div className="flex items-center gap-2">
-        <RefreshCw size={15} className="shrink-0 animate-spin" style={{ animationDuration: '3s' }} />
-        <span className="font-medium">
-          AI Pharmacy v{update.latestVersion} is available!
+        <RefreshCw size={15} className={`shrink-0 ${isInstalling || update.downloading ? 'animate-spin' : ''}`} />
+        <span className="font-semibold text-white">
+          {isInstalling
+            ? 'Installing update & restarting AI Pharmacy OS...'
+            : update.readyToInstall
+            ? `AI Pharmacy v${update.latestVersion} is downloaded and ready to install!`
+            : update.downloading
+            ? `AI Pharmacy v${update.latestVersion} is downloading in background...`
+            : `AI Pharmacy v${update.latestVersion} is available!`}
         </span>
         {update.changelog && (
           <button
             onClick={() => setShowChangelog(v => !v)}
-            className="underline underline-offset-2 opacity-80 hover:opacity-100 text-xs text-white"
+            className="underline underline-offset-2 opacity-80 hover:opacity-100 text-xs text-white cursor-pointer"
           >
             {showChangelog ? 'Hide' : "What's new"}
           </button>
@@ -55,18 +81,30 @@ export default function UpdateBanner() {
       </div>
 
       <div className="flex items-center gap-2">
-        <a
-          href={update.downloadUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 border border-white/30 px-3 py-1 rounded-lg font-medium transition-colors text-white text-xs"
-        >
-          <Download size={13} />
-          Download Update
-        </a>
+        {update.readyToInstall && !isInstalling ? (
+          <button
+            onClick={handleInstallAndRestart}
+            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1 rounded-lg font-bold text-white text-xs shadow-md transition-all cursor-pointer active:scale-95"
+            title="Automatically close app, install update, and restart"
+          >
+            <RefreshCw size={13} />
+            Install & Restart
+          </button>
+        ) : update.downloadUrl && !update.readyToInstall && !isInstalling ? (
+          <a
+            href={update.downloadUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 border border-white/30 px-3 py-1 rounded-lg font-medium transition-colors text-white text-xs"
+          >
+            <Download size={13} />
+            Download Manually
+          </a>
+        ) : null}
+
         <button
           onClick={() => setDismissed(true)}
-          className="p-1 opacity-70 hover:opacity-100 transition-opacity text-white"
+          className="p-1 opacity-70 hover:opacity-100 transition-opacity text-white cursor-pointer"
           title="Dismiss"
         >
           <X size={15} />

@@ -1333,6 +1333,7 @@ function launchAppBrowser(url, customProfileDir, onExit) {
       const args = [
         `--app=${url}`,
         `--user-data-dir=${profileDir}`,
+        "--start-fullscreen",
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-sync",
@@ -1380,8 +1381,7 @@ function closeAppBrowser() {
     console.log(`[ChromeBrowser] Terminating app browser window process (PID: ${pid})...`);
     try {
       if (process.platform === "win32") {
-        (0, import_child_process.exec)(`taskkill /pid ${pid} /t /f`, () => {
-        });
+        (0, import_child_process.execSync)(`taskkill /pid ${pid} /t /f`, { stdio: "ignore" });
       } else {
         activeAppBrowserProcess.kill("SIGTERM");
       }
@@ -1393,8 +1393,7 @@ function closeAppBrowser() {
   if (process.platform === "win32") {
     try {
       const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      (0, import_child_process.exec)(killCmd, () => {
-      });
+      (0, import_child_process.execSync)(killCmd, { stdio: "ignore", timeout: 5e3 });
     } catch (_) {
     }
   }
@@ -1724,8 +1723,11 @@ function getCompatibleItemTypes(dosageForm) {
   if (df === "SYRUP" || df === "LIQUID" || df === "SUSPENSION") {
     return ["BOTTLE", "LIQUID", "SYP", "SUSP", "DROP", "SOLUTION", "ELIXIR"];
   }
-  if (df === "TABLET" || df === "CAPSULE") {
-    return ["STRIP", "TAB", "CAP", "BOX", "PACK", "STRIP OF", "TABLET", "CAPSULE"];
+  if (df === "TABLET") {
+    return ["STRIP", "TAB", "BOX", "PACK", "STRIP OF", "TABLET", "TABLETS", "DT", "CAPLET"];
+  }
+  if (df === "CAPSULE") {
+    return ["STRIP", "CAP", "BOX", "PACK", "STRIP OF", "CAPSULE", "CAPSULES", "SOFGEL", "SOFTGEL"];
   }
   if (df === "DROPS") {
     return ["BOTTLE", "DROP", "DROPS", "EYE DROP", "EAR DROP", "NASAL DROP"];
@@ -1810,7 +1812,9 @@ function isItemTypeConflicting(dosageForm, itemTypeOrName) {
   if (!dosageForm || !itemTypeOrName) return false;
   const df = dosageForm.toUpperCase().trim();
   const it = itemTypeOrName.toUpperCase().trim();
-  const isSolidOral = df === "TABLET" || df === "CAPSULE";
+  const isTablet = df === "TABLET";
+  const isCapsule = df === "CAPSULE";
+  const isSolidOral = isTablet || isCapsule;
   const isLiquidOral = df === "SYRUP" || df === "LIQUID" || df === "SUSPENSION";
   const isInjectable = df === "INJECTION" || df === "INFUSION";
   const isTopical = df === "CREAM" || df === "OINTMENT" || df === "GEL" || df === "LOTION" || df === "BALM";
@@ -1819,7 +1823,9 @@ function isItemTypeConflicting(dosageForm, itemTypeOrName) {
   const isShampoo = df === "SHAMPOO";
   const isSoap = df === "SOAP" || df === "BAR";
   const isFaceWash = df === "FACE WASH" || df === "FACEWASH";
-  const itIsSolidOral = /\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES|CAPLET)\b/.test(it);
+  const itIsTablet = /\b(TAB|TABLET|TABLETS|DT)\b/.test(it);
+  const itIsCapsule = /\b(CAP|CAPSULE|CAPSULES|SOFGEL|SOFTGEL)\b/.test(it);
+  const itIsSolidOral = itIsTablet || itIsCapsule;
   const itIsLiquidOral = /\b(SYP|SYRUP|SUSP|SUSPENSION|ELIXIR|ORAL SOLUTION)\b/.test(it);
   const itIsInjectable = /\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(it);
   const itIsFaceWash = /\b(FACE WASH|FACEWASH|CLEANSER|BODY WASH)\b/.test(it);
@@ -1829,6 +1835,8 @@ function isItemTypeConflicting(dosageForm, itemTypeOrName) {
   const itIsShampoo = /\b(SHAMPOO|HAIR WASH)\b/.test(it);
   const itIsSoap = /\b(SOAP|BAR|BATHING BAR|SYNDET BAR)\b/.test(it);
   if (isFaceWash && itIsFaceWash) return false;
+  if (isTablet && itIsCapsule && !itIsTablet) return true;
+  if (isCapsule && itIsTablet && !itIsCapsule) return true;
   if ((df === "GEL" || df === "SYRUP") && /\b(ML|BOTTLE|SUSP|SUSPENSION|ANTACID)\b/.test(it) && !/\b(TUBE)\b/.test(it)) {
     return false;
   }
@@ -5360,6 +5368,9 @@ var init_onnxOcrService = __esm({
           console.log("[ONNX OCR] Idle timeout reached. Unloading models to free memory.");
           this.unloadModel().catch((err) => console.error("[ONNX OCR] Error unloading models:", err));
         }, this.IDLE_TIME_MS);
+        if (this.idleTimeout && typeof this.idleTimeout.unref === "function") {
+          this.idleTimeout.unref();
+        }
       }
       /**
        * Unload models from RAM
@@ -9999,6 +10010,17 @@ var init_aiCameraService = __esm({
           buffer = imageData;
         }
         const processedBuffer = await this.preprocess(buffer);
+        const isONNXAvailable = await onnxOcrService.checkAvailability();
+        if (isONNXAvailable) {
+          try {
+            const ocrResult = await onnxOcrService.scanImage(processedBuffer);
+            if (ocrResult?.success && ocrResult.text && ocrResult.text.trim().length > 0) {
+              return ocrResult.text;
+            }
+          } catch (err) {
+            console.warn("[AiCamera] ONNX fast OCR extract failed, falling back to Tesseract:", err);
+          }
+        }
         if (!this.initialized) {
           await this.initialize();
         }
@@ -10779,13 +10801,31 @@ ${customerBlock}
  \u2B50 *Match Confidence*: ${Math.round(payload.confidence)}%
 \u2705 *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(", ")}${relatedBlock}${contextBlock}`;
       } else {
+        const formatStockBadge = (stock) => {
+          if (stock === void 0 || stock === null || stock === "") return "";
+          const s = String(stock).toLowerCase().trim();
+          if (s === "0" || s.includes("out") || s.includes("no") || s.includes("unavail")) {
+            return " | \u{1F534} Out of Stock";
+          }
+          const num = parseInt(s, 10);
+          if (!isNaN(num)) {
+            if (num <= 0) return " | \u{1F534} Out of Stock";
+            if (num <= 5) return ` | \u{1F7E1} Low Stock (${num})`;
+            return ` | \u{1F7E2} In Stock (${num})`;
+          }
+          if (s.includes("low") || s.includes("limited")) {
+            return ` | \u{1F7E1} Low Stock (${stock})`;
+          }
+          return ` | \u{1F7E2} In Stock (${stock})`;
+        };
         const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
         const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
         const distLines = [...mappedTop, ...nonMappedTop].map((p, i) => {
-          const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+          const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
           const ptrStr = ptr ? ` | PTR \u20B9${ptr}` : "";
-          const avail = p.availability ? ` | Stock: ${p.availability}` : "";
-          return `${i + 1}. ${p.name || p.productName || "Unknown"} | MRP \u20B9${p.mrp ?? p.MRP ?? "-"}${ptrStr}${avail} | ${p.distributor || p.storeName || "Unknown"}`;
+          const avail = formatStockBadge(p.availability ?? p.stock);
+          const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : "";
+          return `${i + 1}. ${p.name || p.productName || "Unknown"} | MRP \u20B9${p.mrp ?? p.MRP ?? "-"}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || "Unknown"}`;
         }).join("\n");
         messageText = `\u26A0\uFE0F *Medicine Registered in DB but NOT in Physical Stock*
 
@@ -10802,17 +10842,35 @@ ${distLines}
 \u{1F449} Needs a purchase order before confirming to the customer.${contextBlock}`;
       }
     } else {
+      const formatStockBadge = (stock) => {
+        if (stock === void 0 || stock === null || stock === "") return "";
+        const s = String(stock).toLowerCase().trim();
+        if (s === "0" || s.includes("out") || s.includes("no") || s.includes("unavail")) {
+          return " | \u{1F534} Out of Stock";
+        }
+        const num = parseInt(s, 10);
+        if (!isNaN(num)) {
+          if (num <= 0) return " | \u{1F534} Out of Stock";
+          if (num <= 5) return ` | \u{1F7E1} Low Stock (${num})`;
+          return ` | \u{1F7E2} In Stock (${num})`;
+        }
+        if (s.includes("low") || s.includes("limited")) {
+          return ` | \u{1F7E1} Low Stock (${stock})`;
+        }
+        return ` | \u{1F7E2} In Stock (${stock})`;
+      };
       const fmtMatch = (p, idx2) => {
         const name = p.name || p.productName || "Unknown";
         const company = p.manufacturer || p.company || "";
         const pkg2 = p.packaging || p.package || "-";
         const mrp = p.mrp ?? p.MRP ?? "-";
-        const dist = p.distributor || p.storeName || "Unknown";
-        const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+        const dist = p.distributor || p.supplier_name || p.storeName || "Unknown";
+        const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
         const ptrStr = ptr ? ` | PTR \u20B9${ptr}` : "";
-        const avail = p.availability ? ` | Stock: ${p.availability}` : "";
+        const avail = formatStockBadge(p.availability ?? p.stock);
+        const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : "";
         const scoreStr = typeof p.score === "number" ? ` | ${Math.round(p.score * 100)}%` : "";
-        return `${idx2}. ${name}${company ? ` | ${company}` : ""} | ${pkg2} | MRP \u20B9${mrp}${ptrStr}${avail} | ${dist}${scoreStr}`;
+        return `${idx2}. ${name}${company ? ` | ${company}` : ""} | ${pkg2} | MRP \u20B9${mrp}${ptrStr}${avail}${scheme} | ${dist}${scoreStr}`;
       };
       const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
       const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
@@ -10894,6 +10952,73 @@ async function notifyAdminOfNonAllopathic(payload) {
     console.error("[Admin Escalation] Error in notifyAdminOfNonAllopathic:", err);
   }
 }
+async function notifyAdminOfUnmatchedQuery(payload) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const guard = await escalateGuard(db2, payload.phone || payload.customer?.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+    const customerPhoneRaw = payload.phone || payload.customer?.phone || "";
+    if (!customerPhoneRaw) return;
+    const medicineKey = payload.medicineName.toLowerCase().trim();
+    const msgId = payload.msgId || "";
+    const dup = await db2.get(
+      `SELECT 1 FROM wa_admin_escalations
+       WHERE status != 'failed' AND medicine_key = ?
+         AND ( (msg_id = ? AND msg_id != '')
+            OR (customer_phone = ? AND created_at > datetime('now','-24 hours')) )
+       LIMIT 1`,
+      [medicineKey, msgId, customerPhoneRaw]
+    );
+    if (dup) return;
+    await db2.run(
+      `INSERT INTO wa_admin_escalations (msg_id, customer_phone, medicine_key, outcome, status)
+       VALUES (?, ?, ?, 'unmatched', 'pending')`,
+      [msgId, customerPhoneRaw, medicineKey]
+    );
+    const { display: displayPhone, waDigits } = await resolvePhone(db2, customerPhoneRaw, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} \u2014 https://wa.me/${waDigits}` : displayPhone;
+    const messageText = `\u2753 *Unmatched Customer Medicine Inquiry*
+
+\u{1F464} ${payload.customer?.name || "Customer"}
+\u{1F4DE} ${phoneLine}
+\u{1F4DD} *Original*: "${payload.messageBody || payload.medicineName}"
+
+\u{1F48A} *Asked for*: ${payload.medicineName}${payload.quantity && payload.quantity > 1 ? ` \xD7 ${payload.quantity}${payload.unit ? ` ${payload.unit}` : ""}` : ""}
+\u274C *Outcome*: Not found in local inventory and no distributor match in Pharmarack.
+\u{1F449} Customer may have typed a rare brand or heavy typo. Please verify manually.`;
+    try {
+      await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, "admin_escalation_unmatched", "Admin / Store Owner", void 0, payload.imagePath);
+      console.log(`[Admin Escalation] Unmatched medicine alert sent for "${payload.medicineName}" to admin ${adminWhatsapp}.`);
+    } catch (sendErr) {
+      console.error("[Admin Escalation] Failed to enqueue unmatched query alert:", sendErr);
+    }
+  } catch (err) {
+    console.error("[Admin Escalation] Error in notifyAdminOfUnmatchedQuery:", err);
+  }
+}
+async function notifyAdminOfCustomerConfirmation(payload) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const guard = await escalateGuard(db2, payload.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+    const { display: displayPhone, waDigits } = await resolvePhone(db2, payload.phone, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} \u2014 https://wa.me/${waDigits}` : displayPhone;
+    const messageText = `\u2705 *Customer Confirmed Medicine*
+
+\u{1F464} ${payload.customer?.name || "Customer"}
+\u{1F4DE} ${phoneLine}
+
+\u{1F48A} *Confirmed Item*: *${payload.suggestedName}*
+\u{1F4DD} *Original Inquiry*: "${payload.originalQuery}"
+\u{1F449} Customer confirmed with "Yes". Ready to fulfill or create purchase order.`;
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, "admin_escalation_confirmed", "Admin / Store Owner");
+    console.log(`[Admin Escalation] Customer confirmation forwarded for "${payload.suggestedName}".`);
+  } catch (err) {
+    console.error("[Admin Escalation] Error in notifyAdminOfCustomerConfirmation:", err);
+  }
+}
 var ADMIN_PHONE_SETTING_KEYS, waAdminEscalationService;
 var init_waAdminEscalationService = __esm({
   "src/services/waAdminEscalationService.ts"() {
@@ -10901,7 +11026,14 @@ var init_waAdminEscalationService = __esm({
     init_connection();
     init_whatsappQueueWorker();
     ADMIN_PHONE_SETTING_KEYS = ["admin_whatsapp", "owner_whatsapp_number", "admin_whatsapp_number", "shop_phone", "store_phone"];
-    waAdminEscalationService = { maybeEscalate, notifyAdminOfUnprocessedMedia, resolveAdminWhatsappNumber, notifyAdminOfNonAllopathic };
+    waAdminEscalationService = {
+      maybeEscalate,
+      notifyAdminOfUnprocessedMedia,
+      resolveAdminWhatsappNumber,
+      notifyAdminOfNonAllopathic,
+      notifyAdminOfUnmatchedQuery,
+      notifyAdminOfCustomerConfirmation
+    };
   }
 });
 
@@ -16704,6 +16836,36 @@ async function ensureSchema(dbPath) {
     await ensureOrderTimingSchema(db2);
     await ensureMultiPharmacyAndSnapshotSchema(db2);
     await ensureMedicineSearchSummaryTriggers(db2);
+    await db2.exec(`
+    CREATE TABLE IF NOT EXISTS app_license (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      license_id TEXT,
+      machine_id TEXT,
+      pharmacy_name TEXT,
+      activated_at TEXT,
+      expires_at TEXT,
+      last_validated_at TEXT,
+      status TEXT NOT NULL DEFAULT 'testing',
+      offline_grace_days INTEGER NOT NULL DEFAULT 7,
+      testing_mode INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT OR IGNORE INTO app_license (id, status, testing_mode)
+    VALUES (1, 'testing', 1);
+
+    CREATE TABLE IF NOT EXISTS update_checks (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_checked_at TEXT,
+      last_known_version TEXT,
+      current_version TEXT DEFAULT '1.0.0',
+      check_interval_days INTEGER NOT NULL DEFAULT 15
+    );
+    INSERT OR IGNORE INTO update_checks (id, current_version, check_interval_days)
+    VALUES (1, '1.0.0', 15);
+  `);
+    try {
+      await db2.exec("ALTER TABLE app_license ADD COLUMN expires_at TEXT;");
+    } catch (_) {
+    }
     await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
     await db2.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
     console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
@@ -16717,7 +16879,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 58;
+    CURRENT_SCHEMA_VERSION = 60;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -22499,12 +22661,12 @@ var init_notificationService = __esm({
       /**
        * Send a WhatsApp message
        */
-      async sendWhatsApp(phoneNumber, message, mediaPath, caption) {
+      async sendWhatsApp(phoneNumber, message, mediaPath, caption, type = "whatsapp_notification") {
         try {
           const queueId = await whatsappQueueWorker.enqueue(
             phoneNumber,
             message || caption || "",
-            "whatsapp_notification",
+            type,
             void 0,
             Date.now(),
             mediaPath
@@ -23346,6 +23508,4012 @@ ${mrpLine}
   }
 });
 
+// src/services/searchCache.ts
+var searchCache_exports = {};
+__export(searchCache_exports, {
+  SearchCache: () => SearchCache,
+  searchCache: () => searchCache
+});
+var import_fs17, import_path19, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
+var init_searchCache = __esm({
+  "src/services/searchCache.ts"() {
+    "use strict";
+    import_fs17 = __toESM(require("fs"), 1);
+    import_path19 = __toESM(require("path"), 1);
+    init_config();
+    PERSIST_FILE = import_path19.default.join(getAppDataDir(), "data", "search-cache.json");
+    SAVE_DEBOUNCE_MS = 2e3;
+    STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+    SearchCache = class {
+      cache = /* @__PURE__ */ new Map();
+      CACHE_TTL = 5 * 60 * 1e3;
+      // fresh window
+      MAX_CACHE_SIZE = 100;
+      saveTimer = null;
+      constructor() {
+        this.loadFromDisk();
+        process.once("exit", () => this.flushToDisk());
+      }
+      /**
+       * Fresh hit → { items, stale: false }. Expired-but-present hit (≤7 days) →
+       * { items, stale: true } so the route can serve instantly and revalidate in
+       * background. Miss/empty → null.
+       */
+      lookup(query, storeId, isMapped) {
+        const q = query.toLowerCase().trim();
+        if (!q) return null;
+        this.cleanup();
+        const entry = this.cache.get(this.getCacheKey(q, storeId, isMapped));
+        if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) return null;
+        return { items: entry.data, stale: Date.now() - entry.timestamp >= this.CACHE_TTL };
+      }
+      set(query, storeId, isMapped, data) {
+        const q = query.toLowerCase().trim();
+        if (!q) return;
+        const cacheKey = this.getCacheKey(q, storeId, isMapped);
+        if (this.cache.size >= this.MAX_CACHE_SIZE && !this.cache.has(cacheKey)) {
+          let oldestKey = null;
+          let oldestTime = Infinity;
+          for (const [key, entry] of this.cache.entries()) {
+            if (entry.timestamp < oldestTime) {
+              oldestTime = entry.timestamp;
+              oldestKey = key;
+            }
+          }
+          if (oldestKey) {
+            this.cache.delete(oldestKey);
+          }
+        }
+        this.cache.set(cacheKey, {
+          timestamp: Date.now(),
+          data
+        });
+        this.scheduleSave();
+      }
+      clear() {
+        this.cache.clear();
+        this.scheduleSave();
+      }
+      entries() {
+        return this.cache.entries();
+      }
+      /** Canonical key — lets callers (e.g. single-flight revalidation) key their maps identically. */
+      keyFor(query, storeId, isMapped) {
+        return this.getCacheKey(query.toLowerCase().trim(), storeId, isMapped);
+      }
+      getCacheKey(query, storeId, isMapped) {
+        return query + this.getCacheKeySuffix(storeId, isMapped);
+      }
+      getCacheKeySuffix(storeId, isMapped) {
+        return storeId ? `_store_${storeId}_mapped_${isMapped}` : "";
+      }
+      // Only prune ancient entries — expired-but-present entries stay available as
+      // stale-while-revalidate hits. The TTL check itself happens in lookup().
+      cleanup() {
+        const now = Date.now();
+        for (const [key, entry] of this.cache.entries()) {
+          if (now - entry.timestamp > STALE_MAX_AGE_MS) {
+            this.cache.delete(key);
+          }
+        }
+      }
+      loadFromDisk() {
+        try {
+          if (!import_fs17.default.existsSync(PERSIST_FILE)) return;
+          const raw = JSON.parse(import_fs17.default.readFileSync(PERSIST_FILE, "utf-8"));
+          if (!Array.isArray(raw)) return;
+          const now = Date.now();
+          for (const pair of raw) {
+            if (!Array.isArray(pair) || typeof pair[0] !== "string") continue;
+            const [key, entry] = pair;
+            if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) continue;
+            if (typeof entry.timestamp !== "number" || now - entry.timestamp > STALE_MAX_AGE_MS) continue;
+            this.cache.set(key, { timestamp: entry.timestamp, data: entry.data });
+          }
+          if (this.cache.size > this.MAX_CACHE_SIZE) {
+            const newest = [...this.cache.entries()].sort((a, b) => b[1].timestamp - a[1].timestamp).slice(0, this.MAX_CACHE_SIZE);
+            this.cache = new Map(newest);
+          }
+        } catch {
+        }
+      }
+      scheduleSave() {
+        if (this.saveTimer) return;
+        this.saveTimer = setTimeout(() => {
+          this.saveTimer = null;
+          this.flushToDisk();
+        }, SAVE_DEBOUNCE_MS);
+        this.saveTimer.unref?.();
+      }
+      flushToDisk() {
+        try {
+          import_fs17.default.mkdirSync(import_path19.default.dirname(PERSIST_FILE), { recursive: true });
+          import_fs17.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
+        } catch {
+        }
+      }
+    };
+    searchCache = new SearchCache();
+  }
+});
+
+// src/services/distributorDispatchReminderWorker.ts
+var distributorDispatchReminderWorker_exports = {};
+__export(distributorDispatchReminderWorker_exports, {
+  allocateDynamicReminderTimes: () => allocateDynamicReminderTimes,
+  checkAndSendAfternoonDeliveryBoyReminder: () => checkAndSendAfternoonDeliveryBoyReminder,
+  checkAndSendAutoReminders: () => checkAndSendAutoReminders,
+  purgeStaleOfflineReminders: () => purgeStaleOfflineReminders,
+  startDistributorDispatchReminderWorker: () => startDistributorDispatchReminderWorker,
+  stopDistributorDispatchReminderWorker: () => stopDistributorDispatchReminderWorker,
+  syncTodayActiveDistributors: () => syncTodayActiveDistributors
+});
+async function ensureReminderSchema(db2) {
+  if (reminderSchemaEnsured) return;
+  try {
+    const cols = await db2.all("PRAGMA table_info(distributor_dispatch_reminders)");
+    const colNames = new Set(cols.map((c) => c.name.toLowerCase()));
+    if (!colNames.has("scheduled_send_time")) {
+      await db2.run("ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL");
+    }
+    reminderSchemaEnsured = true;
+  } catch (_e) {
+  }
+}
+function getTodayDateString() {
+  const now = /* @__PURE__ */ new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+async function syncTodayActiveDistributors() {
+  const db2 = await dbManager.getConnection();
+  const todayStr2 = getTodayDateString();
+  try {
+    await ensureReminderSchema(db2);
+    await db2.run(
+      `DELETE FROM distributor_dispatch_reminders 
+       WHERE id NOT IN (
+         SELECT MAX(id) 
+         FROM distributor_dispatch_reminders 
+         GROUP BY date, LOWER(TRIM(distributor_name))
+       )`
+    );
+    const pharmarackOrders = await db2.all(
+      `SELECT DISTINCT po.store_name as store_name
+       FROM pharmarack_placed_orders po
+       WHERE po.order_date = ? OR DATE(po.placed_at / 1000, 'unixepoch') = ?`,
+      [todayStr2, todayStr2]
+    );
+    const pharmarackDistributors = [];
+    for (const po of pharmarackOrders) {
+      const storeName = (po.store_name || "").trim();
+      if (!storeName) continue;
+      const contact = await resolveDistributorContact(db2, storeName);
+      pharmarackDistributors.push({
+        store_name: storeName,
+        distributor_id: contact.distributor_id,
+        distributor_name: storeName,
+        distributor_phone: contact.distributor_phone || ""
+      });
+    }
+    const purchases = await db2.all(
+      `SELECT DISTINCT d.name as store_name, d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+       FROM purchases p
+       JOIN distributors d ON p.distributor_id = d.id
+       WHERE p.date IS NOT NULL AND DATE(p.date) = ?`,
+      [todayStr2]
+    );
+    const purchaseDistributors = purchases.map((d) => ({
+      store_name: d.store_name,
+      distributor_id: d.distributor_id,
+      distributor_name: d.distributor_name,
+      distributor_phone: (d.distributor_phone || d.distributor_contact || "").replace(/\D/g, "").slice(-10)
+    }));
+    const emailDistributors = await db2.all(
+      `SELECT DISTINCT d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+       FROM distributors d
+       WHERE d.id IN (
+         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
+         UNION
+         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
+       )
+       OR LOWER(TRIM(d.name)) IN (
+         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
+       )
+       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
+         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
+       ))
+       OR EXISTS (
+         SELECT 1 FROM emails e 
+         WHERE (
+           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
+           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
+           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
+         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
+       )`,
+      [todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2]
+    );
+    const distMap = /* @__PURE__ */ new Map();
+    for (const d of [...pharmarackDistributors, ...purchaseDistributors]) {
+      const name = d.distributor_name || d.store_name;
+      if (name && !distMap.has(name.toLowerCase().trim())) {
+        distMap.set(name.toLowerCase().trim(), {
+          id: d.distributor_id || null,
+          name: name.trim(),
+          phone: d.distributor_phone || "",
+          hasEmailToday: false
+        });
+      }
+    }
+    for (const d of emailDistributors) {
+      const name = d.distributor_name;
+      if (name) {
+        const key = name.toLowerCase().trim();
+        const existing = distMap.get(key);
+        const p = (d.distributor_phone || d.distributor_contact || "").replace(/\D/g, "").slice(-10);
+        if (existing) {
+          existing.hasEmailToday = true;
+          if (!existing.phone && p) existing.phone = p;
+        } else {
+          distMap.set(key, {
+            id: d.distributor_id || null,
+            name: name.trim(),
+            phone: p || "",
+            hasEmailToday: true
+          });
+        }
+      }
+    }
+    for (const dist of distMap.values()) {
+      let activePhone = dist.phone;
+      let activeId = dist.id;
+      if (!activePhone) {
+        const resolved = await resolveDistributorContact(db2, dist.name);
+        if (resolved.distributor_phone) {
+          activePhone = resolved.distributor_phone;
+          activeId = activeId || resolved.distributor_id;
+        }
+      }
+      const existing = await db2.get(
+        `SELECT id, status, distributor_phone, distributor_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
+        [dist.name, todayStr2]
+      );
+      if (!existing) {
+        const initialStatus = dist.hasEmailToday ? "Dispatched" : "Pending";
+        await db2.run(
+          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          [
+            activeId,
+            dist.name,
+            activePhone || "",
+            todayStr2,
+            initialStatus,
+            dist.hasEmailToday ? "email" : "pharmarack",
+            dist.hasEmailToday ? (/* @__PURE__ */ new Date()).toISOString() : null
+          ]
+        );
+      } else {
+        if (dist.hasEmailToday && existing.status === "Pending") {
+          await db2.run(
+            `UPDATE distributor_dispatch_reminders SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [existing.id]
+          );
+        }
+        const phoneToUpdate = activePhone || existing.distributor_phone || "";
+        const idToUpdate = activeId || existing.distributor_id || null;
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders 
+           SET distributor_id = COALESCE(distributor_id, ?),
+               distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
+               distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
+           WHERE id = ?`,
+          [idToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
+        );
+      }
+    }
+    const activeNames = Array.from(distMap.values()).map((d) => d.name.toLowerCase().trim());
+    if (activeNames.length > 0) {
+      const placeholders = activeNames.map(() => "?").join(",");
+      await db2.run(
+        `DELETE FROM distributor_dispatch_reminders
+         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
+           AND NOT (status = 'Dispatched' AND order_source != 'email')
+           AND LOWER(TRIM(distributor_name)) NOT IN (${placeholders})`,
+        [todayStr2, ...activeNames]
+      );
+    } else {
+      await db2.run(
+        `DELETE FROM distributor_dispatch_reminders
+         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
+           AND NOT (status = 'Dispatched' AND order_source != 'email')`,
+        [todayStr2]
+      );
+    }
+    const todayEmailDistributors = await db2.all(
+      `SELECT DISTINCT d.id as dist_id, LOWER(TRIM(d.name)) as dist_name
+       FROM distributors d
+       WHERE d.id IN (
+         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
+         UNION
+         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
+       )
+       OR LOWER(TRIM(d.name)) IN (
+         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
+       )
+       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
+         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
+       ))
+       OR EXISTS (
+         SELECT 1 FROM processed_files pf WHERE (LOWER(pf.file_path) LIKE '%' || LOWER(d.name) || '%' OR (d.email IS NOT NULL AND d.email != '' AND LOWER(pf.file_path) LIKE '%' || LOWER(d.email) || '%')) AND DATE(pf.last_processed, 'localtime') = ?
+       )
+       OR EXISTS (
+         SELECT 1 FROM emails e 
+         WHERE (
+           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
+           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
+           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
+         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
+       )`,
+      [todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2]
+    );
+    for (const match of todayEmailDistributors) {
+      if (match.dist_name || match.dist_id) {
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders
+           SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP
+           WHERE date = ? AND (distributor_id = ? OR LOWER(TRIM(distributor_name)) = ?) AND status = 'Pending'`,
+          [todayStr2, match.dist_id || null, match.dist_name || ""]
+        );
+      }
+    }
+    await allocateDynamicReminderTimes(db2, todayStr2);
+    const todayReminders = await db2.all(
+      `SELECT r.id, r.distributor_id,
+              COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
+              COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
+              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
+              db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
+              1 as has_pharmarack_order_today,
+              1 as has_order_today,
+              (
+                SELECT n.status FROM automation_notifications n
+                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
+                  AND DATE(n.created_at) = ?
+                ORDER BY n.id DESC LIMIT 1
+              ) as latest_notif_status,
+              (
+                SELECT n.error_message FROM automation_notifications n
+                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
+                  AND DATE(n.created_at) = ? AND (n.status = 'failed' OR n.status = 'error')
+                ORDER BY n.id DESC LIMIT 1
+              ) as latest_notif_error
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       LEFT JOIN delivery_boys db ON r.delivery_boy_id = db.id
+       WHERE r.date = ?
+       ORDER BY r.status DESC, r.created_at DESC`,
+      [todayStr2, todayStr2, todayStr2]
+    );
+    for (const r of todayReminders) {
+      if (!r.distributor_phone || r.distributor_phone.trim() === "") {
+        const resolved = await resolveDistributorContact(db2, r.distributor_name);
+        if (resolved.distributor_phone) {
+          r.distributor_phone = resolved.distributor_phone;
+          r.distributor_id = r.distributor_id || resolved.distributor_id;
+          try {
+            await db2.run(
+              `UPDATE distributor_dispatch_reminders 
+               SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
+               WHERE id = ?`,
+              [resolved.distributor_phone, resolved.distributor_id, r.id]
+            );
+          } catch (_) {
+          }
+        }
+      }
+    }
+    const existingNamesSet = /* @__PURE__ */ new Set();
+    for (const tr of todayReminders) {
+      if (tr.distributor_name) existingNamesSet.add(tr.distributor_name.toLowerCase().trim());
+    }
+    try {
+      const allMasterDistributors = await db2.all(
+        `SELECT d.id, d.name, d.phone, d.contact 
+         FROM distributors d 
+         WHERE d.name IS NOT NULL AND d.name != ''
+         ORDER BY d.name ASC`
+      );
+      let syntheticCounter = 8e5;
+      for (const md of allMasterDistributors) {
+        const normName = md.name.toLowerCase().trim();
+        if (!existingNamesSet.has(normName)) {
+          existingNamesSet.add(normName);
+          const phone = (md.phone || md.contact || "").replace(/\D/g, "").slice(-10);
+          todayReminders.push({
+            id: md.id ? 8e5 + md.id : ++syntheticCounter,
+            distributor_id: md.id || null,
+            distributor_name: md.name.trim(),
+            distributor_phone: phone,
+            date: todayStr2,
+            status: "No Order Today",
+            auto_remind: 0,
+            delivery_boy_id: null,
+            last_reminded_at: null,
+            scheduled_send_time: null,
+            created_at: (/* @__PURE__ */ new Date()).toISOString(),
+            delivery_boy_name: null,
+            delivery_boy_phone: null,
+            has_pharmarack_order_today: 0,
+            has_order_today: 0,
+            latest_notif_status: null,
+            latest_notif_error: null
+          });
+        }
+      }
+      const pharmarackMappings = await db2.all(
+        `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
+      );
+      for (const pm of pharmarackMappings) {
+        const normName = pm.store_name.toLowerCase().trim();
+        if (!existingNamesSet.has(normName)) {
+          existingNamesSet.add(normName);
+          const phone = (pm.phone || "").replace(/\D/g, "").slice(-10);
+          todayReminders.push({
+            id: ++syntheticCounter,
+            distributor_id: pm.distributor_id || null,
+            distributor_name: pm.store_name.trim(),
+            distributor_phone: phone,
+            date: todayStr2,
+            status: "No Order Today",
+            auto_remind: 0,
+            delivery_boy_id: null,
+            last_reminded_at: null,
+            scheduled_send_time: null,
+            created_at: (/* @__PURE__ */ new Date()).toISOString(),
+            delivery_boy_name: null,
+            delivery_boy_phone: null,
+            has_pharmarack_order_today: 0,
+            has_order_today: 0,
+            latest_notif_status: null,
+            latest_notif_error: null
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("[DistributorReminderWorker] Error merging master saved distributors:", err.message);
+    }
+    try {
+      const todayPlacedOrders = await db2.all(
+        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
+         FROM pharmarack_placed_orders 
+         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
+         ORDER BY placed_at ASC`,
+        [todayStr2, todayStr2, todayStr2]
+      );
+      const todayPurchases = await db2.all(
+        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
+         FROM purchases p
+         JOIN distributors d ON p.distributor_id = d.id
+         WHERE (p.date IS NOT NULL AND (DATE(p.date) = ? OR DATE(p.date, 'localtime') = ?))
+         ORDER BY p.id ASC`,
+        [todayStr2, todayStr2]
+      );
+      for (const r of todayReminders) {
+        const normDistName = (r.distributor_name || "").toLowerCase().trim();
+        const distId = r.distributor_id;
+        const matchingPlaced = todayPlacedOrders.filter(
+          (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
+        );
+        const matchingPurchases = todayPurchases.filter(
+          (p) => p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName || distId && p.distributor_id === distId
+        );
+        const ordersList = [];
+        let totalItems = 0;
+        for (const po of matchingPlaced) {
+          let itemsArr = [];
+          try {
+            itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
+          } catch (_) {
+          }
+          totalItems += itemsArr.length;
+          const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
+          const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
+          ordersList.push({
+            id: `pharma_${po.id}`,
+            source: "pharmarack",
+            order_time: timeStr,
+            items_count: itemsArr.length,
+            items_preview: previews
+          });
+        }
+        for (const p of matchingPurchases) {
+          const timeStr = p.date ? new Date(p.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
+          ordersList.push({
+            id: `purch_${p.id}`,
+            source: "purchase",
+            order_time: timeStr,
+            items_count: 1,
+            items_preview: [`Purchase Bill #${p.invoice_no || p.id}`]
+          });
+        }
+        const totalCount = ordersList.length;
+        r.order_count = totalCount > 0 ? totalCount : r.has_order_today && r.status !== "No Order Today" ? 1 : 0;
+        r.orders_list = ordersList;
+        r.total_items_count = totalItems;
+      }
+    } catch (countErr) {
+      console.warn("[DistributorReminderWorker] Error calculating order counts:", countErr.message);
+    }
+    return todayReminders || [];
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error syncing today active distributors:", err.message);
+    return [];
+  }
+}
+async function allocateDynamicReminderTimes(db2, todayStr2) {
+  try {
+    await ensureReminderSchema(db2);
+    const [startSetting, endSetting] = await Promise.all([
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'")
+    ]);
+    const startTimeStr = startSetting?.value || "12:30";
+    const endTimeStr = endSetting?.value || "13:00";
+    const [startH, startM] = startTimeStr.split(":").map(Number);
+    const [endH, endM] = endTimeStr.split(":").map(Number);
+    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
+    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
+    const windowDuration = Math.max(10, endMinutesTotal - startMinutesTotal);
+    const reminders = await db2.all(
+      `SELECT id, distributor_name, scheduled_send_time, last_reminded_at, status
+       FROM distributor_dispatch_reminders
+       WHERE date = ? AND status = 'Pending'
+       ORDER BY id ASC`,
+      [todayStr2]
+    );
+    if (reminders.length === 0) return;
+    const pastThirtyDaysDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3).toISOString().split("T")[0];
+    const pastReminders = await db2.all(
+      `SELECT LOWER(TRIM(distributor_name)) as dist_name, last_reminded_at, scheduled_send_time, date
+       FROM distributor_dispatch_reminders
+       WHERE date >= ? AND date < ? AND (last_reminded_at IS NOT NULL OR scheduled_send_time IS NOT NULL)`,
+      [pastThirtyDaysDate, todayStr2]
+    );
+    const pastMinutesMap = /* @__PURE__ */ new Map();
+    for (const pr of pastReminders) {
+      const name = pr.dist_name;
+      if (!name) continue;
+      let minuteOfDay = null;
+      if (pr.last_reminded_at) {
+        const d = new Date(pr.last_reminded_at);
+        if (!isNaN(d.getTime())) {
+          minuteOfDay = d.getHours() * 60 + d.getMinutes();
+        }
+      }
+      if (minuteOfDay === null && pr.scheduled_send_time && pr.scheduled_send_time.includes(":")) {
+        const [ph, pm] = pr.scheduled_send_time.split(":").map(Number);
+        if (!isNaN(ph) && !isNaN(pm)) {
+          minuteOfDay = ph * 60 + pm;
+        }
+      }
+      if (minuteOfDay !== null) {
+        if (!pastMinutesMap.has(name)) pastMinutesMap.set(name, []);
+        pastMinutesMap.get(name).push(minuteOfDay);
+      }
+    }
+    const assignedSlotsToday = /* @__PURE__ */ new Set();
+    for (const r of reminders) {
+      if (r.scheduled_send_time && r.scheduled_send_time.includes(":")) {
+        const [h, m] = r.scheduled_send_time.split(":").map(Number);
+        if (!isNaN(h) && !isNaN(m)) {
+          assignedSlotsToday.add(h * 60 + m);
+        }
+      }
+    }
+    const unassigned = reminders.filter((r) => !r.scheduled_send_time);
+    if (unassigned.length === 0) return;
+    const totalSlotsNeeded = unassigned.length;
+    const step = windowDuration / (totalSlotsNeeded + 1);
+    for (let i = 0; i < unassigned.length; i++) {
+      const rem = unassigned[i];
+      const normName = (rem.distributor_name || "").toLowerCase().trim();
+      const pastMinutes = pastMinutesMap.get(normName) || [];
+      const jitter = Math.floor(Math.random() * 9) - 4;
+      let targetMin = Math.round(startMinutesTotal + (i + 1) * step + jitter);
+      targetMin = Math.max(startMinutesTotal, Math.min(endMinutesTotal - 1, targetMin));
+      let bestMin = targetMin;
+      let bestScore = -Infinity;
+      for (let offset = -15; offset <= 15; offset++) {
+        const candidate = targetMin + offset;
+        if (candidate < startMinutesTotal || candidate >= endMinutesTotal) continue;
+        let collisionToday = false;
+        for (const assigned of assignedSlotsToday) {
+          if (Math.abs(assigned - candidate) < 2) {
+            collisionToday = true;
+            break;
+          }
+        }
+        if (collisionToday) continue;
+        let minPastDist = 999;
+        for (const pm of pastMinutes) {
+          const diff = Math.abs(pm - candidate);
+          if (diff < minPastDist) minPastDist = diff;
+        }
+        const score = minPastDist * 2 - Math.abs(offset);
+        if (score > bestScore) {
+          bestScore = score;
+          bestMin = candidate;
+        }
+      }
+      assignedSlotsToday.add(bestMin);
+      const resH = Math.floor(bestMin / 60);
+      const resM = bestMin % 60;
+      const formattedTime = `${String(resH).padStart(2, "0")}:${String(resM).padStart(2, "0")}`;
+      await db2.run(
+        `UPDATE distributor_dispatch_reminders SET scheduled_send_time = ? WHERE id = ?`,
+        [formattedTime, rem.id]
+      );
+      rem.scheduled_send_time = formattedTime;
+    }
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error allocating dynamic reminder times:", err.message);
+  }
+}
+async function checkAndSendAutoReminders() {
+  if (isWorkerRunning) return;
+  isWorkerRunning = true;
+  try {
+    const db2 = await dbManager.getConnection();
+    const [globalAuto, triggerSetting, startSetting, endSetting, pausedDatesRow] = await Promise.all([
+      db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'")
+    ]);
+    const isGlobalEnabled = !globalAuto || globalAuto.value === "true";
+    const isTriggerEnabled = triggerSetting?.value === "true";
+    if (!isGlobalEnabled || !isTriggerEnabled) {
+      isWorkerRunning = false;
+      return;
+    }
+    const todayStr2 = getTodayDateString();
+    if (pausedDatesRow?.value) {
+      try {
+        const pausedDates = JSON.parse(pausedDatesRow.value);
+        if (Array.isArray(pausedDates) && pausedDates.includes(todayStr2)) {
+          isWorkerRunning = false;
+          return;
+        }
+      } catch (_) {
+      }
+    }
+    const now = /* @__PURE__ */ new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const startTimeStr = startSetting?.value || "12:30";
+    const endTimeStr = endSetting?.value || "13:00";
+    const [startH, startM] = startTimeStr.split(":").map(Number);
+    const [endH, endM] = endTimeStr.split(":").map(Number);
+    const currentMinutesTotal = hours * 60 + minutes;
+    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
+    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
+    const isWithinWindow = currentMinutesTotal >= startMinutesTotal && currentMinutesTotal <= endMinutesTotal + 15;
+    if (!isWithinWindow) {
+      isWorkerRunning = false;
+      return;
+    }
+    await syncTodayActiveDistributors();
+    await allocateDynamicReminderTimes(db2, todayStr2);
+    const activeReminders = await db2.all(
+      `SELECT r.id, r.distributor_name, r.distributor_phone, r.scheduled_send_time, d.phone as master_phone
+       FROM distributor_dispatch_reminders r
+       LEFT JOIN distributors d ON r.distributor_id = d.id
+       WHERE r.date = ? AND r.status = 'Pending'
+         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at, 'localtime') != ?)`,
+      [todayStr2, todayStr2]
+    );
+    const dueReminders = [];
+    const missingPhone = [];
+    for (const item of activeReminders) {
+      const p = (item.distributor_phone || item.master_phone || "").replace(/\D/g, "").slice(-10);
+      if (!p || p.length !== 10) {
+        missingPhone.push({ id: item.id, distributor_name: item.distributor_name });
+        continue;
+      }
+      let isDue = true;
+      if (item.scheduled_send_time && item.scheduled_send_time.includes(":")) {
+        const [schH, schM] = item.scheduled_send_time.split(":").map(Number);
+        if (!isNaN(schH) && !isNaN(schM)) {
+          const schMinutes = schH * 60 + schM;
+          if (currentMinutesTotal < schMinutes) {
+            isDue = false;
+          }
+        }
+      }
+      if (isDue) {
+        dueReminders.push({ id: item.id, distributor_name: item.distributor_name });
+      }
+    }
+    if (dueReminders.length > 0) {
+      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
+      try {
+        const { ensureWhatsAppReady: ensureWhatsAppReady2, isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+        if (!await isWhatsAppAutoConnectAllowed2()) {
+          console.log("[DistributorReminderWorker] WhatsApp not configured \u2014 skipping reminder dispatch.");
+          isWorkerRunning = false;
+          return;
+        }
+        const isReady2 = await ensureWhatsAppReady2(3e4);
+        if (!isReady2) {
+          console.warn("[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.");
+          isWorkerRunning = false;
+          return;
+        }
+      } catch (waReadyErr) {
+        console.warn("[DistributorReminderWorker] WhatsApp readiness check warning:", waReadyErr?.message || waReadyErr);
+      }
+      for (const item of dueReminders) {
+        await notificationService.sendDistributorDispatchReminder(item.id);
+        await new Promise((res) => setTimeout(res, 1e3));
+      }
+    }
+    if (missingPhone.length > 0) {
+      const alreadyAlerted = await db2.get(
+        `SELECT id FROM automation_notifications 
+         WHERE type = 'admin_missing_distributor_phones' AND DATE(created_at) = ?
+         LIMIT 1`,
+        [todayStr2]
+      );
+      if (!alreadyAlerted) {
+        console.log(`[DistributorReminderWorker] Alerting pharmacy admin of ${missingPhone.length} missing distributor phone numbers.`);
+        await notificationService.sendMissingDistributorPhonesAdminAlert(
+          missingPhone.map((m) => ({ name: m.distributor_name }))
+        );
+      }
+    }
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error during auto reminder run:", err.message);
+  } finally {
+    isWorkerRunning = false;
+  }
+}
+async function checkAndSendAfternoonDeliveryBoyReminder() {
+  try {
+    const db2 = await dbManager.getConnection();
+    const todayStr2 = getTodayDateString();
+    const [globalAuto, enabledSetting] = await Promise.all([
+      db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
+      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'")
+    ]);
+    const isGlobalEnabled = !globalAuto || globalAuto.value === "true";
+    if (!isGlobalEnabled || enabledSetting?.value !== "true") return;
+    const timeSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_time'");
+    const targetTime = timeSetting?.value || "14:00";
+    const [targetH, targetM] = targetTime.split(":").map(Number);
+    const now = /* @__PURE__ */ new Date();
+    const currentH = now.getHours();
+    const currentM = now.getMinutes();
+    const isTargetHour = currentH === (targetH || 14);
+    const isWithinMinutes = currentM >= (targetM || 0) && currentM <= (targetM || 0) + 15;
+    if (!isTargetHour || !isWithinMinutes) {
+      return;
+    }
+    const alreadySent = await db2.get(
+      `SELECT id FROM automation_notifications 
+       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ? AND status = 'sent'
+       LIMIT 1`,
+      [todayStr2]
+    );
+    if (alreadySent) {
+      return;
+    }
+    console.log(`[DistributorReminderWorker] Triggering scheduled afternoon Delivery Boy consolidated dispatch at ${targetTime}...`);
+    try {
+      const { ensureWhatsAppReady: ensureWhatsAppReady2, isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+      if (!await isWhatsAppAutoConnectAllowed2()) {
+        console.log("[DistributorReminderWorker] WhatsApp not configured \u2014 skipping afternoon delivery boy dispatch.");
+        return;
+      }
+      await ensureWhatsAppReady2(3e4);
+    } catch (_) {
+    }
+    const todayReminders = await syncTodayActiveDistributors();
+    const result = await notificationService.sendConsolidatedDeliveryBoyDispatch(todayReminders);
+    console.log("[DistributorReminderWorker] Afternoon Delivery Boy dispatch result:", result);
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error in checkAndSendAfternoonDeliveryBoyReminder:", err.message);
+  }
+}
+async function purgeStaleOfflineReminders() {
+  const db2 = await dbManager.getConnection();
+  const todayStr2 = getTodayDateString();
+  try {
+    const staleRecords = await db2.all(
+      `SELECT id, distributor_name, distributor_phone, date
+       FROM distributor_dispatch_reminders
+       WHERE date < ? AND status = 'Pending'`,
+      [todayStr2]
+    );
+    if (staleRecords.length > 0) {
+      console.log(`[DistributorReminderWorker] Purging/expiring ${staleRecords.length} past-due reminders from PC offline period.`);
+      for (const item of staleRecords) {
+        await db2.run(
+          `UPDATE distributor_dispatch_reminders SET status = 'Skipped (PC Offline)' WHERE id = ?`,
+          [item.id]
+        );
+        await db2.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            "distributor_dispatch_reminder",
+            item.distributor_name,
+            item.distributor_phone || "",
+            `Skipped automatically because PC was offline on ${item.date}`,
+            "skipped_offline",
+            `reminder_stale_${item.id}_${item.date}`
+          ]
+        );
+      }
+    }
+    return staleRecords.length;
+  } catch (err) {
+    console.error("[DistributorReminderWorker] Error purging stale offline reminders:", err.message);
+    return 0;
+  }
+}
+function startDistributorDispatchReminderWorker() {
+  if (checkIntervalTimer) return;
+  purgeStaleOfflineReminders().catch(() => {
+  });
+  syncTodayActiveDistributors().catch(() => {
+  });
+  checkAndSendAutoReminders().catch(() => {
+  });
+  checkAndSendAfternoonDeliveryBoyReminder().catch(() => {
+  });
+  checkIntervalTimer = setInterval(async () => {
+    try {
+      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+      if (activityTracker2.isIdle()) return;
+    } catch (_) {
+    }
+    purgeStaleOfflineReminders().catch(() => {
+    });
+    checkAndSendAutoReminders().catch(() => {
+    });
+    checkAndSendAfternoonDeliveryBoyReminder().catch(() => {
+    });
+  }, 60 * 1e3);
+  console.log("[DistributorReminderWorker] Distributor dispatch reminder background worker initialized with dynamic 30-day staggered scheduler & PC offline protection.");
+}
+function stopDistributorDispatchReminderWorker() {
+  if (checkIntervalTimer) {
+    clearInterval(checkIntervalTimer);
+    checkIntervalTimer = null;
+    console.log("[DistributorReminderWorker] Distributor dispatch reminder background worker stopped.");
+  }
+}
+var isWorkerRunning, checkIntervalTimer, reminderSchemaEnsured;
+var init_distributorDispatchReminderWorker = __esm({
+  "src/services/distributorDispatchReminderWorker.ts"() {
+    "use strict";
+    init_connection();
+    init_notificationService();
+    init_distributorSyncHelper();
+    isWorkerRunning = false;
+    checkIntervalTimer = null;
+    reminderSchemaEnsured = false;
+  }
+});
+
+// src/services/medicineSalesMetricsService.ts
+var medicineSalesMetricsService_exports = {};
+__export(medicineSalesMetricsService_exports, {
+  applyPurchaseDelta: () => applyPurchaseDelta,
+  applySaleDelta: () => applySaleDelta,
+  computeReorderSuggestion: () => computeReorderSuggestion,
+  ensureMedicineSalesMetricsSchema: () => ensureMedicineSalesMetricsSchema,
+  getReorderWindowMonths: () => getReorderWindowMonths,
+  reconcileAllMedicineSalesMetrics: () => reconcileAllMedicineSalesMetrics
+});
+async function ensureMedicineSalesMetricsSchema(db2) {
+  if (schemaEnsured) return;
+  await db2.run(`
+    CREATE TABLE IF NOT EXISTS medicine_sales_metrics (
+      medicine_id INTEGER PRIMARY KEY,
+      sales_2d_qty REAL NOT NULL DEFAULT 0,
+      sales_window_qty REAL NOT NULL DEFAULT 0,
+      purchases_window_qty REAL NOT NULL DEFAULT 0,
+      last_sold_date TEXT,
+      last_purchase_date TEXT,
+      last_purchase_ptr REAL DEFAULT 0,
+      last_distributor_id INTEGER,
+      last_distributor_name TEXT,
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY (medicine_id) REFERENCES medicines(id)
+    )
+  `);
+  try {
+    const cols = await db2.all("PRAGMA table_info(medicine_sales_metrics)");
+    const colNames = new Set(cols.map((c) => c.name));
+    if (cols.length > 0 && !colNames.has("last_purchase_date")) {
+      await db2.run("ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT");
+    }
+  } catch (_) {
+  }
+  await db2.run(`
+    CREATE INDEX IF NOT EXISTS idx_msm_activity
+    ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)
+  `);
+  schemaEnsured = true;
+}
+async function applySaleDelta(db2, medicineId, soldQty) {
+  if (!medicineId || !soldQty) return;
+  await ensureMedicineSalesMetricsSchema(db2);
+  await db2.run(
+    `INSERT INTO medicine_sales_metrics (medicine_id, sales_2d_qty, sales_window_qty, last_sold_date, updated_at)
+     VALUES (?, ?, ?, DATETIME('now'), DATETIME('now'))
+     ON CONFLICT(medicine_id) DO UPDATE SET
+       sales_2d_qty = sales_2d_qty + excluded.sales_2d_qty,
+       sales_window_qty = sales_window_qty + excluded.sales_window_qty,
+       last_sold_date = excluded.last_sold_date,
+       updated_at = excluded.updated_at`,
+    [medicineId, soldQty, soldQty]
+  );
+}
+async function applyPurchaseDelta(db2, medicineId, purchasedQty, ptr, distributorId, distributorName) {
+  if (!medicineId) return;
+  await ensureMedicineSalesMetricsSchema(db2);
+  await db2.run(
+    `INSERT INTO medicine_sales_metrics (
+       medicine_id, purchases_window_qty, last_purchase_date,
+       last_purchase_ptr, last_distributor_id, last_distributor_name, updated_at
+     )
+     VALUES (?, ?, DATETIME('now'), ?, ?, ?, DATETIME('now'))
+     ON CONFLICT(medicine_id) DO UPDATE SET
+       purchases_window_qty = purchases_window_qty + excluded.purchases_window_qty,
+       last_purchase_date = excluded.last_purchase_date,
+       last_purchase_ptr = CASE WHEN excluded.last_purchase_ptr > 0 THEN excluded.last_purchase_ptr ELSE medicine_sales_metrics.last_purchase_ptr END,
+       last_distributor_id = COALESCE(excluded.last_distributor_id, medicine_sales_metrics.last_distributor_id),
+       last_distributor_name = COALESCE(excluded.last_distributor_name, medicine_sales_metrics.last_distributor_name),
+       updated_at = excluded.updated_at`,
+    [medicineId, purchasedQty || 0, ptr || 0, distributorId || null, distributorName || null]
+  );
+  const numericPtr = Number(ptr) || 0;
+  await db2.run(
+    `UPDATE medicines SET
+       last_purchase_date = DATETIME('now'),
+       last_purchase_ptr = CASE WHEN ? > 0 THEN ? ELSE last_purchase_ptr END,
+       last_distributor_name = COALESCE(?, last_distributor_name),
+       lowest_purchase_ptr = CASE 
+         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
+         THEN ? 
+         ELSE lowest_purchase_ptr 
+       END,
+       lowest_distributor_name = CASE 
+         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
+         THEN COALESCE(?, lowest_distributor_name) 
+         ELSE lowest_distributor_name 
+       END
+     WHERE id = ?`,
+    [
+      numericPtr,
+      numericPtr,
+      distributorName || null,
+      numericPtr,
+      numericPtr,
+      numericPtr,
+      numericPtr,
+      numericPtr,
+      distributorName || null,
+      medicineId
+    ]
+  ).catch(() => {
+  });
+}
+async function getReorderWindowMonths(dbInstance) {
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_reorder_window_months'");
+    const val = row && row.value ? parseInt(row.value, 10) : NaN;
+    if ([2, 4, 6, 8].includes(val)) return val;
+  } catch (err) {
+    console.warn("[MedicineSalesMetrics] Error resolving reorder window months:", err);
+  }
+  return 2;
+}
+function computeReorderSuggestion(metrics, windowMonths) {
+  const { sales2dQty, salesWindowQty, purchasesWindowQty, currentStock } = metrics;
+  const monthlyWeightedConsumption = Math.round((0.7 * purchasesWindowQty + 0.3 * salesWindowQty) / windowMonths);
+  const isHotMover = monthlyWeightedConsumption >= 10 || sales2dQty >= 5;
+  const isLowStockSafety = currentStock <= 2 && (purchasesWindowQty >= 6 || salesWindowQty >= 6);
+  const included = sales2dQty > 0 || isLowStockSafety || monthlyWeightedConsumption > 0 && currentStock <= monthlyWeightedConsumption;
+  let suggestedQty = 1;
+  if (monthlyWeightedConsumption > currentStock) {
+    suggestedQty = Math.max(1, Math.ceil(monthlyWeightedConsumption - currentStock));
+  } else if (sales2dQty > 0) {
+    suggestedQty = Math.max(1, sales2dQty * 2);
+  } else if (isLowStockSafety) {
+    suggestedQty = Math.max(1, 10 - currentStock);
+  }
+  return { monthlyWeightedConsumption, isHotMover, isLowStockSafety, included, suggestedQty };
+}
+async function reconcileAllMedicineSalesMetrics(db2, windowMonths) {
+  await ensureMedicineSalesMetricsSchema(db2);
+  const windowDays = windowMonths * 30;
+  const salesRows = await db2.all(
+    `SELECT im.medicine_id, SUM(si.quantity) as window_qty, MAX(inv.date) as last_sold_date
+     FROM sale_items si
+     JOIN sales_invoices inv ON si.invoice_id = inv.id
+     JOIN inventory_master im ON si.inventory_id = im.id
+     WHERE inv.date >= DATETIME('now', ?)
+     GROUP BY im.medicine_id`,
+    [`-${windowDays} days`]
+  );
+  const twoDayRows = await db2.all(
+    `SELECT im.medicine_id, SUM(si.quantity) as two_day_qty
+     FROM sale_items si
+     JOIN sales_invoices inv ON si.invoice_id = inv.id
+     JOIN inventory_master im ON si.inventory_id = im.id
+     WHERE inv.date >= DATETIME('now', '-2 days')
+     GROUP BY im.medicine_id`
+  );
+  const purchaseRows = await db2.all(
+    `SELECT pi.medicine_id, SUM(pi.quantity) as window_qty, MAX(p.date) as last_purchase_date
+     FROM purchase_items pi
+     JOIN purchases p ON pi.purchase_id = p.id
+     WHERE p.date >= DATETIME('now', ?)
+     GROUP BY pi.medicine_id`,
+    [`-${windowDays} days`]
+  );
+  const lastPurchaseDetailRows = await db2.all(
+    `SELECT pi.medicine_id, pi.cost_price as ptr, p.distributor_id, d.name as distributor_name, p.date
+     FROM purchase_items pi
+     JOIN purchases p ON pi.purchase_id = p.id
+     LEFT JOIN distributors d ON d.id = p.distributor_id
+     WHERE p.date >= DATETIME('now', ?)
+     ORDER BY p.date DESC`,
+    [`-${windowDays} days`]
+  );
+  const lastPurchaseDetailByMed = {};
+  for (const row of lastPurchaseDetailRows) {
+    if (!lastPurchaseDetailByMed[row.medicine_id]) lastPurchaseDetailByMed[row.medicine_id] = row;
+  }
+  const medicineIds = /* @__PURE__ */ new Set();
+  for (const r of salesRows) medicineIds.add(r.medicine_id);
+  for (const r of twoDayRows) medicineIds.add(r.medicine_id);
+  for (const r of purchaseRows) medicineIds.add(r.medicine_id);
+  const salesByMed = Object.fromEntries(salesRows.map((r) => [r.medicine_id, r]));
+  const twoDayByMed = Object.fromEntries(twoDayRows.map((r) => [r.medicine_id, r]));
+  const purchaseByMed = Object.fromEntries(purchaseRows.map((r) => [r.medicine_id, r]));
+  await db2.run("BEGIN IMMEDIATE TRANSACTION");
+  try {
+    await db2.run("DELETE FROM medicine_sales_metrics");
+    for (const medId of medicineIds) {
+      const sales = salesByMed[medId];
+      const twoDay = twoDayByMed[medId];
+      const purchase = purchaseByMed[medId];
+      const lastPurchase = lastPurchaseDetailByMed[medId];
+      await db2.run(
+        `INSERT INTO medicine_sales_metrics
+           (medicine_id, sales_2d_qty, sales_window_qty, purchases_window_qty,
+            last_sold_date, last_purchase_date, last_purchase_ptr, last_distributor_id, last_distributor_name, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now'))`,
+        [
+          medId,
+          Number(twoDay?.two_day_qty || 0),
+          Number(sales?.window_qty || 0),
+          Number(purchase?.window_qty || 0),
+          sales?.last_sold_date || null,
+          lastPurchase?.date || null,
+          Number(lastPurchase?.ptr || 0),
+          lastPurchase?.distributor_id || null,
+          lastPurchase?.distributor_name || null
+        ]
+      );
+    }
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK").catch(() => {
+    });
+    throw err;
+  }
+}
+var schemaEnsured;
+var init_medicineSalesMetricsService = __esm({
+  "src/services/medicineSalesMetricsService.ts"() {
+    "use strict";
+    init_connection();
+    schemaEnsured = false;
+    setTimeout(() => {
+      (async () => {
+        try {
+          const db2 = await dbManager.getConnection();
+          await ensureMedicineSalesMetricsSchema(db2);
+          const row = await db2.get("SELECT COUNT(*) as c FROM medicine_sales_metrics");
+          if (!row || Number(row.c) === 0) {
+            const windowMonths = await getReorderWindowMonths(db2);
+            await reconcileAllMedicineSalesMetrics(db2, windowMonths);
+            console.log("[MedicineSalesMetrics] Initial backfill complete.");
+          }
+        } catch (err) {
+          console.error("[MedicineSalesMetrics] Initial backfill failed:", err);
+        }
+      })();
+    }, 6e4);
+  }
+});
+
+// src/worker/stockCalculatorWorker.ts
+var stockCalculatorWorker_exports = {};
+__export(stockCalculatorWorker_exports, {
+  recalculateStockLimits: () => recalculateStockLimits,
+  recalculateTargetedStockMetrics: () => recalculateTargetedStockMetrics,
+  startStockCalculatorWorker: () => startStockCalculatorWorker,
+  stopStockCalculatorWorker: () => stopStockCalculatorWorker,
+  triggerPreCalculatedStockRebuildDebounced: () => triggerPreCalculatedStockRebuildDebounced
+});
+function triggerPreCalculatedStockRebuildDebounced(medicineIds, delayMs = 500) {
+  if (medicineIds && medicineIds.length > 0) {
+    for (const id of medicineIds) {
+      if (typeof id === "number" && id > 0) {
+        pendingMedicineIds.add(id);
+      }
+    }
+  } else {
+    fullStockRebuildRequested = true;
+  }
+  if (debounceTimer2) clearTimeout(debounceTimer2);
+  debounceTimer2 = setTimeout(() => {
+    const idsToProcess = Array.from(pendingMedicineIds);
+    const needFull = fullStockRebuildRequested;
+    pendingMedicineIds.clear();
+    fullStockRebuildRequested = false;
+    debounceTimer2 = null;
+    if (!needFull && idsToProcess.length > 0) {
+      recalculateTargetedStockMetrics(idsToProcess).catch((err) => {
+        console.error("[StockCalculatorWorker] Targeted rebuild error:", err);
+      });
+    } else if (needFull) {
+      recalculateTargetedStockMetrics().catch((err) => {
+        console.error("[StockCalculatorWorker] Full rebuild error:", err);
+      });
+    }
+  }, delayMs);
+}
+async function recalculateTargetedStockMetrics(affectedMedicineIds) {
+  if (activeStockRecalcPromise) {
+    return activeStockRecalcPromise;
+  }
+  activeStockRecalcPromise = (async () => {
+    const db2 = await dbManager.getConnection();
+    try {
+      let medicineIdsToUpdate = [];
+      const isTargeted = affectedMedicineIds && affectedMedicineIds.length > 0 && affectedMedicineIds.length <= 100;
+      if (affectedMedicineIds && affectedMedicineIds.length > 0) {
+        medicineIdsToUpdate = Array.from(new Set(affectedMedicineIds));
+      } else {
+        const rows = await db2.all(`
+          SELECT DISTINCT id FROM medicines WHERE id IN (
+            SELECT DISTINCT medicine_id FROM inventory_master
+            UNION
+            SELECT DISTINCT im.medicine_id FROM sale_items sit JOIN inventory_master im ON im.id = sit.inventory_id
+            UNION
+            SELECT DISTINCT medicine_id FROM purchase_items
+          )
+        `);
+        medicineIdsToUpdate = rows.map((r) => r.id);
+      }
+      if (medicineIdsToUpdate.length === 0) return;
+      console.log(`[StockCalculatorWorker] Recalculating precalculated stock metrics for ${medicineIdsToUpdate.length} medicines`);
+      if (isTargeted) {
+        for (const medId of medicineIdsToUpdate) {
+          const poolRow = await db2.get(`
+            SELECT 
+              COALESCE(SUM(im.quantity * COALESCE(m.pack_size, 1) + COALESCE(im.loose_quantity, 0)), 0) as total_units,
+              MAX(im.reorder_level) as reorder_level
+            FROM inventory_master im
+            LEFT JOIN medicines m ON m.id = im.medicine_id
+            WHERE im.medicine_id = ?
+          `, [medId]);
+          const totalUnitsPool = poolRow?.total_units || 0;
+          const configRow = await db2.get(
+            "SELECT reorder_level FROM stock_config WHERE medicine_id = ?",
+            [medId]
+          );
+          const reorderLevel = poolRow?.reorder_level ?? configRow?.reorder_level ?? DEFAULT_MIN_STOCK;
+          const lowStockFlag = totalUnitsPool <= reorderLevel ? 1 : 0;
+          const salesRow = await db2.get(`
+            SELECT 
+              COALESCE(SUM(sit.quantity), 0) as total_qty,
+              MIN(si.date) as first_sale_date
+            FROM sale_items sit
+            JOIN sales_invoices si ON si.id = sit.invoice_id
+            JOIN inventory_master im ON im.id = sit.inventory_id
+            WHERE im.medicine_id = ?
+            AND si.date >= datetime('now', '-180 days')
+          `, [medId]);
+          const totalQty180d = salesRow?.total_qty || 0;
+          const firstSaleDateStr = salesRow?.first_sale_date;
+          let dailySalesVelocity = 0;
+          let burnRateRatio = 0;
+          const nowTime = Date.now();
+          const daysSinceFirstSale = firstSaleDateStr ? Math.max(1, Math.ceil((nowTime - new Date(firstSaleDateStr).getTime()) / (1e3 * 60 * 60 * 24))) : 0;
+          if (daysSinceFirstSale > 0 && daysSinceFirstSale < 30) {
+            const microVelocity = totalQty180d / daysSinceFirstSale;
+            dailySalesVelocity = microVelocity;
+            burnRateRatio = totalUnitsPool > 0 ? microVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : microVelocity > 0 ? 99 : 0;
+          } else {
+            dailySalesVelocity = totalQty180d / 180;
+            burnRateRatio = totalUnitsPool > 0 ? dailySalesVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : dailySalesVelocity > 0 ? 99 : 0;
+          }
+          const heavySellFlag = burnRateRatio >= 1.2 ? 1 : 0;
+          const suggestedRefillQty = lowStockFlag === 1 || heavySellFlag === 1 ? Math.max(0, reorderLevel * 2 - totalUnitsPool) : 0;
+          const metricsJson = JSON.stringify({
+            total_units_pool: totalUnitsPool,
+            reorder_level: reorderLevel,
+            low_stock_flag: lowStockFlag,
+            daily_sales_velocity: Number(dailySalesVelocity.toFixed(3)),
+            burn_rate_ratio: Number(burnRateRatio.toFixed(3)),
+            heavy_sell_flag: heavySellFlag,
+            suggested_refill_qty: suggestedRefillQty,
+            days_since_first_sale: daysSinceFirstSale
+          });
+          await db2.run(`
+            INSERT INTO precalculated_stock_metrics
+            (medicine_id, total_units_pool, low_stock_flag, daily_sales_velocity, burn_rate_ratio, heavy_sell_flag, suggested_refill_qty, metrics_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(medicine_id) DO UPDATE SET
+              total_units_pool = excluded.total_units_pool,
+              low_stock_flag = excluded.low_stock_flag,
+              daily_sales_velocity = excluded.daily_sales_velocity,
+              burn_rate_ratio = excluded.burn_rate_ratio,
+              heavy_sell_flag = excluded.heavy_sell_flag,
+              suggested_refill_qty = excluded.suggested_refill_qty,
+              metrics_json = excluded.metrics_json,
+              updated_at = CURRENT_TIMESTAMP
+          `, [
+            medId,
+            totalUnitsPool,
+            lowStockFlag,
+            dailySalesVelocity,
+            burnRateRatio,
+            heavySellFlag,
+            suggestedRefillQty,
+            metricsJson
+          ]);
+        }
+      } else {
+        const poolRows = await db2.all(`
+          SELECT 
+            im.medicine_id,
+            COALESCE(SUM(im.quantity * COALESCE(m.pack_size, 1) + COALESCE(im.loose_quantity, 0)), 0) as total_units,
+            MAX(im.reorder_level) as reorder_level
+          FROM inventory_master im
+          LEFT JOIN medicines m ON m.id = im.medicine_id
+          GROUP BY im.medicine_id
+        `);
+        const poolMap = /* @__PURE__ */ new Map();
+        for (const r of poolRows) {
+          poolMap.set(r.medicine_id, r);
+        }
+        const configRows = await db2.all(
+          "SELECT medicine_id, reorder_level FROM stock_config"
+        );
+        const configMap = /* @__PURE__ */ new Map();
+        for (const r of configRows) {
+          configMap.set(r.medicine_id, r.reorder_level);
+        }
+        const salesRows = await db2.all(`
+          SELECT 
+            im.medicine_id,
+            COALESCE(SUM(sit.quantity), 0) as total_qty,
+            MIN(si.date) as first_sale_date
+          FROM sale_items sit
+          JOIN sales_invoices si ON si.id = sit.invoice_id
+          JOIN inventory_master im ON im.id = sit.inventory_id
+          WHERE si.date >= datetime('now', '-180 days')
+          GROUP BY im.medicine_id
+        `);
+        const salesMap = /* @__PURE__ */ new Map();
+        for (const r of salesRows) {
+          salesMap.set(r.medicine_id, r);
+        }
+        const nowTime = Date.now();
+        const insertBatch2 = [];
+        for (const medId of medicineIdsToUpdate) {
+          const pool = poolMap.get(medId);
+          const totalUnitsPool = pool?.total_units || 0;
+          const reorderLevel = pool?.reorder_level ?? configMap.get(medId) ?? DEFAULT_MIN_STOCK;
+          const lowStockFlag = totalUnitsPool <= reorderLevel ? 1 : 0;
+          const sales = salesMap.get(medId);
+          const totalQty180d = sales?.total_qty || 0;
+          const firstSaleDateStr = sales?.first_sale_date;
+          let dailySalesVelocity = 0;
+          let burnRateRatio = 0;
+          const daysSinceFirstSale = firstSaleDateStr ? Math.max(1, Math.ceil((nowTime - new Date(firstSaleDateStr).getTime()) / (1e3 * 60 * 60 * 24))) : 0;
+          if (daysSinceFirstSale > 0 && daysSinceFirstSale < 30) {
+            const microVelocity = totalQty180d / daysSinceFirstSale;
+            dailySalesVelocity = microVelocity;
+            burnRateRatio = totalUnitsPool > 0 ? microVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : microVelocity > 0 ? 99 : 0;
+          } else {
+            dailySalesVelocity = totalQty180d / 180;
+            burnRateRatio = totalUnitsPool > 0 ? dailySalesVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : dailySalesVelocity > 0 ? 99 : 0;
+          }
+          const heavySellFlag = burnRateRatio >= 1.2 ? 1 : 0;
+          const suggestedRefillQty = lowStockFlag === 1 || heavySellFlag === 1 ? Math.max(0, reorderLevel * 2 - totalUnitsPool) : 0;
+          const metricsJson = JSON.stringify({
+            total_units_pool: totalUnitsPool,
+            reorder_level: reorderLevel,
+            low_stock_flag: lowStockFlag,
+            daily_sales_velocity: Number(dailySalesVelocity.toFixed(3)),
+            burn_rate_ratio: Number(burnRateRatio.toFixed(3)),
+            heavy_sell_flag: heavySellFlag,
+            suggested_refill_qty: suggestedRefillQty,
+            days_since_first_sale: daysSinceFirstSale
+          });
+          insertBatch2.push({
+            medId,
+            totalUnitsPool,
+            lowStockFlag,
+            dailySalesVelocity,
+            burnRateRatio,
+            heavySellFlag,
+            suggestedRefillQty,
+            metricsJson
+          });
+        }
+        const chunkSize = 200;
+        for (let i = 0; i < insertBatch2.length; i += chunkSize) {
+          const chunk = insertBatch2.slice(i, i + chunkSize);
+          const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
+          const flatParams = [];
+          for (const item of chunk) {
+            flatParams.push(
+              item.medId,
+              item.totalUnitsPool,
+              item.lowStockFlag,
+              item.dailySalesVelocity,
+              item.burnRateRatio,
+              item.heavySellFlag,
+              item.suggestedRefillQty,
+              item.metricsJson
+            );
+          }
+          await db2.run(`
+            INSERT INTO precalculated_stock_metrics
+            (medicine_id, total_units_pool, low_stock_flag, daily_sales_velocity, burn_rate_ratio, heavy_sell_flag, suggested_refill_qty, metrics_json, updated_at)
+            VALUES ${placeholders}
+            ON CONFLICT(medicine_id) DO UPDATE SET
+              total_units_pool = excluded.total_units_pool,
+              low_stock_flag = excluded.low_stock_flag,
+              daily_sales_velocity = excluded.daily_sales_velocity,
+              burn_rate_ratio = excluded.burn_rate_ratio,
+              heavy_sell_flag = excluded.heavy_sell_flag,
+              suggested_refill_qty = excluded.suggested_refill_qty,
+              metrics_json = excluded.metrics_json,
+              updated_at = CURRENT_TIMESTAMP
+          `, flatParams);
+        }
+      }
+      eventService.broadcast("stock_metrics_updated", {
+        count: medicineIdsToUpdate.length,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (err) {
+      console.error("[StockCalculatorWorker] Targeted calculation error:", err);
+    } finally {
+      activeStockRecalcPromise = null;
+    }
+  })();
+  return activeStockRecalcPromise;
+}
+async function recalculateStockLimits() {
+  if (activeStockLimitsPromise) {
+    return activeStockLimitsPromise;
+  }
+  activeStockLimitsPromise = (async () => {
+    const db2 = await dbManager.getConnection();
+    try {
+      try {
+        const { deactivateExpiredInventory: deactivateExpiredInventory2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
+        const zeroed = await deactivateExpiredInventory2(db2);
+        if (zeroed > 0) console.log(`[StockCalculatorWorker] Deactivated ${zeroed} expired inventory batch(es).`);
+      } catch (err) {
+        console.error("[StockCalculatorWorker] deactivateExpiredInventory error:", err);
+      }
+      await db2.run(`
+        CREATE TABLE IF NOT EXISTS stock_config (
+          medicine_id INTEGER PRIMARY KEY,
+          avg_daily_sales REAL DEFAULT 0,
+          lead_time_days INTEGER DEFAULT 7,
+          safety_factor REAL DEFAULT 1.5,
+          min_stock_level INTEGER DEFAULT 10,
+          max_stock_level INTEGER DEFAULT 30,
+          reorder_level INTEGER DEFAULT 12,
+          last_calculated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const medicines = await db2.all(
+        `SELECT id, name FROM medicines WHERE id IN (
+           SELECT DISTINCT medicine_id FROM inventory_master
+         )`
+      );
+      console.log(`[StockCalculatorWorker] Recalculating stock limits for ${medicines.length} medicines`);
+      const salesGroupRows = await db2.all(`
+        SELECT
+          daily.medicine_id,
+          COALESCE(AVG(daily.daily_qty), 0) as avg_daily_sales
+        FROM (
+          SELECT
+            im.medicine_id,
+            DATE(si.date) as sale_date,
+            SUM(sit.quantity) as daily_qty
+          FROM sale_items sit
+          JOIN sales_invoices si ON si.id = sit.invoice_id
+          JOIN inventory_master im ON im.id = sit.inventory_id
+          WHERE si.date >= datetime('now', '-90 days')
+          GROUP BY im.medicine_id, DATE(si.date)
+        ) daily
+        GROUP BY daily.medicine_id
+      `);
+      const avgSalesMap = /* @__PURE__ */ new Map();
+      for (const r of salesGroupRows) {
+        avgSalesMap.set(r.medicine_id, r.avg_daily_sales);
+      }
+      const configItems = [];
+      const leadTime = DEFAULT_LEAD_TIME;
+      for (const med of medicines) {
+        const avgDailySales = avgSalesMap.get(med.id) || 0;
+        const minStock = Math.max(
+          DEFAULT_MIN_STOCK,
+          Math.ceil(avgDailySales * leadTime * SAFETY_FACTOR)
+        );
+        const reorderLevel = Math.ceil(minStock * 1.2);
+        const maxStock = Math.ceil(minStock * 3);
+        configItems.push({
+          id: med.id,
+          avgDailySales,
+          leadTime,
+          safetyFactor: SAFETY_FACTOR,
+          minStock,
+          maxStock,
+          reorderLevel
+        });
+      }
+      const chunkSize = 200;
+      for (let i = 0; i < configItems.length; i += chunkSize) {
+        const chunk = configItems.slice(i, i + chunkSize);
+        const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
+        const flatParams = [];
+        for (const item of chunk) {
+          flatParams.push(
+            item.id,
+            item.avgDailySales,
+            item.leadTime,
+            item.safetyFactor,
+            item.minStock,
+            item.maxStock,
+            item.reorderLevel
+          );
+        }
+        await db2.run(`
+          INSERT OR REPLACE INTO stock_config
+          (medicine_id, avg_daily_sales, lead_time_days, safety_factor, min_stock_level, max_stock_level, reorder_level, last_calculated)
+          VALUES ${placeholders}
+        `, flatParams);
+      }
+      await recalculateTargetedStockMetrics();
+      console.log("[StockCalculatorWorker] Stock limits recalculated successfully");
+    } catch (err) {
+      console.error("[StockCalculatorWorker] Recalculation error:", err);
+    } finally {
+      activeStockLimitsPromise = null;
+    }
+  })();
+  return activeStockLimitsPromise;
+}
+function startStockCalculatorWorker(intervalMs = 864e5) {
+  if (process.env.DISABLE_BACKGROUND_WORKERS === "true") {
+    console.log("[StockCalculatorWorker] StockCalculatorWorker is STOPPED and DISABLED.");
+    stopStockCalculatorWorker();
+    return;
+  }
+  if (intervalId) return;
+  console.log(`[StockCalculatorWorker] Starting with interval ${intervalMs}ms`);
+  (async () => {
+    try {
+      const db2 = await dbManager.getConnection();
+      await db2.run(`
+        CREATE TABLE IF NOT EXISTS stock_config (
+          medicine_id INTEGER PRIMARY KEY,
+          avg_daily_sales REAL DEFAULT 0,
+          lead_time_days INTEGER DEFAULT 7,
+          safety_factor REAL DEFAULT 1.5,
+          min_stock_level INTEGER DEFAULT 10,
+          max_stock_level INTEGER DEFAULT 30,
+          reorder_level INTEGER DEFAULT 12,
+          last_calculated DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      const row = await db2.get(
+        `SELECT MAX(last_calculated) as last_calc FROM stock_config`
+      );
+      if (row && row.last_calc) {
+        const lastTime = new Date(row.last_calc).getTime();
+        const now = Date.now();
+        const diffMs = now - lastTime;
+        if (diffMs < intervalMs) {
+          console.log(`[StockCalculatorWorker] Stock limits were calculated ${(diffMs / 36e5).toFixed(1)}h ago. Skipping boot recalculation.`);
+          return;
+        }
+      }
+      await recalculateStockLimits();
+    } catch (err) {
+      console.error("[StockCalculatorWorker] Initial calculation check failed:", err);
+    }
+  })();
+  intervalId = setInterval(() => {
+    if (activityTracker.isIdle()) return;
+    runHeavyJob("stock_calculator", recalculateStockLimits).catch(
+      (err) => console.error("[StockCalculatorWorker] Periodic calculation failed:", err)
+    );
+  }, intervalMs);
+}
+function stopStockCalculatorWorker() {
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalId = null;
+    console.log("[StockCalculatorWorker] Stopped");
+  }
+}
+var SAFETY_FACTOR, DEFAULT_LEAD_TIME, DEFAULT_MIN_STOCK, debounceTimer2, pendingMedicineIds, fullStockRebuildRequested, activeStockRecalcPromise, activeStockLimitsPromise, intervalId;
+var init_stockCalculatorWorker = __esm({
+  "src/worker/stockCalculatorWorker.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    init_activityTracker();
+    init_backgroundJobLane();
+    SAFETY_FACTOR = 1.5;
+    DEFAULT_LEAD_TIME = 7;
+    DEFAULT_MIN_STOCK = 10;
+    debounceTimer2 = null;
+    pendingMedicineIds = /* @__PURE__ */ new Set();
+    fullStockRebuildRequested = false;
+    activeStockRecalcPromise = null;
+    activeStockLimitsPromise = null;
+    intervalId = null;
+  }
+});
+
+// src/routes/pharmarack.ts
+var pharmarack_exports = {};
+__export(pharmarack_exports, {
+  adjustSpecialOrderInLiveCart: () => adjustSpecialOrderInLiveCart,
+  default: () => pharmarack_default,
+  invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
+  performPharmarackSearch: () => performPharmarackSearch,
+  warmupStartupCart: () => warmupStartupCart
+});
+function findChromePath2() {
+  return findChromePath({ includeEdge: true });
+}
+async function getPharmarackSettings() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all("SELECT key, value FROM app_settings WHERE key LIKE 'pharmarack_%' OR key = 'combine_pharmarack_pharmacy_search'");
+  const settings = {};
+  rows.forEach((r) => {
+    settings[r.key] = r.value;
+  });
+  return settings;
+}
+async function fetchPharmarack(url, options = {}) {
+  const settings = await getPharmarackSettings();
+  let token = settings["pharmarack_session_token"] || "";
+  const getHeaders = (t) => {
+    const authHeader = t.startsWith("Bearer ") ? t : `Bearer ${t}`;
+    return {
+      "Authorization": authHeader,
+      "Content-Type": "application/json",
+      "devicetype": "web",
+      "Accept": "application/json, text/plain, */*",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Referer": "https://retailers.pharmarack.com/",
+      "Origin": "https://retailers.pharmarack.com",
+      ...options.headers || {}
+    };
+  };
+  const executeFetch = async (t) => {
+    return await fetch(url, {
+      ...options,
+      headers: getHeaders(t)
+    });
+  };
+  let response = await executeFetch(token);
+  if ((response.status === 401 || response.status === 403) && token) {
+    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Marking session status 'expired' (manual re-auth required).`);
+    try {
+      const db2 = await dbManager.getConnection();
+      await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
+    } catch (dbErr) {
+      console.error("Failed to mark session expired:", dbErr);
+    }
+  }
+  return response;
+}
+function cleanSearchQuery(query) {
+  const stopwords = [
+    "drop",
+    "drops",
+    "eye drop",
+    "eye drops",
+    "ear drop",
+    "ear drops",
+    "tab",
+    "tabs",
+    "tablet",
+    "tablets",
+    "cap",
+    "caps",
+    "capsule",
+    "capsules",
+    "syp",
+    "syrup",
+    "syrups",
+    "suspension",
+    "liquid",
+    "liquids",
+    "solution",
+    "solutions",
+    "emulsion",
+    "emulsions",
+    "elixir",
+    "elixirs",
+    "tonic",
+    "tonics",
+    "cream",
+    "gel",
+    "gels",
+    "ointment",
+    "ointments",
+    "lotion",
+    "lotions",
+    "liniment",
+    "liniments",
+    "paste",
+    "pastes",
+    "spray",
+    "sprays",
+    "gargle",
+    "gargles",
+    "mouthwash",
+    "mouthwashes",
+    "inj",
+    "injection",
+    "injections",
+    "powder",
+    "powders",
+    "sachet",
+    "sachets",
+    "granules",
+    "patch",
+    "patches",
+    "inhaler",
+    "inhalers"
+  ];
+  let cleaned = query;
+  const detectedForms = [];
+  for (const word of stopwords) {
+    const regex = new RegExp(`\\b${word}\\b`, "gi");
+    if (regex.test(query)) {
+      detectedForms.push(word);
+    }
+    cleaned = cleaned.replace(regex, "");
+  }
+  return { cleaned: cleaned.replace(/\s+/g, " ").trim(), detectedForms };
+}
+async function searchOfflineCatalogFallback(q, storeId, isMapped) {
+  try {
+    const results = [];
+    const seenKeys = /* @__PURE__ */ new Set();
+    try {
+      const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
+      const combined = [...offlineResults.mapped, ...offlineResults.nonMapped];
+      let filtered = combined;
+      if (storeId !== null && storeId !== void 0 && !isNaN(storeId)) {
+        filtered = combined.filter((p) => p.storeId === storeId && (isMapped === void 0 || p.isMapped === isMapped));
+      }
+      for (const p of filtered) {
+        const key = `${(p.name || "").toLowerCase()}|${p.storeId}|${p.distributorPrice}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          results.push({
+            name: p.name,
+            shortName: p.name,
+            fullName: p.name,
+            packaging: p.packaging || "",
+            distributor: p.distributor || "Distributor",
+            rate: p.distributorPrice !== null && p.distributorPrice !== void 0 ? Number(p.distributorPrice) : null,
+            mrp: p.mrp !== null && p.mrp !== void 0 ? Number(p.mrp) : null,
+            mapped: p.isMapped,
+            stock: "Offline",
+            scheme: "",
+            productId: p.storeId ? p.storeId * 1e5 + 1 : 1,
+            productCode: "",
+            company: p.manufacturer || "",
+            storeId: p.storeId || 1,
+            isOffline: true
+          });
+        }
+      }
+    } catch (_) {
+    }
+    const db2 = await dbManager.getConnection();
+    const settings = await getPharmarackSettings();
+    const isCombineEnabled = settings["combine_pharmarack_pharmacy_search"] !== "false";
+    if (isCombineEnabled) {
+      try {
+        const qClean = q.trim();
+        const tokens = qClean.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+        if (tokens.length > 0) {
+          const likeClauses = tokens.map(() => "m.name LIKE ?").join(" AND ");
+          const likeParams = tokens.map((t) => `%${t}%`);
+          let storeFilterSql = "";
+          const extraParams = [];
+          if (storeId !== null && storeId !== void 0 && !isNaN(storeId)) {
+            storeFilterSql = " AND d.id = ?";
+            extraParams.push(storeId);
+          }
+          const localPurchases = await db2.all(`
+            SELECT 
+              m.id as medicineId,
+              m.name as medicineName,
+              COALESCE(m.packaging, m.pack_size, '') as packaging,
+              COALESCE(m.manufacturer, m.marketed_by, '') as company,
+              d.id as distributorId,
+              d.name as distributorName,
+              pi.cost_price as rate,
+              pi.mrp as mrp,
+              pi.scheme_per as scheme,
+              (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock,
+              MAX(p.date) as lastPurchaseDate,
+              CASE WHEN dlp.distributor_id IS NOT NULL THEN 1 ELSE 0 END as isMappedProfile
+            FROM purchase_items pi
+            JOIN purchases p ON pi.purchase_id = p.id
+            JOIN distributors d ON p.distributor_id = d.id
+            JOIN medicines m ON pi.medicine_id = m.id
+            LEFT JOIN distributor_learning_profiles dlp ON d.id = dlp.distributor_id
+            WHERE (${likeClauses})${storeFilterSql}
+            GROUP BY m.id, d.id, pi.cost_price, pi.mrp
+            ORDER BY lastPurchaseDate DESC
+            LIMIT 30
+          `, [...likeParams, ...extraParams]).catch(() => []);
+          for (const lp of localPurchases) {
+            const key = `${(lp.medicineName || "").toLowerCase()}|${lp.distributorId}|${lp.rate}`;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              const mappedStatus = isMapped !== void 0 ? isMapped : lp.isMappedProfile === 1;
+              const stockDisplay = lp.currentStock > 0 ? lp.currentStock >= 10 ? "High" : String(lp.currentStock) : "Low";
+              results.push({
+                name: lp.medicineName,
+                shortName: lp.medicineName,
+                fullName: lp.medicineName,
+                packaging: lp.packaging || "",
+                distributor: lp.distributorName || "Local Distributor",
+                rate: lp.rate !== null && lp.rate !== void 0 ? Number(lp.rate) : null,
+                mrp: lp.mrp !== null && lp.mrp !== void 0 ? Number(lp.mrp) : null,
+                mapped: mappedStatus,
+                stock: "Offline",
+                scheme: lp.scheme ? `${lp.scheme}%` : "",
+                productId: lp.medicineId || 1,
+                productCode: String(lp.medicineId || ""),
+                company: lp.company || "",
+                storeId: lp.distributorId || 1,
+                isLocalPharmacy: true,
+                isOffline: true
+              });
+            }
+          }
+          if (results.length === 0) {
+            const baseMedicines = await db2.all(`
+              SELECT 
+                m.id as medicineId,
+                m.name as medicineName,
+                COALESCE(m.packaging, m.pack_size, '') as packaging,
+                COALESCE(m.manufacturer, m.marketed_by, '') as company,
+                m.mrp as mrp,
+                (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock
+              FROM medicines m
+              WHERE (${likeClauses})
+              LIMIT 15
+            `, likeParams).catch(() => []);
+            const defaultDistributor = await db2.get("SELECT id, name FROM distributors ORDER BY id ASC LIMIT 1").catch(() => null);
+            for (const bm of baseMedicines) {
+              const key = `${(bm.medicineName || "").toLowerCase()}|${defaultDistributor?.id || 1}|${bm.mrp}`;
+              if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                results.push({
+                  name: bm.medicineName,
+                  shortName: bm.medicineName,
+                  fullName: bm.medicineName,
+                  packaging: bm.packaging || "",
+                  distributor: defaultDistributor?.name || "Local Pharmacy",
+                  rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
+                  mrp: bm.mrp ? Number(bm.mrp) : null,
+                  mapped: true,
+                  stock: "Offline",
+                  scheme: "",
+                  productId: bm.medicineId || 1,
+                  productCode: String(bm.medicineId || ""),
+                  company: bm.company || "",
+                  storeId: defaultDistributor?.id || 1,
+                  isLocalPharmacy: true,
+                  isOffline: true
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+    }
+    return results;
+  } catch (e) {
+    return [];
+  }
+}
+async function performPharmarackSearch(qRaw, storeId, isMapped) {
+  const hasStoreFilter = storeId !== null && !isNaN(storeId);
+  let settings = {};
+  try {
+    activityTracker.recordActivity();
+    settings = await getPharmarackSettings();
+    let token = settings["pharmarack_session_token"] || "";
+    if (!token) {
+      const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
+      if (offline2.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, offline2);
+        return { status: "ok", items: offline2 };
+      }
+      if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+        return { status: "ok", items: [] };
+      }
+      return { status: "need_login" };
+    }
+    const buildPayload = (keyword) => ({
+      SearchKeyword: keyword,
+      StoreId: hasStoreFilter && isMapped ? [storeId] : [],
+      NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
+      Count: 100,
+      SkipCount: 0,
+      isMappedSearch: hasStoreFilter ? isMapped : null,
+      IsStock: 2,
+      IsScheme: 2,
+      IsSort: 1,
+      CartSource: "MOVP"
+    });
+    let response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+      method: "POST",
+      body: JSON.stringify(buildPayload(qRaw)),
+      signal: AbortSignal.timeout(5e3)
+    });
+    let data = response.ok ? await response.json().catch(() => null) : null;
+    const cleanedTerm = qRaw.replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
+    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm.length >= 2) {
+      response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+        method: "POST",
+        body: JSON.stringify(buildPayload(cleanedTerm)),
+        signal: AbortSignal.timeout(4e3)
+      });
+      if (response.ok) {
+        data = await response.json().catch(() => null);
+      }
+    }
+    if (data && Array.isArray(data.data) && data.data.length > 0) {
+      const results = data.data.map((p) => {
+        const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || "";
+        return {
+          name: rawName,
+          shortName: rawName,
+          fullName: rawName,
+          packaging: p.Packing || "",
+          distributor: p.StoreName || "",
+          rate: p.PTR !== void 0 ? p.PTR : null,
+          mrp: p.MRP !== void 0 ? p.MRP : null,
+          mapped: p.IsMapped === 1 || p.Ismapped === 1 || p.isMapped === true || p.isMapped === 1 || String(p.IsMapped) === "1" || String(p.Ismapped) === "1",
+          stock: p.Stock !== void 0 ? String(p.Stock) : "High",
+          scheme: p.Scheme || p.SchemeDescription || p.ProductScheme || "",
+          productId: p.ProductId || p.PrProductId || p.ProductCode,
+          productCode: p.ProductCode || "",
+          company: p.Company || "",
+          storeId: p.StoreId
+        };
+      });
+      const qLower = qRaw.toLowerCase().trim();
+      results.sort((a, b) => {
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
+        const nameA = String(a.name || "").toLowerCase();
+        const nameB = String(b.name || "").toLowerCase();
+        const aStarts = nameA.startsWith(qLower);
+        const bStarts = nameB.startsWith(qLower);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+      });
+      searchCache.set(qRaw, storeId, isMapped, results);
+      return { status: "ok", items: results };
+    }
+    const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
+    if (offline.length > 0) {
+      const qLower = qRaw.toLowerCase().trim();
+      offline.sort((a, b) => {
+        const aMapped = Boolean(a.mapped);
+        const bMapped = Boolean(b.mapped);
+        if (aMapped && !bMapped) return -1;
+        if (!aMapped && bMapped) return 1;
+        const nameA = String(a.name || "").toLowerCase();
+        const nameB = String(b.name || "").toLowerCase();
+        const aStarts = nameA.startsWith(qLower);
+        const bStarts = nameB.startsWith(qLower);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+      });
+      searchCache.set(qRaw, storeId, isMapped, offline);
+    }
+    return { status: "ok", items: offline };
+  } catch (err) {
+    console.error("Pharmarack direct live API search failed:", err.message);
+    try {
+      const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
+      if (offline.length > 0) {
+        searchCache.set(qRaw, storeId, isMapped, offline);
+        return { status: "ok", items: offline };
+      }
+    } catch (_) {
+    }
+    if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+      return { status: "ok", items: [] };
+    }
+    return { status: "connection_error" };
+  }
+}
+function revalidateStaleSearch(qRaw, storeId, isMapped) {
+  const key = searchCache.keyFor(qRaw, storeId, isMapped);
+  if (searchRevalidations.has(key)) return;
+  const p = performPharmarackSearch(qRaw, storeId, isMapped).catch(() => {
+  }).finally(() => {
+    searchRevalidations.delete(key);
+  });
+  searchRevalidations.set(key, p);
+}
+async function probeUserCartDetails(timeoutMs) {
+  const now = Date.now();
+  if (userCartProbeCache && now - userCartProbeCache.ts < USER_CART_PROBE_TTL_MS) {
+    return userCartProbeCache;
+  }
+  const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
+    method: "GET",
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  let data = null;
+  if (response.ok) {
+    data = await response.json().catch(() => null);
+  }
+  const entry = { ts: Date.now(), ok: response.ok, status: response.status, data };
+  if (response.ok || response.status === 401 || response.status === 403) {
+    userCartProbeCache = entry;
+  }
+  return entry;
+}
+async function loadLiveCartCore() {
+  const settings = await getPharmarackSettings();
+  const token = settings["pharmarack_session_token"] || "";
+  if (!token) {
+    throw Object.assign(new Error("Need to login"), { code: "NEED_LOGIN" });
+  }
+  const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
+    method: "GET",
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw Object.assign(
+      new Error("Session expired. Please re-login from the Learning page."),
+      { code: "SESSION_EXPIRED" }
+    );
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error(`Pharmarack API returned ${response.status}`), { httpStatus: 503 });
+  }
+  const cartData = await response.json().catch(() => null);
+  let rawList = [];
+  if (cartData) {
+    if (Array.isArray(cartData)) {
+      rawList = cartData;
+    } else {
+      const targetObj = cartData.data || cartData.Data || cartData;
+      if (Array.isArray(targetObj)) {
+        rawList = targetObj;
+      } else if (typeof targetObj === "object") {
+        const keysToTry = [
+          "IList",
+          "ilist",
+          "StoreWiseCartDetails",
+          "storeWiseCartDetails",
+          "CartDetails",
+          "cartDetails",
+          "Stores",
+          "stores",
+          "StoreList",
+          "storeList",
+          "CartList",
+          "cartList",
+          "Items",
+          "items",
+          "Products",
+          "products"
+        ];
+        for (const k of keysToTry) {
+          if (Array.isArray(targetObj[k])) {
+            rawList = targetObj[k];
+            break;
+          }
+        }
+        if (rawList.length === 0 && typeof cartData === "object") {
+          for (const k of keysToTry) {
+            if (Array.isArray(cartData[k])) {
+              rawList = cartData[k];
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  let distributors = [];
+  if (rawList.length > 0) {
+    const firstEntry = rawList[0];
+    const hasNestedItems = Boolean(
+      firstEntry.lineItems && Array.isArray(firstEntry.lineItems) || firstEntry.LineItems && Array.isArray(firstEntry.LineItems) || firstEntry.items && Array.isArray(firstEntry.items) || firstEntry.Items && Array.isArray(firstEntry.Items) || firstEntry.products && Array.isArray(firstEntry.products) || firstEntry.Products && Array.isArray(firstEntry.Products) || firstEntry.ProductList && Array.isArray(firstEntry.ProductList) || firstEntry.productList && Array.isArray(firstEntry.productList) || firstEntry.CartItemList && Array.isArray(firstEntry.CartItemList) || firstEntry.cartItemList && Array.isArray(firstEntry.cartItemList)
+    );
+    if (hasNestedItems) {
+      distributors = rawList.map((store) => {
+        const rawItems = store.lineItems || store.LineItems || store.items || store.Items || store.products || store.Products || store.ProductList || store.productList || store.CartItemList || store.cartItemList || [];
+        return {
+          storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
+          storeName: store.StoreName || store.storeName || store.Name || store.name || "Unknown Distributor",
+          lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
+          deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d) => ({
+            name: d.SalesmanName || d.name || d.Salesman || "",
+            code: d.SalesmanCode || d.code || ""
+          })),
+          items: rawItems.map((item) => ({
+            productId: item.ProductId || item.productId || item.Id || item.id,
+            storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
+            productCode: item.ProductCode || item.productCode || "",
+            productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
+            company: item.Company || item.company || "",
+            packaging: item.Packing || item.packaging || item.CasePacking || "",
+            qty: item.Quantity || item.qty || item.quantity || 1,
+            ptr: item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0,
+            mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
+            scheme: item.Scheme || item.scheme || "",
+            stock: item.Stock ?? item.stock ?? null,
+            amount: item.ProductWiseAmount || item.amount || item.LineTotal || 0,
+            cartSource: item.CartSource || item.cartSource || "",
+            isChecked: item.IsProductChecked === 1 || item.isChecked === true,
+            createdDate: item.CreatedDate || item.createdDate || ""
+          }))
+        };
+      });
+    } else {
+      const storeMap = /* @__PURE__ */ new Map();
+      for (const item of rawList) {
+        const storeId = item.StoreId || item.storeId || item.Id || item.id || 0;
+        const storeName = item.StoreName || item.storeName || item.Name || item.name || "Unknown Distributor";
+        const storeKey = `${storeId}_${storeName}`;
+        if (!storeMap.has(storeKey)) {
+          storeMap.set(storeKey, {
+            storeId,
+            storeName,
+            lineTotal: 0,
+            deliveryPersons: (item.DeliveryPersonList || item.deliveryPersons || []).map((d) => ({
+              name: d.SalesmanName || d.name || "",
+              code: d.SalesmanCode || d.code || ""
+            })),
+            items: []
+          });
+        }
+        const storeObj = storeMap.get(storeKey);
+        const itemQty = item.Quantity || item.qty || item.quantity || 1;
+        const itemPtr = item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0;
+        const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || itemPtr * itemQty;
+        storeObj.lineTotal += itemAmt;
+        storeObj.items.push({
+          productId: item.ProductId || item.productId || item.Id || item.id,
+          storeId,
+          productCode: item.ProductCode || item.productCode || "",
+          productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
+          company: item.Company || item.company || "",
+          packaging: item.Packing || item.packaging || item.CasePacking || "",
+          qty: itemQty,
+          ptr: itemPtr,
+          mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
+          scheme: item.Scheme || item.scheme || "",
+          stock: item.Stock ?? item.stock ?? null,
+          amount: itemAmt,
+          cartSource: item.CartSource || item.cartSource || "",
+          isChecked: item.IsProductChecked === 1 || item.isChecked === true,
+          createdDate: item.CreatedDate || item.createdDate || ""
+        });
+      }
+      distributors = Array.from(storeMap.values());
+    }
+  }
+  distributors.forEach((dist) => {
+    if (Array.isArray(dist.items)) {
+      dist.items.sort(
+        (a, b) => String(a.productName || "").localeCompare(String(b.productName || ""), void 0, { sensitivity: "base" })
+      );
+    }
+  });
+  distributors.sort(
+    (a, b) => String(a.storeName || "").localeCompare(String(b.storeName || ""), void 0, { sensitivity: "base" })
+  );
+  const totalItems = distributors.reduce((s, d) => s + d.items.length, 0);
+  return { distributors, totalItems };
+}
+async function warmupStartupCart() {
+  if (isWarmingUpCart || startupCartWarmedUp) return;
+  isWarmingUpCart = true;
+  try {
+    const settings = await getPharmarackSettings();
+    const token = settings["pharmarack_session_token"] || "";
+    if (!token) {
+      console.log("[StartupSync] No Pharmarack token configured. Marking startup cart sync complete.");
+      startupCartWarmedUp = true;
+      startupSyncCoordinator.markCartLoaded();
+      return;
+    }
+    const { checkConnectivity: checkConnectivity2 } = await Promise.resolve().then(() => (init_networkDetector(), networkDetector_exports));
+    const isOnline = await checkConnectivity2();
+    if (!isOnline) {
+      console.log("[StartupSync] Offline: skipping boot cart warm-up.");
+      return;
+    }
+    const { distributors, totalItems } = await loadLiveCartCore();
+    serverCartCache = { distributors, totalItems, ts: Date.now() };
+    startupCartWarmedUp = true;
+    startupSyncCoordinator.markCartLoaded();
+    console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
+  } catch (err) {
+    console.warn("[StartupSync] Boot cart warm-up could not load live cart:", err?.message || err);
+  } finally {
+    isWarmingUpCart = false;
+  }
+}
+async function executeSingleItemDelete(item) {
+  const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = item;
+  try {
+    const settings = await getPharmarackSettings();
+    let token = settings["pharmarack_session_token"] || "";
+    if (!token) return false;
+    let deleteSuccess = false;
+    let lastError = "";
+    let resolvedProductId = (() => {
+      if (!productId) return 0;
+      const n = Number(productId);
+      if (!isNaN(n) && n > 0) return n;
+      const stripped = String(productId).replace(/^PR/i, "");
+      const sn = Number(stripped);
+      return !isNaN(sn) && sn > 0 ? sn : 0;
+    })();
+    let resolvedProductCode = productCode || "";
+    let resolvedCompany = company || "";
+    let resolvedPtr = Number(ptr || 0);
+    let resolvedMrp = Number(mrp || 0);
+    if ((!resolvedProductId || !resolvedProductCode) && token) {
+      try {
+        let cleanKeyword = (productName || "").trim().replace(/\s*\([^)]*\)\s*$/, "").trim();
+        if (cleanKeyword) {
+          const searchPayload = {
+            SearchKeyword: cleanKeyword,
+            StoreId: storeId ? [Number(storeId)] : [],
+            NonMappedStoreId: [],
+            Count: 10,
+            SkipCount: 0,
+            isMappedSearch: null,
+            IsStock: 2,
+            IsScheme: 2,
+            IsSort: 1,
+            CartSource: "MOVP"
+          };
+          const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+            method: "POST",
+            body: JSON.stringify(searchPayload),
+            signal: AbortSignal.timeout(6e3)
+            // Increased buffer for slow connections
+          });
+          if (searchRes.ok) {
+            const searchData = await searchRes.json().catch(() => null);
+            if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+              const matched = searchData.data.find((p) => Number(p.StoreId) === Number(storeId)) || searchData.data[0];
+              if (matched) {
+                resolvedProductId = Number(matched.PrProductId || matched.ProductId || resolvedProductId);
+                resolvedProductCode = matched.ProductCode || resolvedProductCode;
+                resolvedCompany = matched.Company || resolvedCompany;
+                resolvedPtr = Number(matched.PTR || resolvedPtr);
+                resolvedMrp = Number(matched.MRP || resolvedMrp);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[Pharmarack Delete Worker] Search enrichment warning:", e);
+      }
+    }
+    if (resolvedProductCode) {
+      try {
+        const deleteUrl = new URL("https://pharmretail-api.pharmarack.com/cart/api/v1/DeleteUserCartDetailByStoreIdV2");
+        deleteUrl.searchParams.set("StoreId", String(storeId));
+        deleteUrl.searchParams.set("ProductCode", String(resolvedProductCode));
+        const secRes = await fetchPharmarack(deleteUrl.toString(), {
+          method: "GET",
+          signal: AbortSignal.timeout(1e4)
+        });
+        if (secRes.ok) {
+          const secJson = await secRes.json().catch(() => ({}));
+          const isSecOk = secJson && (secJson.StatusCode === 200 || secJson.statusCode === 200 || String(secJson.StatusCode) === "200" || secJson.status === 200 || secJson.status === "success" || secJson.code === 200 || secJson.success === true || secJson.Message && String(secJson.Message).toLowerCase().includes("delete") || secJson.message && String(secJson.message).toLowerCase().includes("delete"));
+          if (isSecOk || secRes.status === 200) {
+            deleteSuccess = true;
+          }
+        } else {
+          lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
+        }
+      } catch (err) {
+        lastError = err.message;
+      }
+    }
+    if (deleteSuccess) {
+      invalidatePharmarackCartCache();
+      eventService.broadcast("pharmarack_cart_changed", { action: "remove", at: Date.now(), productName: productName || "" });
+      console.log(`[Pharmarack Delete Worker] Successfully removed "${productName || resolvedProductCode}" from live cart.`);
+      return true;
+    } else {
+      console.warn(`[Pharmarack Delete Worker] Direct cart deletion did not succeed for "${productName || resolvedProductCode}":`, lastError);
+      return false;
+    }
+  } catch (err) {
+    console.error(`[Pharmarack Delete Worker] Fatal error deleting "${productName}":`, err);
+    return false;
+  }
+}
+async function adjustSpecialOrderInLiveCart(order) {
+  try {
+    const rawProd = (order.product || "").trim();
+    if (!rawProd) return { action: "none", productName: "", message: "No product name specified" };
+    const requestedQty = Math.max(1, Number(order.qty) || 1);
+    const cart = await loadLiveCartCore();
+    if (!cart || !Array.isArray(cart.distributors) || cart.distributors.length === 0) {
+      return { action: "none", productName: rawProd, message: "Live cart is empty" };
+    }
+    const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const targetNorm = normalize(rawProd);
+    const targetDistNorm = order.distributor ? normalize(order.distributor) : "";
+    let matchedItem = null;
+    let matchedDist = null;
+    for (const dist of cart.distributors) {
+      const distNorm = normalize(dist.storeName || "");
+      const distMatches = !targetDistNorm || distNorm.includes(targetDistNorm) || targetDistNorm.includes(distNorm);
+      for (const it of dist.items || []) {
+        const itNorm = normalize(it.productName || "");
+        if (itNorm === targetNorm && distMatches) {
+          matchedItem = it;
+          matchedDist = dist;
+          break;
+        }
+      }
+      if (matchedItem) break;
+    }
+    if (!matchedItem) {
+      for (const dist of cart.distributors) {
+        for (const it of dist.items || []) {
+          const itNorm = normalize(it.productName || "");
+          if (itNorm === targetNorm) {
+            matchedItem = it;
+            matchedDist = dist;
+            break;
+          }
+        }
+        if (matchedItem) break;
+      }
+    }
+    if (!matchedItem && targetNorm.length >= 4) {
+      for (const dist of cart.distributors) {
+        for (const it of dist.items || []) {
+          const itNorm = normalize(it.productName || "");
+          if (itNorm.startsWith(targetNorm) || targetNorm.startsWith(itNorm)) {
+            matchedItem = it;
+            matchedDist = dist;
+            break;
+          }
+        }
+        if (matchedItem) break;
+      }
+    }
+    if (!matchedItem) {
+      return { action: "none", productName: rawProd, message: "Item not found in current live cart" };
+    }
+    const currentCartQty = Number(matchedItem.qty) || 1;
+    const storeName = matchedDist?.storeName || matchedItem.storeName || "";
+    if (currentCartQty <= requestedQty) {
+      const deleteItem = {
+        storeId: Number(matchedItem.storeId),
+        productId: matchedItem.productId,
+        productCode: matchedItem.productCode,
+        productName: matchedItem.productName,
+        company: matchedItem.company,
+        packaging: matchedItem.packaging,
+        ptr: matchedItem.ptr,
+        mrp: matchedItem.mrp,
+        storeName
+      };
+      const task = pharmarackDeleteChain.catch(() => {
+      }).then(() => executeSingleItemDelete(deleteItem));
+      pharmarackDeleteChain = task;
+      await task;
+      return {
+        action: "removed",
+        productName: matchedItem.productName,
+        previousQty: currentCartQty,
+        deductedQty: currentCartQty,
+        remainingQty: 0,
+        storeName,
+        message: `Removed "${matchedItem.productName}" from Pharmarack live cart`
+      };
+    }
+    const remainingQty = currentCartQty - requestedQty;
+    const rateVal = Number(matchedItem.ptr || 0);
+    const payload = {
+      StoreId: Number(matchedItem.storeId) || 0,
+      StoreName: storeName,
+      ProductCode: matchedItem.productCode || "",
+      Quantity: remainingQty,
+      PTR: rateVal,
+      Free: 0,
+      HiddenPTR: rateVal,
+      NetRate: rateVal,
+      Scheme: matchedItem.scheme || "",
+      SchemeType: "",
+      GSTPercentage: 0,
+      ItemGSTValue: 0,
+      CartSource: "MOVP",
+      DeliveryOption: "",
+      RemarkForStore: "",
+      ProductAddedBy: 0,
+      Priority: "",
+      OrderPlaced: 0,
+      OrderPlacedBy: 0,
+      CreatedBy: 0,
+      ProductName: matchedItem.productName,
+      StoreProductName: matchedItem.productName,
+      StoreWiseAmount: 0,
+      StoreWiseGSTAmount: 0,
+      IsDeleted: 0,
+      AllowMinQty: 0,
+      AllowMaxQty: 0,
+      StepUpValue: 1,
+      AllowMOQ: true,
+      MinItemLimit: 0,
+      MaxItemLimit: 0,
+      MinAmountLimit: 0,
+      MaxAmountLimit: 0,
+      DODIsPrefenceSet: 0,
+      IsDODPreferenceSet: 0,
+      DisplayHalfSchemeOn: "",
+      DisplayHalfScheme: "0",
+      RetailerSchemePreference: 1,
+      HalfSchemeValueToRetailer: 0,
+      RoundOffDisplayHS: "",
+      MinOrderQuantity: 0,
+      MaxOrderQuantity: 0,
+      IsDODProduct: 0,
+      IsDODProductCheck: 0,
+      IsDODProductSelected: 0,
+      OrderDeliveryModeStatus: 1,
+      OrderRemarks: 1,
+      SpecialRate: 0,
+      Stock: 999,
+      RShowPtr: 1,
+      IsPartyLocked: 0,
+      RewardSchemeId: 0,
+      IsProductChecked: 1,
+      DeliveryPerson: "",
+      DeliveryPersonCode: "",
+      RShowPtrForAllCompanies: 1,
+      Company: matchedItem.company || "",
+      IsGroupWisePTR: 0,
+      IsGroupWisePTRRetailer: 0,
+      RateValidity: null,
+      IsShowNonMappedOrderStock: 1,
+      RStockVisibility: 0,
+      IsMapped: 1,
+      ProductId: (() => {
+        const v = matchedItem.productId;
+        if (!v) return 0;
+        const n = Number(v);
+        if (!isNaN(n) && n > 0) return n;
+        const stripped = String(v).replace(/^PR/i, "");
+        const sn = Number(stripped);
+        return !isNaN(sn) && sn > 0 ? sn : 0;
+      })(),
+      MRP: String(matchedItem.mrp || 0),
+      ProductWiseAmount: 0,
+      ProductWiseGSTAmount: 0,
+      ProductWiseSchemeAmount: 0,
+      ProductWiseSchemeGSTAmount: 0,
+      StoreWiseSchemeAmount: 0,
+      StoreWiseSchemeGSTAmount: 0,
+      ProductLock: 0,
+      BoxPacking: "0",
+      CasePacking: matchedItem.packaging || "1 strip",
+      Packing: matchedItem.packaging || "1 strip"
+    };
+    const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15e3)
+    });
+    if (response.ok) {
+      invalidatePharmarackCartCache();
+      eventService.broadcast("pharmarack_cart_changed", { action: "update", at: Date.now(), productName: matchedItem.productName });
+      return {
+        action: "adjusted",
+        productName: matchedItem.productName,
+        previousQty: currentCartQty,
+        deductedQty: requestedQty,
+        remainingQty,
+        storeName,
+        message: `Decreased "${matchedItem.productName}" in Pharmarack cart from ${currentCartQty} to ${remainingQty} (deducted ${requestedQty} special order)`
+      };
+    } else {
+      const errTxt = await response.text().catch(() => "");
+      console.warn("[Pharmarack] Failed to auto-adjust cart item quantity:", errTxt);
+      return {
+        action: "none",
+        productName: matchedItem.productName,
+        message: "Failed to update upstream Pharmarack cart quantity"
+      };
+    }
+  } catch (err) {
+    console.error("[adjustSpecialOrderInLiveCart] Error:", err);
+    return { action: "none", productName: order.product, message: err?.message || "Error adjusting live cart" };
+  }
+}
+async function verifyOrderPlacedInPharmarack(storeId) {
+  try {
+    const today = /* @__PURE__ */ new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const todayStr2 = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const payload = {
+      FromDate: todayStr2,
+      ToDate: todayStr2,
+      SkipCount: 0,
+      Count: 15
+    };
+    const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/order/api/v1/GetOrderList", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    if (response.ok) {
+      const data = await response.json();
+      let orders = [];
+      if (data) {
+        if (Array.isArray(data.data)) {
+          orders = data.data;
+        } else if (data.data && Array.isArray(data.data.Orders)) {
+          orders = data.data.Orders;
+        } else if (Array.isArray(data.Orders)) {
+          orders = data.Orders;
+        }
+      }
+      const matchingOrder = orders.find((order) => Number(order.StoreId) === storeId || Number(order.Storeid) === storeId);
+      if (matchingOrder) {
+        return true;
+      }
+    }
+  } catch (err) {
+    console.error("[Pharmarack Order Verify] Failed to verify order list:", err.message);
+  }
+  return false;
+}
+var import_express, import_path20, import_url15, import_fs18, import_child_process4, import_util2, execAsync2, __filename14, __dirname14, DB_PATH5, router, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var init_pharmarack = __esm({
+  "src/routes/pharmarack.ts"() {
+    "use strict";
+    import_express = __toESM(require("express"), 1);
+    import_path20 = __toESM(require("path"), 1);
+    import_url15 = require("url");
+    import_fs18 = __toESM(require("fs"), 1);
+    init_connection();
+    init_eventService();
+    init_notificationService();
+    init_searchCache();
+    init_tokenRefreshScheduler();
+    import_child_process4 = require("child_process");
+    import_util2 = require("util");
+    init_config();
+    init_distributorSyncHelper();
+    init_distributorDispatchReminderWorker();
+    init_pharmarackCatalogCache();
+    init_startupSyncCoordinator();
+    init_chromeBrowser();
+    init_activityTracker();
+    execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
+    __filename14 = (0, import_url15.fileURLToPath)(import_meta_url);
+    __dirname14 = import_path20.default.dirname(__filename14);
+    DB_PATH5 = process.env.DB_PATH || import_path20.default.resolve(__dirname14, "..", "..", "data", "app.db");
+    router = import_express.default.Router();
+    searchRevalidations = /* @__PURE__ */ new Map();
+    router.get("/search", async (req, res) => {
+      const qRaw = (req.query.q || "").trim();
+      if (!qRaw) {
+        return res.json([]);
+      }
+      const storeId = req.query.storeId ? Number(req.query.storeId) : null;
+      const isMapped = req.query.isMapped === "true";
+      const cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
+      if (cachedHit) {
+        if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
+        return res.json(cachedHit.items);
+      }
+      const outcome = await performPharmarackSearch(qRaw, storeId, isMapped);
+      if (outcome.status === "need_login") {
+        return res.status(401).json({ error: "Need to login", code: "NEED_LOGIN" });
+      }
+      if (outcome.status === "connection_error") {
+        return res.status(503).json({ error: "Connection error, please check internet or reconnect", code: "CONNECTION_ERROR" });
+      }
+      return res.json(outcome.items);
+    });
+    router.get("/distributors", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(`
+      SELECT 
+        d.id as storeId,
+        d.name as storeName,
+        COALESCE(d.phone, d.contact, '') as mobileNumber,
+        COALESCE(d.email, '') as email,
+        COALESCE(d.address, '') as address,
+        COALESCE(d.gstin, '') as partyCode,
+        p.distributor_id as profileId
+      FROM distributors d
+      LEFT JOIN distributor_learning_profiles p ON d.id = p.distributor_id
+      ORDER BY d.name ASC
+      LIMIT 1000
+    `);
+        const stores = rows.map((s) => {
+          const hasPhone = Boolean(s.mobileNumber && s.mobileNumber.trim());
+          const hasProfile = Boolean(s.profileId);
+          const isMapped = hasPhone || hasProfile;
+          return {
+            storeId: s.storeId,
+            storeName: s.storeName || "Unknown Store",
+            isMapped,
+            partyCode: s.partyCode || "",
+            address: s.address || "",
+            city: "",
+            mobileNumber: s.mobileNumber || "",
+            email: s.email || "",
+            contactPerson: "",
+            remarks: ""
+          };
+        });
+        const mapped = stores.filter((s) => s.isMapped);
+        const nonMapped = stores.filter((s) => !s.isMapped);
+        return res.json({ success: true, mode: "Local", mapped, nonMapped });
+      } catch (err) {
+        console.error("Local distributors fetch error:", err);
+        return res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router.get("/distributor-mappings", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(`
+      SELECT 
+        m.store_name, 
+        COALESCE(m.distributor_id, d.id) as distributor_id, 
+        COALESCE(d.phone, d.contact, m.phone) as phone, 
+        COALESCE(d.name, m.store_name) as distributor_name, 
+        COALESCE(d.phone, d.contact, m.phone) as distributor_phone
+      FROM pharmarack_distributor_mappings m
+      LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+      UNION
+      SELECT 
+        d.name as store_name, 
+        d.id as distributor_id, 
+        COALESCE(d.phone, d.contact) as phone, 
+        d.name as distributor_name, 
+        COALESCE(d.phone, d.contact) as distributor_phone
+      FROM distributors d
+      WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+        AND LOWER(TRIM(d.name)) NOT IN (
+          SELECT LOWER(TRIM(store_name)) FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL
+        )
+    `);
+        res.json({ success: true, mappings: rows || [] });
+      } catch (error) {
+        console.error("Failed to fetch distributor mappings:", error);
+        res.status(500).json({ error: "Failed to fetch distributor mappings" });
+      }
+    });
+    router.post("/distributor-mappings", async (req, res) => {
+      const { store_name, distributor_id, phone } = req.body;
+      if (!store_name) {
+        return res.status(400).json({ error: "store_name is required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        await syncDistributorPhoneAcrossTables(db2, {
+          id: distributor_id ? Number(distributor_id) : void 0,
+          store_name,
+          phone
+        });
+        res.json({ success: true, message: "Store mapping saved successfully" });
+      } catch (error) {
+        console.error("Failed to save distributor mapping:", error);
+        res.status(500).json({ error: "Failed to save distributor mapping: " + error.message });
+      }
+    });
+    router.post("/catalog/sync", async (_req, res) => {
+      try {
+        const { pharmarackCatalogCache: pharmarackCatalogCache2 } = await Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports));
+        res.json({ success: true, message: "Catalog sync started in background" });
+        pharmarackCatalogCache2.syncCatalog().then((result) => console.log(`[Pharmarack] Manual catalog sync complete:`, result)).catch((err) => console.error("[Pharmarack] Manual catalog sync failed:", err));
+      } catch (err) {
+        res.status(500).json({ error: "Failed to start catalog sync: " + err.message });
+      }
+    });
+    router.post("/session/warmup", async (_req, res) => {
+      res.json({ success: true, message: "Session warm-up probe triggered" });
+      tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
+      });
+    });
+    router.post("/login-window", async (req, res) => {
+      const chromePath = findChromePath2();
+      if (!chromePath) {
+        return res.status(404).json({ error: "Google Chrome was not found on your system. Please install Google Chrome to use this feature." });
+      }
+      if (tokenRefreshScheduler.isLoginWindowActive) {
+        return res.json({ success: true, message: "Chrome login window is already open." });
+      }
+      tokenRefreshScheduler.isLoginWindowActive = true;
+      res.json({ success: true, message: "Opening login window..." });
+      (async () => {
+        const mainProfilePath = import_path20.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        try {
+          console.log("[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...");
+          await killOrphanChromeProcesses("pharmarack_profile");
+          if (!import_fs18.default.existsSync(mainProfilePath)) import_fs18.default.mkdirSync(mainProfilePath, { recursive: true });
+          cleanProfileLockFiles(mainProfilePath);
+          console.log("[LoginWindow] Spawning Chrome natively from:", chromePath);
+          const { spawn: spawnProc } = await import("child_process");
+          const chromeProc = spawnProc(chromePath, [
+            `--user-data-dir=${mainProfilePath}`,
+            "--start-maximized",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-dev-shm-usage",
+            "--disable-extensions",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--mute-audio",
+            "https://retailers.pharmarack.com/loginotp"
+          ], { detached: false, stdio: "ignore" });
+          chromeProc.on("error", (e) => {
+            console.warn("[LoginWindow] Chrome spawn error:", e.message);
+            tokenRefreshScheduler.isLoginWindowActive = false;
+          });
+          chromeProc.on("exit", async () => {
+            console.log("[LoginWindow] Chrome login window closed. Extracting session token...");
+            tokenRefreshScheduler.isLoginWindowActive = false;
+            await new Promise((r) => setTimeout(r, 1200));
+            let token = extractTokenFromProfile(mainProfilePath);
+            if (token) {
+              console.log("[LoginWindow] Successfully captured token from profile storage:", token.substring(0, 15) + "...");
+              try {
+                const db2 = await dbManager.getConnection();
+                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
+                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
+                Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.ensureCatalogSyncCron()).catch(() => {
+                });
+              } catch (dbErr) {
+                console.error("[LoginWindow] Failed to persist token:", dbErr.message);
+              }
+            } else {
+              console.log("[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...");
+              token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
+            }
+            await tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
+            });
+            try {
+              const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+              const db2 = await dbManager.getConnection();
+              const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
+              const hasToken = !!tokenRow?.value;
+              eventService2.broadcast("pharmarack_session_refreshed", {
+                status: hasToken ? "success" : "failed",
+                error: hasToken ? null : "Login window closed without capturing token"
+              });
+            } catch (_) {
+            }
+            console.log("[LoginWindow] Pharmarack login window session ended.");
+          });
+        } catch (err) {
+          console.error("[LoginWindow] Error during Pharmarack login window:", err.message);
+          tokenRefreshScheduler.isLoginWindowActive = false;
+        }
+      })();
+    });
+    serverCartCache = null;
+    userCartProbeCache = null;
+    USER_CART_PROBE_TTL_MS = 1e4;
+    invalidatePharmarackCartCache = () => {
+      serverCartCache = null;
+      userCartProbeCache = null;
+    };
+    isWarmingUpCart = false;
+    startupCartWarmedUp = false;
+    router.post("/cart/add", async (req, res) => {
+      const { items } = req.body;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "No items provided" });
+      }
+      try {
+        const settings = await getPharmarackSettings();
+        const token = settings["pharmarack_session_token"] || "";
+        if (!token) {
+          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+            return res.json({
+              success: true,
+              offline: true,
+              message: "Item saved to distributor cart (offline mode). Sync will occur when connected."
+            });
+          }
+          return res.status(401).json({ error: "Need to login to Pharmarack to add items to cart", code: "NEED_LOGIN" });
+        }
+        for (const item of items) {
+          if (!item.productCode || !item.productName) {
+            for (const [_, cacheEntry] of searchCache.entries()) {
+              const matched = cacheEntry.data.find((p) => p.productId === item.productId && p.storeId === item.storeId);
+              if (matched) {
+                item.productCode = matched.productCode;
+                item.productName = matched.name;
+                item.storeName = matched.distributor;
+                item.company = matched.company;
+                item.mrp = matched.mrp;
+                item.rate = matched.rate;
+                break;
+              }
+            }
+          }
+          const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
+          if (!hasValidId && token) {
+            try {
+              let cleanKeyword = (item.productName || item.product || item.name || "").trim();
+              cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
+              const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
+              const wantName = norm(cleanKeyword);
+              const wantStore = String(item.storeName || "").toLowerCase().trim();
+              if (wantName) {
+                let best = null;
+                let bestIsStoreMatch = false;
+                for (const [_, cacheEntry] of searchCache.entries()) {
+                  for (const p of cacheEntry.data || []) {
+                    const nShort = norm(p.shortName || p.name);
+                    const nFull = norm(p.fullName || p.name);
+                    if (nShort !== wantName && nFull !== wantName) continue;
+                    const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
+                    if (!best || storeMatch && !bestIsStoreMatch) {
+                      best = p;
+                      bestIsStoreMatch = storeMatch;
+                    }
+                    if (bestIsStoreMatch) break;
+                  }
+                  if (bestIsStoreMatch) break;
+                }
+                if (best) {
+                  item.productId = Number(best.productId || item.productId || 0);
+                  item.storeId = Number(best.storeId || item.storeId || 0);
+                  item.productCode = best.productCode || item.productCode || "";
+                  item.storeName = best.distributor || item.storeName || "";
+                  item.company = best.company || item.company || "";
+                  item.mrp = Number(best.mrp || item.mrp || 0);
+                  item.rate = Number(best.rate || item.rate || 0);
+                  continue;
+                }
+              }
+              if (cleanKeyword) {
+                const searchPayload = {
+                  SearchKeyword: cleanKeyword,
+                  StoreId: item.storeId ? [Number(item.storeId)] : [],
+                  NonMappedStoreId: [],
+                  Count: 10,
+                  SkipCount: 0,
+                  isMappedSearch: null,
+                  IsStock: 2,
+                  IsScheme: 2,
+                  IsSort: 1,
+                  CartSource: "MOVP"
+                };
+                const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+                  method: "POST",
+                  body: JSON.stringify(searchPayload),
+                  signal: AbortSignal.timeout(4e3)
+                });
+                if (searchRes.ok) {
+                  const searchData = await searchRes.json().catch(() => null);
+                  if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+                    const matched = searchData.data.find(
+                      (p) => (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) && Number(p.StoreId) === Number(item.storeId)
+                    ) || searchData.data.find((p) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
+                    if (matched) {
+                      item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
+                      item.storeId = Number(matched.StoreId || item.storeId || 0);
+                      item.productCode = matched.ProductCode || item.productCode || "";
+                      item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || "";
+                      item.storeName = matched.StoreName || item.storeName || "";
+                      item.company = matched.Company || item.company || "";
+                      item.mrp = Number(matched.MRP || item.mrp || 0);
+                      item.rate = Number(matched.PTR || item.rate || 0);
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.error("On-the-fly search enrichment failed:", err);
+            }
+          }
+        }
+        let cartSuccess = false;
+        let lastError = "";
+        try {
+          for (const item of items) {
+            const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
+            const payload = {
+              StoreId: Number(item.storeId) || 0,
+              StoreName: item.storeName || "",
+              ProductCode: item.productCode || "",
+              Quantity: Number(item.qty || item.Quantity || 1),
+              PTR: rateVal,
+              Free: 0,
+              HiddenPTR: rateVal,
+              NetRate: rateVal,
+              Scheme: item.scheme || "",
+              SchemeType: "",
+              GSTPercentage: 0,
+              ItemGSTValue: 0,
+              CartSource: "MOVP",
+              DeliveryOption: "",
+              RemarkForStore: "",
+              ProductAddedBy: 0,
+              Priority: "",
+              OrderPlaced: 0,
+              OrderPlacedBy: 0,
+              CreatedBy: 0,
+              ProductName: item.productName || item.product || "",
+              StoreProductName: item.productName || item.product || "",
+              StoreWiseAmount: 0,
+              StoreWiseGSTAmount: 0,
+              IsDeleted: 0,
+              AllowMinQty: 0,
+              AllowMaxQty: 0,
+              StepUpValue: 1,
+              AllowMOQ: true,
+              MinItemLimit: 0,
+              MaxItemLimit: 0,
+              MinAmountLimit: 0,
+              MaxAmountLimit: 0,
+              DODIsPrefenceSet: 0,
+              IsDODPreferenceSet: 0,
+              DisplayHalfSchemeOn: "",
+              DisplayHalfScheme: "0",
+              RetailerSchemePreference: 1,
+              HalfSchemeValueToRetailer: 0,
+              RoundOffDisplayHS: "",
+              MinOrderQuantity: 0,
+              MaxOrderQuantity: 0,
+              IsDODProduct: 0,
+              IsDODProductCheck: 0,
+              IsDODProductSelected: 0,
+              OrderDeliveryModeStatus: 1,
+              OrderRemarks: 1,
+              SpecialRate: 0,
+              Stock: 999,
+              RShowPtr: 1,
+              IsPartyLocked: 0,
+              RewardSchemeId: 0,
+              IsProductChecked: 1,
+              DeliveryPerson: "",
+              DeliveryPersonCode: "",
+              RShowPtrForAllCompanies: 1,
+              Company: item.company || "",
+              IsGroupWisePTR: 0,
+              IsGroupWisePTRRetailer: 0,
+              RateValidity: null,
+              IsShowNonMappedOrderStock: 1,
+              RStockVisibility: 0,
+              IsMapped: item.mapped === false || item.isMapped === false ? 0 : 1,
+              ProductId: (() => {
+                const v = item.productId;
+                if (!v) return 0;
+                const n = Number(v);
+                if (!isNaN(n) && n > 0) return n;
+                const stripped = String(v).replace(/^PR/i, "");
+                const sn = Number(stripped);
+                return !isNaN(sn) && sn > 0 ? sn : 0;
+              })(),
+              MRP: String(item.mrp || 0),
+              ProductWiseAmount: 0,
+              ProductWiseGSTAmount: 0,
+              ProductWiseSchemeAmount: 0,
+              ProductWiseSchemeGSTAmount: 0,
+              StoreWiseSchemeAmount: 0,
+              StoreWiseSchemeGSTAmount: 0,
+              ProductLock: 0,
+              BoxPacking: "0",
+              CasePacking: item.packaging || item.Packing || "1 strip",
+              Packing: item.packaging || item.Packing || "1 strip"
+            };
+            const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
+              method: "POST",
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(15e3)
+            });
+            if (response.ok) {
+              const resJson = await response.json().catch(() => ({}));
+              const isOk = resJson && (resJson.StatusCode === 200 || resJson.statusCode === 200 || String(resJson.StatusCode) === "200" || resJson.status === 200 || resJson.status === "success" || resJson.success === true || resJson.Message && String(resJson.Message).toLowerCase().includes("success") || resJson.message && String(resJson.message).toLowerCase().includes("success"));
+              if (isOk) {
+                cartSuccess = true;
+              } else {
+                lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
+                cartSuccess = false;
+                break;
+              }
+            } else {
+              const errText = await response.text().catch(() => "");
+              lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
+              cartSuccess = false;
+              break;
+            }
+          }
+        } catch (err) {
+          lastError = err.message;
+          cartSuccess = false;
+        }
+        if (!cartSuccess) {
+          console.warn("[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:", lastError);
+        }
+        if (cartSuccess) {
+          invalidatePharmarackCartCache();
+          eventService.broadcast("pharmarack_cart_changed", { action: "add", at: Date.now() });
+          return res.json({ success: true, message: "Successfully added to Pharmarack cart!", mode: "Live" });
+        } else {
+          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+            return res.json({
+              success: true,
+              offline: true,
+              message: "Item saved to distributor cart (offline mode)."
+            });
+          }
+          return res.status(503).json({ error: "Failed to add items to actual Pharmarack cart", details: lastError });
+        }
+      } catch (err) {
+        console.error("Pharmarack cart route error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    pharmarackDeleteChain = Promise.resolve();
+    router.post("/delete-cart-item", async (req, res) => {
+      const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = req.body;
+      if (!storeId || !productId && !productCode && !productName) {
+        return res.status(400).json({ error: "Missing required item details for cart deletion" });
+      }
+      const deleteItem = {
+        storeId: Number(storeId),
+        productId,
+        productCode,
+        productName,
+        company,
+        packaging,
+        ptr,
+        mrp,
+        storeName
+      };
+      try {
+        const task = pharmarackDeleteChain.catch(() => {
+        }).then(() => executeSingleItemDelete(deleteItem));
+        pharmarackDeleteChain = task;
+        const success = await task;
+        if (success) {
+          return res.json({ success: true, message: "Item deleted from Pharmarack live cart" });
+        } else {
+          return res.status(500).json({ success: false, error: "Failed to delete item from Pharmarack live cart" });
+        }
+      } catch (err) {
+        console.error("[Pharmarack Delete Worker] Runner error:", err);
+        return res.status(500).json({ success: false, error: err.message || "Internal error deleting item" });
+      }
+    });
+    router.post("/adjust-special-order", async (req, res) => {
+      const { product, qty, distributor } = req.body;
+      if (!product) {
+        return res.status(400).json({ error: "product is required" });
+      }
+      try {
+        const result = await adjustSpecialOrderInLiveCart({ product, qty, distributor });
+        return res.json({ success: true, ...result });
+      } catch (err) {
+        return res.status(500).json({ error: err.message || "Failed to adjust special order in live cart" });
+      }
+    });
+    router.post("/cart/notify-manual", async (req, res) => {
+      const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;
+      if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Missing distributor info or items list" });
+      }
+      try {
+        const result = await notificationService.notifyDistributorCartOrder(
+          storeName,
+          Number(storeId),
+          items,
+          deliveryPersons || [],
+          { skipDistributor: !!skipDistributor }
+        );
+        if (result.ok) {
+          res.json({ success: true, message: "Notifications processed successfully via WhatsApp!", sentCount: result.sentCount, suppressedCount: result.suppressedCount });
+        } else {
+          res.status(500).json({ error: "Failed to send WhatsApp messages." });
+        }
+      } catch (err) {
+        console.error("Manual notification route error:", err);
+        res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router.post("/cart/notify-delivery-boys-batch", async (req, res) => {
+      const { orders } = req.body;
+      if (!orders || !Array.isArray(orders) || orders.length === 0) {
+        return res.status(400).json({ error: "Missing or empty orders array" });
+      }
+      try {
+        const success = await notificationService.notifyDeliveryBoysBatch(orders);
+        if (success) {
+          res.json({ success: true, message: `Delivery boy batch notification sent for ${orders.length} order(s)!` });
+        } else {
+          res.status(500).json({ error: "Failed to send delivery boy batch notification. No delivery boy contacts found." });
+        }
+      } catch (err) {
+        console.error("Batch delivery boy notification error:", err);
+        res.status(500).json({ error: "Internal server error: " + err.message });
+      }
+    });
+    router.get("/cart", async (req, res) => {
+      try {
+        const forceRefresh = req.query.fresh === "true" || req.query.refresh === "true";
+        if (!forceRefresh && serverCartCache && Date.now() - serverCartCache.ts < 3e4) {
+          return res.json({
+            success: true,
+            mode: "Live",
+            distributors: serverCartCache.distributors,
+            totalItems: serverCartCache.totalItems,
+            cached: true
+          });
+        }
+        let distributors = [];
+        let totalItems = 0;
+        try {
+          ({ distributors, totalItems } = await loadLiveCartCore());
+        } catch (cartErr) {
+          if (cartErr?.code === "NEED_LOGIN") {
+            return res.status(401).json({ error: "Need to login", code: "NEED_LOGIN" });
+          }
+          if (cartErr?.code === "SESSION_EXPIRED") {
+            return res.status(401).json({ error: "Session expired. Please re-login from the Learning page.", code: "SESSION_EXPIRED" });
+          }
+          if (cartErr?.httpStatus === 503) {
+            return res.status(503).json({ error: cartErr.message });
+          }
+          throw cartErr;
+        }
+        try {
+          const db2 = await dbManager.getConnection();
+          const snapshots = await db2.all("SELECT store_id, store_name, items_json, delivery_persons_json FROM pharmarack_cart_snapshots");
+          const snapshotMap = /* @__PURE__ */ new Map();
+          snapshots.forEach((s) => {
+            snapshotMap.set(s.store_id, {
+              storeName: s.store_name,
+              items: JSON.parse(s.items_json),
+              deliveryPersons: JSON.parse(s.delivery_persons_json)
+            });
+          });
+          const activeStoreIds = new Set(distributors.map((d) => d.storeId));
+          for (const [storeId, snap] of snapshotMap.entries()) {
+            if (!activeStoreIds.has(storeId) && snap.items.length > 0) {
+              console.log(`[AutoNotif] Detected empty cart transition for store ${storeId} (${snap.storeName})`);
+              const isOrderPlaced = await verifyOrderPlacedInPharmarack(storeId);
+              if (isOrderPlaced) {
+                console.log(`[AutoNotif] Order placement verified for store ${storeId}. Triggering auto notifications...`);
+                await notificationService.notifyDistributorCartOrder(snap.storeName, storeId, snap.items, snap.deliveryPersons);
+              } else {
+                console.log(`[AutoNotif] No order verified for store ${storeId}. Assuming manual cart clear/deletion. Skipping.`);
+              }
+              await db2.run("DELETE FROM pharmarack_cart_snapshots WHERE store_id = ?", [storeId]);
+            }
+          }
+        } catch (dbErr) {
+          console.error("[AutoNotif] Error running automatic cart transition checks:", dbErr);
+        }
+        startupSyncCoordinator.markCartLoaded();
+        Promise.resolve().then(() => (init_pharmarackDailyDispatchService(), pharmarackDailyDispatchService_exports)).then((m) => m.handleCartPageVisit()).catch((err) => console.warn("[PharmarackBatch] handleCartPageVisit error:", err));
+        serverCartCache = {
+          distributors,
+          totalItems,
+          ts: Date.now()
+        };
+        return res.json({ success: true, mode: "Live", distributors, totalItems });
+      } catch (err) {
+        console.error("Pharmarack cart fetch error:", err);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router.get("/startup-sync-status", (req, res) => {
+      res.json({ success: true, ...startupSyncCoordinator.getStatus() });
+    });
+    router.get("/live-cart-summary", async (req, res) => {
+      try {
+        const settings = await getPharmarackSettings();
+        const token = settings["pharmarack_session_token"] || "";
+        let cartDistributors = [];
+        if (token) {
+          try {
+            const probe = await probeUserCartDetails(2e4);
+            if (probe.ok) {
+              const cartData = probe.data;
+              let rawList = [];
+              if (cartData) {
+                if (Array.isArray(cartData)) {
+                  rawList = cartData;
+                } else {
+                  const targetObj = cartData.data || cartData.Data || cartData;
+                  if (Array.isArray(targetObj)) {
+                    rawList = targetObj;
+                  } else if (typeof targetObj === "object") {
+                    const keysToTry = [
+                      "IList",
+                      "ilist",
+                      "StoreWiseCartDetails",
+                      "storeWiseCartDetails",
+                      "CartDetails",
+                      "cartDetails",
+                      "Stores",
+                      "stores",
+                      "StoreList",
+                      "storeList",
+                      "CartList",
+                      "cartList",
+                      "Items",
+                      "items",
+                      "Products",
+                      "products"
+                    ];
+                    for (const k of keysToTry) {
+                      if (Array.isArray(targetObj[k])) {
+                        rawList = targetObj[k];
+                        break;
+                      }
+                    }
+                    if (rawList.length === 0 && typeof cartData === "object") {
+                      for (const k of keysToTry) {
+                        if (Array.isArray(cartData[k])) {
+                          rawList = cartData[k];
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              if (rawList.length > 0) {
+                const firstEntry = rawList[0];
+                const hasNestedItems = Boolean(
+                  firstEntry.lineItems && Array.isArray(firstEntry.lineItems) || firstEntry.LineItems && Array.isArray(firstEntry.LineItems) || firstEntry.items && Array.isArray(firstEntry.items) || firstEntry.Items && Array.isArray(firstEntry.Items) || firstEntry.products && Array.isArray(firstEntry.products) || firstEntry.Products && Array.isArray(firstEntry.Products) || firstEntry.ProductList && Array.isArray(firstEntry.ProductList) || firstEntry.productList && Array.isArray(firstEntry.productList) || firstEntry.CartItemList && Array.isArray(firstEntry.CartItemList) || firstEntry.cartItemList && Array.isArray(firstEntry.cartItemList)
+                );
+                if (hasNestedItems) {
+                  cartDistributors = rawList.map((store) => {
+                    const rawItems = store.lineItems || store.LineItems || store.items || store.Items || store.products || store.Products || store.ProductList || store.productList || store.CartItemList || store.cartItemList || [];
+                    return {
+                      storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
+                      storeName: store.StoreName || store.storeName || store.Name || store.name || "Unknown Distributor",
+                      lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
+                      deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d) => ({
+                        name: d.SalesmanName || d.name || d.Salesman || "",
+                        code: d.SalesmanCode || d.code || ""
+                      })),
+                      items: rawItems.map((item) => ({
+                        productId: item.ProductId || item.productId || item.Id || item.id,
+                        storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
+                        productCode: item.ProductCode || item.productCode || "",
+                        productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
+                        company: item.Company || item.company || "",
+                        packaging: item.Packing || item.packaging || item.CasePacking || "",
+                        qty: item.Quantity || item.qty || item.quantity || 1,
+                        ptr: item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0,
+                        mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
+                        scheme: item.Scheme || item.scheme || "",
+                        stock: item.Stock ?? item.stock ?? null,
+                        amount: item.ProductWiseAmount || item.amount || item.LineTotal || 0,
+                        cartSource: item.CartSource || item.cartSource || "",
+                        isChecked: item.IsProductChecked === 1 || item.isChecked === true,
+                        createdDate: item.CreatedDate || item.createdDate || ""
+                      }))
+                    };
+                  });
+                } else {
+                  const storeMap = /* @__PURE__ */ new Map();
+                  for (const item of rawList) {
+                    const storeId = item.StoreId || item.storeId || item.Id || item.id || 0;
+                    const storeName = item.StoreName || item.storeName || item.Name || item.name || "Unknown Distributor";
+                    const storeKey = `${storeId}_${storeName}`;
+                    if (!storeMap.has(storeKey)) {
+                      storeMap.set(storeKey, {
+                        storeId,
+                        storeName,
+                        lineTotal: 0,
+                        deliveryPersons: (item.DeliveryPersonList || item.deliveryPersons || []).map((d) => ({
+                          name: d.SalesmanName || d.name || "",
+                          code: d.SalesmanCode || d.code || ""
+                        })),
+                        items: []
+                      });
+                    }
+                    const storeObj = storeMap.get(storeKey);
+                    const itemQty = item.Quantity || item.qty || item.quantity || 1;
+                    const itemPtr = item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0;
+                    const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || itemPtr * itemQty;
+                    storeObj.lineTotal += itemAmt;
+                    storeObj.items.push({
+                      productId: item.ProductId || item.productId || item.Id || item.id,
+                      storeId,
+                      productCode: item.ProductCode || item.productCode || "",
+                      productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
+                      company: item.Company || item.company || "",
+                      packaging: item.Packing || item.packaging || item.CasePacking || "",
+                      qty: itemQty,
+                      ptr: itemPtr,
+                      mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
+                      scheme: item.Scheme || item.scheme || "",
+                      stock: item.Stock ?? item.stock ?? null,
+                      amount: itemAmt,
+                      cartSource: item.CartSource || item.cartSource || "",
+                      isChecked: item.IsProductChecked === 1 || item.isChecked === true,
+                      createdDate: item.CreatedDate || item.createdDate || ""
+                    });
+                  }
+                  cartDistributors = Array.from(storeMap.values());
+                }
+              }
+            }
+          } catch (err) {
+            console.warn("Live cart details fetch error in summary route:", err.message);
+          }
+        }
+        const db2 = await dbManager.getConnection();
+        const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
+          db2.all("SELECT * FROM special_orders WHERE status = 'Pending' OR status = 'Ordered' ORDER BY id DESC"),
+          db2.all("SELECT word FROM permanently_ignored_words").catch(() => []),
+          db2.all(`
+        SELECT 
+          LOWER(TRIM(m.store_name)) as store_name_lower, 
+          COALESCE(d.phone, d.contact, m.phone) as phone
+        FROM pharmarack_distributor_mappings m
+        LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+        UNION
+        SELECT 
+          LOWER(TRIM(d.name)) as store_name_lower, 
+          COALESCE(d.phone, d.contact) as phone
+        FROM distributors d
+        WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+      `).catch(() => [])
+        ]);
+        const ignoredWordsSet = new Set((ignoredRows || []).map((r) => String(r.word || "").toLowerCase().trim()).filter(Boolean));
+        const filteredOrders = (pendingOrders || []).filter((o) => {
+          const p = (o.product || "").toLowerCase().trim();
+          return p && !ignoredWordsSet.has(p);
+        });
+        const phoneMap = /* @__PURE__ */ new Map();
+        for (const r of mappingRows || []) {
+          if (r.store_name_lower && r.phone) {
+            const cleanP = String(r.phone).replace(/\D/g, "").slice(-10);
+            if (cleanP && cleanP.length === 10) {
+              phoneMap.set(r.store_name_lower, cleanP);
+            }
+          }
+        }
+        let missingDistributorsCount = 0;
+        for (const dist of cartDistributors) {
+          const sLower = String(dist.storeName || "").toLowerCase().trim();
+          const mappedPhone = phoneMap.get(sLower) || "";
+          dist.phone = mappedPhone;
+          const cleanP = mappedPhone.replace(/\D/g, "").slice(-10);
+          if (!cleanP || cleanP.length !== 10) {
+            missingDistributorsCount++;
+          }
+        }
+        const totalItems = cartDistributors.reduce((sum, d) => sum + (d.items?.length || 0), 0);
+        return res.json({
+          success: true,
+          cart: { distributors: cartDistributors },
+          distributors: cartDistributors,
+          totalItems,
+          missingDistributorsCount,
+          orders: filteredOrders,
+          autoRefills: []
+        });
+      } catch (err) {
+        console.error("Error in /api/pharmarack/live-cart-summary:", err);
+        return res.status(500).json({ error: "Failed to fetch live cart summary: " + err.message });
+      }
+    });
+    router.get("/auto-verify", async (req, res) => {
+      try {
+        const settings = await getPharmarackSettings();
+        const token = settings["pharmarack_session_token"] || "";
+        if (!token) {
+          const db3 = await dbManager.getConnection();
+          await db3.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+          return res.json({ healthy: false, mode: "Live", reason: "NO_TOKEN", needs_login: true, message: "No session token found" });
+        }
+        let healthy = false;
+        let reason = "EXPIRED";
+        let message = "Session expired";
+        try {
+          const probe = await probeUserCartDetails(6e3);
+          if (probe.ok) {
+            healthy = true;
+          } else if (probe.status === 401 || probe.status === 403) {
+            reason = "EXPIRED";
+            message = "Session expired or invalid token";
+          } else {
+            reason = "SERVER_ERROR";
+            message = `Server returned status ${probe.status}`;
+          }
+        } catch (err) {
+          reason = "NETWORK_ERROR";
+          message = err.message || "Network timeout/connection error";
+        }
+        const db2 = await dbManager.getConnection();
+        if (healthy) {
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+          return res.json({ healthy: true, mode: "Live", message: "Session active and verified" });
+        } else {
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+          return res.json({ healthy: false, mode: "Live", reason, needs_login: true, message });
+        }
+      } catch (err) {
+        console.error("Session auto-verify error:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router.get("/session-status", async (req, res) => {
+      try {
+        const isRefreshing = tokenRefreshScheduler.getStatus().isRefreshing;
+        const settings = await getPharmarackSettings();
+        const token = settings["pharmarack_session_token"] || "";
+        if (!token) {
+          return res.json({ healthy: false, mode: "Live", isRefreshing, daysLeft: null, expiresAt: null, reason: "NO_TOKEN", message: "Session not linked" });
+        }
+        let healthy = false;
+        let reason = "EXPIRED";
+        let message = "Session expired";
+        let daysLeft = null;
+        let expiresAt = null;
+        try {
+          const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
+          const parts = cleanToken.split(".");
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
+            if (payload.exp && typeof payload.exp === "number") {
+              const expMs = payload.exp * 1e3;
+              expiresAt = new Date(expMs).toISOString();
+              const diffMs = expMs - Date.now();
+              daysLeft = Math.max(0, Math.ceil(diffMs / (1e3 * 60 * 60 * 24)));
+            }
+          }
+        } catch {
+        }
+        try {
+          const probe = await probeUserCartDetails(6e3);
+          if (probe.ok) {
+            healthy = true;
+          } else if (probe.status === 401 || probe.status === 403) {
+            reason = "EXPIRED";
+            message = "Session expired or invalid token";
+          } else {
+            reason = "SERVER_ERROR";
+            message = `Server returned status ${probe.status}`;
+          }
+        } catch (err) {
+          reason = "NETWORK_ERROR";
+          message = err.message || "Network timeout/connection error";
+        }
+        return res.json({
+          healthy,
+          mode: "Live",
+          isRefreshing,
+          daysLeft,
+          expiresAt,
+          reason: healthy ? void 0 : reason,
+          message: healthy ? "Session active" : message
+        });
+      } catch (err) {
+        console.error("Session status check error:", err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    router.post("/logout", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
+        Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
+        });
+        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
+        const pharmarackProfilePath = import_path20.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (import_fs18.default.existsSync(pharmarackProfilePath)) {
+          import_fs18.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
+          console.log("Cleared Pharmarack Puppeteer profile directory.");
+        }
+        res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
+      } catch (err) {
+        console.error("Error during Pharmarack logout:", err);
+        res.status(500).json({ error: "Failed to clear session: " + err.message });
+      }
+    });
+    router.get("/sent-orders/dates", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          'SELECT DISTINCT order_date FROM pharmarack_placed_orders WHERE order_date IS NOT NULL AND order_date <> "" ORDER BY order_date DESC'
+        );
+        const dates = rows.map((r) => r.order_date);
+        res.json({ success: true, dates });
+      } catch (err) {
+        console.error("Error fetching Pharmarack sent order dates:", err);
+        res.status(500).json({ error: "Failed to fetch sent order dates: " + err.message });
+      }
+    });
+    router.get("/sent-orders", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        let targetDate = (req.query.date || "").trim();
+        if (!targetDate) {
+          targetDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        }
+        const rows = await db2.all(
+          "SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC",
+          [targetDate]
+        );
+        const parsedOrders = rows.map((r) => {
+          let items = [];
+          let deliveryPersons = [];
+          try {
+            items = JSON.parse(r.items_json || "[]");
+          } catch (_) {
+          }
+          try {
+            deliveryPersons = JSON.parse(r.delivery_persons_json || "[]");
+          } catch (_) {
+          }
+          return {
+            id: r.id,
+            order_date: r.order_date,
+            store_id: r.store_id,
+            store_name: r.store_name,
+            items,
+            delivery_persons: deliveryPersons,
+            placed_at: r.placed_at,
+            batch_sent: r.batch_sent === 1,
+            batch_sent_at: r.batch_sent_at
+          };
+        });
+        res.json({ success: true, date: targetDate, is_recent_fallback: false, orders: parsedOrders });
+      } catch (err) {
+        console.error("Error fetching Pharmarack sent orders:", err);
+        res.status(500).json({ error: "Failed to fetch sent orders: " + err.message });
+      }
+    });
+    router.get("/sent-orders/latest-map", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1e3;
+        const cutoff = Date.now() - THREE_DAYS_MS;
+        const rows = await db2.all(
+          `SELECT * FROM pharmarack_placed_orders 
+       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
+       ORDER BY placed_at DESC`,
+          [cutoff]
+        );
+        const sentMap = {};
+        rows.forEach((r) => {
+          let items = [];
+          try {
+            items = JSON.parse(r.items_json || "[]");
+          } catch (_) {
+          }
+          const storeKey = r.store_id ? String(r.store_id) : (r.store_name || "").toLowerCase().trim();
+          const normNameKey = (r.store_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const placedAt = Number(r.placed_at || r.batch_sent_at || 0);
+          const parsedItems = items.map((i) => ({
+            productCode: i.productCode || i.product_code || "",
+            productName: i.productName || i.product || i.name || "",
+            qty: i.qty || i.quantity || 1,
+            placedAt: Number(i.placedAt || i.placed_at || placedAt || 0)
+          })).filter((i) => i.placedAt >= cutoff);
+          if (parsedItems.length === 0) return;
+          const updateKey = (key) => {
+            if (!key) return;
+            if (!sentMap[key]) {
+              sentMap[key] = {
+                storeId: r.store_id || null,
+                storeName: r.store_name || "",
+                placedAt,
+                items: [...parsedItems]
+              };
+            } else {
+              if (placedAt > sentMap[key].placedAt) {
+                sentMap[key].placedAt = placedAt;
+              }
+              parsedItems.forEach((pi) => {
+                const piNormName = (pi.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const existingIndex = sentMap[key].items.findIndex((ex) => {
+                  if (pi.productCode && ex.productCode && pi.productCode === ex.productCode) return true;
+                  const exNormName = (ex.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                  return piNormName && exNormName && piNormName === exNormName;
+                });
+                if (existingIndex === -1) {
+                  sentMap[key].items.push(pi);
+                } else if (pi.placedAt > (sentMap[key].items[existingIndex].placedAt || 0)) {
+                  sentMap[key].items[existingIndex].placedAt = pi.placedAt;
+                }
+              });
+            }
+          };
+          updateKey(storeKey);
+          if (normNameKey) updateKey(normNameKey);
+        });
+        res.json({ success: true, sentMap });
+      } catch (err) {
+        console.error("Error fetching Pharmarack latest sent map:", err);
+        res.status(500).json({ error: "Failed to fetch latest sent map: " + err.message });
+      }
+    });
+    router.get("/reorder-recent", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const { getReorderWindowMonths: getReorderWindowMonths2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
+        const queryMonths = parseInt(req.query.months || "", 10);
+        const months = [2, 4, 6, 8].includes(queryMonths) ? queryMonths : await getReorderWindowMonths2(db2);
+        const windowDays = months * 30;
+        const rows = await db2.all(
+          `SELECT * FROM pharmarack_placed_orders
+       WHERE order_date >= DATE('now', ?)
+       ORDER BY placed_at DESC`,
+          [`-${windowDays} days`]
+        );
+        const byMedicine = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          let items = [];
+          try {
+            items = JSON.parse(row.items_json || "[]");
+          } catch (_) {
+            continue;
+          }
+          for (const item of items) {
+            const name = (item.productName || item.name || "").trim();
+            if (!name || byMedicine.has(name)) continue;
+            byMedicine.set(name, {
+              medicineName: name,
+              lastOrderedDate: row.order_date,
+              lastQty: Number(item.qty || item.quantity || 1),
+              lastDistributorName: row.store_name || ""
+            });
+          }
+        }
+        res.json({ success: true, items: Array.from(byMedicine.values()) });
+      } catch (err) {
+        console.error("Error fetching recently reordered medicines:", err);
+        res.status(500).json({ error: "Failed to fetch recently reordered medicines: " + err.message });
+      }
+    });
+    router.post("/log-placed-order", async (req, res) => {
+      try {
+        const { store_id, store_name, items, delivery_persons } = req.body;
+        if (!store_name || !items) {
+          return res.status(400).json({ error: "store_name and items are required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const placedAt = Date.now();
+        await db2.run(
+          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+          [
+            today,
+            store_id || null,
+            store_name,
+            JSON.stringify(items),
+            delivery_persons ? JSON.stringify(delivery_persons) : null,
+            placedAt,
+            placedAt
+          ]
+        );
+        if (Array.isArray(items) && items.length > 0) {
+          try {
+            const pendingOrders = await db2.all("SELECT id, product FROM special_orders WHERE status = 'Pending'");
+            for (const item of items) {
+              const prodName = (item.productName || item.product || item.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (!prodName) continue;
+              for (const order of pendingOrders) {
+                const reqName = (order.product || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (reqName && (reqName === prodName || reqName.length >= 4 && prodName.length >= 4 && (reqName.includes(prodName) || prodName.includes(reqName)))) {
+                  await db2.run("UPDATE special_orders SET status = 'Ordered', pharmarack_distributor = ? WHERE id = ?", [store_name, order.id]);
+                }
+              }
+            }
+          } catch (orderErr) {
+            console.warn("Error auto-updating special orders status on placed order:", orderErr);
+          }
+        }
+        try {
+          await resolveDistributorContact(db2, store_name);
+          syncTodayActiveDistributors().catch((err) => console.warn("Background sync reminders error on placed order:", err));
+        } catch (_) {
+        }
+        eventService.broadcast("dispatch_updated", { at: Date.now(), source: "log_placed_order", store_name });
+        eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+        res.json({ success: true });
+      } catch (err) {
+        console.error("Error logging placed order:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router.post("/check-overstock", async (req, res) => {
+      try {
+        const { productName, company, packaging, distributorStoreId, requestedQty = 1 } = req.body;
+        if (!productName || typeof productName !== "string") {
+          return res.status(400).json({ error: "productName is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const rawClean = productName.replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+        const { cleaned } = cleanSearchQuery(productName);
+        const brandTokens = rawClean.replace(/\b(new|tab|tabs|tablet|tablets|cap|caps|capsule|inj|syrup|10tab|15tab|10s|15s|10|15|30|60|100)\b/gi, "").replace(/[\s\-_.\/]+/g, " ").trim();
+        const alphaNumericOnly = rawClean.replace(/[^a-z0-9]/g, "");
+        let matchingMeds = await db2.all(
+          `SELECT id, name, generic_name, max_stock_level FROM medicines 
+       WHERE LOWER(name) = ? OR LOWER(generic_name) = ? OR LOWER(name) = ?`,
+          [productName.toLowerCase(), rawClean, cleaned.toLowerCase()]
+        );
+        if (matchingMeds.length === 0 && brandTokens.length >= 2) {
+          matchingMeds = await db2.all(
+            `SELECT id, name, generic_name, max_stock_level FROM medicines 
+         WHERE LOWER(name) LIKE ? OR LOWER(generic_name) LIKE ?
+         ORDER BY LENGTH(name) ASC LIMIT 10`,
+            [`%${brandTokens}%`, `%${brandTokens}%`]
+          );
+        }
+        if (matchingMeds.length === 0 && alphaNumericOnly.length >= 3) {
+          const strippedBrand = alphaNumericOnly.replace(/(new|tab|tablet|cap|capsule|inj|syrup|10tab|15tab|10s|15s)/g, "");
+          if (strippedBrand.length >= 3) {
+            matchingMeds = await db2.all(
+              `SELECT id, name, generic_name, max_stock_level FROM medicines 
+           WHERE REPLACE(REPLACE(REPLACE(REPLACE(LOWER(name), ' ', ''), '-', ''), '.', ''), '/', '') LIKE ?
+           ORDER BY LENGTH(name) ASC LIMIT 10`,
+              [`%${strippedBrand}%`]
+            );
+          }
+        }
+        if (matchingMeds.length === 0) {
+          const firstWord = rawClean.split(/\s+/)[0];
+          if (firstWord && firstWord.length >= 3 && !["new", "tab", "tablet", "cap", "capsule"].includes(firstWord)) {
+            matchingMeds = await db2.all(
+              `SELECT id, name, generic_name, max_stock_level FROM medicines 
+           WHERE LOWER(name) LIKE ? 
+           ORDER BY LENGTH(name) ASC LIMIT 10`,
+              [`%${firstWord}%`]
+            );
+          }
+        }
+        let currentStock = 0;
+        let maxStockLevel = null;
+        let sales30d = 0;
+        let matchedName = matchingMeds.length > 0 ? matchingMeds[0].name : productName;
+        const matchedIds = matchingMeds.map((m) => m.id);
+        if (matchedIds.length > 0) {
+          const placeholders = matchedIds.map(() => "?").join(",");
+          const stockRow = await db2.get(
+            `SELECT COALESCE(SUM(quantity), 0) as total_qty, MAX(max_stock_level) as inv_max 
+         FROM inventory_master WHERE medicine_id IN (${placeholders})`,
+            matchedIds
+          );
+          if (stockRow) {
+            currentStock = Number(stockRow.total_qty || 0);
+            if (stockRow.inv_max !== null) {
+              maxStockLevel = Number(stockRow.inv_max);
+            }
+          }
+          const salesRow = await db2.get(
+            `SELECT COALESCE(SUM(si.quantity), 0) as sales_qty 
+         FROM sale_items si
+         JOIN sales_invoices inv ON si.invoice_id = inv.id
+         WHERE si.inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id IN (${placeholders}))
+         AND inv.date >= datetime('now', '-30 days')`,
+            matchedIds
+          );
+          if (salesRow) {
+            sales30d = Number(salesRow.sales_qty || 0);
+          }
+        }
+        let maxLimit = 30;
+        if (maxStockLevel !== null && maxStockLevel > 0) {
+          maxLimit = maxStockLevel;
+        } else if (sales30d > 0) {
+          maxLimit = Math.max(10, Math.ceil(sales30d * 1.25));
+        }
+        let lastPurchasePTR = null;
+        let lowestPurchasePTR = null;
+        try {
+          if (matchedIds.length > 0) {
+            const placeholders = matchedIds.map(() => "?").join(",");
+            const lastPriceRow = await db2.get(
+              `SELECT cost_price FROM purchase_items 
+           WHERE medicine_id IN (${placeholders}) AND cost_price > 0 
+           ORDER BY id DESC LIMIT 1`,
+              matchedIds
+            );
+            if (lastPriceRow && lastPriceRow.cost_price != null) {
+              lastPurchasePTR = Number(lastPriceRow.cost_price);
+            }
+            const minPriceRow = await db2.get(
+              `SELECT MIN(cost_price) as min_rate FROM purchase_items 
+           WHERE medicine_id IN (${placeholders}) AND cost_price > 0`,
+              matchedIds
+            );
+            if (minPriceRow && minPriceRow.min_rate != null) {
+              lowestPurchasePTR = Number(minPriceRow.min_rate);
+            }
+          }
+        } catch (_) {
+        }
+        let cartQty = 0;
+        try {
+          const settings = await getPharmarackSettings();
+          const token = settings["pharmarack_session_token"] || "";
+          if (token) {
+            const cartRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
+              method: "GET",
+              signal: AbortSignal.timeout(5e3)
+            });
+            if (cartRes.ok) {
+              const cartData = await cartRes.json();
+              const rawList = Array.isArray(cartData?.IList) ? cartData.IList : Array.isArray(cartData?.data) ? cartData.data : Array.isArray(cartData?.Data) ? cartData.Data : cartData?.data?.Stores || cartData?.Data?.Stores || [];
+              const targetNames = matchingMeds.map((m) => m.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+              targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ""));
+              targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ""));
+              for (const store of rawList) {
+                const items = store.lineItems || store.items || store.Products || store.line_items || [];
+                for (const item of items) {
+                  const itemTitle = (item.productName || item.ProductName || item.ProductFullName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                  const matchesAny = targetNames.some((tn) => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
+                  if (matchesAny) {
+                    cartQty += Number(item.qty || item.Quantity || item.quantity || 0);
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {
+        }
+        const totalInHandAndCart = currentStock + cartQty;
+        const reqQtyNum = Number(requestedQty) || 1;
+        const isOverstock = totalInHandAndCart + reqQtyNum > maxLimit;
+        const isExistingInStock = currentStock > 0;
+        const isDuplicateInCart = cartQty > 0;
+        let warningMessage = null;
+        if (isOverstock) {
+          warningMessage = `Overstock Notice: You already have ${currentStock} in stock and ${cartQty} in cart. Based on sales velocity (${sales30d}/mo), recommended cap is ${maxLimit} units.`;
+        } else if (isExistingInStock && isDuplicateInCart) {
+          warningMessage = `Note: ${currentStock} units in stock and ${cartQty} units already in cart.`;
+        } else if (isExistingInStock) {
+          warningMessage = `Note: You already have ${currentStock} units in store inventory.`;
+        } else if (isDuplicateInCart) {
+          warningMessage = `Note: ${cartQty} units already added in live cart across distributors.`;
+        }
+        return res.json({
+          success: true,
+          matchedLocalMedicineName: matchedName,
+          currentStock,
+          cartQty,
+          sales30d,
+          maxLimit,
+          recommendedQty: Math.max(0, maxLimit - totalInHandAndCart),
+          isOverstock,
+          isExistingInStock,
+          isDuplicateInCart,
+          lastPurchasePTR,
+          lowestPurchasePTR,
+          warningMessage
+        });
+      } catch (err) {
+        console.error("Error in /api/pharmarack/check-overstock:", err);
+        return res.status(500).json({ error: "Failed to check overstock status: " + err.message });
+      }
+    });
+    router.get("/auto-refill-suggestions", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        let rows = await db2.all(`
+      SELECT 
+        m.id as medicine_id,
+        m.name as medicine_name,
+        m.manufacturer,
+        m.packaging,
+        psm.total_units_pool as current_stock,
+        psm.low_stock_flag,
+        psm.daily_sales_velocity,
+        psm.burn_rate_ratio,
+        psm.heavy_sell_flag,
+        psm.suggested_refill_qty
+      FROM precalculated_stock_metrics psm
+      JOIN medicines m ON m.id = psm.medicine_id
+      WHERE (psm.low_stock_flag = 1 OR psm.heavy_sell_flag = 1)
+      ORDER BY psm.burn_rate_ratio DESC, psm.daily_sales_velocity DESC
+      LIMIT 25
+    `);
+        if (rows.length === 0) {
+          Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((w) => w.recalculateTargetedStockMetrics()).catch((err) => console.error("Failed to trigger background stock calculation:", err));
+        }
+        const suggestions = rows.map((r) => {
+          const stock = Number(r.current_stock || 0);
+          const sales30d = Math.round(Number(r.daily_sales_velocity || 0) * 30);
+          const recQty = Number(r.suggested_refill_qty) > 0 ? Number(r.suggested_refill_qty) : Math.max(1, 10 - stock);
+          return {
+            medicine_id: r.medicine_id,
+            medicine_name: r.medicine_name,
+            manufacturer: r.manufacturer || "",
+            packaging: r.packaging || "",
+            current_stock: stock,
+            sales_30d: sales30d,
+            reorder_level: 5,
+            recommended_qty: recQty
+          };
+        });
+        res.json({ success: true, suggestions });
+      } catch (err) {
+        console.error("Error fetching auto refill suggestions:", err);
+        res.status(500).json({ error: "Failed to fetch auto-refill suggestions: " + err.message });
+      }
+    });
+    router.get("/session-logs", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const sixtyDaysAgo = Date.now() - 60 * 86400 * 1e3;
+        const logs = await db2.all(
+          `SELECT id, timestamp, trigger_type, next_scheduled_minutes, status, error_message
+       FROM session_refresh_logs
+       WHERE timestamp >= ?
+       ORDER BY timestamp DESC
+       LIMIT 100`,
+          [sixtyDaysAgo]
+        );
+        res.json({ success: true, logs });
+      } catch (err) {
+        console.error("Error fetching session refresh logs:", err);
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+    router.get("/dispatch-schedule", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const pausedRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'");
+        const timerRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_pacing_min_ms'");
+        let pausedDates = [];
+        if (pausedRow?.value) {
+          try {
+            pausedDates = JSON.parse(pausedRow.value);
+          } catch (_) {
+          }
+        }
+        const timerSec = timerRow?.value ? Math.round(Number(timerRow.value) / 1e3) : 10;
+        res.json({
+          success: true,
+          pausedDates,
+          timerSec
+        });
+      } catch (err) {
+        console.error("Error fetching dispatch schedule:", err);
+        res.status(500).json({ error: "Failed to fetch schedule: " + err.message });
+      }
+    });
+    router.post("/dispatch-schedule", async (req, res) => {
+      try {
+        const { pausedDates, timerSec } = req.body;
+        const db2 = await dbManager.getConnection();
+        if (Array.isArray(pausedDates)) {
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES ('pharmarack_paused_dispatch_dates', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [JSON.stringify(pausedDates)]
+          );
+        }
+        if (typeof timerSec === "number" && timerSec > 0) {
+          const minMs = timerSec * 1e3;
+          const maxMs = minMs + 2e3;
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES ('whatsapp_pacing_min_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [minMs.toString()]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES ('whatsapp_pacing_max_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [maxMs.toString()]
+          );
+        }
+        res.json({ success: true, message: "Dispatch schedule updated successfully" });
+      } catch (err) {
+        console.error("Error updating dispatch schedule:", err);
+        res.status(500).json({ error: "Failed to update schedule: " + err.message });
+      }
+    });
+    handleManualReauth = async (_req, res) => {
+      try {
+        console.log("[Pharmarack Re-auth] Manual re-auth requested. Checking session...");
+        const token = await tokenRefreshScheduler.triggerImmediateCheck("manual_reauth");
+        if (token) {
+          return res.json({ success: true, message: "Pharmarack live B2B session refreshed successfully." });
+        } else {
+          const status = tokenRefreshScheduler.getStatus();
+          return res.json({
+            success: false,
+            needs_login: true,
+            message: status.lastError || "Session expired or needs manual OTP login. Please open the login window."
+          });
+        }
+      } catch (err) {
+        console.error("[Pharmarack Re-auth] Error during manual reauth:", err);
+        return res.status(500).json({ success: false, error: err.message });
+      }
+    };
+    router.post("/trigger-reauth", handleManualReauth);
+    router.post("/login", handleManualReauth);
+    router.post("/refresh-token", handleManualReauth);
+    pharmarack_default = router;
+  }
+});
+
 // src/services/shortageReminderService.ts
 var shortageReminderService_exports = {};
 __export(shortageReminderService_exports, {
@@ -23473,7 +27641,7 @@ The requested medicine has not been added to inventory for over 23 hours.
     if (adminPhone && adminPhone.length >= 10 && shortageNoticeEnabled) {
       const formattedPhone = adminPhone.length === 10 ? `91${adminPhone}` : adminPhone;
       try {
-        await notificationService.sendWhatsApp(formattedPhone, adminMessage);
+        await notificationService.sendWhatsApp(formattedPhone, adminMessage, void 0, void 0, "admin_shortage_reminder");
         await connection.run(
           "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
           ["SHORTAGE_REMINDER_SENT", `Sent admin shortage order reminder for ${medName} to ${formattedPhone}`]
@@ -23528,8 +27696,8 @@ __export(whatsappIntentService_exports, {
   saveInboundMedia: () => saveInboundMedia,
   whatsappIntentService: () => whatsappIntentService
 });
-function passesGate(bestScore, hasIntentWords, source) {
-  const threshold = hasIntentWords || source !== "text" ? GATE_WITH_INTENT : GATE_IMPLICIT;
+function passesGate(bestScore, hasIntentWords, source, hasConfirmedMatch = false) {
+  const threshold = hasIntentWords || source !== "text" || hasConfirmedMatch ? GATE_WITH_INTENT : GATE_IMPLICIT;
   return bestScore >= threshold;
 }
 async function downloadMediaWithRetry(downloadFn, options = {}) {
@@ -23553,10 +27721,10 @@ async function downloadMediaWithRetry(downloadFn, options = {}) {
   throw lastErr;
 }
 async function saveInboundMedia(msgId, buffer) {
-  await import_fs17.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
+  await import_fs19.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = import_path19.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
-  await import_fs17.default.promises.writeFile(filePath, buffer);
+  const filePath = import_path21.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
+  await import_fs19.default.promises.writeFile(filePath, buffer);
   return filePath;
 }
 function resolveOcrGateDecision(ocrRaw, finalName, knownApis) {
@@ -23645,6 +27813,59 @@ async function getCustomerContext(customer, chatId, currentMsgId) {
     }
   }
   return context;
+}
+async function checkMedicineClarificationResponse(phone, body, customer, chatId) {
+  const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
+  if (!cleanDigits) return false;
+  try {
+    const db2 = await dbManager.getConnection();
+    await db2.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+      phone TEXT PRIMARY KEY,
+      suggested_name TEXT NOT NULL,
+      original_query TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const pending2 = await db2.get(
+      `SELECT phone, suggested_name, original_query FROM wa_pending_clarifications 
+       WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`]
+    );
+    if (!pending2) return false;
+    const lower = body.toLowerCase().trim();
+    const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay)$/i.test(lower);
+    const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
+    if (isAffirmative) {
+      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+      const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName4(db2);
+      const storePhone = await getStorePhone3(db2);
+      const phoneSuffix = storePhone ? `
+\u{1F4DE} ${storePhone}` : "";
+      const ackMsg = `Thank you! We have noted your confirmation for *${pending2.suggested_name}*.
+Our pharmacist is checking stock with our distributors and will contact you shortly.${phoneSuffix}`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      await waAdminEscalationService.notifyAdminOfCustomerConfirmation({
+        customer,
+        suggestedName: pending2.suggested_name,
+        originalQuery: pending2.original_query || pending2.suggested_name,
+        phone,
+        chatId
+      });
+      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}".`);
+      return true;
+    } else if (isNegative) {
+      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+      const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", customer?.name || "Customer");
+      console.log(`[Intent Service] Customer ${cleanDigits} rejected suggested medicine "${pending2.suggested_name}".`);
+      return true;
+    }
+  } catch (err) {
+    console.warn("[Intent Service] Error checking medicine clarification response:", err);
+  }
+  return false;
 }
 async function handleInbound(msg) {
   try {
@@ -23741,6 +27962,9 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
           return;
         }
       }
+    }
+    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+      return;
     }
     const parsed = parseMessage(body);
     let scispacyNames = [];
@@ -23999,30 +28223,47 @@ async function searchAndBroadcast(opts) {
   );
   let livePharmarackResults = null;
   const nothingFound = filterResult.matches.length === 0 && (!catalogResults || catalogResults.mapped.length === 0 && catalogResults.nonMapped.length === 0);
-  if ((nothingFound || !isExactLocal || availability === "REGISTERED_NO_STOCK") && (hasIntentWords || source !== "text")) {
+  const isPlausible = isPlausibleMedicineName(medicineName);
+  if ((nothingFound || !isExactLocal || availability === "REGISTERED_NO_STOCK") && (hasIntentWords || source !== "text" || isPlausible)) {
     try {
-      const response = await fetch(`http://localhost:${process.env.PORT || 3e3}/api/pharmarack/search?q=${encodeURIComponent(medicineName)}`, {
-        signal: AbortSignal.timeout(6e3)
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const scored = data.map((p) => ({ ...p, score: scoreProductName(medicineName, p.name || p.productName || "") })).filter((p) => p.score >= 0.6).sort((a, b) => b.score - a.score);
+      const { performPharmarackSearch: performPharmarackSearch2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+      const searchTerms = [medicineName];
+      if (filterResult.matches[0]) {
+        const cleanMatched = filterResult.matches[0].split(/\s+/).slice(0, 3).join(" ");
+        if (cleanMatched.toLowerCase() !== medicineName.toLowerCase()) {
+          searchTerms.unshift(cleanMatched);
+        }
+      }
+      for (const term of searchTerms) {
+        const searchRes = await performPharmarackSearch2(term, null, true);
+        if (searchRes && searchRes.status === "ok" && Array.isArray(searchRes.items) && searchRes.items.length > 0) {
+          const scored = searchRes.items.map((p) => ({
+            ...p,
+            productName: p.name,
+            supplier_name: p.distributor,
+            distributor_name: p.distributor,
+            distributorPrice: p.rate,
+            availability: p.stock,
+            score: scoreProductName(medicineName, p.name || "")
+          })).filter((p) => p.score >= 0.5).sort((a, b) => b.score - a.score);
           if (scored.length > 0) {
             livePharmarackResults = scored;
             catalogResults = {
-              mapped: scored.filter((p) => p.mapped || p.isMapped),
-              nonMapped: scored.filter((p) => !(p.mapped || p.isMapped))
+              mapped: scored.filter((p) => p.mapped),
+              nonMapped: scored.filter((p) => !p.mapped)
             };
+            break;
           }
         }
       }
     } catch (liveErr) {
-      console.warn("[Intent Service] Live Pharmarack search failed:", liveErr);
+      console.warn("[Intent Service] Live performPharmarackSearch failed:", liveErr);
     }
   }
+  const hasConfirmedCatalog = (catalogResults?.mapped?.length || 0) > 0 || (catalogResults?.nonMapped?.length || 0) > 0;
+  const hasConfirmedMatch = filterResult.matches.length > 0 || hasConfirmedCatalog;
   const bestScore = Math.max(filterResult.topScore ?? 0, catalogTopScore());
-  if (!passesGate(bestScore, hasIntentWords, source)) {
+  if (!passesGate(bestScore, hasIntentWords, source, hasConfirmedMatch)) {
     console.log(`[Intent Service] Gate: discarding "${medicineName}" (bestScore=${bestScore.toFixed(2)}, intent=${hasIntentWords}, source=${source}). Not a medicine.`);
     if (source !== "text" && imagePath) {
       try {
@@ -24035,6 +28276,32 @@ async function searchAndBroadcast(opts) {
         });
       } catch (notifyErr) {
         console.error("[Intent Service] Failed to notify admin of uncertain scan:", notifyErr);
+      }
+    } else if (source === "text" && isPlausible) {
+      try {
+        const db2 = await dbManager.getConnection();
+        await waAdminEscalationService.notifyAdminOfUnmatchedQuery({
+          customer,
+          medicineName,
+          quantity,
+          unit,
+          messageBody,
+          source,
+          msgId,
+          phone,
+          chatId,
+          imagePath
+        });
+        const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
+        if (!toggle || toggle.value !== "false") {
+          const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const storeName = await getStoreMedicalName4(db2);
+          const ackMsg = `Namaste! We received your inquiry for "${medicineName}" at ${storeName}. Our pharmacist is checking availability with our distributors and will message you shortly.`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone || chatId || "", ackMsg, "customer_inquiry_ack", customer?.name || "Customer");
+        }
+      } catch (unmatchedErr) {
+        console.warn("[Intent Service] Failed to notify admin/customer of unmatched inquiry:", unmatchedErr);
       }
     }
     return;
@@ -24097,6 +28364,39 @@ async function searchAndBroadcast(opts) {
     relatedMedicines: opts.relatedMedicines,
     imagePath
   }).catch((err) => console.error("[Intent Service] Admin escalation failed:", err));
+  if (source === "text" && phone) {
+    try {
+      const db2 = await dbManager.getConnection();
+      const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
+      if (!toggle || toggle.value !== "false") {
+        const topMatched = filterResult.matches[0] || catalogResults?.mapped?.[0]?.productName || catalogResults?.mapped?.[0]?.name;
+        if (topMatched) {
+          await db2.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+            phone TEXT PRIMARY KEY,
+            suggested_name TEXT NOT NULL,
+            original_query TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`);
+          const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
+          await db2.run(
+            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, created_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(phone) DO UPDATE SET
+               suggested_name = excluded.suggested_name,
+               original_query = excluded.original_query,
+               created_at = CURRENT_TIMESTAMP`,
+            [cleanPhone, topMatched, medicineName]
+          );
+          const promptMsg = `Namaste! Did you mean *${topMatched}*? Please reply *Yes* or *No*.`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+          console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+        }
+      }
+    } catch (clarifyErr) {
+      console.warn("[Intent Service] Customer clarification prompt failed:", clarifyErr);
+    }
+  }
   const hasOrderIntent = hasIntentWords || source === "ocr";
   const isConfirmedMedicine = filterResult.matches.length > 0 || catalogResults?.mapped && catalogResults.mapped.length > 0;
   const isOutOfStock = availability === "REGISTERED_NO_STOCK" || availability === "EXTERNAL_ONLY";
@@ -24160,7 +28460,7 @@ async function handleOcrComplete(data) {
             }
           }
         }
-        const safeWebPath = imagePath ? `/data/inbound_media/${import_path19.default.basename(imagePath)}` : null;
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path21.default.basename(imagePath)}` : null;
         await db2.run(
           `UPDATE special_orders
            SET payment_screenshot_path = ?,
@@ -24300,8 +28600,8 @@ async function handleOcrComplete(data) {
     }
     let visualBoostName = null;
     try {
-      if (imagePath && import_fs17.default.existsSync(imagePath)) {
-        const buf = import_fs17.default.readFileSync(imagePath);
+      if (imagePath && import_fs19.default.existsSync(imagePath)) {
+        const buf = import_fs19.default.readFileSync(imagePath);
         const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(" ");
         const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
         if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
@@ -24378,12 +28678,12 @@ async function resolveRelatedMedicinesLocal(names) {
   }
   return results;
 }
-var import_fs17, import_path19, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, whatsappIntentService, whatsappIntentService_default;
+var import_fs19, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
-    import_fs17 = __toESM(require("fs"), 1);
-    import_path19 = __toESM(require("path"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
+    import_path21 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_intentKeywords();
@@ -24396,7 +28696,7 @@ var init_whatsappIntentService = __esm({
     init_scanGateAlgorithms();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
-    INBOUND_MEDIA_DIR = import_path19.default.resolve(process.cwd(), "data", "inbound_media");
+    INBOUND_MEDIA_DIR = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
     whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast };
     whatsappIntentService_default = whatsappIntentService;
   }
@@ -24626,12 +28926,12 @@ __export(whatsappClient_exports, {
   waitForWhatsAppReady: () => waitForWhatsAppReady
 });
 function hasSavedSession() {
-  const sessionPath = import_path20.default.join(WWEBJS_AUTH_DIR, "session");
-  if (!import_fs18.default.existsSync(sessionPath)) return false;
+  const sessionPath = import_path22.default.join(WWEBJS_AUTH_DIR, "session");
+  if (!import_fs20.default.existsSync(sessionPath)) return false;
   try {
-    const defaultDir = import_path20.default.join(sessionPath, "Default");
-    const targetDir = import_fs18.default.existsSync(defaultDir) ? defaultDir : sessionPath;
-    const files = import_fs18.default.readdirSync(targetDir);
+    const defaultDir = import_path22.default.join(sessionPath, "Default");
+    const targetDir = import_fs20.default.existsSync(defaultDir) ? defaultDir : sessionPath;
+    const files = import_fs20.default.readdirSync(targetDir);
     const meaningfulFiles = files.filter(
       (f) => !/^(devtoolsactiveport|singleton|lock|\.lock|lockfile)$/i.test(f)
     );
@@ -24653,29 +28953,29 @@ async function isWhatsAppAutoConnectAllowed() {
   return false;
 }
 function safeRemoveDirectorySync(dirPath) {
-  if (!import_fs18.default.existsSync(dirPath)) return;
+  if (!import_fs20.default.existsSync(dirPath)) return;
   try {
-    import_fs18.default.rmSync(dirPath, { recursive: true, force: true });
+    import_fs20.default.rmSync(dirPath, { recursive: true, force: true });
   } catch (err) {
     try {
-      const entries = import_fs18.default.readdirSync(dirPath, { withFileTypes: true });
+      const entries = import_fs20.default.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        const fullPath = import_path20.default.join(dirPath, entry.name);
+        const fullPath = import_path22.default.join(dirPath, entry.name);
         try {
-          import_fs18.default.chmodSync(fullPath, 438);
+          import_fs20.default.chmodSync(fullPath, 438);
         } catch {
         }
         if (entry.isDirectory()) {
           safeRemoveDirectorySync(fullPath);
         } else {
           try {
-            import_fs18.default.unlinkSync(fullPath);
+            import_fs20.default.unlinkSync(fullPath);
           } catch {
           }
         }
       }
       try {
-        import_fs18.default.rmdirSync(dirPath);
+        import_fs20.default.rmdirSync(dirPath);
       } catch {
       }
     } catch {
@@ -24876,12 +29176,12 @@ async function shouldRouteToBusiness() {
   return false;
 }
 async function cleanupProfileLocks() {
-  const sessionPath = import_path20.default.join(WWEBJS_AUTH_DIR, "session");
+  const sessionPath = import_path22.default.join(WWEBJS_AUTH_DIR, "session");
   if (process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
       const cmd = `powershell -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*${filterPattern}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      await execAsync2(cmd, { timeout: 8e3 });
+      await execAsync3(cmd, { timeout: 8e3 });
       console.log("[WhatsApp Init] Stale WhatsApp browser processes terminated.");
     } catch (err) {
       console.warn("[WhatsApp Init] Could not check/kill running browser processes (non-fatal):", err.message);
@@ -25038,14 +29338,14 @@ function launchClientInstance(forceQr) {
     const paths = [
       "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-      process.env.LOCALAPPDATA ? import_path20.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
-      process.env.PROGRAMFILES ? import_path20.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.LOCALAPPDATA ? import_path22.default.join(process.env.LOCALAPPDATA, "Google\\Chrome\\Application\\chrome.exe") : null,
+      process.env.PROGRAMFILES ? import_path22.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
       "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-      process.env.LOCALAPPDATA ? import_path20.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
+      process.env.LOCALAPPDATA ? import_path22.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
     ].filter(Boolean);
     for (const p of paths) {
-      if (import_fs18.default.existsSync(p)) {
+      if (import_fs20.default.existsSync(p)) {
         execPath = p;
         break;
       }
@@ -25507,9 +29807,9 @@ async function forceReconnect() {
   const authPath = WWEBJS_AUTH_DIR;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (import_fs18.default.existsSync(authPath)) {
+      if (import_fs20.default.existsSync(authPath)) {
         safeRemoveDirectorySync(authPath);
-        if (!import_fs18.default.existsSync(authPath) || !hasSavedSession()) {
+        if (!import_fs20.default.existsSync(authPath) || !hasSavedSession()) {
           console.log("[WhatsApp] Old session data cleared from", authPath);
           break;
         }
@@ -25683,7 +29983,7 @@ async function sendMessage(to, mediaPath, caption, file) {
         }
         recentSendsCache.set(sendKey, Date.now());
         try {
-          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path20.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
+          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path22.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
           const provTimestamp = Math.floor(Date.now() / 1e3);
           const provHasMedia = file || mediaPath ? 1 : 0;
           await db2.run(
@@ -25724,18 +30024,18 @@ async function sendMessage(to, mediaPath, caption, file) {
         continue;
       } else {
         if (file && file.mimetype && file.data) {
-          if (!import_fs18.default.existsSync(config.tempDir)) {
-            import_fs18.default.mkdirSync(config.tempDir, { recursive: true });
+          if (!import_fs20.default.existsSync(config.tempDir)) {
+            import_fs20.default.mkdirSync(config.tempDir, { recursive: true });
           }
-          const tempFilePath = import_path20.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
-          import_fs18.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
+          const tempFilePath = import_path22.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
+          import_fs20.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
           try {
             const result = await whatsappBusinessService.sendDocument(cleanPhone, tempFilePath, caption, file.filename);
             success = result.success;
             if (result.messageId) messageId = result.messageId;
           } finally {
-            if (import_fs18.default.existsSync(tempFilePath)) {
-              import_fs18.default.unlinkSync(tempFilePath);
+            if (import_fs20.default.existsSync(tempFilePath)) {
+              import_fs20.default.unlinkSync(tempFilePath);
             }
           }
         } else if (mediaPath) {
@@ -25757,7 +30057,7 @@ async function sendMessage(to, mediaPath, caption, file) {
       console.error("[WhatsApp Client Wrapper] Send failed:", err?.message || err);
       throw err;
     }
-    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path20.default.basename(mediaPath)} ${caption || ""}` : caption || "";
+    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path22.default.basename(mediaPath)} ${caption || ""}` : caption || "";
     const timestamp = Math.floor(Date.now() / 1e3);
     const hasMedia = file || mediaPath ? 1 : 0;
     try {
@@ -25927,22 +30227,22 @@ async function getChatMessages(chatId, limit = 500) {
   }
 }
 async function getMessageMedia(chatId, messageId) {
-  if (!import_fs18.default.existsSync(UPLOADS_DIR)) {
-    import_fs18.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  if (!import_fs20.default.existsSync(UPLOADS_DIR)) {
+    import_fs20.default.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
-  const files = import_fs18.default.readdirSync(UPLOADS_DIR);
+  const files = import_fs20.default.readdirSync(UPLOADS_DIR);
   const matchedFile = files.find((f) => f.startsWith(messageId));
   if (!matchedFile) {
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
-  const filePath = import_path20.default.join(UPLOADS_DIR, matchedFile);
-  const ext = import_path20.default.extname(matchedFile).toLowerCase();
+  const filePath = import_path22.default.join(UPLOADS_DIR, matchedFile);
+  const ext = import_path22.default.extname(matchedFile).toLowerCase();
   let mimetype = "image/jpeg";
   if (ext === ".png") mimetype = "image/png";
   else if (ext === ".pdf") mimetype = "application/pdf";
   else if (ext === ".mp3") mimetype = "audio/mp3";
   else if (ext === ".mp4") mimetype = "video/mp4";
-  const data = import_fs18.default.readFileSync(filePath).toString("base64");
+  const data = import_fs20.default.readFileSync(filePath).toString("base64");
   return {
     mimetype,
     data,
@@ -25977,27 +30277,27 @@ async function checkPhoneWhatsAppRegistered(cleanDigits10) {
     return "UNABLE_TO_VERIFY";
   }
 }
-var import_whatsapp_web, import_fs18, import_path20, import_url15, import_child_process4, import_util2, Client, LocalAuth, MessageMedia, execAsync2, __filename14, __dirname14, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
+var import_whatsapp_web, import_fs20, import_path22, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
     import_whatsapp_web = __toESM(require("whatsapp-web.js"), 1);
-    import_fs18 = __toESM(require("fs"), 1);
-    import_path20 = __toESM(require("path"), 1);
-    import_url15 = require("url");
-    import_child_process4 = require("child_process");
-    import_util2 = require("util");
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
+    import_url16 = require("url");
+    import_child_process5 = require("child_process");
+    import_util3 = require("util");
     init_eventService();
     init_connection();
     init_config();
     init_whatsappBusinessService();
     init_tokenRefreshScheduler();
     ({ Client, LocalAuth, MessageMedia } = import_whatsapp_web.default);
-    execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
-    __filename14 = (0, import_url15.fileURLToPath)(import_meta_url);
-    __dirname14 = import_path20.default.dirname(__filename14);
-    UPLOADS_DIR = import_path20.default.resolve(getAppDataDir(), "uploads");
-    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path20.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path20.default.resolve(getAppDataDir(), ".wwebjs_auth");
+    execAsync3 = (0, import_util3.promisify)(import_child_process5.exec);
+    __filename15 = (0, import_url16.fileURLToPath)(import_meta_url);
+    __dirname15 = import_path22.default.dirname(__filename15);
+    UPLOADS_DIR = import_path22.default.resolve(getAppDataDir(), "uploads");
+    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path22.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path22.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
       const msg = reason?.message || String(reason);
       if (isPuppeteerDetachedError(msg)) {
@@ -27373,11 +31673,11 @@ async function rebuildAllExpiryCaches(force = false) {
   }
   activeRebuildPromise = (async () => {
     try {
-      const cacheDir = import_path21.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-      const manifestPath = import_path21.default.join(cacheDir, "manifest.json");
-      if (!force && import_fs19.default.existsSync(manifestPath)) {
+      const cacheDir = import_path23.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path23.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs21.default.existsSync(manifestPath)) {
         try {
-          const rawManifest = await import_fs19.default.promises.readFile(manifestPath, "utf-8");
+          const rawManifest = await import_fs21.default.promises.readFile(manifestPath, "utf-8");
           const manifest = JSON.parse(rawManifest);
           if (manifest && typeof manifest.totalMonthFiles === "number") {
             console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
@@ -27407,8 +31707,8 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      if (!import_fs19.default.existsSync(cacheDir)) {
-        await import_fs19.default.promises.mkdir(cacheDir, { recursive: true });
+      if (!import_fs21.default.existsSync(cacheDir)) {
+        await import_fs21.default.promises.mkdir(cacheDir, { recursive: true });
       }
       const groups = {};
       for (const r of rows) {
@@ -27423,20 +31723,20 @@ async function rebuildAllExpiryCaches(force = false) {
         items.sort((a, b) => (a.medicine_name || "").localeCompare(b.medicine_name || "", void 0, { sensitivity: "base", numeric: true }));
         const fileName = `expiry_${ym}.json`;
         validMonthFiles.add(fileName);
-        const filePath = import_path21.default.join(cacheDir, fileName);
-        await import_fs19.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
+        const filePath = import_path23.default.join(cacheDir, fileName);
+        await import_fs21.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
         written++;
       }
-      const existingFiles = await import_fs19.default.promises.readdir(cacheDir);
+      const existingFiles = await import_fs21.default.promises.readdir(cacheDir);
       for (const file of existingFiles) {
         if (file.startsWith("expiry_") && file.endsWith(".json") && !validMonthFiles.has(file)) {
           try {
-            await import_fs19.default.promises.unlink(import_path21.default.join(cacheDir, file));
+            await import_fs21.default.promises.unlink(import_path23.default.join(cacheDir, file));
           } catch (_) {
           }
         }
       }
-      await import_fs19.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
+      await import_fs21.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
     } catch (err) {
@@ -27449,8 +31749,8 @@ async function rebuildAllExpiryCaches(force = false) {
 }
 async function patchExpiryCacheForInventoryItem(inventoryId) {
   try {
-    const cacheDir = import_path21.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-    if (!import_fs19.default.existsSync(cacheDir)) return;
+    const cacheDir = import_path23.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+    if (!import_fs21.default.existsSync(cacheDir)) return;
     const db2 = await dbManager.getConnection();
     const item = await db2.get(`
       SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
@@ -27473,11 +31773,11 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     if (!item) return;
     const ym = getExpiryYearMonth(item.expiry_date);
     if (ym === "unknown") return;
-    const filePath = import_path21.default.join(cacheDir, `expiry_${ym}.json`);
+    const filePath = import_path23.default.join(cacheDir, `expiry_${ym}.json`);
     let monthItems = [];
-    if (import_fs19.default.existsSync(filePath)) {
+    if (import_fs21.default.existsSync(filePath)) {
       try {
-        monthItems = JSON.parse(await import_fs19.default.promises.readFile(filePath, "utf-8"));
+        monthItems = JSON.parse(await import_fs21.default.promises.readFile(filePath, "utf-8"));
       } catch {
         monthItems = [];
       }
@@ -27490,12 +31790,12 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
       );
     }
     if (monthItems.length === 0) {
-      if (import_fs19.default.existsSync(filePath)) {
-        await import_fs19.default.promises.unlink(filePath);
+      if (import_fs21.default.existsSync(filePath)) {
+        await import_fs21.default.promises.unlink(filePath);
         console.log(`[ExpiryCache] Patch: ${ym} file deleted (all items sold/returned).`);
       }
     } else {
-      await import_fs19.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
+      await import_fs21.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
       console.log(`[ExpiryCache] Patch: ${ym} updated for inventory #${inventoryId} (qty=${item.quantity}).`);
     }
   } catch (err) {
@@ -27528,467 +31828,24 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds) {
     }
   }, 800);
 }
-var import_path21, import_url16, import_fs19, __filename15, __dirname15, DB_PATH5, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
+var import_path23, import_url17, import_fs21, __filename16, __dirname16, DB_PATH6, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
 var init_expiryAlertService = __esm({
   "src/services/expiryAlertService.ts"() {
     "use strict";
     init_connection();
     init_inventoryActive();
-    import_path21 = __toESM(require("path"), 1);
-    import_url16 = require("url");
-    import_fs19 = __toESM(require("fs"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_url17 = require("url");
+    import_fs21 = __toESM(require("fs"), 1);
     init_config();
-    __filename15 = (0, import_url16.fileURLToPath)(import_meta_url);
-    __dirname15 = import_path21.default.dirname(__filename15);
-    DB_PATH5 = process.env.DB_PATH || import_path21.default.resolve(__dirname15, "..", "..", "data", "app.db");
+    __filename16 = (0, import_url17.fileURLToPath)(import_meta_url);
+    __dirname16 = import_path23.default.dirname(__filename16);
+    DB_PATH6 = process.env.DB_PATH || import_path23.default.resolve(__dirname16, "..", "..", "data", "app.db");
     activeRebuildPromise = null;
     lastRebuildTime = 0;
     rebuildTimeout = null;
     pendingInventoryIds = /* @__PURE__ */ new Set();
     fullExpiryRebuildRequested = false;
-  }
-});
-
-// src/worker/stockCalculatorWorker.ts
-var stockCalculatorWorker_exports = {};
-__export(stockCalculatorWorker_exports, {
-  recalculateStockLimits: () => recalculateStockLimits,
-  recalculateTargetedStockMetrics: () => recalculateTargetedStockMetrics,
-  startStockCalculatorWorker: () => startStockCalculatorWorker,
-  stopStockCalculatorWorker: () => stopStockCalculatorWorker,
-  triggerPreCalculatedStockRebuildDebounced: () => triggerPreCalculatedStockRebuildDebounced
-});
-function triggerPreCalculatedStockRebuildDebounced(medicineIds, delayMs = 500) {
-  if (medicineIds && medicineIds.length > 0) {
-    for (const id of medicineIds) {
-      if (typeof id === "number" && id > 0) {
-        pendingMedicineIds.add(id);
-      }
-    }
-  } else {
-    fullStockRebuildRequested = true;
-  }
-  if (debounceTimer2) clearTimeout(debounceTimer2);
-  debounceTimer2 = setTimeout(() => {
-    const idsToProcess = Array.from(pendingMedicineIds);
-    const needFull = fullStockRebuildRequested;
-    pendingMedicineIds.clear();
-    fullStockRebuildRequested = false;
-    debounceTimer2 = null;
-    if (!needFull && idsToProcess.length > 0) {
-      recalculateTargetedStockMetrics(idsToProcess).catch((err) => {
-        console.error("[StockCalculatorWorker] Targeted rebuild error:", err);
-      });
-    } else if (needFull) {
-      recalculateTargetedStockMetrics().catch((err) => {
-        console.error("[StockCalculatorWorker] Full rebuild error:", err);
-      });
-    }
-  }, delayMs);
-}
-async function recalculateTargetedStockMetrics(affectedMedicineIds) {
-  if (activeStockRecalcPromise) {
-    return activeStockRecalcPromise;
-  }
-  activeStockRecalcPromise = (async () => {
-    const db2 = await dbManager.getConnection();
-    try {
-      let medicineIdsToUpdate = [];
-      const isTargeted = affectedMedicineIds && affectedMedicineIds.length > 0 && affectedMedicineIds.length <= 100;
-      if (affectedMedicineIds && affectedMedicineIds.length > 0) {
-        medicineIdsToUpdate = Array.from(new Set(affectedMedicineIds));
-      } else {
-        const rows = await db2.all(`
-          SELECT DISTINCT id FROM medicines WHERE id IN (
-            SELECT DISTINCT medicine_id FROM inventory_master
-            UNION
-            SELECT DISTINCT im.medicine_id FROM sale_items sit JOIN inventory_master im ON im.id = sit.inventory_id
-            UNION
-            SELECT DISTINCT medicine_id FROM purchase_items
-          )
-        `);
-        medicineIdsToUpdate = rows.map((r) => r.id);
-      }
-      if (medicineIdsToUpdate.length === 0) return;
-      console.log(`[StockCalculatorWorker] Recalculating precalculated stock metrics for ${medicineIdsToUpdate.length} medicines`);
-      if (isTargeted) {
-        for (const medId of medicineIdsToUpdate) {
-          const poolRow = await db2.get(`
-            SELECT 
-              COALESCE(SUM(im.quantity * COALESCE(m.pack_size, 1) + COALESCE(im.loose_quantity, 0)), 0) as total_units,
-              MAX(im.reorder_level) as reorder_level
-            FROM inventory_master im
-            LEFT JOIN medicines m ON m.id = im.medicine_id
-            WHERE im.medicine_id = ?
-          `, [medId]);
-          const totalUnitsPool = poolRow?.total_units || 0;
-          const configRow = await db2.get(
-            "SELECT reorder_level FROM stock_config WHERE medicine_id = ?",
-            [medId]
-          );
-          const reorderLevel = poolRow?.reorder_level ?? configRow?.reorder_level ?? DEFAULT_MIN_STOCK;
-          const lowStockFlag = totalUnitsPool <= reorderLevel ? 1 : 0;
-          const salesRow = await db2.get(`
-            SELECT 
-              COALESCE(SUM(sit.quantity), 0) as total_qty,
-              MIN(si.date) as first_sale_date
-            FROM sale_items sit
-            JOIN sales_invoices si ON si.id = sit.invoice_id
-            JOIN inventory_master im ON im.id = sit.inventory_id
-            WHERE im.medicine_id = ?
-            AND si.date >= datetime('now', '-180 days')
-          `, [medId]);
-          const totalQty180d = salesRow?.total_qty || 0;
-          const firstSaleDateStr = salesRow?.first_sale_date;
-          let dailySalesVelocity = 0;
-          let burnRateRatio = 0;
-          const nowTime = Date.now();
-          const daysSinceFirstSale = firstSaleDateStr ? Math.max(1, Math.ceil((nowTime - new Date(firstSaleDateStr).getTime()) / (1e3 * 60 * 60 * 24))) : 0;
-          if (daysSinceFirstSale > 0 && daysSinceFirstSale < 30) {
-            const microVelocity = totalQty180d / daysSinceFirstSale;
-            dailySalesVelocity = microVelocity;
-            burnRateRatio = totalUnitsPool > 0 ? microVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : microVelocity > 0 ? 99 : 0;
-          } else {
-            dailySalesVelocity = totalQty180d / 180;
-            burnRateRatio = totalUnitsPool > 0 ? dailySalesVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : dailySalesVelocity > 0 ? 99 : 0;
-          }
-          const heavySellFlag = burnRateRatio >= 1.2 ? 1 : 0;
-          const suggestedRefillQty = lowStockFlag === 1 || heavySellFlag === 1 ? Math.max(0, reorderLevel * 2 - totalUnitsPool) : 0;
-          const metricsJson = JSON.stringify({
-            total_units_pool: totalUnitsPool,
-            reorder_level: reorderLevel,
-            low_stock_flag: lowStockFlag,
-            daily_sales_velocity: Number(dailySalesVelocity.toFixed(3)),
-            burn_rate_ratio: Number(burnRateRatio.toFixed(3)),
-            heavy_sell_flag: heavySellFlag,
-            suggested_refill_qty: suggestedRefillQty,
-            days_since_first_sale: daysSinceFirstSale
-          });
-          await db2.run(`
-            INSERT INTO precalculated_stock_metrics
-            (medicine_id, total_units_pool, low_stock_flag, daily_sales_velocity, burn_rate_ratio, heavy_sell_flag, suggested_refill_qty, metrics_json, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(medicine_id) DO UPDATE SET
-              total_units_pool = excluded.total_units_pool,
-              low_stock_flag = excluded.low_stock_flag,
-              daily_sales_velocity = excluded.daily_sales_velocity,
-              burn_rate_ratio = excluded.burn_rate_ratio,
-              heavy_sell_flag = excluded.heavy_sell_flag,
-              suggested_refill_qty = excluded.suggested_refill_qty,
-              metrics_json = excluded.metrics_json,
-              updated_at = CURRENT_TIMESTAMP
-          `, [
-            medId,
-            totalUnitsPool,
-            lowStockFlag,
-            dailySalesVelocity,
-            burnRateRatio,
-            heavySellFlag,
-            suggestedRefillQty,
-            metricsJson
-          ]);
-        }
-      } else {
-        const poolRows = await db2.all(`
-          SELECT 
-            im.medicine_id,
-            COALESCE(SUM(im.quantity * COALESCE(m.pack_size, 1) + COALESCE(im.loose_quantity, 0)), 0) as total_units,
-            MAX(im.reorder_level) as reorder_level
-          FROM inventory_master im
-          LEFT JOIN medicines m ON m.id = im.medicine_id
-          GROUP BY im.medicine_id
-        `);
-        const poolMap = /* @__PURE__ */ new Map();
-        for (const r of poolRows) {
-          poolMap.set(r.medicine_id, r);
-        }
-        const configRows = await db2.all(
-          "SELECT medicine_id, reorder_level FROM stock_config"
-        );
-        const configMap = /* @__PURE__ */ new Map();
-        for (const r of configRows) {
-          configMap.set(r.medicine_id, r.reorder_level);
-        }
-        const salesRows = await db2.all(`
-          SELECT 
-            im.medicine_id,
-            COALESCE(SUM(sit.quantity), 0) as total_qty,
-            MIN(si.date) as first_sale_date
-          FROM sale_items sit
-          JOIN sales_invoices si ON si.id = sit.invoice_id
-          JOIN inventory_master im ON im.id = sit.inventory_id
-          WHERE si.date >= datetime('now', '-180 days')
-          GROUP BY im.medicine_id
-        `);
-        const salesMap = /* @__PURE__ */ new Map();
-        for (const r of salesRows) {
-          salesMap.set(r.medicine_id, r);
-        }
-        const nowTime = Date.now();
-        const insertBatch2 = [];
-        for (const medId of medicineIdsToUpdate) {
-          const pool = poolMap.get(medId);
-          const totalUnitsPool = pool?.total_units || 0;
-          const reorderLevel = pool?.reorder_level ?? configMap.get(medId) ?? DEFAULT_MIN_STOCK;
-          const lowStockFlag = totalUnitsPool <= reorderLevel ? 1 : 0;
-          const sales = salesMap.get(medId);
-          const totalQty180d = sales?.total_qty || 0;
-          const firstSaleDateStr = sales?.first_sale_date;
-          let dailySalesVelocity = 0;
-          let burnRateRatio = 0;
-          const daysSinceFirstSale = firstSaleDateStr ? Math.max(1, Math.ceil((nowTime - new Date(firstSaleDateStr).getTime()) / (1e3 * 60 * 60 * 24))) : 0;
-          if (daysSinceFirstSale > 0 && daysSinceFirstSale < 30) {
-            const microVelocity = totalQty180d / daysSinceFirstSale;
-            dailySalesVelocity = microVelocity;
-            burnRateRatio = totalUnitsPool > 0 ? microVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : microVelocity > 0 ? 99 : 0;
-          } else {
-            dailySalesVelocity = totalQty180d / 180;
-            burnRateRatio = totalUnitsPool > 0 ? dailySalesVelocity * DEFAULT_LEAD_TIME / totalUnitsPool : dailySalesVelocity > 0 ? 99 : 0;
-          }
-          const heavySellFlag = burnRateRatio >= 1.2 ? 1 : 0;
-          const suggestedRefillQty = lowStockFlag === 1 || heavySellFlag === 1 ? Math.max(0, reorderLevel * 2 - totalUnitsPool) : 0;
-          const metricsJson = JSON.stringify({
-            total_units_pool: totalUnitsPool,
-            reorder_level: reorderLevel,
-            low_stock_flag: lowStockFlag,
-            daily_sales_velocity: Number(dailySalesVelocity.toFixed(3)),
-            burn_rate_ratio: Number(burnRateRatio.toFixed(3)),
-            heavy_sell_flag: heavySellFlag,
-            suggested_refill_qty: suggestedRefillQty,
-            days_since_first_sale: daysSinceFirstSale
-          });
-          insertBatch2.push({
-            medId,
-            totalUnitsPool,
-            lowStockFlag,
-            dailySalesVelocity,
-            burnRateRatio,
-            heavySellFlag,
-            suggestedRefillQty,
-            metricsJson
-          });
-        }
-        const chunkSize = 200;
-        for (let i = 0; i < insertBatch2.length; i += chunkSize) {
-          const chunk = insertBatch2.slice(i, i + chunkSize);
-          const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
-          const flatParams = [];
-          for (const item of chunk) {
-            flatParams.push(
-              item.medId,
-              item.totalUnitsPool,
-              item.lowStockFlag,
-              item.dailySalesVelocity,
-              item.burnRateRatio,
-              item.heavySellFlag,
-              item.suggestedRefillQty,
-              item.metricsJson
-            );
-          }
-          await db2.run(`
-            INSERT INTO precalculated_stock_metrics
-            (medicine_id, total_units_pool, low_stock_flag, daily_sales_velocity, burn_rate_ratio, heavy_sell_flag, suggested_refill_qty, metrics_json, updated_at)
-            VALUES ${placeholders}
-            ON CONFLICT(medicine_id) DO UPDATE SET
-              total_units_pool = excluded.total_units_pool,
-              low_stock_flag = excluded.low_stock_flag,
-              daily_sales_velocity = excluded.daily_sales_velocity,
-              burn_rate_ratio = excluded.burn_rate_ratio,
-              heavy_sell_flag = excluded.heavy_sell_flag,
-              suggested_refill_qty = excluded.suggested_refill_qty,
-              metrics_json = excluded.metrics_json,
-              updated_at = CURRENT_TIMESTAMP
-          `, flatParams);
-        }
-      }
-      eventService.broadcast("stock_metrics_updated", {
-        count: medicineIdsToUpdate.length,
-        updated_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
-    } catch (err) {
-      console.error("[StockCalculatorWorker] Targeted calculation error:", err);
-    } finally {
-      activeStockRecalcPromise = null;
-    }
-  })();
-  return activeStockRecalcPromise;
-}
-async function recalculateStockLimits() {
-  if (activeStockLimitsPromise) {
-    return activeStockLimitsPromise;
-  }
-  activeStockLimitsPromise = (async () => {
-    const db2 = await dbManager.getConnection();
-    try {
-      try {
-        const { deactivateExpiredInventory: deactivateExpiredInventory2 } = await Promise.resolve().then(() => (init_inventoryActive(), inventoryActive_exports));
-        const zeroed = await deactivateExpiredInventory2(db2);
-        if (zeroed > 0) console.log(`[StockCalculatorWorker] Deactivated ${zeroed} expired inventory batch(es).`);
-      } catch (err) {
-        console.error("[StockCalculatorWorker] deactivateExpiredInventory error:", err);
-      }
-      await db2.run(`
-        CREATE TABLE IF NOT EXISTS stock_config (
-          medicine_id INTEGER PRIMARY KEY,
-          avg_daily_sales REAL DEFAULT 0,
-          lead_time_days INTEGER DEFAULT 7,
-          safety_factor REAL DEFAULT 1.5,
-          min_stock_level INTEGER DEFAULT 10,
-          max_stock_level INTEGER DEFAULT 30,
-          reorder_level INTEGER DEFAULT 12,
-          last_calculated DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      const medicines = await db2.all(
-        `SELECT id, name FROM medicines WHERE id IN (
-           SELECT DISTINCT medicine_id FROM inventory_master
-         )`
-      );
-      console.log(`[StockCalculatorWorker] Recalculating stock limits for ${medicines.length} medicines`);
-      const salesGroupRows = await db2.all(`
-        SELECT
-          daily.medicine_id,
-          COALESCE(AVG(daily.daily_qty), 0) as avg_daily_sales
-        FROM (
-          SELECT
-            im.medicine_id,
-            DATE(si.date) as sale_date,
-            SUM(sit.quantity) as daily_qty
-          FROM sale_items sit
-          JOIN sales_invoices si ON si.id = sit.invoice_id
-          JOIN inventory_master im ON im.id = sit.inventory_id
-          WHERE si.date >= datetime('now', '-90 days')
-          GROUP BY im.medicine_id, DATE(si.date)
-        ) daily
-        GROUP BY daily.medicine_id
-      `);
-      const avgSalesMap = /* @__PURE__ */ new Map();
-      for (const r of salesGroupRows) {
-        avgSalesMap.set(r.medicine_id, r.avg_daily_sales);
-      }
-      const configItems = [];
-      const leadTime = DEFAULT_LEAD_TIME;
-      for (const med of medicines) {
-        const avgDailySales = avgSalesMap.get(med.id) || 0;
-        const minStock = Math.max(
-          DEFAULT_MIN_STOCK,
-          Math.ceil(avgDailySales * leadTime * SAFETY_FACTOR)
-        );
-        const reorderLevel = Math.ceil(minStock * 1.2);
-        const maxStock = Math.ceil(minStock * 3);
-        configItems.push({
-          id: med.id,
-          avgDailySales,
-          leadTime,
-          safetyFactor: SAFETY_FACTOR,
-          minStock,
-          maxStock,
-          reorderLevel
-        });
-      }
-      const chunkSize = 200;
-      for (let i = 0; i < configItems.length; i += chunkSize) {
-        const chunk = configItems.slice(i, i + chunkSize);
-        const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
-        const flatParams = [];
-        for (const item of chunk) {
-          flatParams.push(
-            item.id,
-            item.avgDailySales,
-            item.leadTime,
-            item.safetyFactor,
-            item.minStock,
-            item.maxStock,
-            item.reorderLevel
-          );
-        }
-        await db2.run(`
-          INSERT OR REPLACE INTO stock_config
-          (medicine_id, avg_daily_sales, lead_time_days, safety_factor, min_stock_level, max_stock_level, reorder_level, last_calculated)
-          VALUES ${placeholders}
-        `, flatParams);
-      }
-      await recalculateTargetedStockMetrics();
-      console.log("[StockCalculatorWorker] Stock limits recalculated successfully");
-    } catch (err) {
-      console.error("[StockCalculatorWorker] Recalculation error:", err);
-    } finally {
-      activeStockLimitsPromise = null;
-    }
-  })();
-  return activeStockLimitsPromise;
-}
-function startStockCalculatorWorker(intervalMs = 864e5) {
-  if (process.env.DISABLE_BACKGROUND_WORKERS === "true") {
-    console.log("[StockCalculatorWorker] StockCalculatorWorker is STOPPED and DISABLED.");
-    stopStockCalculatorWorker();
-    return;
-  }
-  if (intervalId) return;
-  console.log(`[StockCalculatorWorker] Starting with interval ${intervalMs}ms`);
-  (async () => {
-    try {
-      const db2 = await dbManager.getConnection();
-      await db2.run(`
-        CREATE TABLE IF NOT EXISTS stock_config (
-          medicine_id INTEGER PRIMARY KEY,
-          avg_daily_sales REAL DEFAULT 0,
-          lead_time_days INTEGER DEFAULT 7,
-          safety_factor REAL DEFAULT 1.5,
-          min_stock_level INTEGER DEFAULT 10,
-          max_stock_level INTEGER DEFAULT 30,
-          reorder_level INTEGER DEFAULT 12,
-          last_calculated DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      const row = await db2.get(
-        `SELECT MAX(last_calculated) as last_calc FROM stock_config`
-      );
-      if (row && row.last_calc) {
-        const lastTime = new Date(row.last_calc).getTime();
-        const now = Date.now();
-        const diffMs = now - lastTime;
-        if (diffMs < intervalMs) {
-          console.log(`[StockCalculatorWorker] Stock limits were calculated ${(diffMs / 36e5).toFixed(1)}h ago. Skipping boot recalculation.`);
-          return;
-        }
-      }
-      await recalculateStockLimits();
-    } catch (err) {
-      console.error("[StockCalculatorWorker] Initial calculation check failed:", err);
-    }
-  })();
-  intervalId = setInterval(() => {
-    if (activityTracker.isIdle()) return;
-    runHeavyJob("stock_calculator", recalculateStockLimits).catch(
-      (err) => console.error("[StockCalculatorWorker] Periodic calculation failed:", err)
-    );
-  }, intervalMs);
-}
-function stopStockCalculatorWorker() {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-    console.log("[StockCalculatorWorker] Stopped");
-  }
-}
-var SAFETY_FACTOR, DEFAULT_LEAD_TIME, DEFAULT_MIN_STOCK, debounceTimer2, pendingMedicineIds, fullStockRebuildRequested, activeStockRecalcPromise, activeStockLimitsPromise, intervalId;
-var init_stockCalculatorWorker = __esm({
-  "src/worker/stockCalculatorWorker.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    init_activityTracker();
-    init_backgroundJobLane();
-    SAFETY_FACTOR = 1.5;
-    DEFAULT_LEAD_TIME = 7;
-    DEFAULT_MIN_STOCK = 10;
-    debounceTimer2 = null;
-    pendingMedicineIds = /* @__PURE__ */ new Set();
-    fullStockRebuildRequested = false;
-    activeStockRecalcPromise = null;
-    activeStockLimitsPromise = null;
-    intervalId = null;
   }
 });
 
@@ -29413,11 +33270,11 @@ __export(inventory_exports, {
 function invalidateInventoryCountCache() {
   inventoryCountCache.clear();
 }
-var import_express, import_path22, import_url17, import_qrcode, router, __filename16, __dirname16, DB_PATH6, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
+var import_express2, import_path24, import_url18, import_qrcode, router2, __filename17, __dirname17, DB_PATH7, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
 var init_inventory = __esm({
   "src/routes/inventory.ts"() {
     "use strict";
-    import_express = __toESM(require("express"), 1);
+    import_express2 = __toESM(require("express"), 1);
     init_inventoryService();
     init_inventoryCache();
     init_connection();
@@ -29426,14 +33283,14 @@ var init_inventory = __esm({
     init_eventService();
     init_storeContextService();
     init_auditLoggerService();
-    import_path22 = __toESM(require("path"), 1);
-    import_url17 = require("url");
+    import_path24 = __toESM(require("path"), 1);
+    import_url18 = require("url");
     import_qrcode = __toESM(require("qrcode"), 1);
-    router = import_express.default.Router();
-    __filename16 = (0, import_url17.fileURLToPath)(import_meta_url);
-    __dirname16 = import_path22.default.dirname(__filename16);
-    DB_PATH6 = process.env.DB_PATH || import_path22.default.resolve(__dirname16, "..", "..", "data", "app.db");
-    router.use((req, res, next) => {
+    router2 = import_express2.default.Router();
+    __filename17 = (0, import_url18.fileURLToPath)(import_meta_url);
+    __dirname17 = import_path24.default.dirname(__filename17);
+    DB_PATH7 = process.env.DB_PATH || import_path24.default.resolve(__dirname17, "..", "..", "data", "app.db");
+    router2.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -29455,7 +33312,7 @@ var init_inventory = __esm({
     });
     INVENTORY_COUNT_TTL_MS = 6e4;
     inventoryCountCache = /* @__PURE__ */ new Map();
-    router.get("/", async (req, res) => {
+    router2.get("/", async (req, res) => {
       let db2;
       const page = parseInt(req.query.page) || 1;
       const search = (req.query.search || "").trim().replace(/\s+/g, " ");
@@ -29614,7 +33471,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.post("/override", async (req, res) => {
+    router2.post("/override", async (req, res) => {
       let db2;
       try {
         const { inventory_id, quantity, reason } = req.body;
@@ -29655,7 +33512,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.get("/peek/:medicine_id", async (req, res) => {
+    router2.get("/peek/:medicine_id", async (req, res) => {
       let db2;
       try {
         const { medicine_id } = req.params;
@@ -29681,7 +33538,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.put("/:id", async (req, res) => {
+    router2.put("/:id", async (req, res) => {
       let db2;
       const { id } = req.params;
       const { quantity, rack_location, batch_no, expiry_date, reorder_level, name, mrp, loose_quantity, pack_size, sell_price } = req.body;
@@ -29797,7 +33654,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router.post("/bulk-sell-prices", async (req, res) => {
+    router2.post("/bulk-sell-prices", async (req, res) => {
       let db2;
       try {
         const { items = [] } = req.body;
@@ -29826,7 +33683,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    router.delete("/:id", async (req, res) => {
+    router2.delete("/:id", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -29859,7 +33716,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router.post("/bulk-action", async (req, res) => {
+    router2.post("/bulk-action", async (req, res) => {
       let db2;
       const { action, ids = [] } = req.body;
       try {
@@ -29885,7 +33742,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.post("/", async (req, res) => {
+    router2.post("/", async (req, res) => {
       const { name, api_reference, mrp, cost_price, batch_no, expiry_date, quantity, rack_location, category } = req.body;
       if (!name) return res.status(400).json({ error: "Medicine name is required" });
       let db2;
@@ -29918,7 +33775,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.post("/medicines/alias", async (req, res) => {
+    router2.post("/medicines/alias", async (req, res) => {
       const { alias_name, medicine_id } = req.body;
       if (!alias_name || !medicine_id) {
         return res.status(400).json({ error: "alias_name and medicine_id are required" });
@@ -29936,7 +33793,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to save alias" });
       }
     });
-    router.get("/catalog-search", async (req, res) => {
+    router2.get("/catalog-search", async (req, res) => {
       let db2;
       try {
         const rawQ = (req.query.q || "").trim();
@@ -30134,7 +33991,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Search failed" });
       }
     });
-    router.get("/batch-info", async (req, res) => {
+    router2.get("/batch-info", async (req, res) => {
       let db2;
       try {
         const medicine_id = req.query.medicine_id ? parseInt(req.query.medicine_id, 10) : null;
@@ -30177,7 +34034,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.get("/barcode/:id", async (req, res) => {
+    router2.get("/barcode/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -30214,7 +34071,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to generate QR Code" });
       }
     });
-    router.get("/medicines/:id/enriched", async (req, res) => {
+    router2.get("/medicines/:id/enriched", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -30244,7 +34101,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch enriched medicine details" });
       }
     });
-    router.get("/medicines/:id/quick-edit", async (req, res) => {
+    router2.get("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -30274,7 +34131,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch quick-edit details" });
       }
     });
-    router.put("/medicines/:id/quick-edit", async (req, res) => {
+    router2.put("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       const {
@@ -30474,7 +34331,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error during update" });
       }
     });
-    router.post("/sync", async (req, res) => {
+    router2.post("/sync", async (req, res) => {
       const { updates = [] } = req.body;
       if (!Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an array" });
@@ -30507,7 +34364,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error during stock sync" });
       }
     });
-    router.get("/therapeutic-search", async (req, res) => {
+    router2.get("/therapeutic-search", async (req, res) => {
       const { query } = req.query;
       if (!query || typeof query !== "string") {
         return res.json([]);
@@ -30528,7 +34385,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to search by therapeutic class" });
       }
     });
-    router.get("/precalculated-metrics", async (req, res) => {
+    router2.get("/precalculated-metrics", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { low_stock_only, heavy_sell_only, limit = "100" } = req.query;
@@ -30561,7 +34418,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch precalculated metrics: " + err.message });
       }
     });
-    router.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
+    router2.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
       try {
         const { id } = req.params;
         const { allow_loose_sale } = req.body;
@@ -30578,7 +34435,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
       }
     });
-    router.post("/toggle-online", async (req, res) => {
+    router2.post("/toggle-online", async (req, res) => {
       try {
         const { medicine_id, medicine_ids, is_online } = req.body;
         const onlineVal = is_online ? 1 : 0;
@@ -30606,7 +34463,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle online status" });
       }
     });
-    router.post("/publish-all-in-stock", async (req, res) => {
+    router2.post("/publish-all-in-stock", async (req, res) => {
       try {
         const { is_online = true } = req.body;
         const onlineVal = is_online ? 1 : 0;
@@ -30628,7 +34485,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to publish in-stock medicines" });
       }
     });
-    inventory_default = router;
+    inventory_default = router2;
   }
 });
 
@@ -30769,15 +34626,15 @@ async function logAction(db2, actionType, description, metadata) {
     [actionType, description, metadata ? JSON.stringify(metadata) : null]
   );
 }
-var import_express2, router2, TIMELINE_CACHE_TTL_MS, TIMELINE_CACHE_MAX_ENTRIES, timelineCache, nextDayString, rowTs, investigation_default;
+var import_express3, router3, TIMELINE_CACHE_TTL_MS, TIMELINE_CACHE_MAX_ENTRIES, timelineCache, nextDayString, rowTs, investigation_default;
 var init_investigation = __esm({
   "src/routes/investigation.ts"() {
     "use strict";
-    import_express2 = __toESM(require("express"), 1);
+    import_express3 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
     init_summaryCacheService();
-    router2 = import_express2.default.Router();
+    router3 = import_express3.default.Router();
     TIMELINE_CACHE_TTL_MS = 6e4;
     TIMELINE_CACHE_MAX_ENTRIES = 40;
     timelineCache = /* @__PURE__ */ new Map();
@@ -30790,7 +34647,7 @@ var init_investigation = __esm({
       const t = Date.parse(String(value ?? ""));
       return Number.isNaN(t) ? 0 : t;
     };
-    router2.get("/timeline", async (req, res) => {
+    router3.get("/timeline", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const {
@@ -31306,7 +35163,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.get("/search", async (req, res) => {
+    router3.get("/search", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const {
@@ -31400,7 +35257,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.get("/details/:inventoryId", async (req, res) => {
+    router3.get("/details/:inventoryId", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { inventoryId } = req.params;
@@ -31465,7 +35322,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.put("/inventory/:inventoryId", async (req, res) => {
+    router3.put("/inventory/:inventoryId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -31525,7 +35382,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router2.put("/sales/:invoiceId", async (req, res) => {
+    router3.put("/sales/:invoiceId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -31720,7 +35577,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router2.put("/purchases/:purchaseId", async (req, res) => {
+    router3.put("/purchases/:purchaseId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -31886,7 +35743,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router2.get("/audit-logs/:inventoryId", async (req, res) => {
+    router3.get("/audit-logs/:inventoryId", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { inventoryId } = req.params;
@@ -31913,7 +35770,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    investigation_default = router2;
+    investigation_default = router3;
   }
 });
 
@@ -31928,18 +35785,18 @@ __export(nonMovingReportService_exports, {
 function invalidateNonMovingReportCache() {
   nonMovingCache.clear();
 }
-var import_path23, import_fs20, import_url18, __filename17, __dirname17, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
+var import_path25, import_fs22, import_url19, __filename18, __dirname18, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
 var init_nonMovingReportService = __esm({
   "src/services/nonMovingReportService.ts"() {
     "use strict";
     init_inventoryActive();
     init_connection();
     init_telegramBot();
-    import_path23 = __toESM(require("path"), 1);
-    import_fs20 = __toESM(require("fs"), 1);
-    import_url18 = require("url");
-    __filename17 = (0, import_url18.fileURLToPath)(import_meta_url);
-    __dirname17 = import_path23.default.dirname(__filename17);
+    import_path25 = __toESM(require("path"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
+    import_url19 = require("url");
+    __filename18 = (0, import_url19.fileURLToPath)(import_meta_url);
+    __dirname18 = import_path25.default.dirname(__filename18);
     NON_MOVING_CACHE_TTL_MS = 5 * 6e4;
     nonMovingCache = /* @__PURE__ */ new Map();
     NonMovingReportService = class {
@@ -32075,13 +35932,13 @@ var init_nonMovingReportService = __esm({
        */
       async saveReportToFile(report, filename) {
         try {
-          const reportDir = import_path23.default.join(process.cwd(), "data", "reports");
-          if (!import_fs20.default.existsSync(reportDir)) {
-            import_fs20.default.mkdirSync(reportDir, { recursive: true });
+          const reportDir = import_path25.default.join(process.cwd(), "data", "reports");
+          if (!import_fs22.default.existsSync(reportDir)) {
+            import_fs22.default.mkdirSync(reportDir, { recursive: true });
           }
           const fileName = filename || `non_moving_report_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-          const filePath = import_path23.default.join(reportDir, fileName);
-          await import_fs20.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
+          const filePath = import_path25.default.join(reportDir, fileName);
+          await import_fs22.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
           console.log(`Non-moving inventory report saved to: ${filePath}`);
           return filePath;
         } catch (error) {
@@ -32304,7 +36161,7 @@ __export(monthlyReportService_exports, {
   MonthlyReportService: () => MonthlyReportService,
   monthlyReportService: () => monthlyReportService
 });
-var import_pdfkit2, import_xlsx2, import_fs21, import_path24, import_url19, __filename18, __dirname18, TEMP_DIR2, MonthlyReportService, monthlyReportService;
+var import_pdfkit2, import_xlsx2, import_fs23, import_path26, import_url20, __filename19, __dirname19, TEMP_DIR2, MonthlyReportService, monthlyReportService;
 var init_monthlyReportService = __esm({
   "src/services/monthlyReportService.ts"() {
     "use strict";
@@ -32314,12 +36171,12 @@ var init_monthlyReportService = __esm({
     init_config();
     import_pdfkit2 = __toESM(require("pdfkit"), 1);
     import_xlsx2 = __toESM(require("xlsx"), 1);
-    import_fs21 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
-    import_url19 = require("url");
-    __filename18 = (0, import_url19.fileURLToPath)(import_meta_url);
-    __dirname18 = import_path24.default.dirname(__filename18);
-    TEMP_DIR2 = import_path24.default.resolve(getAppDataDir(), "uploads", "temp");
+    import_fs23 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
+    import_url20 = require("url");
+    __filename19 = (0, import_url20.fileURLToPath)(import_meta_url);
+    __dirname19 = import_path26.default.dirname(__filename19);
+    TEMP_DIR2 = import_path26.default.resolve(getAppDataDir(), "uploads", "temp");
     MonthlyReportService = class {
       /**
        * Helper to compute date range for monthly, midmonth, quarterly, yearly, or custom date ranges.
@@ -32564,13 +36421,13 @@ var init_monthlyReportService = __esm({
        * Generate a PDF report document using pdfkit with customizable template themes.
        */
       async generateReportPdf(data, chartStyle = "standard", templateTheme = "executive", outputPath) {
-        if (!import_fs21.default.existsSync(TEMP_DIR2)) {
-          import_fs21.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs23.default.existsSync(TEMP_DIR2)) {
+          import_fs23.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+        const finalPath = outputPath || import_path26.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
         return new Promise((resolve, reject) => {
           const doc = new import_pdfkit2.default({ margin: 40, size: "A4" });
-          const stream = import_fs21.default.createWriteStream(finalPath);
+          const stream = import_fs23.default.createWriteStream(finalPath);
           doc.pipe(stream);
           const fmt = (n) => `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           let headerBg = "#0f172a";
@@ -32749,10 +36606,10 @@ Review this sample PDF report layout on your phone to choose your preferred desi
        * Generate an Excel spreadsheet report document.
        */
       async generateReportExcel(data, outputPath) {
-        if (!import_fs21.default.existsSync(TEMP_DIR2)) {
-          import_fs21.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs23.default.existsSync(TEMP_DIR2)) {
+          import_fs23.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path24.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
+        const finalPath = outputPath || import_path26.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
         const wsData = [
           [`${data.pharmacyName} - ${data.periodLabel}`],
           [`Period: ${data.startDate} to ${data.endDate}`],
@@ -32963,17 +36820,17 @@ async function resolveFromDate(requestedFrom, db2) {
     return "1970-01-01";
   }
 }
-var import_express3, router3, REPORTS_SUMMARY_TTL_MS, REPORTS_SUMMARY_CACHE_MAX, reportsSummaryCache, SALES_DATE_EXPR, SALES_INV_DATE_EXPR, PURCHASES_DATE_EXPR, PURCHASES_P_DATE_EXPR, reports_default;
+var import_express4, router4, REPORTS_SUMMARY_TTL_MS, REPORTS_SUMMARY_CACHE_MAX, reportsSummaryCache, SALES_DATE_EXPR, SALES_INV_DATE_EXPR, PURCHASES_DATE_EXPR, PURCHASES_P_DATE_EXPR, reports_default;
 var init_reports = __esm({
   "src/routes/reports.ts"() {
     "use strict";
-    import_express3 = __toESM(require("express"), 1);
+    import_express4 = __toESM(require("express"), 1);
     init_connection();
     init_reportExporter();
     init_nonMovingReportService();
     init_reportCutover();
     init_storeContextService();
-    router3 = import_express3.default.Router();
+    router4 = import_express4.default.Router();
     REPORTS_SUMMARY_TTL_MS = 6e4;
     REPORTS_SUMMARY_CACHE_MAX = 60;
     reportsSummaryCache = /* @__PURE__ */ new Map();
@@ -32981,7 +36838,7 @@ var init_reports = __esm({
     SALES_INV_DATE_EXPR = "COALESCE(date(sinv.business_date), date(sinv.date), date(substr(sinv.date, 1, 10)), date(substr(sinv.business_date, 1, 10)))";
     PURCHASES_DATE_EXPR = "COALESCE(date(date), date(business_date), date(substr(date, 1, 10)), date(substr(business_date, 1, 10)))";
     PURCHASES_P_DATE_EXPR = "COALESCE(date(p.date), date(p.business_date), date(substr(p.date, 1, 10)), date(substr(p.business_date, 1, 10)))";
-    router3.get("/", async (req, res) => {
+    router4.get("/", async (req, res) => {
       const { fromDate, toDate, type } = req.query;
       const reportType = type ? String(type) : "sales";
       const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
@@ -33122,7 +36979,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.get("/data", async (req, res) => {
+    router4.get("/data", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
       const allStores = req.query.all_stores === "true";
@@ -33182,7 +37039,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.get("/export-pdf", async (req, res) => {
+    router4.get("/export-pdf", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -33267,7 +37124,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export PDF" });
       }
     });
-    router3.get("/export-excel", async (req, res) => {
+    router4.get("/export-excel", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -33340,7 +37197,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export Excel sheet" });
       }
     });
-    router3.get("/export-csv", async (req, res) => {
+    router4.get("/export-csv", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -33413,7 +37270,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export CSV file" });
       }
     });
-    router3.get("/non-moving", async (req, res) => {
+    router4.get("/non-moving", async (req, res) => {
       try {
         const { days } = req.query;
         const periodDays = days ? parseInt(days) : 200;
@@ -33435,7 +37292,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate non-moving report" });
       }
     });
-    router3.get("/non-moving/data", async (req, res) => {
+    router4.get("/non-moving/data", async (req, res) => {
       try {
         const { days } = req.query;
         const periodDays = days ? parseInt(days) : 200;
@@ -33451,7 +37308,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to get non-moving inventory data" });
       }
     });
-    router3.get("/product-trace", async (req, res) => {
+    router4.get("/product-trace", async (req, res) => {
       const query = (req.query.q || "").trim();
       if (!query || query.length < 2) {
         return res.json({ purchases: [], sales: [] });
@@ -33506,7 +37363,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.get("/monthly-scheduled-preview", async (req, res) => {
+    router4.get("/monthly-scheduled-preview", async (req, res) => {
       const periodType = req.query.type ? String(req.query.type) : "monthly";
       const chartStyle = req.query.style ? String(req.query.style) : "standard";
       const theme = req.query.theme ? String(req.query.theme) : "executive";
@@ -33536,7 +37393,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate report preview" });
       }
     });
-    router3.post("/send-all-template-samples", async (req, res) => {
+    router4.post("/send-all-template-samples", async (req, res) => {
       const customPhone = req.body.phone ? String(req.body.phone).trim() : void 0;
       try {
         const { monthlyReportService: monthlyReportService2 } = await Promise.resolve().then(() => (init_monthlyReportService(), monthlyReportService_exports));
@@ -33547,7 +37404,7 @@ var init_reports = __esm({
         res.status(500).json({ success: false, message: err.message || "Failed to send template samples" });
       }
     });
-    router3.post("/send-monthly-scheduled", async (req, res) => {
+    router4.post("/send-monthly-scheduled", async (req, res) => {
       const periodType = req.body.type ? String(req.body.type) : "monthly";
       const customPhone = req.body.phone ? String(req.body.phone).trim() : void 0;
       const deliveryFormat = req.body.deliveryFormat ? String(req.body.deliveryFormat).trim() : void 0;
@@ -33564,7 +37421,7 @@ var init_reports = __esm({
         res.status(500).json({ success: false, message: err.message || "Failed to send report" });
       }
     });
-    router3.get("/gstr-1", async (req, res) => {
+    router4.get("/gstr-1", async (req, res) => {
       const { fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -33618,7 +37475,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate GSTR-1 summary" });
       }
     });
-    router3.get("/hsn-summary", async (req, res) => {
+    router4.get("/hsn-summary", async (req, res) => {
       const { fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -33669,7 +37526,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate HSN summary report" });
       }
     });
-    reports_default = router3;
+    reports_default = router4;
   }
 });
 
@@ -33678,7 +37535,7 @@ var connection_exports = {};
 __export(connection_exports, {
   dbManager: () => dbManager
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path25, import_fs22, import_zlib, import_promises, DB_PATH7, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path27, import_fs24, import_zlib, import_promises, DB_PATH8, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -33686,12 +37543,12 @@ var init_connection = __esm({
     import_sqlite = require("sqlite");
     import_sqlite32 = __toESM(require("sqlite3"), 1);
     import_sqlite2 = require("sqlite");
-    import_path25 = __toESM(require("path"), 1);
-    import_fs22 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
     init_config();
-    DB_PATH7 = config.dbPath;
+    DB_PATH8 = config.dbPath;
     DatabaseManager = class _DatabaseManager {
       static instance;
       connection = null;
@@ -33931,37 +37788,37 @@ var init_connection = __esm({
           }
         }
         console.error("[DB] Database load failed. Starting silent self-healing database restoration...");
-        const logPath = import_path25.default.join(import_path25.default.dirname(dbPath), "self_healing.log");
+        const logPath = import_path27.default.join(import_path27.default.dirname(dbPath), "self_healing.log");
         const appendLog = (msg) => {
           const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-          import_fs22.default.appendFileSync(logPath, `[${timestamp}] ${msg}
+          import_fs24.default.appendFileSync(logPath, `[${timestamp}] ${msg}
 `);
         };
         appendLog(`[ERROR] DB_CORRUPT: ${initialErrorMsg}`);
         const backups = [];
-        const dataDir = import_path25.default.dirname(dbPath);
-        if (import_fs22.default.existsSync(dataDir)) {
-          import_fs22.default.readdirSync(dataDir).forEach((file) => {
+        const dataDir = import_path27.default.dirname(dbPath);
+        if (import_fs24.default.existsSync(dataDir)) {
+          import_fs24.default.readdirSync(dataDir).forEach((file) => {
             if (file.startsWith("app.db.bak_")) {
-              const fp = import_path25.default.join(dataDir, file);
+              const fp = import_path27.default.join(dataDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs22.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs24.default.statSync(fp).mtime.getTime(),
                 type: "bak"
               });
             }
           });
         }
-        const snapshotsDir = import_path25.default.join(getAppDataDir(), "backup", "snapshots");
-        if (import_fs22.default.existsSync(snapshotsDir)) {
-          import_fs22.default.readdirSync(snapshotsDir).forEach((file) => {
+        const snapshotsDir = import_path27.default.join(getAppDataDir(), "backup", "snapshots");
+        if (import_fs24.default.existsSync(snapshotsDir)) {
+          import_fs24.default.readdirSync(snapshotsDir).forEach((file) => {
             if (file.startsWith("snapshot_") && file.endsWith(".db.gz")) {
-              const fp = import_path25.default.join(snapshotsDir, file);
+              const fp = import_path27.default.join(snapshotsDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs22.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs24.default.statSync(fp).mtime.getTime(),
                 type: "gz"
               });
             }
@@ -33975,14 +37832,14 @@ var init_connection = __esm({
         const targetBackup = backups[0];
         appendLog(`[ACTION] RENAME: ${dbPath} -> ${dbPath}.corrupt`);
         try {
-          if (import_fs22.default.existsSync(dbPath)) {
-            if (import_fs22.default.existsSync(dbPath + ".corrupt")) {
-              import_fs22.default.unlinkSync(dbPath + ".corrupt");
+          if (import_fs24.default.existsSync(dbPath)) {
+            if (import_fs24.default.existsSync(dbPath + ".corrupt")) {
+              import_fs24.default.unlinkSync(dbPath + ".corrupt");
             }
-            import_fs22.default.renameSync(dbPath, dbPath + ".corrupt");
+            import_fs24.default.renameSync(dbPath, dbPath + ".corrupt");
           }
-          if (import_fs22.default.existsSync(dbPath + "-wal")) import_fs22.default.unlinkSync(dbPath + "-wal");
-          if (import_fs22.default.existsSync(dbPath + "-shm")) import_fs22.default.unlinkSync(dbPath + "-shm");
+          if (import_fs24.default.existsSync(dbPath + "-wal")) import_fs24.default.unlinkSync(dbPath + "-wal");
+          if (import_fs24.default.existsSync(dbPath + "-shm")) import_fs24.default.unlinkSync(dbPath + "-shm");
         } catch (err) {
           appendLog(`[ERROR] Failed to rename corrupt database or clean logs: ${err.message}`);
           throw new Error("DB_INTEGRITY_FAILURE");
@@ -33991,11 +37848,11 @@ var init_connection = __esm({
         try {
           if (targetBackup.type === "gz") {
             const gunzip = import_zlib.default.createGunzip();
-            const source = import_fs22.default.createReadStream(targetBackup.path);
-            const destination = import_fs22.default.createWriteStream(dbPath);
+            const source = import_fs24.default.createReadStream(targetBackup.path);
+            const destination = import_fs24.default.createWriteStream(dbPath);
             await (0, import_promises.pipeline)(source, gunzip, destination);
           } else {
-            import_fs22.default.copyFileSync(targetBackup.path, dbPath);
+            import_fs24.default.copyFileSync(targetBackup.path, dbPath);
           }
         } catch (err) {
           appendLog(`[ERROR] Failed to restore backup file: ${err.message}`);
@@ -34133,7 +37990,7 @@ function parseExtractedText(text, onProgress, progressStart = 10, progressEnd = 
   return extracted;
 }
 async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
-  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path26.default.basename(filePath)}. Falling back to OCR.`);
+  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path28.default.basename(filePath)}. Falling back to OCR.`);
   if (onProgress) onProgress(5);
   let getDocument;
   try {
@@ -34185,7 +38042,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   return parseExtractedText(allText, onProgress, 80, 100);
 }
 async function extractFromPdf(filePath, onProgress) {
-  const data = await import_fs23.default.promises.readFile(filePath);
+  const data = await import_fs25.default.promises.readFile(filePath);
   const pdfData = await (0, import_pdf_parse.default)(data);
   const text = pdfData.text;
   const cleanedText = text.replace(/\s+/g, "").trim();
@@ -34194,18 +38051,18 @@ async function extractFromPdf(filePath, onProgress) {
   }
   return parseExtractedText(text, onProgress);
 }
-var import_fs23, import_path26, import_pdf_parse, import_sync2, import_url20, __filename19, __dirname19, MIN_TEXT_CHARS_THRESHOLD;
+var import_fs25, import_path28, import_pdf_parse, import_sync2, import_url21, __filename20, __dirname20, MIN_TEXT_CHARS_THRESHOLD;
 var init_extractor = __esm({
   "src/extractor.ts"() {
     "use strict";
-    import_fs23 = __toESM(require("fs"), 1);
-    import_path26 = __toESM(require("path"), 1);
+    import_fs25 = __toESM(require("fs"), 1);
+    import_path28 = __toESM(require("path"), 1);
     import_pdf_parse = __toESM(require("pdf-parse"), 1);
     import_sync2 = require("csv-parse/sync");
     init_aiCameraService();
-    import_url20 = require("url");
-    __filename19 = (0, import_url20.fileURLToPath)(import_meta_url);
-    __dirname19 = import_path26.default.dirname(__filename19);
+    import_url21 = require("url");
+    __filename20 = (0, import_url21.fileURLToPath)(import_meta_url);
+    __dirname20 = import_path28.default.dirname(__filename20);
     MIN_TEXT_CHARS_THRESHOLD = 50;
   }
 });
@@ -34281,7 +38138,7 @@ async function preScanCsv(filePath, onProgress) {
   return new Promise((resolve, reject) => {
     let nameCol = "";
     let processedRows = 0;
-    const readStream = import_fs24.default.createReadStream(filePath);
+    const readStream = import_fs26.default.createReadStream(filePath);
     const parserStream = readStream.pipe((0, import_csv_parser2.default)());
     parserStream.on("headers", (headers) => {
       nameCol = headers.find((c) => /name|brand/i.test(c)) || headers.find((c) => /product|item|inn|title/i.test(c)) || headers[0] || "";
@@ -34348,9 +38205,9 @@ function parseCsvLine(line) {
 async function readCsvRawRows(filePath, maxRows = 20) {
   return new Promise((resolve) => {
     const rawRows = [];
-    if (!import_fs24.default.existsSync(filePath)) return resolve(rawRows);
+    if (!import_fs26.default.existsSync(filePath)) return resolve(rawRows);
     const rl = import_readline.default.createInterface({
-      input: import_fs24.default.createReadStream(filePath),
+      input: import_fs26.default.createReadStream(filePath),
       crlfDelay: Infinity
     });
     rl.on("line", (line) => {
@@ -34371,8 +38228,8 @@ async function readCsvPreview(filePath, maxRows = 10, skipRows = 0) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let headers = [];
-    if (!import_fs24.default.existsSync(filePath)) return resolve({ headers, rows });
-    const stream = import_fs24.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
+    if (!import_fs26.default.existsSync(filePath)) return resolve({ headers, rows });
+    const stream = import_fs26.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
     stream.on("headers", (h) => {
       headers = h;
     });
@@ -34473,7 +38330,7 @@ async function runCatalogAnalysis(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path27.default.extname(job.file_path).toLowerCase();
+    const ext = import_path29.default.extname(job.file_path).toLowerCase();
     let headers = [];
     let previewData = [];
     let rawRows = [];
@@ -34764,7 +38621,7 @@ async function runCatalogImport(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path27.default.extname(job.file_path).toLowerCase();
+    const ext = import_path29.default.extname(job.file_path).toLowerCase();
     const mapping = JSON.parse(job.mapping_config || "{}");
     const filters = JSON.parse(job.data_filters || "{}");
     const skipRows = Math.max(0, parseInt(filters.skipRows || "0", 10));
@@ -34848,7 +38705,7 @@ async function runCatalogImport(jobId) {
     if (ext === ".csv") {
       totalToProcess = await new Promise((resolve) => {
         let count = 0;
-        const countStream = import_fs24.default.createReadStream(job.file_path);
+        const countStream = import_fs26.default.createReadStream(job.file_path);
         countStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows })).on("data", () => {
           count++;
         }).on("end", () => {
@@ -35063,7 +38920,7 @@ async function runCatalogImport(jobId) {
     };
     let lastProgressTime = Date.now();
     if (ext === ".csv") {
-      const readStream = import_fs24.default.createReadStream(job.file_path);
+      const readStream = import_fs26.default.createReadStream(job.file_path);
       const csvStream = readStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
       readStream.on("error", (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
@@ -35240,12 +39097,12 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs24, import_path27, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url21, __filename20, __dirname20, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
+var import_fs26, import_path29, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, import_url22, __filename21, __dirname21, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
-    import_fs24 = __toESM(require("fs"), 1);
-    import_path27 = __toESM(require("path"), 1);
+    import_fs26 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
     import_readline = __toESM(require("readline"), 1);
     init_config();
     init_connection();
@@ -35256,9 +39113,9 @@ var init_catalogWorker = __esm({
     import_sqlite33 = __toESM(require("sqlite3"), 1);
     import_sqlite4 = require("sqlite");
     import_worker_threads = require("worker_threads");
-    import_url21 = require("url");
-    __filename20 = (0, import_url21.fileURLToPath)(import_meta_url);
-    __dirname20 = import_path27.default.dirname(__filename20);
+    import_url22 = require("url");
+    __filename21 = (0, import_url22.fileURLToPath)(import_meta_url);
+    __dirname21 = import_path29.default.dirname(__filename21);
     getDbPath2 = () => config.dbPath;
     catalogEmptyHistoryScans = 0;
     catalogNudgeRequested = false;
@@ -35374,10 +39231,229 @@ var init_notFoundHandler = __esm({
   }
 });
 
+// src/services/licenseService.ts
+var licenseService_exports = {};
+__export(licenseService_exports, {
+  activateLicense: () => activateLicense,
+  checkForUpdate: () => checkForUpdate,
+  checkLicense: () => checkLicense,
+  getMachineId: () => getMachineId,
+  reportCrashTelemetry: () => reportCrashTelemetry
+});
+function getMachineId() {
+  const nets = (0, import_os.networkInterfaces)();
+  let mac = "";
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (!net.internal && net.mac !== "00:00:00:00:00:00") {
+        mac = net.mac;
+        break;
+      }
+    }
+    if (mac) break;
+  }
+  let winGuid = "";
+  try {
+    const out = (0, import_child_process6.execSync)(
+      'reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
+      { encoding: "utf8", timeout: 3e3 }
+    );
+    const m = out.match(/MachineGuid\s+REG_SZ\s+(.+)/);
+    if (m) winGuid = m[1].trim();
+  } catch {
+  }
+  return import_crypto3.default.createHash("sha256").update(`${mac}|${winGuid}`).digest("hex").substring(0, 32);
+}
+async function checkLicense() {
+  const db2 = await dbManager.getConnection();
+  const row = await db2.get("SELECT * FROM app_license WHERE id = 1");
+  if (!row || row.testing_mode === 1) {
+    const firstBoot = row?.activated_at ? new Date(row.activated_at).getTime() : Date.now();
+    if (!row?.activated_at) {
+      await db2.run(
+        "UPDATE app_license SET activated_at = ?, status = ? WHERE id = 1",
+        [(/* @__PURE__ */ new Date()).toISOString(), "testing"]
+      );
+    }
+    const elapsed2 = Date.now() - firstBoot;
+    const remaining2 = Math.max(0, TESTING_FREE_PERIOD_MS - elapsed2);
+    const daysLeft2 = Math.floor(remaining2 / (24 * 60 * 60 * 1e3));
+    return {
+      valid: daysLeft2 > 0,
+      mode: "testing",
+      pharmacyName: null,
+      licenseId: null,
+      daysUntilExpiry: daysLeft2,
+      message: daysLeft2 > 30 ? `Testing mode \u2014 ${daysLeft2} days remaining` : daysLeft2 > 0 ? `\u26A0\uFE0F Testing period expires in ${daysLeft2} days. Please activate your license.` : "Testing period expired. Please activate your license."
+    };
+  }
+  const machineId = getMachineId();
+  try {
+    const resp = await import_axios.default.get(`${LICENSE_SERVER}/api/license/validate`, {
+      params: { licenseId: row.license_id, machineId },
+      timeout: 5e3
+    });
+    if (resp.data.valid) {
+      const expiresAt = resp.data.expiresAt || null;
+      await db2.run(
+        "UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ? WHERE id = 1",
+        [(/* @__PURE__ */ new Date()).toISOString(), "licensed", expiresAt]
+      );
+      const daysLeft2 = resp.data.daysUntilExpiry ?? null;
+      return {
+        valid: true,
+        mode: "licensed",
+        pharmacyName: resp.data.pharmacyName,
+        licenseId: row.license_id,
+        daysUntilExpiry: daysLeft2,
+        message: daysLeft2 !== null && daysLeft2 <= 30 ? `\u26A0\uFE0F License expires in ${daysLeft2} day${daysLeft2 !== 1 ? "s" : ""}. Please renew.` : `Licensed to ${resp.data.pharmacyName}`
+      };
+    }
+  } catch (err) {
+    if (err.response?.data?.code === "EXPIRED") {
+      await db2.run(
+        "UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1",
+        ["expired", (/* @__PURE__ */ new Date()).toISOString()]
+      );
+      return {
+        valid: false,
+        mode: "expired",
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: 0,
+        message: "License has expired. Please renew your license."
+      };
+    }
+  }
+  const lastValidated = row.last_validated_at ? new Date(row.last_validated_at).getTime() : 0;
+  const graceDays = row.offline_grace_days ?? 7;
+  const graceMs = graceDays * 24 * 60 * 60 * 1e3;
+  const elapsed = Date.now() - lastValidated;
+  const remaining = Math.max(0, graceMs - elapsed);
+  const daysLeft = Math.floor(remaining / (24 * 60 * 60 * 1e3));
+  if (remaining > 0) {
+    return {
+      valid: true,
+      mode: "grace",
+      pharmacyName: row.pharmacy_name,
+      licenseId: row.license_id,
+      daysUntilExpiry: daysLeft,
+      message: `Offline mode \u2014 license unverified. ${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining before lockout.`
+    };
+  }
+  return {
+    valid: false,
+    mode: "expired",
+    pharmacyName: row.pharmacy_name,
+    licenseId: row.license_id,
+    daysUntilExpiry: 0,
+    message: "License validation failed. Please connect to the internet to verify your license."
+  };
+}
+async function activateLicense(licenseId, licenseKey) {
+  const machineId = getMachineId();
+  const machineName = (() => {
+    try {
+      return (0, import_child_process6.execSync)("hostname", { encoding: "utf8", timeout: 2e3 }).trim();
+    } catch {
+      return "Unknown PC";
+    }
+  })();
+  try {
+    const resp = await import_axios.default.post(`${LICENSE_SERVER}/api/license/activate`, {
+      licenseId,
+      licenseKey,
+      machineId,
+      machineName
+    }, { timeout: 1e4 });
+    if (resp.data.success) {
+      const db2 = await dbManager.getConnection();
+      await db2.run(`
+        UPDATE app_license
+        SET license_id = ?, machine_id = ?, pharmacy_name = ?,
+            activated_at = ?, last_validated_at = ?, status = ?, testing_mode = 0
+        WHERE id = 1
+      `, [
+        licenseId,
+        machineId,
+        resp.data.pharmacyName,
+        resp.data.activatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        (/* @__PURE__ */ new Date()).toISOString(),
+        "licensed"
+      ]);
+      return { success: true, pharmacyName: resp.data.pharmacyName };
+    }
+    return { success: false, error: "Activation failed" };
+  } catch (err) {
+    const msg = err.response?.data?.error || err.message || "Network error";
+    return { success: false, error: msg };
+  }
+}
+async function checkForUpdate() {
+  try {
+    const db2 = await dbManager.getConnection();
+    const row = await db2.get("SELECT current_version FROM update_checks WHERE id = 1");
+    const currentVersion = row?.current_version || APP_VERSION;
+    const licRow = await db2.get("SELECT license_id FROM app_license WHERE id = 1");
+    const machineId = getMachineId();
+    const resp = await import_axios.default.get(`${LICENSE_SERVER}/api/updates/check`, {
+      params: {
+        version: currentVersion,
+        licenseId: licRow?.license_id || void 0,
+        machineId
+      },
+      timeout: 8e3
+    });
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    await db2.run(
+      "UPDATE update_checks SET last_checked_at = ?, last_known_version = ? WHERE id = 1",
+      [now, resp.data.latestVersion]
+    );
+    return {
+      hasUpdate: resp.data.hasUpdate,
+      latestVersion: resp.data.latestVersion,
+      downloadUrl: resp.data.downloadUrl,
+      changelog: resp.data.changelog
+    };
+  } catch {
+    return null;
+  }
+}
+async function reportCrashTelemetry(errorData) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const licRow = await db2.get("SELECT license_id FROM app_license WHERE id = 1");
+    const machineId = getMachineId();
+    await import_axios.default.post(`${LICENSE_SERVER}/api/telemetry/report`, {
+      machineId,
+      licenseId: licRow?.license_id || null,
+      appVersion: APP_VERSION,
+      errorType: errorData.errorType,
+      message: errorData.message,
+      stack: errorData.stack
+    }, { timeout: 4e3 });
+  } catch {
+  }
+}
+var import_crypto3, import_child_process6, import_os, import_axios, LICENSE_SERVER, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var init_licenseService = __esm({
+  "src/services/licenseService.ts"() {
+    "use strict";
+    import_crypto3 = __toESM(require("crypto"), 1);
+    import_child_process6 = require("child_process");
+    import_os = require("os");
+    import_axios = __toESM(require("axios"), 1);
+    init_connection();
+    LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
+    APP_VERSION = process.env.APP_VERSION || "1.0.0";
+    TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
+  }
+});
+
 // src/process/processGuardian.ts
 async function writeCrashLog(message, stack) {
   try {
-    const db2 = await (0, import_sqlite5.open)({ filename: DB_PATH8, driver: import_sqlite34.default.Database });
+    const db2 = await (0, import_sqlite5.open)({ filename: DB_PATH9, driver: import_sqlite34.default.Database });
     let appVersion = "unknown";
     try {
       const row = await db2.get("SELECT value FROM app_settings WHERE key = 'app_version'");
@@ -35389,6 +39465,11 @@ async function writeCrashLog(message, stack) {
       [message, stack, appVersion]
     );
     await db2.close();
+    Promise.resolve().then(() => (init_licenseService(), licenseService_exports)).then((m) => {
+      m.reportCrashTelemetry({ errorType: "PROCESS_CRASH", message, stack }).catch(() => {
+      });
+    }).catch(() => {
+    });
   } catch (err) {
     console.error("[ProcessGuardian] Failed to write crash_log entry:", err);
   }
@@ -35411,14 +39492,14 @@ function registerProcessGuardian() {
   });
   console.log("[ProcessGuardian] Registered \u2014 uncaught exceptions will log to crash_log and exit(1), unhandled rejections logged safely.");
 }
-var import_sqlite34, import_sqlite5, DB_PATH8;
+var import_sqlite34, import_sqlite5, DB_PATH9;
 var init_processGuardian = __esm({
   "src/process/processGuardian.ts"() {
     "use strict";
     import_sqlite34 = __toESM(require("sqlite3"), 1);
     import_sqlite5 = require("sqlite");
     init_config();
-    DB_PATH8 = config.dbPath;
+    DB_PATH9 = config.dbPath;
   }
 });
 
@@ -35427,22 +39508,22 @@ var whatsappBusiness_exports = {};
 __export(whatsappBusiness_exports, {
   default: () => whatsappBusiness_default
 });
-var import_express4, import_path28, import_url22, __filename21, __dirname21, DB_PATH9, router4, whatsappBusiness_default;
+var import_express5, import_path30, import_url23, __filename22, __dirname22, DB_PATH10, router5, whatsappBusiness_default;
 var init_whatsappBusiness = __esm({
   "src/routes/whatsappBusiness.ts"() {
     "use strict";
-    import_express4 = __toESM(require("express"), 1);
+    import_express5 = __toESM(require("express"), 1);
     init_whatsappBusinessService();
     init_eventService();
     init_connection();
-    import_path28 = __toESM(require("path"), 1);
-    import_url22 = require("url");
+    import_path30 = __toESM(require("path"), 1);
+    import_url23 = require("url");
     init_whatsappIntentService();
-    __filename21 = (0, import_url22.fileURLToPath)(import_meta_url);
-    __dirname21 = import_path28.default.dirname(__filename21);
-    DB_PATH9 = process.env.DB_PATH || import_path28.default.resolve(__dirname21, "..", "..", "data", "app.db");
-    router4 = import_express4.default.Router();
-    router4.get("/webhook", async (req, res) => {
+    __filename22 = (0, import_url23.fileURLToPath)(import_meta_url);
+    __dirname22 = import_path30.default.dirname(__filename22);
+    DB_PATH10 = process.env.DB_PATH || import_path30.default.resolve(__dirname22, "..", "..", "data", "app.db");
+    router5 = import_express5.default.Router();
+    router5.get("/webhook", async (req, res) => {
       const mode = req.query["hub.mode"];
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
@@ -35467,7 +39548,7 @@ var init_whatsappBusiness = __esm({
         return res.status(500).send("Internal error");
       }
     });
-    router4.post("/webhook", async (req, res) => {
+    router5.post("/webhook", async (req, res) => {
       res.sendStatus(200);
       try {
         const body = req.body;
@@ -35575,7 +39656,7 @@ var init_whatsappBusiness = __esm({
         console.error("[WA Business Webhook] Processing error:", err);
       }
     });
-    router4.post("/send", async (req, res) => {
+    router5.post("/send", async (req, res) => {
       const { number, message } = req.body;
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
@@ -35592,7 +39673,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to send message" });
       }
     });
-    router4.post("/send-template", async (req, res) => {
+    router5.post("/send-template", async (req, res) => {
       const { number, template_name, language, components } = req.body;
       if (!number || !template_name) {
         return res.status(400).json({ error: "number and template_name are required" });
@@ -35614,7 +39695,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to send template message" });
       }
     });
-    router4.post("/test", async (_req, res) => {
+    router5.post("/test", async (_req, res) => {
       try {
         const result = await whatsappBusinessService.testConnection();
         res.json(result);
@@ -35623,7 +39704,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ success: false, error: "Failed to test connection" });
       }
     });
-    router4.get("/status", async (_req, res) => {
+    router5.get("/status", async (_req, res) => {
       try {
         const config2 = await whatsappBusinessService.getConfig();
         res.json({
@@ -35639,7 +39720,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to fetch status" });
       }
     });
-    whatsappBusiness_default = router4;
+    whatsappBusiness_default = router5;
   }
 });
 
@@ -35833,20 +39914,20 @@ __export(pdfInvoiceService_exports, {
   PdfInvoiceService: () => PdfInvoiceService,
   pdfInvoiceService: () => pdfInvoiceService
 });
-var import_pdfkit3, import_path29, import_fs25, import_url23, __filename22, __dirname22, DB_PATH10, PdfInvoiceService, pdfInvoiceService;
+var import_pdfkit3, import_path31, import_fs27, import_url24, __filename23, __dirname23, DB_PATH11, PdfInvoiceService, pdfInvoiceService;
 var init_pdfInvoiceService = __esm({
   "src/services/pdfInvoiceService.ts"() {
     "use strict";
     import_pdfkit3 = __toESM(require("pdfkit"), 1);
     init_connection();
-    import_path29 = __toESM(require("path"), 1);
-    import_fs25 = __toESM(require("fs"), 1);
-    import_url23 = require("url");
+    import_path31 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
+    import_url24 = require("url");
     init_config();
     init_barcodeService();
-    __filename22 = (0, import_url23.fileURLToPath)(import_meta_url);
-    __dirname22 = import_path29.default.dirname(__filename22);
-    DB_PATH10 = process.env.DB_PATH || import_path29.default.resolve(__dirname22, "..", "..", "data", "app.db");
+    __filename23 = (0, import_url24.fileURLToPath)(import_meta_url);
+    __dirname23 = import_path31.default.dirname(__filename23);
+    DB_PATH11 = process.env.DB_PATH || import_path31.default.resolve(__dirname23, "..", "..", "data", "app.db");
     PdfInvoiceService = class {
       async generateInvoicePdf(invoiceId, outPath, includeStampAndSig = true) {
         const db2 = await dbManager.getConnection();
@@ -35887,7 +39968,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs25.default.createWriteStream(outPath);
+            const stream = import_fs27.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -35994,9 +40075,9 @@ var init_pdfInvoiceService = __esm({
             } catch (bcErr) {
               console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
             }
-            const uploadsDir = import_path29.default.resolve(getAppDataDir(), "uploads");
-            const customStampPath = import_path29.default.join(uploadsDir, "custom_stamp.png");
-            const customSigPath = import_path29.default.join(uploadsDir, "custom_signature.png");
+            const uploadsDir = import_path31.default.resolve(getAppDataDir(), "uploads");
+            const customStampPath = import_path31.default.join(uploadsDir, "custom_stamp.png");
+            const customSigPath = import_path31.default.join(uploadsDir, "custom_signature.png");
             if (includeStampAndSig) {
               const defaultStampX = 410;
               const defaultStampY = Math.min(Math.max(grandTotalY + 5, 540), 650);
@@ -36005,7 +40086,7 @@ var init_pdfInvoiceService = __esm({
               const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
               const stampWidth = Math.round(80 * (stampScale / 100));
               const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
-              if (import_fs25.default.existsSync(customStampPath)) {
+              if (import_fs27.default.existsSync(customStampPath)) {
                 doc.save();
                 if (stampRot !== 0) {
                   doc.rotate(stampRot, { origin: [stampX + stampWidth / 2, stampY + stampWidth / 2] });
@@ -36040,7 +40121,7 @@ var init_pdfInvoiceService = __esm({
               const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
               const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
               const sigWidth = Math.round(75 * (sigScale / 100));
-              if (import_fs25.default.existsSync(customSigPath)) {
+              if (import_fs27.default.existsSync(customSigPath)) {
                 doc.image(customSigPath, sigX, sigY, { width: sigWidth });
               }
               doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
@@ -36092,7 +40173,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs25.default.createWriteStream(outPath);
+            const stream = import_fs27.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -36207,7 +40288,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs25.default.createWriteStream(outPath);
+            const stream = import_fs27.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -36289,7 +40370,7 @@ var init_pdfInvoiceService = __esm({
         return new Promise((resolve, reject) => {
           try {
             const doc = new import_pdfkit3.default({ size: "A4", margin: 30 });
-            const stream = import_fs25.default.createWriteStream(outPath);
+            const stream = import_fs27.default.createWriteStream(outPath);
             stream.on("error", reject);
             stream.on("finish", resolve);
             doc.pipe(stream);
@@ -36401,13 +40482,13 @@ function getMessage(lang, path65, values = {}) {
     return values[placeholder] ?? `{{${placeholder}}}`;
   });
 }
-var import_fs26, import_path30, import_url24, import_module3, require2, ALL_MESSAGES;
+var import_fs28, import_path32, import_url25, import_module3, require2, ALL_MESSAGES;
 var init_getMessage = __esm({
   "src/i18n/getMessage.ts"() {
     "use strict";
-    import_fs26 = require("fs");
-    import_path30 = require("path");
-    import_url24 = require("url");
+    import_fs28 = require("fs");
+    import_path32 = require("path");
+    import_url25 = require("url");
     import_module3 = require("module");
     init_messageDAO();
     require2 = (0, import_module3.createRequire)(import_meta_url);
@@ -36416,11 +40497,11 @@ var init_getMessage = __esm({
       ALL_MESSAGES = require2("./messages.json");
     } catch (_) {
       try {
-        const __filename48 = (0, import_url24.fileURLToPath)(import_meta_url);
-        const __dirname48 = (0, import_path30.dirname)(__filename48);
-        const messagesPath = (0, import_path30.join)(__dirname48, "messages.json");
-        if ((0, import_fs26.existsSync)(messagesPath)) {
-          ALL_MESSAGES = JSON.parse((0, import_fs26.readFileSync)(messagesPath, "utf8"));
+        const __filename48 = (0, import_url25.fileURLToPath)(import_meta_url);
+        const __dirname48 = (0, import_path32.dirname)(__filename48);
+        const messagesPath = (0, import_path32.join)(__dirname48, "messages.json");
+        if ((0, import_fs28.existsSync)(messagesPath)) {
+          ALL_MESSAGES = JSON.parse((0, import_fs28.readFileSync)(messagesPath, "utf8"));
         }
       } catch (err) {
         console.error("[i18n] Failed to load messages.json:", err);
@@ -36481,15 +40562,15 @@ var crm_exports = {};
 __export(crm_exports, {
   default: () => crm_default
 });
-var import_express5, import_path31, import_fs27, import_url25, __filename23, __dirname23, DB_PATH11, router5, crm_default;
+var import_express6, import_path33, import_fs29, import_url26, __filename24, __dirname24, DB_PATH12, router6, crm_default;
 var init_crm = __esm({
   "src/routes/crm.ts"() {
     "use strict";
-    import_express5 = __toESM(require("express"), 1);
+    import_express6 = __toESM(require("express"), 1);
     init_connection();
-    import_path31 = __toESM(require("path"), 1);
-    import_fs27 = __toESM(require("fs"), 1);
-    import_url25 = require("url");
+    import_path33 = __toESM(require("path"), 1);
+    import_fs29 = __toESM(require("fs"), 1);
+    import_url26 = require("url");
     init_doctorReportingService();
     init_whatsappQueueWorker();
     init_pdfInvoiceService();
@@ -36499,11 +40580,13 @@ var init_crm = __esm({
     init_config();
     init_storeContextService();
     init_eventService();
-    __filename23 = (0, import_url25.fileURLToPath)(import_meta_url);
-    __dirname23 = import_path31.default.dirname(__filename23);
-    DB_PATH11 = process.env.DB_PATH || import_path31.default.resolve(__dirname23, "..", "..", "data", "app.db");
-    router5 = import_express5.default.Router();
-    router5.get("/patients", async (req, res) => {
+    init_storeSettingsService();
+    init_nameFormatter();
+    __filename24 = (0, import_url26.fileURLToPath)(import_meta_url);
+    __dirname24 = import_path33.default.dirname(__filename24);
+    DB_PATH12 = process.env.DB_PATH || import_path33.default.resolve(__dirname24, "..", "..", "data", "app.db");
+    router6 = import_express6.default.Router();
+    router6.get("/patients", async (req, res) => {
       const { q, limit } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -36579,7 +40662,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.post("/patients", async (req, res) => {
+    router6.post("/patients", async (req, res) => {
       const { name, phone, address, notes, language } = req.body;
       if (!name) return res.status(400).json({ error: "Name is required" });
       try {
@@ -36599,7 +40682,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.put("/patients/:id", async (req, res) => {
+    router6.put("/patients/:id", async (req, res) => {
       const { id } = req.params;
       const { name, phone, address, notes, language } = req.body;
       try {
@@ -36635,7 +40718,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.delete("/patients/:id", async (req, res) => {
+    router6.delete("/patients/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -36649,7 +40732,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.get("/", async (req, res) => {
+    router6.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const customers = await db2.all("SELECT * FROM customers ORDER BY id DESC LIMIT 1000");
@@ -36658,7 +40741,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.get("/:id/history", async (req, res) => {
+    router6.get("/:id/history", async (req, res) => {
       const customerId = req.params.id;
       try {
         const db2 = await dbManager.getConnection();
@@ -36723,7 +40806,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to fetch history: " + error.message });
       }
     });
-    router5.get("/history-by-phone/:phone", async (req, res) => {
+    router6.get("/history-by-phone/:phone", async (req, res) => {
       const phone = req.params.phone;
       try {
         const db2 = await dbManager.getConnection();
@@ -36782,7 +40865,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to fetch history: " + error.message });
       }
     });
-    router5.get("/doctors", async (req, res) => {
+    router6.get("/doctors", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const doctors = await db2.all("SELECT * FROM doctors ORDER BY name ASC LIMIT 1000");
@@ -36792,7 +40875,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.post("/doctors", async (req, res) => {
+    router6.post("/doctors", async (req, res) => {
       const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
       if (!name) return res.status(400).json({ error: "Doctor name is required" });
       const cleanName = sanitizeDoctorName(name) || name.trim();
@@ -36824,7 +40907,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.put("/doctors/:id", async (req, res) => {
+    router6.put("/doctors/:id", async (req, res) => {
       const { id } = req.params;
       const { name, speciality, phone, hospital, degree, reg_no, send_daily_summary } = req.body;
       if (!name) return res.status(400).json({ error: "Doctor name is required" });
@@ -36844,7 +40927,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.delete("/doctors/:id", async (req, res) => {
+    router6.delete("/doctors/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -36855,7 +40938,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router5.post("/doctors/send-daily-reports", async (req, res) => {
+    router6.post("/doctors/send-daily-reports", async (req, res) => {
       const { date } = req.body;
       try {
         const result = await sendDailyDoctorReports(date);
@@ -36865,7 +40948,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router5.get("/doctors/:id/suggestions", async (req, res) => {
+    router6.get("/doctors/:id/suggestions", async (req, res) => {
       const doctorId = req.params.id;
       const limit = parseInt(req.query.limit, 10) || 25;
       try {
@@ -36918,7 +41001,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router5.get("/doctors/:id/combinations/:medicineId", async (req, res) => {
+    router6.get("/doctors/:id/combinations/:medicineId", async (req, res) => {
       const doctorId = req.params.id;
       const medicineId = req.params.medicineId;
       try {
@@ -36974,7 +41057,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router5.get("/credit-customers", async (req, res) => {
+    router6.get("/credit-customers", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -37005,7 +41088,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to fetch credit customers: " + error.message });
       }
     });
-    router5.post("/credit-customers/:id/clear", async (req, res) => {
+    router6.post("/credit-customers/:id/clear", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -37032,7 +41115,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to clear credit: " + error.message });
       }
     });
-    router5.put("/credit-customers/:id/due-date", async (req, res) => {
+    router6.put("/credit-customers/:id/due-date", async (req, res) => {
       const { id } = req.params;
       const { due_date } = req.body || {};
       try {
@@ -37048,7 +41131,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to update due date: " + error.message });
       }
     });
-    router5.post("/credit-customers/:id/send-reminder", async (req, res) => {
+    router6.post("/credit-customers/:id/send-reminder", async (req, res) => {
       const { id } = req.params;
       const { custom_message } = req.body || {};
       try {
@@ -37112,12 +41195,12 @@ var init_crm = __esm({
         }
         let pdfPath = void 0;
         try {
-          const uploadsDir = import_path31.default.resolve(getAppDataDir(), "uploads");
-          if (!import_fs27.default.existsSync(uploadsDir)) {
-            import_fs27.default.mkdirSync(uploadsDir, { recursive: true });
+          const uploadsDir = import_path33.default.resolve(getAppDataDir(), "uploads");
+          if (!import_fs29.default.existsSync(uploadsDir)) {
+            import_fs29.default.mkdirSync(uploadsDir, { recursive: true });
           }
           const pdfFilename = `credit_statement_cust_${id}_${Date.now()}.pdf`;
-          const fullPdfPath = import_path31.default.join(uploadsDir, pdfFilename);
+          const fullPdfPath = import_path33.default.join(uploadsDir, pdfFilename);
           await pdfInvoiceService.generateCreditStatementPdf(Number(id), fullPdfPath);
           pdfPath = fullPdfPath;
         } catch (pdfErr) {
@@ -37143,7 +41226,7 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to send reminder: " + error.message });
       }
     });
-    router5.post("/ledger/pay", async (req, res) => {
+    router6.post("/ledger/pay", async (req, res) => {
       const { customer_id, amount } = req.body || {};
       const payAmt = parseFloat(amount);
       if (!customer_id || isNaN(payAmt) || payAmt <= 0) {
@@ -37235,7 +41318,183 @@ var init_crm = __esm({
         res.status(500).json({ error: "Failed to process payment: " + error.message });
       }
     });
-    crm_default = router5;
+    router6.get("/delay-notice-candidates", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
+        const allStores = req.query.all_stores === "true";
+        const storeFilterSpecial = allStores ? "" : "AND (store_id = ? OR (store_id IS NULL AND ? = 1))";
+        const storeParamsSpecial = allStores ? [] : [targetStoreId, targetStoreId];
+        const specialOrders = await db2.all(
+          `SELECT 
+        id,
+        'special_order' as type,
+        requester as patient_name,
+        phone as patient_phone,
+        COALESCE(product, medicine_name, 'Medicine') as medicine_name,
+        COALESCE(qty, 1) as qty,
+        COALESCE(estimated_delivery_start, scheduled_processing_at, date) as scheduled_date,
+        status,
+        pharmarack_distributor as distributor_name,
+        store_id
+      FROM special_orders
+      WHERE status IN ('Pending', 'Ordered', 'Waiting')
+        ${storeFilterSpecial}
+      ORDER BY id DESC LIMIT 200`,
+          storeParamsSpecial
+        );
+        const storeFilterRefills = allStores ? "" : "AND (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))";
+        const storeParamsRefills = allStores ? [] : [targetStoreId, targetStoreId];
+        const refills = await db2.all(
+          `SELECT 
+        pr.id,
+        'refill' as type,
+        pr.patient_name,
+        pr.patient_phone,
+        COALESCE(m.name, 'Refill Medicine') as medicine_name,
+        COALESCE(pr.quantity_needed, 1) as qty,
+        pr.next_refill_date as scheduled_date,
+        pr.status,
+        NULL as distributor_name,
+        pr.store_id
+      FROM patient_refills pr
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.is_active = 1 
+        AND pr.status = 'pending'
+        ${storeFilterRefills}
+        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= datetime('now', '+2 days'))
+      ORDER BY pr.next_refill_date ASC LIMIT 200`,
+          storeParamsRefills
+        );
+        const candidates = [
+          ...specialOrders.map((o) => ({
+            id: o.id,
+            type: "special_order",
+            patient_name: o.patient_name || "Walk-in Customer",
+            patient_phone: (o.patient_phone || "").trim(),
+            medicine_name: o.medicine_name,
+            qty: Number(o.qty) || 1,
+            scheduled_date: o.scheduled_date || null,
+            status: o.status || "Pending",
+            distributor_name: o.distributor_name || null,
+            store_id: o.store_id || 1
+          })),
+          ...refills.map((r) => ({
+            id: r.id,
+            type: "refill",
+            patient_name: r.patient_name || "Customer",
+            patient_phone: (r.patient_phone || "").trim(),
+            medicine_name: r.medicine_name,
+            qty: Number(r.qty) || 1,
+            scheduled_date: r.scheduled_date || null,
+            status: r.status || "pending",
+            distributor_name: null,
+            store_id: r.store_id || 1
+          }))
+        ];
+        res.json({
+          candidates,
+          count: candidates.length,
+          special_order_count: specialOrders.length,
+          refill_count: refills.length
+        });
+      } catch (err) {
+        console.error("Failed to load delay notice candidates:", err);
+        res.status(500).json({ error: "Failed to fetch delay notice candidates: " + err.message });
+      }
+    });
+    router6.post("/broadcast-delay-notices", async (req, res) => {
+      const { recipients, message_template, postpone_days = 1 } = req.body || {};
+      if (!Array.isArray(recipients) || recipients.length === 0) {
+        return res.status(400).json({ error: "At least one recipient must be selected." });
+      }
+      if (!message_template || typeof message_template !== "string" || !message_template.trim()) {
+        return res.status(400).json({ error: "Message template is required." });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
+        const storeMedicalName = await getStoreMedicalName(db2, targetStoreId) || "Pharmacy";
+        const postponeNum = Number(postpone_days) || 0;
+        let queuedCount = 0;
+        let skippedNoPhoneCount = 0;
+        const errors = [];
+        for (const item of recipients) {
+          const rawPhone = String(item.patient_phone || "").replace(/\D/g, "");
+          if (!rawPhone || rawPhone.length < 10) {
+            skippedNoPhoneCount++;
+            continue;
+          }
+          const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+          const cleanName = formatCustomerName(item.patient_name);
+          const medName = item.medicine_name || "Medicine";
+          const personalizedMsg = message_template.replace(/\{patient_name\}/gi, cleanName).replace(/\{customer_name\}/gi, cleanName).replace(/\{medicine_name\}/gi, medName).replace(/\{product_name\}/gi, medName).replace(/\{pharmacy_name\}/gi, storeMedicalName).replace(/\{store_name\}/gi, storeMedicalName).replace(/\{qty\}/gi, String(item.qty || 1));
+          try {
+            await whatsappQueueWorker.enqueue(
+              formattedPhone,
+              personalizedMsg,
+              "delay_notice",
+              cleanName
+            );
+            await db2.run(
+              `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+              ["delay_notice", cleanName, formattedPhone, personalizedMsg, "queued", `${item.type}_${item.id}`]
+            );
+            if (postponeNum > 0) {
+              if (item.type === "special_order") {
+                await db2.run(
+                  `UPDATE special_orders 
+               SET estimated_delivery_start = datetime(COALESCE(estimated_delivery_start, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   estimated_delivery_end = datetime(COALESCE(estimated_delivery_end, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   scheduled_processing_at = datetime(COALESCE(scheduled_processing_at, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [postponeNum, postponeNum, postponeNum, item.id]
+                );
+                try {
+                  await db2.run(
+                    `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+                 VALUES (?, 'delay_notice_sent', ?, 'staff', CURRENT_TIMESTAMP)`,
+                    [item.id, `Delay notice queued via WhatsApp (+${postponeNum} day schedule adjustment)`]
+                  );
+                } catch (_) {
+                }
+              } else if (item.type === "refill") {
+                await db2.run(
+                  `UPDATE patient_refills
+               SET next_refill_date = datetime(COALESCE(next_refill_date, CURRENT_TIMESTAMP), '+' || ? || ' days')
+               WHERE id = ?`,
+                  [postponeNum, item.id]
+                );
+              }
+            }
+            queuedCount++;
+          } catch (err) {
+            errors.push(`Failed for ${cleanName} (${formattedPhone}): ${err.message}`);
+          }
+        }
+        if (queuedCount > 0) {
+          whatsappQueueWorker.triggerProcessing();
+          try {
+            eventService.broadcast("order_updated", { at: Date.now(), reason: "delay_notice" });
+            eventService.broadcast("refill_updated", { at: Date.now(), reason: "delay_notice" });
+          } catch (_) {
+          }
+        }
+        res.json({
+          success: true,
+          message: `Successfully queued delay notifications for ${queuedCount} patient${queuedCount !== 1 ? "s" : ""}${skippedNoPhoneCount > 0 ? ` (${skippedNoPhoneCount} skipped due to missing phone)` : ""}.`,
+          queued_count: queuedCount,
+          skipped_no_phone_count: skippedNoPhoneCount,
+          errors: errors.length > 0 ? errors : void 0
+        });
+      } catch (err) {
+        console.error("Failed to broadcast delay notices:", err);
+        res.status(500).json({ error: "Broadcast failed: " + err.message });
+      }
+    });
+    crm_default = router6;
   }
 });
 
@@ -37245,11 +41504,11 @@ __export(workerSupervisor_exports, {
   WorkerSupervisor: () => WorkerSupervisor,
   workerSupervisor: () => workerSupervisor
 });
-var import_child_process5, WorkerSupervisor, workerSupervisor;
+var import_child_process7, WorkerSupervisor, workerSupervisor;
 var init_workerSupervisor = __esm({
   "src/worker/workerSupervisor.ts"() {
     "use strict";
-    import_child_process5 = require("child_process");
+    import_child_process7 = require("child_process");
     init_config();
     init_activityTracker();
     WorkerSupervisor = class _WorkerSupervisor {
@@ -37330,7 +41589,7 @@ var init_workerSupervisor = __esm({
           return;
         }
         try {
-          const child = (0, import_child_process5.fork)(forkTarget, [], {
+          const child = (0, import_child_process7.fork)(forkTarget, [], {
             execArgv: [...process.execArgv],
             env: { ...process.env, IS_WORKER: "true", WORKER_ROLE: config2.role }
           });
@@ -37416,24 +41675,24 @@ async function createBackup(reason = "Manual") {
     console.log(`[Backup] Skipping ${reason} \u2014 server uptime ${Math.round(process.uptime())}s < 60s`);
     throw new Error("Backup deferred: server still starting up (retry after 60s)");
   }
-  if (!import_fs28.default.existsSync(BACKUP_DIR)) {
-    import_fs28.default.mkdirSync(BACKUP_DIR, { recursive: true });
+  if (!import_fs30.default.existsSync(BACKUP_DIR)) {
+    import_fs30.default.mkdirSync(BACKUP_DIR, { recursive: true });
   }
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const filename = `app_backup_${timestamp}.db.gz`;
-  const backupPath = import_path32.default.join(BACKUP_DIR, filename);
+  const backupPath = import_path34.default.join(BACKUP_DIR, filename);
   const tempDbPath = backupPath.replace(".gz", "");
-  const tempDb = new import_better_sqlite32.default(DB_PATH12);
+  const tempDb = new import_better_sqlite32.default(DB_PATH13);
   await tempDb.backup(tempDbPath);
   tempDb.close();
   const gzip = import_zlib2.default.createGzip();
-  const source = import_fs28.default.createReadStream(tempDbPath);
-  const destination = import_fs28.default.createWriteStream(backupPath);
+  const source = import_fs30.default.createReadStream(tempDbPath);
+  const destination = import_fs30.default.createWriteStream(backupPath);
   try {
     await (0, import_promises2.pipeline)(source, gzip, destination);
   } finally {
-    if (import_fs28.default.existsSync(tempDbPath)) {
-      import_fs28.default.unlinkSync(tempDbPath);
+    if (import_fs30.default.existsSync(tempDbPath)) {
+      import_fs30.default.unlinkSync(tempDbPath);
     }
   }
   try {
@@ -37453,18 +41712,18 @@ async function backupSessions(reason = "Manual") {
     const { default: AdmZip5 } = await import("adm-zip");
     const appData = getAppDataDir();
     const targets = [
-      { name: "wwebjs_auth", dir: import_path32.default.join(appData, ".wwebjs_auth") },
-      { name: "pharmarack_profile", dir: import_path32.default.join(appData, "data", "pharmarack_profile") }
-    ].filter((t) => import_fs28.default.existsSync(t.dir) && import_fs28.default.readdirSync(t.dir).length > 0);
+      { name: "wwebjs_auth", dir: import_path34.default.join(appData, ".wwebjs_auth") },
+      { name: "pharmarack_profile", dir: import_path34.default.join(appData, "data", "pharmarack_profile") }
+    ].filter((t) => import_fs30.default.existsSync(t.dir) && import_fs30.default.readdirSync(t.dir).length > 0);
     if (targets.length === 0) return null;
-    if (!import_fs28.default.existsSync(BACKUP_DIR)) {
-      import_fs28.default.mkdirSync(BACKUP_DIR, { recursive: true });
+    if (!import_fs30.default.existsSync(BACKUP_DIR)) {
+      import_fs30.default.mkdirSync(BACKUP_DIR, { recursive: true });
     }
     const zip = new AdmZip5();
     const addDirRecursive = (dir, zipPath) => {
-      for (const entry of import_fs28.default.readdirSync(dir, { withFileTypes: true })) {
-        const full = import_path32.default.join(dir, entry.name);
-        const rel = import_path32.default.join(zipPath, entry.name);
+      for (const entry of import_fs30.default.readdirSync(dir, { withFileTypes: true })) {
+        const full = import_path34.default.join(dir, entry.name);
+        const rel = import_path34.default.join(zipPath, entry.name);
         if (entry.isDirectory()) {
           if (SESSION_EXCLUDED_DIRS.has(entry.name)) continue;
           addDirRecursive(full, rel);
@@ -37479,13 +41738,13 @@ async function backupSessions(reason = "Manual") {
     for (const t of targets) addDirRecursive(t.dir, t.name);
     const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     const filename = `sessions_backup_${timestamp}.zip`;
-    zip.writeZip(import_path32.default.join(BACKUP_DIR, filename));
+    zip.writeZip(import_path34.default.join(BACKUP_DIR, filename));
     const sessionZips = listBackups().filter((b) => b.filename.startsWith("sessions_backup_"));
     for (const old of sessionZips.slice(MAX_SESSION_BACKUPS)) {
-      const p = import_path32.default.join(BACKUP_DIR, old.filename);
-      if (import_fs28.default.existsSync(p)) {
+      const p = import_path34.default.join(BACKUP_DIR, old.filename);
+      if (import_fs30.default.existsSync(p)) {
         try {
-          import_fs28.default.unlinkSync(p);
+          import_fs30.default.unlinkSync(p);
         } catch (_) {
         }
       }
@@ -37498,17 +41757,17 @@ async function backupSessions(reason = "Manual") {
   }
 }
 function listBackups() {
-  if (!import_fs28.default.existsSync(BACKUP_DIR)) {
+  if (!import_fs30.default.existsSync(BACKUP_DIR)) {
     return [];
   }
   const results = [];
   const scanDir = (dir) => {
-    if (!import_fs28.default.existsSync(dir)) return;
-    const files = import_fs28.default.readdirSync(dir);
+    if (!import_fs30.default.existsSync(dir)) return;
+    const files = import_fs30.default.readdirSync(dir);
     for (const filename of files) {
-      const filePath = import_path32.default.join(dir, filename);
+      const filePath = import_path34.default.join(dir, filename);
       try {
-        const stats = import_fs28.default.statSync(filePath);
+        const stats = import_fs30.default.statSync(filePath);
         if (stats.isFile() && (filename.endsWith(".db") || filename.endsWith(".db.gz") || filename.endsWith(".zip"))) {
           if (!results.some((r) => r.filename === filename)) {
             results.push({
@@ -37523,54 +41782,54 @@ function listBackups() {
     }
   };
   scanDir(BACKUP_DIR);
-  scanDir(import_path32.default.join(BACKUP_DIR, "archives"));
-  scanDir(import_path32.default.join(BACKUP_DIR, "snapshots"));
+  scanDir(import_path34.default.join(BACKUP_DIR, "archives"));
+  scanDir(import_path34.default.join(BACKUP_DIR, "snapshots"));
   return results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 function deleteBackup(filename) {
-  const sanitized = import_path32.default.basename(filename);
+  const sanitized = import_path34.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename");
   }
-  let filePath = import_path32.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs28.default.existsSync(filePath)) {
-    const archivesPath = import_path32.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path32.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs28.default.existsSync(archivesPath)) filePath = archivesPath;
-    else if (import_fs28.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
+  let filePath = import_path34.default.join(BACKUP_DIR, sanitized);
+  if (!import_fs30.default.existsSync(filePath)) {
+    const archivesPath = import_path34.default.join(BACKUP_DIR, "archives", sanitized);
+    const snapshotsPath = import_path34.default.join(BACKUP_DIR, "snapshots", sanitized);
+    if (import_fs30.default.existsSync(archivesPath)) filePath = archivesPath;
+    else if (import_fs30.default.existsSync(snapshotsPath)) filePath = snapshotsPath;
   }
-  const resolved = import_path32.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path32.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path34.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR + import_path34.default.sep) && resolved !== BACKUP_DIR) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs28.default.existsSync(filePath)) {
+  if (!import_fs30.default.existsSync(filePath)) {
     throw new Error("Backup file not found");
   }
-  import_fs28.default.unlinkSync(filePath);
+  import_fs30.default.unlinkSync(filePath);
 }
 async function restoreBackup(filename) {
-  const sanitized = import_path32.default.basename(filename);
+  const sanitized = import_path34.default.basename(filename);
   if (!sanitized.endsWith(".db") && !sanitized.endsWith(".db.gz") && !sanitized.endsWith(".zip")) {
     throw new Error("Invalid backup filename. Must be .db, .db.gz, or .zip");
   }
-  let filePath = import_path32.default.join(BACKUP_DIR, sanitized);
-  if (!import_fs28.default.existsSync(filePath)) {
-    const archivesPath = import_path32.default.join(BACKUP_DIR, "archives", sanitized);
-    const snapshotsPath = import_path32.default.join(BACKUP_DIR, "snapshots", sanitized);
-    if (import_fs28.default.existsSync(archivesPath)) {
+  let filePath = import_path34.default.join(BACKUP_DIR, sanitized);
+  if (!import_fs30.default.existsSync(filePath)) {
+    const archivesPath = import_path34.default.join(BACKUP_DIR, "archives", sanitized);
+    const snapshotsPath = import_path34.default.join(BACKUP_DIR, "snapshots", sanitized);
+    if (import_fs30.default.existsSync(archivesPath)) {
       filePath = archivesPath;
-    } else if (import_fs28.default.existsSync(snapshotsPath)) {
+    } else if (import_fs30.default.existsSync(snapshotsPath)) {
       filePath = snapshotsPath;
     }
   }
-  const resolved = import_path32.default.resolve(filePath);
-  if (!resolved.startsWith(BACKUP_DIR + import_path32.default.sep) && resolved !== BACKUP_DIR) {
+  const resolved = import_path34.default.resolve(filePath);
+  if (!resolved.startsWith(BACKUP_DIR + import_path34.default.sep) && resolved !== BACKUP_DIR) {
     throw new Error("Invalid backup path");
   }
-  if (!import_fs28.default.existsSync(filePath)) {
+  if (!import_fs30.default.existsSync(filePath)) {
     throw new Error(`Backup file not found: ${sanitized}`);
   }
-  const stagedPath = `${DB_PATH12}.restoring_${Date.now()}`;
+  const stagedPath = `${DB_PATH13}.restoring_${Date.now()}`;
   let tempExtractDir = null;
   let workers = null;
   const isTest = process.env.NODE_ENV === "test" || !!process.env.JEST_WORKER_ID;
@@ -37586,20 +41845,20 @@ async function restoreBackup(filename) {
     let dbSourcePath = filePath;
     if (sanitized.endsWith(".zip")) {
       const { default: AdmZip5 } = await import("adm-zip");
-      tempExtractDir = import_path32.default.join(BACKUP_DIR, `temp_restore_${Date.now()}`);
-      import_fs28.default.mkdirSync(tempExtractDir, { recursive: true });
+      tempExtractDir = import_path34.default.join(BACKUP_DIR, `temp_restore_${Date.now()}`);
+      import_fs30.default.mkdirSync(tempExtractDir, { recursive: true });
       const zip = new AdmZip5(filePath);
       zip.extractAllTo(tempExtractDir, true);
-      const dbFiles = import_fs28.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
+      const dbFiles = import_fs30.default.readdirSync(tempExtractDir).filter((f) => f.endsWith(".db") || f.endsWith(".db.gz"));
       if (dbFiles.length === 0) {
         throw new Error("No valid database file (.db or .db.gz) found inside the zip archive.");
       }
-      dbSourcePath = import_path32.default.join(tempExtractDir, dbFiles[0]);
+      dbSourcePath = import_path34.default.join(tempExtractDir, dbFiles[0]);
     }
     if (dbSourcePath.endsWith(".gz")) {
-      await (0, import_promises2.pipeline)(import_fs28.default.createReadStream(dbSourcePath), import_zlib2.default.createGunzip(), import_fs28.default.createWriteStream(stagedPath));
+      await (0, import_promises2.pipeline)(import_fs30.default.createReadStream(dbSourcePath), import_zlib2.default.createGunzip(), import_fs30.default.createWriteStream(stagedPath));
     } else {
-      import_fs28.default.copyFileSync(dbSourcePath, stagedPath);
+      import_fs30.default.copyFileSync(dbSourcePath, stagedPath);
     }
     const probe = new import_better_sqlite32.default(stagedPath, { readonly: true });
     try {
@@ -37617,43 +41876,43 @@ async function restoreBackup(filename) {
     }
     await dbManager.close(true);
     for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = DB_PATH12 + suffix;
-      if (!import_fs28.default.existsSync(sidecar)) continue;
+      const sidecar = DB_PATH13 + suffix;
+      if (!import_fs30.default.existsSync(sidecar)) continue;
       try {
-        import_fs28.default.unlinkSync(sidecar);
+        import_fs30.default.unlinkSync(sidecar);
       } catch (err) {
-        throw new Error(`Could not clear ${import_path32.default.basename(sidecar)} before restore: ${err.message}`);
+        throw new Error(`Could not clear ${import_path34.default.basename(sidecar)} before restore: ${err.message}`);
       }
     }
     try {
-      import_fs28.default.renameSync(stagedPath, DB_PATH12);
+      import_fs30.default.renameSync(stagedPath, DB_PATH13);
     } catch (renameErr) {
       if (renameErr.code === "EPERM" || renameErr.code === "EBUSY" || renameErr.code === "EEXIST") {
-        import_fs28.default.copyFileSync(stagedPath, DB_PATH12);
+        import_fs30.default.copyFileSync(stagedPath, DB_PATH13);
         try {
-          import_fs28.default.unlinkSync(stagedPath);
+          import_fs30.default.unlinkSync(stagedPath);
         } catch (_) {
         }
       } else {
         throw renameErr;
       }
     } finally {
-      if (tempExtractDir && import_fs28.default.existsSync(tempExtractDir)) {
+      if (tempExtractDir && import_fs30.default.existsSync(tempExtractDir)) {
         try {
-          import_fs28.default.rmSync(tempExtractDir, { recursive: true, force: true });
+          import_fs30.default.rmSync(tempExtractDir, { recursive: true, force: true });
         } catch (_) {
         }
       }
     }
   } catch (err) {
-    if (tempExtractDir && import_fs28.default.existsSync(tempExtractDir)) {
+    if (tempExtractDir && import_fs30.default.existsSync(tempExtractDir)) {
       try {
-        import_fs28.default.rmSync(tempExtractDir, { recursive: true, force: true });
+        import_fs30.default.rmSync(tempExtractDir, { recursive: true, force: true });
       } catch (_) {
       }
     }
     try {
-      if (import_fs28.default.existsSync(stagedPath)) import_fs28.default.unlinkSync(stagedPath);
+      if (import_fs30.default.existsSync(stagedPath)) import_fs30.default.unlinkSync(stagedPath);
     } catch (_) {
     }
     try {
@@ -37671,7 +41930,7 @@ async function restoreBackup(filename) {
   const db2 = await dbManager.getConnection();
   try {
     const { ensureSchema: ensureSchema2, ensureMedicinesFts: ensureMedicinesFts2 } = await Promise.resolve().then(() => (init_database(), database_exports));
-    await ensureSchema2(DB_PATH12);
+    await ensureSchema2(DB_PATH13);
     await ensureMedicinesFts2(db2);
   } catch (schemaErr) {
     console.warn("[Restore] Schema verification after restore failed:", schemaErr.message);
@@ -37763,9 +42022,9 @@ function enforceRetention() {
     if (backups.length > MAX_BACKUPS) {
       const toDelete = backups.slice(MAX_BACKUPS);
       for (const b of toDelete) {
-        const filePath = import_path32.default.join(BACKUP_DIR, b.filename);
-        if (import_fs28.default.existsSync(filePath)) {
-          import_fs28.default.unlinkSync(filePath);
+        const filePath = import_path34.default.join(BACKUP_DIR, b.filename);
+        if (import_fs30.default.existsSync(filePath)) {
+          import_fs30.default.unlinkSync(filePath);
           console.log(`[Backup] Retention cleanup: deleted ${b.filename}`);
         }
       }
@@ -37778,13 +42037,13 @@ async function initBackupScheduler() {
   const freq = await getScheduleConfig();
   startScheduler(freq);
 }
-var import_fs28, import_path32, import_url26, import_node_cron2, import_better_sqlite32, import_zlib2, import_promises2, __filename24, __dirname24, DB_PATH12, BACKUP_DIR, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
+var import_fs30, import_path34, import_url27, import_node_cron2, import_better_sqlite32, import_zlib2, import_promises2, __filename25, __dirname25, DB_PATH13, BACKUP_DIR, MAX_BACKUPS, MAX_SESSION_BACKUPS, SESSION_EXCLUDED_DIRS, scheduledTask;
 var init_backupService = __esm({
   "src/services/backupService.ts"() {
     "use strict";
-    import_fs28 = __toESM(require("fs"), 1);
-    import_path32 = __toESM(require("path"), 1);
-    import_url26 = require("url");
+    import_fs30 = __toESM(require("fs"), 1);
+    import_path34 = __toESM(require("path"), 1);
+    import_url27 = require("url");
     import_node_cron2 = __toESM(require("node-cron"), 1);
     init_connection();
     import_better_sqlite32 = __toESM(require("better-sqlite3"), 1);
@@ -37792,9 +42051,9 @@ var init_backupService = __esm({
     import_promises2 = require("stream/promises");
     init_config();
     init_config();
-    __filename24 = (0, import_url26.fileURLToPath)(import_meta_url);
-    __dirname24 = import_path32.default.dirname(__filename24);
-    DB_PATH12 = config.dbPath;
+    __filename25 = (0, import_url27.fileURLToPath)(import_meta_url);
+    __dirname25 = import_path34.default.dirname(__filename25);
+    DB_PATH13 = config.dbPath;
     BACKUP_DIR = config.backupDir;
     MAX_BACKUPS = 20;
     MAX_SESSION_BACKUPS = 3;
@@ -37815,29 +42074,29 @@ var init_backupService = __esm({
 });
 
 // src/services/backupRecoveryService.ts
-var import_fs29, import_path33, import_better_sqlite33, import_adm_zip2, import_axios, import_zlib3, import_promises3, getDbPath3, BACKUP_DIR2, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
+var import_fs31, import_path35, import_better_sqlite33, import_adm_zip2, import_axios2, import_zlib3, import_promises3, getDbPath3, BACKUP_DIR2, SNAPSHOTS_DIR, ARCHIVES_DIR, BackupRecoveryService, backupRecoveryService;
 var init_backupRecoveryService = __esm({
   "src/services/backupRecoveryService.ts"() {
     "use strict";
-    import_fs29 = __toESM(require("fs"), 1);
-    import_path33 = __toESM(require("path"), 1);
+    import_fs31 = __toESM(require("fs"), 1);
+    import_path35 = __toESM(require("path"), 1);
     import_better_sqlite33 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip2 = __toESM(require("adm-zip"), 1);
-    import_axios = __toESM(require("axios"), 1);
+    import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     init_eventService();
     import_zlib3 = __toESM(require("zlib"), 1);
     import_promises3 = require("stream/promises");
     init_config();
     getDbPath3 = () => config.dbPath;
-    BACKUP_DIR2 = import_path33.default.join(getAppDataDir(), "backup");
-    SNAPSHOTS_DIR = import_path33.default.join(BACKUP_DIR2, "snapshots");
-    ARCHIVES_DIR = import_path33.default.join(BACKUP_DIR2, "archives");
-    if (!import_fs29.default.existsSync(SNAPSHOTS_DIR)) {
-      import_fs29.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    BACKUP_DIR2 = import_path35.default.join(getAppDataDir(), "backup");
+    SNAPSHOTS_DIR = import_path35.default.join(BACKUP_DIR2, "snapshots");
+    ARCHIVES_DIR = import_path35.default.join(BACKUP_DIR2, "archives");
+    if (!import_fs31.default.existsSync(SNAPSHOTS_DIR)) {
+      import_fs31.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
     }
-    if (!import_fs29.default.existsSync(ARCHIVES_DIR)) {
-      import_fs29.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
+    if (!import_fs31.default.existsSync(ARCHIVES_DIR)) {
+      import_fs31.default.mkdirSync(ARCHIVES_DIR, { recursive: true });
     }
     BackupRecoveryService = class _BackupRecoveryService {
       static instance;
@@ -37891,23 +42150,23 @@ var init_backupRecoveryService = __esm({
         const dateStr = now.toISOString().split("T")[0];
         const timeStr = now.toTimeString().split(" ")[0].replace(/:/g, "-");
         const filename = `snapshot_${dateStr}_${timeStr}.db.gz`;
-        const destPath = import_path33.default.join(SNAPSHOTS_DIR, filename);
+        const destPath = import_path35.default.join(SNAPSHOTS_DIR, filename);
         console.log(`[Backup] Generating database snapshot: ${filename}...`);
-        if (!import_fs29.default.existsSync(SNAPSHOTS_DIR)) {
-          import_fs29.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+        if (!import_fs31.default.existsSync(SNAPSHOTS_DIR)) {
+          import_fs31.default.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
         }
         const tempDbPath = destPath.replace(".gz", "");
         const tempDb = new import_better_sqlite33.default(getDbPath3());
         await tempDb.backup(tempDbPath);
         tempDb.close();
         const gzip = import_zlib3.default.createGzip();
-        const source = import_fs29.default.createReadStream(tempDbPath);
-        const destination = import_fs29.default.createWriteStream(destPath);
+        const source = import_fs31.default.createReadStream(tempDbPath);
+        const destination = import_fs31.default.createWriteStream(destPath);
         try {
           await (0, import_promises3.pipeline)(source, gzip, destination);
         } finally {
-          if (import_fs29.default.existsSync(tempDbPath)) {
-            import_fs29.default.unlinkSync(tempDbPath);
+          if (import_fs31.default.existsSync(tempDbPath)) {
+            import_fs31.default.unlinkSync(tempDbPath);
           }
         }
         try {
@@ -37920,16 +42179,16 @@ var init_backupRecoveryService = __esm({
         }
         try {
           const todayPrefix = `snapshot_${dateStr}_`;
-          const files = import_fs29.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
-            const fp = import_path33.default.join(SNAPSHOTS_DIR, f);
-            return { name: f, path: fp, time: import_fs29.default.statSync(fp).mtime.getTime() };
+          const files = import_fs31.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith(todayPrefix) && (f.endsWith(".db") || f.endsWith(".db.gz"))).map((f) => {
+            const fp = import_path35.default.join(SNAPSHOTS_DIR, f);
+            return { name: f, path: fp, time: import_fs31.default.statSync(fp).mtime.getTime() };
           }).sort((a, b) => b.time - a.time);
           const MAX_TODAY_SNAPSHOTS = 5;
           if (files.length > MAX_TODAY_SNAPSHOTS) {
             const toDelete = files.slice(MAX_TODAY_SNAPSHOTS);
             for (const snap of toDelete) {
-              if (import_fs29.default.existsSync(snap.path)) {
-                import_fs29.default.unlinkSync(snap.path);
+              if (import_fs31.default.existsSync(snap.path)) {
+                import_fs31.default.unlinkSync(snap.path);
                 console.log(`[Backup] Same-day snapshot retention: deleted old snapshot ${snap.name}`);
               }
             }
@@ -37947,7 +42206,7 @@ var init_backupRecoveryService = __esm({
         const dailyCompressEnabled = await this.getSetting("backup_daily_compression", "true") === "true";
         if (!dailyCompressEnabled) return;
         try {
-          const files = import_fs29.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+          const files = import_fs31.default.readdirSync(SNAPSHOTS_DIR).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
           if (files.length === 0) return;
           const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
           const dateGroups = {};
@@ -37965,19 +42224,19 @@ var init_backupRecoveryService = __esm({
           }
           for (const [datePart, snapshotFiles] of Object.entries(dateGroups)) {
             const archiveName = `archive_${datePart}.zip`;
-            const archivePath = import_path33.default.join(ARCHIVES_DIR, archiveName);
+            const archivePath = import_path35.default.join(ARCHIVES_DIR, archiveName);
             console.log(`[Backup] Compressing previous day snapshots for ${datePart} into ${archiveName}...`);
             const zip = new import_adm_zip2.default();
             for (const file of snapshotFiles) {
-              const filePath = import_path33.default.join(SNAPSHOTS_DIR, file);
-              if (import_fs29.default.existsSync(filePath)) {
+              const filePath = import_path35.default.join(SNAPSHOTS_DIR, file);
+              if (import_fs31.default.existsSync(filePath)) {
                 zip.addLocalFile(filePath);
               }
             }
             zip.writeZip(archivePath);
-            if (import_fs29.default.existsSync(archivePath)) {
+            if (import_fs31.default.existsSync(archivePath)) {
               for (const file of snapshotFiles) {
-                import_fs29.default.unlinkSync(import_path33.default.join(SNAPSHOTS_DIR, file));
+                import_fs31.default.unlinkSync(import_path35.default.join(SNAPSHOTS_DIR, file));
               }
               console.log(`[Backup] Compressed ${snapshotFiles.length} snapshots into ${archiveName}. Original snapshots cleaned.`);
               await this.uploadArchive(archiveName);
@@ -37992,8 +42251,8 @@ var init_backupRecoveryService = __esm({
        * Uploads the daily archive to Google Drive and Telegram if configured.
        */
       async uploadArchive(filename) {
-        const archivePath = import_path33.default.join(ARCHIVES_DIR, filename);
-        if (!import_fs29.default.existsSync(archivePath)) return;
+        const archivePath = import_path35.default.join(ARCHIVES_DIR, filename);
+        if (!import_fs31.default.existsSync(archivePath)) return;
         const gdriveEnabled = await this.getSetting("backup_gdrive_enabled", "false") === "true";
         const telegramEnabled = await this.getSetting("backup_telegram_enabled", "false") === "true";
         const notifsEnabled = await this.getSetting("backup_notifications_enabled", "true") === "true";
@@ -38053,7 +42312,7 @@ var init_backupRecoveryService = __esm({
        */
       async retryPendingUploads() {
         try {
-          const archives = import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
+          const archives = import_fs31.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip"));
           if (archives.length === 0) return;
           console.log("[Backup] Scanning archives for pending cloud uploads...");
           for (const archive of archives) {
@@ -38075,7 +42334,7 @@ var init_backupRecoveryService = __esm({
             console.warn("[Backup] Google Drive upload skipped: Credentials incomplete.");
             return false;
           }
-          const tokenRes = await import_axios.default.post("https://oauth2.googleapis.com/token", new URLSearchParams({
+          const tokenRes = await import_axios2.default.post("https://oauth2.googleapis.com/token", new URLSearchParams({
             client_id: clientId,
             client_secret: clientSecret,
             refresh_token: refreshToken,
@@ -38088,7 +42347,7 @@ var init_backupRecoveryService = __esm({
             console.error("[Backup] Failed to refresh Google access token.");
             return false;
           }
-          const fileBuffer = import_fs29.default.readFileSync(filePath);
+          const fileBuffer = import_fs31.default.readFileSync(filePath);
           const metadata = {
             name: filename,
             mimeType: "application/zip"
@@ -38109,7 +42368,7 @@ Content-Type: application/zip\r
             Buffer.from(`\r
 --${boundary}--`)
           ]);
-          const uploadRes = await import_axios.default.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", multipartBody, {
+          const uploadRes = await import_axios2.default.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", multipartBody, {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": `multipart/related; boundary=${boundary}`,
@@ -38133,7 +42392,7 @@ Content-Type: application/zip\r
             console.warn("[Backup] Telegram upload skipped: bot credentials or chat ID missing.");
             return false;
           }
-          const fileBuffer = import_fs29.default.readFileSync(filePath);
+          const fileBuffer = import_fs31.default.readFileSync(filePath);
           const formData = new FormData();
           formData.append("chat_id", chatId);
           formData.append("document", new Blob([fileBuffer]), filename);
@@ -38161,16 +42420,16 @@ Content-Type: application/zip\r
         const autoDelete = await this.getSetting("backup_auto_delete_old_archives", "true") === "true";
         if (!autoDelete) return;
         try {
-          const archives = import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
-            const filePath = import_path33.default.join(ARCHIVES_DIR, f);
-            const stats = import_fs29.default.statSync(filePath);
+          const archives = import_fs31.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((f) => {
+            const filePath = import_path35.default.join(ARCHIVES_DIR, f);
+            const stats = import_fs31.default.statSync(filePath);
             return { filename: f, path: filePath, mtime: stats.mtime };
           }).sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
           if (archives.length > 4) {
             const toDelete = archives.slice(4);
             for (const arch of toDelete) {
-              if (import_fs29.default.existsSync(arch.path)) {
-                import_fs29.default.unlinkSync(arch.path);
+              if (import_fs31.default.existsSync(arch.path)) {
+                import_fs31.default.unlinkSync(arch.path);
                 console.log(`[Backup] Retention cleanup: deleted old archive ${arch.filename}`);
               }
             }
@@ -38209,7 +42468,7 @@ Content-Type: application/zip\r
        * Lists all local backup archives.
        */
       listArchives(uploadLogMap) {
-        if (!import_fs29.default.existsSync(ARCHIVES_DIR)) return [];
+        if (!import_fs31.default.existsSync(ARCHIVES_DIR)) return [];
         let uploadLog = uploadLogMap || {};
         if (!uploadLogMap) {
           try {
@@ -38220,9 +42479,9 @@ Content-Type: application/zip\r
           } catch {
           }
         }
-        return import_fs29.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((filename) => {
-          const filePath = import_path33.default.join(ARCHIVES_DIR, filename);
-          const stats = import_fs29.default.statSync(filePath);
+        return import_fs31.default.readdirSync(ARCHIVES_DIR).filter((f) => f.startsWith("archive_") && f.endsWith(".zip")).map((filename) => {
+          const filePath = import_path35.default.join(ARCHIVES_DIR, filename);
+          const stats = import_fs31.default.statSync(filePath);
           let rawDate = filename.replace(/^archive_/, "").replace(/\.zip$/, "");
           if (rawDate.startsWith("manual_")) {
             rawDate = rawDate.replace(/^manual_/, "");
@@ -38246,23 +42505,23 @@ Content-Type: application/zip\r
       async restoreFromArchive(filename) {
         const { restoreBackup: restoreBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
         await restoreBackup2(filename);
-        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path33.default.basename(filename)}`);
+        this.broadcastNotification("backup_restore_completed", `Database restore completed successfully: ${import_path35.default.basename(filename)}`);
       }
       /**
        * Delete a specific archive.
        */
       deleteArchive(filename) {
-        const sanitized = import_path33.default.basename(filename);
+        const sanitized = import_path35.default.basename(filename);
         if (!sanitized.endsWith(".zip")) {
           throw new Error("Invalid archive filename");
         }
-        const filePath = import_path33.default.join(ARCHIVES_DIR, sanitized);
-        const resolvedPath = import_path33.default.resolve(filePath);
-        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path33.default.sep)) {
+        const filePath = import_path35.default.join(ARCHIVES_DIR, sanitized);
+        const resolvedPath = import_path35.default.resolve(filePath);
+        if (!resolvedPath.startsWith(ARCHIVES_DIR + import_path35.default.sep)) {
           throw new Error("Access denied");
         }
-        if (import_fs29.default.existsSync(filePath)) {
-          import_fs29.default.unlinkSync(filePath);
+        if (import_fs31.default.existsSync(filePath)) {
+          import_fs31.default.unlinkSync(filePath);
           console.log(`[Backup] Deleted archive: ${sanitized}`);
         }
       }
@@ -38765,10 +43024,10 @@ var init_migrationMeta = __esm({
 async function validateStagingDatabaseFile(dbPath) {
   const errors = [];
   const tableCounts = {};
-  if (!import_fs30.default.existsSync(dbPath)) {
+  if (!import_fs32.default.existsSync(dbPath)) {
     return { valid: false, errors: ["Database file does not exist"], tableCounts };
   }
-  const stat = import_fs30.default.statSync(dbPath);
+  const stat = import_fs32.default.statSync(dbPath);
   if (stat.size < 1024) {
     errors.push("Database file is too small to be a valid SQLite backup");
   }
@@ -38825,11 +43084,11 @@ async function validateStagingDatabaseFile(dbPath) {
   }
   return { valid: errors.length === 0, errors, tableCounts };
 }
-var import_fs30, REQUIRED_TABLES;
+var import_fs32, REQUIRED_TABLES;
 var init_validateStagingDatabase = __esm({
   "src/utils/validateStagingDatabase.ts"() {
     "use strict";
-    import_fs30 = __toESM(require("fs"), 1);
+    import_fs32 = __toESM(require("fs"), 1);
     REQUIRED_TABLES = ["medicines", "inventory_master", "sales_invoices", "purchases"];
   }
 });
@@ -41508,8 +45767,8 @@ async function runManualMigrationQueue(tasks) {
         const task = migrationQueue.shift();
         const taskIndex = completedTasks;
         currentMsgPrefix = `[File ${taskIndex + 1}/${totalTasks}] `;
-        const filePath = import_path34.default.join(MIGRATION_DIR, task.fileName);
-        if (!import_fs31.default.existsSync(filePath)) {
+        const filePath = import_path36.default.join(MIGRATION_DIR, task.fileName);
+        if (!import_fs33.default.existsSync(filePath)) {
           throw new Error(`File ${task.fileName} does not exist in MIGRATION SAMPEL folder.`);
         }
         const lowerFileName = task.fileName.toLowerCase();
@@ -41581,11 +45840,11 @@ async function gunzipToFile(srcPath, destPath) {
         reject(err);
       }
     });
-    const writeStream = import_fs31.default.createWriteStream(destPath);
+    const writeStream = import_fs33.default.createWriteStream(destPath);
     writeStream.on("close", resolve);
     writeStream.on("finish", resolve);
     writeStream.on("error", reject);
-    import_fs31.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
+    import_fs33.default.createReadStream(srcPath).pipe(gzStream).pipe(writeStream);
   });
 }
 async function processMigrationFile(originalFilePath, dataType, mapping, skipLines = 0, sheetIndex = 0, filters, medicineActions, isIntermediate = false) {
@@ -41593,26 +45852,26 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   let tempCsvPath = "";
   let tempProcessingPath = "";
   try {
-    const ext = import_path34.default.extname(originalFilePath).toLowerCase();
-    const basename = import_path34.default.basename(originalFilePath);
-    tempProcessingPath = import_path34.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
-    import_fs31.default.copyFileSync(originalFilePath, tempProcessingPath);
+    const ext = import_path36.default.extname(originalFilePath).toLowerCase();
+    const basename = import_path36.default.basename(originalFilePath);
+    tempProcessingPath = import_path36.default.join(TEMP_DIR3, `proc_${Date.now()}_${basename}`);
+    import_fs33.default.copyFileSync(originalFilePath, tempProcessingPath);
     Object.assign(migrationStatus, { active: true, progress: 0, message: "Processing migration file...", file: basename, errorCount: 0 });
-    const archiveDir = import_path34.default.join(getAppDataDir(), "data", "archived_migrations");
-    if (!import_fs31.default.existsSync(archiveDir)) import_fs31.default.mkdirSync(archiveDir, { recursive: true });
+    const archiveDir = import_path36.default.join(getAppDataDir(), "data", "archived_migrations");
+    if (!import_fs33.default.existsSync(archiveDir)) import_fs33.default.mkdirSync(archiveDir, { recursive: true });
     try {
       const { closeAllStagingConnections: closeAllStagingConnections2 } = await Promise.resolve().then(() => (init_migration(), migration_exports));
       await closeAllStagingConnections2();
     } catch (_) {
     }
-    const stagingExists = import_fs31.default.existsSync(STAGING_DB_PATH);
+    const stagingExists = import_fs33.default.existsSync(STAGING_DB_PATH);
     if (!isIntermediate || !stagingExists) {
       if (stagingExists) {
         for (let retry = 0; retry < 5; retry++) {
           try {
-            if (import_fs31.default.existsSync(STAGING_DB_PATH)) import_fs31.default.unlinkSync(STAGING_DB_PATH);
-            if (import_fs31.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs31.default.unlinkSync(STAGING_DB_PATH + "-wal");
-            if (import_fs31.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs31.default.unlinkSync(STAGING_DB_PATH + "-shm");
+            if (import_fs33.default.existsSync(STAGING_DB_PATH)) import_fs33.default.unlinkSync(STAGING_DB_PATH);
+            if (import_fs33.default.existsSync(STAGING_DB_PATH + "-wal")) import_fs33.default.unlinkSync(STAGING_DB_PATH + "-wal");
+            if (import_fs33.default.existsSync(STAGING_DB_PATH + "-shm")) import_fs33.default.unlinkSync(STAGING_DB_PATH + "-shm");
             break;
           } catch (_) {
             await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -41620,10 +45879,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
       }
       migrationStatus.message = "Creating staging database...";
-      if (import_fs31.default.existsSync(DB_PATH13)) {
+      if (import_fs33.default.existsSync(DB_PATH14)) {
         try {
           const Database6 = (await import("better-sqlite3")).default;
-          const appDb = new Database6(DB_PATH13);
+          const appDb = new Database6(DB_PATH14);
           appDb.pragma("wal_checkpoint(FULL)");
           appDb.close();
         } catch (checkpointErr) {
@@ -41632,7 +45891,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         let copySuccess = false;
         for (let copyRetry = 0; copyRetry < 5; copyRetry++) {
           try {
-            await import_fs31.default.promises.copyFile(DB_PATH13, STAGING_DB_PATH);
+            await import_fs33.default.promises.copyFile(DB_PATH14, STAGING_DB_PATH);
             copySuccess = true;
             break;
           } catch (copyErr) {
@@ -41686,11 +45945,11 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     let sqlFilePath = tempProcessingPath;
     if (ext === ".db") {
       migrationStatus.message = "Database backup detected \u2014 validating and loading into staging...";
-      import_fs31.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
+      import_fs33.default.copyFileSync(tempProcessingPath, STAGING_DB_PATH);
       const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
       if (!validation.valid) {
         try {
-          import_fs31.default.unlinkSync(STAGING_DB_PATH);
+          import_fs33.default.unlinkSync(STAGING_DB_PATH);
         } catch (_) {
         }
         throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -41704,7 +45963,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       });
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
+          import_fs33.default.copyFileSync(tempProcessingPath, import_path36.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
@@ -41717,8 +45976,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       const sheetName = workbook.SheetNames[sheetIndex] || workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
       const csvContent = XLSX4.utils.sheet_to_csv(worksheet);
-      tempCsvPath = import_path34.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
-      import_fs31.default.writeFileSync(tempCsvPath, csvContent);
+      tempCsvPath = import_path36.default.join(TEMP_DIR3, `converted_${Date.now()}.csv`);
+      import_fs33.default.writeFileSync(tempCsvPath, csvContent);
       actualFilePath = tempCsvPath;
     }
     if (ext === ".csv" || ext === ".xlsx" || ext === ".xls") {
@@ -41729,13 +45988,13 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
       if (!originalFilePath.includes("archived_migrations")) {
         try {
-          import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
+          import_fs33.default.copyFileSync(tempProcessingPath, import_path36.default.join(archiveDir, basename));
         } catch (archiveErr) {
           console.warn("Failed to archive migration file:", archiveErr);
         }
       }
-      if (tempCsvPath && import_fs31.default.existsSync(tempCsvPath)) {
-        import_fs31.default.unlinkSync(tempCsvPath);
+      if (tempCsvPath && import_fs33.default.existsSync(tempCsvPath)) {
+        import_fs33.default.unlinkSync(tempCsvPath);
       }
       return;
     } else if (ext === ".sql") {
@@ -41743,15 +46002,15 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     } else if (ext === ".gz" || tempProcessingPath.toLowerCase().endsWith(".sql.gz") || tempProcessingPath.toLowerCase().endsWith(".db.gz")) {
       const isDb = tempProcessingPath.toLowerCase().endsWith(".db.gz");
       migrationStatus.message = isDb ? "Decompressing database backup snapshot..." : "Decompressing GZIP file...";
-      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs31.default.mkdirSync(extractPath, { recursive: true });
-      sqlFilePath = isDb ? STAGING_DB_PATH : import_path34.default.join(extractPath, "decompressed_backup.sql");
+      extractPath = import_path36.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs33.default.mkdirSync(extractPath, { recursive: true });
+      sqlFilePath = isDb ? STAGING_DB_PATH : import_path36.default.join(extractPath, "decompressed_backup.sql");
       await gunzipToFile(tempProcessingPath, sqlFilePath);
       if (isDb) {
         const validation = await validateStagingDatabaseFile(STAGING_DB_PATH);
         if (!validation.valid) {
           try {
-            import_fs31.default.unlinkSync(STAGING_DB_PATH);
+            import_fs33.default.unlinkSync(STAGING_DB_PATH);
           } catch (_) {
           }
           throw new Error(`Invalid database backup: ${validation.errors.join("; ")}`);
@@ -41765,7 +46024,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         });
         if (!originalFilePath.includes("archived_migrations")) {
           try {
-            import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
+            import_fs33.default.copyFileSync(tempProcessingPath, import_path36.default.join(archiveDir, basename));
           } catch (archiveErr) {
             console.warn("Failed to archive migration file:", archiveErr);
           }
@@ -41773,24 +46032,24 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         return;
       }
     } else if (ext === ".zip") {
-      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs31.default.mkdirSync(extractPath, { recursive: true });
+      extractPath = import_path36.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs33.default.mkdirSync(extractPath, { recursive: true });
       const headerBuf = Buffer.alloc(2);
-      const fdCheck = import_fs31.default.openSync(tempProcessingPath, "r");
-      import_fs31.default.readSync(fdCheck, headerBuf, 0, 2, 0);
-      import_fs31.default.closeSync(fdCheck);
+      const fdCheck = import_fs33.default.openSync(tempProcessingPath, "r");
+      import_fs33.default.readSync(fdCheck, headerBuf, 0, 2, 0);
+      import_fs33.default.closeSync(fdCheck);
       const isActuallyGzip = headerBuf[0] === 31 && headerBuf[1] === 139;
       if (isActuallyGzip) {
         migrationStatus.message = "Decompressing GZIP backup (detected inside .zip container)...";
-        sqlFilePath = import_path34.default.join(extractPath, "decompressed_backup.sql");
+        sqlFilePath = import_path36.default.join(extractPath, "decompressed_backup.sql");
         await gunzipToFile(tempProcessingPath, sqlFilePath);
       } else {
         try {
-          await import_fs31.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
+          await import_fs33.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
         } catch (unzipError) {
           try {
-            const { execSync: execSync3 } = await import("child_process");
-            execSync3(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+            const { execSync: execSync5 } = await import("child_process");
+            execSync5(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
           } catch (_) {
             throw new Error(`Failed to extract ZIP file: ${unzipError.message}`);
           }
@@ -41798,10 +46057,10 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         migrationStatus.message = "Scanning extracted files...";
         const findFileInDir = (dir, matcher) => {
           try {
-            const list = import_fs31.default.readdirSync(dir);
+            const list = import_fs33.default.readdirSync(dir);
             for (const item of list) {
-              const fullPath = import_path34.default.join(dir, item);
-              const stat = import_fs31.default.statSync(fullPath);
+              const fullPath = import_path36.default.join(dir, item);
+              const stat = import_fs33.default.statSync(fullPath);
               if (stat.isDirectory()) {
                 const found = findFileInDir(fullPath, matcher);
                 if (found) return found;
@@ -41819,12 +46078,12 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           if (dbFilePath.toLowerCase().endsWith(".gz")) {
             await gunzipToFile(dbFilePath, STAGING_DB_PATH);
           } else {
-            import_fs31.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
+            import_fs33.default.copyFileSync(dbFilePath, STAGING_DB_PATH);
           }
           const zipDbValidation = await validateStagingDatabaseFile(STAGING_DB_PATH);
           if (!zipDbValidation.valid) {
             try {
-              import_fs31.default.unlinkSync(STAGING_DB_PATH);
+              import_fs33.default.unlinkSync(STAGING_DB_PATH);
             } catch (_) {
             }
             throw new Error(`Invalid database backup in ZIP: ${zipDbValidation.errors.join("; ")}`);
@@ -41838,7 +46097,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           });
           if (!originalFilePath.includes("archived_migrations")) {
             try {
-              import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
+              import_fs33.default.copyFileSync(tempProcessingPath, import_path36.default.join(archiveDir, basename));
             } catch (archiveErr) {
               console.warn("Failed to archive migration file:", archiveErr);
             }
@@ -41851,7 +46110,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
         }
         if (foundSql.toLowerCase().endsWith(".gz")) {
           migrationStatus.message = "Decompressing .sql.gz found inside ZIP archive...";
-          sqlFilePath = import_path34.default.join(extractPath, "decompressed_nested_backup.sql");
+          sqlFilePath = import_path36.default.join(extractPath, "decompressed_nested_backup.sql");
           await gunzipToFile(foundSql, sqlFilePath);
         } else {
           sqlFilePath = foundSql;
@@ -41859,19 +46118,19 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       }
     } else if (ext === ".tar" || ext === ".tgz" || tempProcessingPath.toLowerCase().endsWith(".tar.gz")) {
       migrationStatus.message = "Extracting TAR archive...";
-      extractPath = import_path34.default.join(TEMP_DIR3, `extract_${Date.now()}`);
-      import_fs31.default.mkdirSync(extractPath, { recursive: true });
-      const { execSync: execSync3 } = await import("child_process");
+      extractPath = import_path36.default.join(TEMP_DIR3, `extract_${Date.now()}`);
+      import_fs33.default.mkdirSync(extractPath, { recursive: true });
+      const { execSync: execSync5 } = await import("child_process");
       try {
-        execSync3(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+        execSync5(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
       } catch (tarError) {
         throw new Error(`Failed to extract TAR archive: ${tarError.message}`);
       }
       const findSqlFile = (dir) => {
-        const list = import_fs31.default.readdirSync(dir);
+        const list = import_fs33.default.readdirSync(dir);
         for (const item of list) {
-          const fullPath = import_path34.default.join(dir, item);
-          const stat = import_fs31.default.statSync(fullPath);
+          const fullPath = import_path36.default.join(dir, item);
+          const stat = import_fs33.default.statSync(fullPath);
           if (stat.isDirectory()) {
             const found = findSqlFile(fullPath);
             if (found) return found;
@@ -41903,7 +46162,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     }
     if (!originalFilePath.includes("archived_migrations")) {
       try {
-        import_fs31.default.copyFileSync(tempProcessingPath, import_path34.default.join(archiveDir, basename));
+        import_fs33.default.copyFileSync(tempProcessingPath, import_path36.default.join(archiveDir, basename));
       } catch (archiveErr) {
         console.warn("Failed to archive migration file:", archiveErr);
       }
@@ -41913,16 +46172,16 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
     Object.assign(migrationStatus, { active: false, progress: 0, message: `Failed: ${err.message}`, file: null });
     throw err;
   } finally {
-    if (tempProcessingPath && import_fs31.default.existsSync(tempProcessingPath)) {
+    if (tempProcessingPath && import_fs33.default.existsSync(tempProcessingPath)) {
       try {
-        import_fs31.default.unlinkSync(tempProcessingPath);
+        import_fs33.default.unlinkSync(tempProcessingPath);
       } catch (cleanupError) {
         console.warn("Failed to cleanup temp copy:", cleanupError);
       }
     }
-    if (extractPath && import_fs31.default.existsSync(extractPath)) {
+    if (extractPath && import_fs33.default.existsSync(extractPath)) {
       try {
-        import_fs31.default.rmSync(extractPath, { recursive: true, force: true });
+        import_fs33.default.rmSync(extractPath, { recursive: true, force: true });
       } catch (cleanupError) {
         console.warn("Failed to cleanup extraction directory:", cleanupError);
       }
@@ -41930,7 +46189,7 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
   }
 }
 async function detectDumpFormat(sqlPath) {
-  const fileStream = import_fs31.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs33.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline2.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   const headerLines = [];
   for await (const line of rl) {
@@ -42286,7 +46545,7 @@ async function parseAndImportPgDump(sqlPath, targetDbPath) {
   }
 }
 async function streamPgDump(sqlPath, handlers, db2) {
-  const fileStream = import_fs31.default.createReadStream(sqlPath, { encoding: "utf8" });
+  const fileStream = import_fs33.default.createReadStream(sqlPath, { encoding: "utf8" });
   const rl = import_readline2.default.createInterface({ input: fileStream, crlfDelay: Infinity });
   let currentTable = null;
   let currentColumns = [];
@@ -42362,8 +46621,8 @@ async function streamPgDump(sqlPath, handlers, db2) {
   fileStream.destroy();
 }
 async function generateMigrationReport(db2, stats) {
-  const reportsDir = import_path34.default.join(getAppDataDir(), "data", "migration_reports");
-  if (!import_fs31.default.existsSync(reportsDir)) import_fs31.default.mkdirSync(reportsDir, { recursive: true });
+  const reportsDir = import_path36.default.join(getAppDataDir(), "data", "migration_reports");
+  if (!import_fs33.default.existsSync(reportsDir)) import_fs33.default.mkdirSync(reportsDir, { recursive: true });
   await saveMigrationAuditSummary(db2);
   const auditSummary = await getMigrationAuditSummary(db2);
   const summary = {
@@ -42385,12 +46644,12 @@ async function generateMigrationReport(db2, stats) {
     },
     audit_summary: auditSummary
   };
-  import_fs31.default.writeFileSync(
-    import_path34.default.join(reportsDir, "migration_summary.json"),
+  import_fs33.default.writeFileSync(
+    import_path36.default.join(reportsDir, "migration_summary.json"),
     JSON.stringify(summary, null, 2)
   );
-  import_fs31.default.writeFileSync(
-    import_path34.default.join(reportsDir, "migration_audit_report.json"),
+  import_fs33.default.writeFileSync(
+    import_path36.default.join(reportsDir, "migration_audit_report.json"),
     JSON.stringify(auditSummary, null, 2)
   );
   const counts = {};
@@ -42403,8 +46662,8 @@ async function generateMigrationReport(db2, stats) {
       counts[tbl] = -1;
     }
   }
-  import_fs31.default.writeFileSync(
-    import_path34.default.join(reportsDir, "row_counts.json"),
+  import_fs33.default.writeFileSync(
+    import_path36.default.join(reportsDir, "row_counts.json"),
     JSON.stringify(counts, null, 2)
   );
   console.log("Migration reports saved to:", reportsDir);
@@ -42416,7 +46675,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
     await db2.run("PRAGMA busy_timeout = 30000");
     await ensureStagingFts(db2);
     await ensureMigrationErrorsTable(db2);
-    const fileStream = import_fs31.default.createReadStream(sqlPath);
+    const fileStream = import_fs33.default.createReadStream(sqlPath);
     const rl = import_readline2.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -42450,7 +46709,7 @@ async function parseAndImportLegacySQL(sqlPath, targetDbPath) {
         const errMsg = err.message || "Unknown processing error";
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path34.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
+          [import_path36.default.basename(sqlPath), linesProcessed2, trimmedLine.slice(0, 1e3), errMsg]
         );
       }
       if (migrated) {
@@ -42475,14 +46734,14 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await ensureMigrationErrorsTable(db2);
     if (skipLines > 0) {
       try {
-        const content = import_fs31.default.readFileSync(csvPath, "utf8");
+        const content = import_fs33.default.readFileSync(csvPath, "utf8");
         const lines = content.split(/\r?\n/).slice(0, skipLines);
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           if (line) {
             await db2.run(
               "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-              [import_path34.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
+              [import_path36.default.basename(csvPath), i + 1, line, "Skipped Row (Header)"]
             );
           }
         }
@@ -42596,7 +46855,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const errorMsg = validation.errors.join("; ");
         await db2.run(
           "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-          [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
+          [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), errorMsg]
         );
         insertCount++;
         return;
@@ -42609,7 +46868,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
+            [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Missing required medicine name"]
           );
           insertCount++;
           return;
@@ -42752,7 +47011,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -42782,7 +47041,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (patientName) {
           customerId = null;
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "customer",
@@ -42804,7 +47063,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (doctorName) {
           doctorId = null;
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "sales_invoice",
             record_identifier: invoiceNo,
             entity_type: "doctor",
@@ -42842,7 +47101,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
+            [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Sale item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -42903,7 +47162,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const rawInvoiceNo = invoiceNoKey ? String(cleanRow[invoiceNoKey] || "").trim() : "";
         if (!rawInvoiceNo) {
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "purchase",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -42924,7 +47183,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "purchases",
             record_identifier: invoiceNo,
             entity_type: "distributor",
@@ -42964,7 +47223,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
+            [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Purchase item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -43009,7 +47268,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         const returnNo = returnNoKey ? String(cleanRow[returnNoKey] || "").trim() : "";
         if (!returnNo) {
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "return",
             record_identifier: `row-${insertCount + 1}`,
             entity_type: "invoice",
@@ -43036,7 +47295,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
         } else if (distributorName) {
           distributorId = null;
           queueMigrationAudit({
-            file_name: import_path34.default.basename(csvPath),
+            file_name: import_path36.default.basename(csvPath),
             record_type: "returns",
             record_identifier: returnNo,
             entity_type: "distributor",
@@ -43073,7 +47332,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
+            [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Return item missing required medicine name"]
           );
           insertCount++;
           return;
@@ -43118,7 +47377,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           migrationStatus.errorCount++;
           await db2.run(
             "INSERT INTO migration_errors (file_name, row_index, raw_data, error_message) VALUES (?, ?, ?, ?)",
-            [import_path34.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
+            [import_path36.default.basename(csvPath), insertCount + skipLines + 1, JSON.stringify(row), "Skipped: Missing required customer name"]
           );
           insertCount++;
           return;
@@ -43181,7 +47440,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (patientName) {
             customerId = null;
             queueMigrationAudit({
-              file_name: import_path34.default.basename(csvPath),
+              file_name: import_path36.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "customer",
@@ -43207,7 +47466,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (doctorName) {
             doctorId = null;
             queueMigrationAudit({
-              file_name: import_path34.default.basename(csvPath),
+              file_name: import_path36.default.basename(csvPath),
               record_type: "sales_invoice",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "doctor",
@@ -43227,7 +47486,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
           } else if (distributorName) {
             distributorId = null;
             queueMigrationAudit({
-              file_name: import_path34.default.basename(csvPath),
+              file_name: import_path36.default.basename(csvPath),
               record_type: "purchases",
               record_identifier: String(cleanRow[Object.keys(mapping || {}).find((k) => mapping?.[k] === "invoice_no" || mapping?.[k] === "bill_no") || ""] || "ROW-" + (insertCount + 1)),
               entity_type: "distributor",
@@ -43427,7 +47686,7 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
       }
     };
     await new Promise((resolve, reject) => {
-      const stream = import_fs31.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
+      const stream = import_fs33.default.createReadStream(csvPath).pipe((0, import_csv_parser3.default)({ skipLines })).on("headers", async (headers) => {
         if (dataType === "inventory" || dataType === "combined") {
           for (const rawHeader of headers) {
             const rawColName = rawHeader.trim();
@@ -43520,13 +47779,13 @@ async function parseAndImportCSV(csvPath, targetDbPath, dataType, mapping, skipL
     await db2.close();
   }
 }
-var import_fs31, import_path34, import_url27, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline2, import_csv_parser3, XLSX4, __filename25, __dirname25, MIGRATION_DIR, TEMP_DIR3, DB_PATH13, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
+var import_fs33, import_path36, import_url28, import_unzipper, import_zlib4, import_sqlite6, import_sqlite35, import_readline2, import_csv_parser3, XLSX4, __filename26, __dirname26, MIGRATION_DIR, TEMP_DIR3, DB_PATH14, STAGING_DB_PATH, currentMsgPrefix, migrationStatus, isQueueRunning, migrationQueue;
 var init_migrationWorker = __esm({
   "src/worker/migrationWorker.ts"() {
     "use strict";
-    import_fs31 = __toESM(require("fs"), 1);
-    import_path34 = __toESM(require("path"), 1);
-    import_url27 = require("url");
+    import_fs33 = __toESM(require("fs"), 1);
+    import_path36 = __toESM(require("path"), 1);
+    import_url28 = require("url");
     import_unzipper = __toESM(require("unzipper"), 1);
     import_zlib4 = __toESM(require("zlib"), 1);
     import_sqlite6 = require("sqlite");
@@ -43560,12 +47819,12 @@ var init_migrationWorker = __esm({
     init_returnsParser();
     init_inventoryParser();
     init_salesParser();
-    __filename25 = (0, import_url27.fileURLToPath)(import_meta_url);
-    __dirname25 = import_path34.default.dirname(__filename25);
-    MIGRATION_DIR = import_path34.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    TEMP_DIR3 = import_path34.default.join(getAppDataDir(), "data", "temp_migration");
-    DB_PATH13 = config.dbPath;
-    STAGING_DB_PATH = import_path34.default.join(import_path34.default.dirname(DB_PATH13), "staging.db");
+    __filename26 = (0, import_url28.fileURLToPath)(import_meta_url);
+    __dirname26 = import_path36.default.dirname(__filename26);
+    MIGRATION_DIR = import_path36.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    TEMP_DIR3 = import_path36.default.join(getAppDataDir(), "data", "temp_migration");
+    DB_PATH14 = config.dbPath;
+    STAGING_DB_PATH = import_path36.default.join(import_path36.default.dirname(DB_PATH14), "staging.db");
     currentMsgPrefix = "";
     migrationStatus = new Proxy({
       active: false,
@@ -43587,8 +47846,8 @@ var init_migrationWorker = __esm({
         return true;
       }
     });
-    if (!import_fs31.default.existsSync(MIGRATION_DIR)) import_fs31.default.mkdirSync(MIGRATION_DIR, { recursive: true });
-    if (!import_fs31.default.existsSync(TEMP_DIR3)) import_fs31.default.mkdirSync(TEMP_DIR3, { recursive: true });
+    if (!import_fs33.default.existsSync(MIGRATION_DIR)) import_fs33.default.mkdirSync(MIGRATION_DIR, { recursive: true });
+    if (!import_fs33.default.existsSync(TEMP_DIR3)) import_fs33.default.mkdirSync(TEMP_DIR3, { recursive: true });
     isQueueRunning = false;
     migrationQueue = [];
   }
@@ -43650,7 +47909,7 @@ async function readCsvHeaders(filePath, skipLines = 0) {
   const samples = [];
   let totalRows = 0;
   await new Promise((resolve, reject) => {
-    import_fs32.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
+    import_fs34.default.createReadStream(filePath).pipe((0, import_csv_parser4.default)({ skipLines })).on("headers", (h) => headers.push(...h)).on("data", (row) => {
       totalRows++;
       if (samples.length < 100) samples.push(row);
     }).on("end", resolve).on("error", reject);
@@ -43678,17 +47937,17 @@ function readExcelHeaders(filePath, skipLines = 0, sheetIdx = 0) {
   }
   return { headers, samples, sheetNames: wb.SheetNames, totalRows };
 }
-var import_express6, import_sqlite7, import_sqlite36, import_path35, import_url28, import_fs32, import_multer, XLSX5, import_csv_parser4, __filename26, __dirname26, DB_PATH14, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router6, migration_default;
+var import_express7, import_sqlite7, import_sqlite36, import_path37, import_url29, import_fs34, import_multer, XLSX5, import_csv_parser4, __filename27, __dirname27, DB_PATH15, MIGRATION_DIR2, STAGING_DB_PATH2, openConnections, stagingDbLocked, ALLOWED_MIGRATION_EXTENSIONS, MAX_MIGRATION_SIZE, storage, upload, router7, migration_default;
 var init_migration = __esm({
   "src/routes/migration.ts"() {
     "use strict";
-    import_express6 = __toESM(require("express"), 1);
+    import_express7 = __toESM(require("express"), 1);
     import_sqlite7 = require("sqlite");
     import_sqlite36 = __toESM(require("sqlite3"), 1);
     init_connection();
-    import_path35 = __toESM(require("path"), 1);
-    import_url28 = require("url");
-    import_fs32 = __toESM(require("fs"), 1);
+    import_path37 = __toESM(require("path"), 1);
+    import_url29 = require("url");
+    import_fs34 = __toESM(require("fs"), 1);
     import_multer = __toESM(require("multer"), 1);
     XLSX5 = __toESM(require("xlsx"), 1);
     init_migrationWorker();
@@ -43700,12 +47959,12 @@ var init_migration = __esm({
     init_migrationAudit();
     init_reportCutover();
     init_config();
-    __filename26 = (0, import_url28.fileURLToPath)(import_meta_url);
-    __dirname26 = import_path35.default.dirname(__filename26);
-    DB_PATH14 = config.dbPath;
-    MIGRATION_DIR2 = import_path35.default.join(getAppDataDir(), "MIGRATION SAMPEL");
-    STAGING_DB_PATH2 = import_path35.default.join(import_path35.default.dirname(DB_PATH14), "staging.db");
-    if (!import_fs32.default.existsSync(MIGRATION_DIR2)) import_fs32.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
+    __filename27 = (0, import_url29.fileURLToPath)(import_meta_url);
+    __dirname27 = import_path37.default.dirname(__filename27);
+    DB_PATH15 = config.dbPath;
+    MIGRATION_DIR2 = import_path37.default.join(getAppDataDir(), "MIGRATION SAMPEL");
+    STAGING_DB_PATH2 = import_path37.default.join(import_path37.default.dirname(DB_PATH15), "staging.db");
+    if (!import_fs34.default.existsSync(MIGRATION_DIR2)) import_fs34.default.mkdirSync(MIGRATION_DIR2, { recursive: true });
     openConnections = /* @__PURE__ */ new Set();
     stagingDbLocked = false;
     ALLOWED_MIGRATION_EXTENSIONS = /\.(zip|sql|gz|tgz|csv|xlsx|xls|db)$/i;
@@ -43715,7 +47974,7 @@ var init_migration = __esm({
         cb(null, MIGRATION_DIR2);
       },
       filename: (_req, file, cb) => {
-        const sanitized = import_path35.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const sanitized = import_path37.default.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
         cb(null, `${Date.now()}-${sanitized}`);
       }
     });
@@ -43730,8 +47989,8 @@ var init_migration = __esm({
         }
       }
     });
-    router6 = import_express6.default.Router();
-    router6.post("/upload", (req, res) => {
+    router7 = import_express7.default.Router();
+    router7.post("/upload", (req, res) => {
       upload.single("file")(req, res, (err) => {
         if (err) {
           console.error("Upload Error:", err.message);
@@ -43743,10 +48002,10 @@ var init_migration = __esm({
         res.json({ success: true, message: "File uploaded successfully", file: req.file.filename });
       });
     });
-    router6.get("/status", (req, res) => {
+    router7.get("/status", (req, res) => {
       res.json(migrationStatus);
     });
-    router6.get("/summary", async (_req, res) => {
+    router7.get("/summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const medRow = await db2.get("SELECT COUNT(*) as cnt FROM medicines");
@@ -43774,12 +48033,12 @@ var init_migration = __esm({
         res.status(500).json({ error: "Failed to fetch migration summary", details: err.message });
       }
     });
-    router6.post("/analyze", async (req, res) => {
+    router7.post("/analyze", async (req, res) => {
       const { fileName, skipLines } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path35.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs32.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
-      const ext = import_path35.default.extname(fileName).toLowerCase();
+      const filePath = import_path37.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs34.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const ext = import_path37.default.extname(fileName).toLowerCase();
       const skipCount = parseInt(skipLines) || 0;
       try {
         let headers = [];
@@ -43802,7 +48061,7 @@ var init_migration = __esm({
           sheetNames = r.sheetNames;
           totalRows = r.totalRows;
         }
-        const stat = import_fs32.default.statSync(filePath);
+        const stat = import_fs34.default.statSync(filePath);
         const lowercaseHeaders = headers.map((h) => h.toLowerCase().trim());
         const detected = detectDataModules(headers);
         res.json({
@@ -43820,13 +48079,13 @@ var init_migration = __esm({
         res.status(500).json({ error: "Failed to analyze file", details: err.message });
       }
     });
-    router6.post("/pre-migration-analyze", async (req, res) => {
+    router7.post("/pre-migration-analyze", async (req, res) => {
       const { fileName, skipLines, sheetIndex, userMapping } = req.body;
       if (!fileName) return res.status(400).json({ error: "fileName required" });
-      const filePath = import_path35.default.join(MIGRATION_DIR2, fileName);
-      if (!import_fs32.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
+      const filePath = import_path37.default.join(MIGRATION_DIR2, fileName);
+      if (!import_fs34.default.existsSync(filePath)) return res.status(404).json({ error: "File not found" });
       try {
-        const ext = import_path35.default.extname(fileName).toLowerCase().replace(".", "");
+        const ext = import_path37.default.extname(fileName).toLowerCase().replace(".", "");
         const skipCount = parseInt(skipLines) || 0;
         const sheetIdx = parseInt(sheetIndex) || 0;
         let headers = [];
@@ -43953,7 +48212,7 @@ var init_migration = __esm({
         res.status(500).json({ error: "Pre-migration analysis failed", details: err.message });
       }
     });
-    router6.post("/run", async (req, res) => {
+    router7.post("/run", async (req, res) => {
       const { tasks, fileName, dataType, mapping, skipLines, sheetIndex, filters, medicineActions } = req.body;
       if (!tasks && !fileName) {
         return res.status(400).json({ error: "fileName or tasks required" });
@@ -43981,8 +48240,8 @@ var init_migration = __esm({
         res.status(500).json({ error: error.message || "Failed to start migration" });
       }
     });
-    router6.get("/staging/errors", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/errors", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -43999,8 +48258,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/inventory", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/inventory", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -44019,8 +48278,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/sales", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/sales", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -44039,8 +48298,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/purchases", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/purchases", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -44058,8 +48317,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/returns", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/returns", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -44077,15 +48336,15 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.delete("/staging/rollback", async (_req, res) => {
+    router7.delete("/staging/rollback", async (_req, res) => {
       try {
         await closeAllStagingConnections();
-        if (import_fs32.default.existsSync(STAGING_DB_PATH2)) {
+        if (import_fs34.default.existsSync(STAGING_DB_PATH2)) {
           for (let retry = 0; retry < 5; retry++) {
             try {
-              if (import_fs32.default.existsSync(STAGING_DB_PATH2)) import_fs32.default.unlinkSync(STAGING_DB_PATH2);
-              if (import_fs32.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs32.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
-              if (import_fs32.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs32.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
+              if (import_fs34.default.existsSync(STAGING_DB_PATH2)) import_fs34.default.unlinkSync(STAGING_DB_PATH2);
+              if (import_fs34.default.existsSync(STAGING_DB_PATH2 + "-wal")) import_fs34.default.unlinkSync(STAGING_DB_PATH2 + "-wal");
+              if (import_fs34.default.existsSync(STAGING_DB_PATH2 + "-shm")) import_fs34.default.unlinkSync(STAGING_DB_PATH2 + "-shm");
               break;
             } catch (_) {
               await new Promise((r) => setTimeout(r, 100 * (retry + 1)));
@@ -44098,8 +48357,8 @@ var init_migration = __esm({
         res.status(500).json({ error: "Failed to rollback staging", details: err.message });
       }
     });
-    router6.get("/staging/summary", async (_req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
+    router7.get("/staging/summary", async (_req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({ success: true, ready: false, stats: {}, errorCount: 0, conflictCount: 0 });
       }
       try {
@@ -44144,8 +48403,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/audit", async (_req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
+    router7.get("/staging/audit", async (_req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) {
         return res.json({
           unresolvedCustomers: 0,
           unresolvedDoctors: 0,
@@ -44165,8 +48424,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/audits", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
+    router7.get("/staging/audits", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json({ rows: [], total: 0 });
       const limit = Math.min(parseInt(String(req.query.limit || "500"), 10) || 500, 5e3);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       try {
@@ -44178,8 +48437,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/staging/conflicts", async (_req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
+    router7.get("/staging/conflicts", async (_req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.json([]);
       try {
         const db2 = await openStagingDb();
         const rows = await db2.all(`
@@ -44204,12 +48463,12 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/staging/resolve", async (req, res) => {
+    router7.post("/staging/resolve", async (req, res) => {
       const { conflictId, resolution } = req.body;
       if (!conflictId || !resolution) {
         return res.status(400).json({ error: "conflictId and resolution are required" });
       }
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       const allowed = ["merge", "overwrite", "skip", "keep_new"];
@@ -44289,9 +48548,9 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/staging/resolve-all-similar", async (req, res) => {
+    router7.post("/staging/resolve-all-similar", async (req, res) => {
       const minScore = typeof req.body?.minScore === "number" ? req.body.minScore : 85;
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) {
         return res.status(400).json({ error: "No staging database found" });
       }
       try {
@@ -44334,7 +48593,7 @@ var init_migration = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router6.get("/snapshots", async (_req, res) => {
+    router7.get("/snapshots", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -44345,13 +48604,13 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/snapshots/restore", async (req, res) => {
+    router7.post("/snapshots/restore", async (req, res) => {
       const { snapshotId } = req.body;
       if (!snapshotId) return res.status(400).json({ error: "snapshotId required" });
       try {
         const db2 = await dbManager.getConnection();
         const snap = await db2.get("SELECT * FROM migration_snapshots WHERE id = ?", [snapshotId]);
-        if (!snap?.backup_path || !import_fs32.default.existsSync(snap.backup_path)) {
+        if (!snap?.backup_path || !import_fs34.default.existsSync(snap.backup_path)) {
           return res.status(404).json({ error: "Snapshot backup file not found on disk" });
         }
         try {
@@ -44361,16 +48620,16 @@ var init_migration = __esm({
         }
         await closeAllStagingConnections();
         await dbManager.close(true);
-        if (import_fs32.default.existsSync(DB_PATH14)) {
-          const emergency = DB_PATH14 + ".pre_restore_" + Date.now();
-          import_fs32.default.copyFileSync(DB_PATH14, emergency);
+        if (import_fs34.default.existsSync(DB_PATH15)) {
+          const emergency = DB_PATH15 + ".pre_restore_" + Date.now();
+          import_fs34.default.copyFileSync(DB_PATH15, emergency);
         }
-        import_fs32.default.copyFileSync(snap.backup_path, DB_PATH14);
+        import_fs34.default.copyFileSync(snap.backup_path, DB_PATH15);
         ["app.db-wal", "app.db-shm"].forEach((f) => {
-          const p = import_path35.default.join(import_path35.default.dirname(DB_PATH14), f);
-          if (import_fs32.default.existsSync(p)) {
+          const p = import_path37.default.join(import_path37.default.dirname(DB_PATH15), f);
+          if (import_fs34.default.existsSync(p)) {
             try {
-              import_fs32.default.unlinkSync(p);
+              import_fs34.default.unlinkSync(p);
             } catch (_) {
             }
           }
@@ -44398,8 +48657,8 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/staging/finalize", async (req, res) => {
-      if (!import_fs32.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
+    router7.post("/staging/finalize", async (req, res) => {
+      if (!import_fs34.default.existsSync(STAGING_DB_PATH2)) return res.status(400).json({ error: "No staging DB found" });
       const { regenerateInvoices, reportCutoverDate } = req.body;
       let backupPath = null;
       try {
@@ -44497,11 +48756,11 @@ var init_migration = __esm({
         }
         await dbManager.close(true);
         dbManager.suspend();
-        if (import_fs32.default.existsSync(DB_PATH14)) {
+        if (import_fs34.default.existsSync(DB_PATH15)) {
           const Database6 = (await import("better-sqlite3")).default;
           let tempAppDb = null;
           try {
-            tempAppDb = new Database6(DB_PATH14, { timeout: 1e4 });
+            tempAppDb = new Database6(DB_PATH15, { timeout: 1e4 });
             tempAppDb.pragma("wal_checkpoint(TRUNCATE)");
             tempAppDb.pragma("journal_mode = DELETE");
           } catch (checkpointErr) {
@@ -44514,23 +48773,23 @@ var init_migration = __esm({
           }
         }
         const timestamp = Date.now();
-        backupPath = DB_PATH14 + ".bak_" + timestamp;
-        if (import_fs32.default.existsSync(DB_PATH14)) {
-          import_fs32.default.copyFileSync(DB_PATH14, backupPath);
+        backupPath = DB_PATH15 + ".bak_" + timestamp;
+        if (import_fs34.default.existsSync(DB_PATH15)) {
+          import_fs34.default.copyFileSync(DB_PATH15, backupPath);
         }
         ["app.db-wal", "app.db-shm", "staging.db-wal", "staging.db-shm"].forEach((f) => {
-          const p = import_path35.default.join(import_path35.default.dirname(DB_PATH14), f);
-          if (import_fs32.default.existsSync(p)) {
+          const p = import_path37.default.join(import_path37.default.dirname(DB_PATH15), f);
+          if (import_fs34.default.existsSync(p)) {
             try {
-              import_fs32.default.unlinkSync(p);
+              import_fs34.default.unlinkSync(p);
             } catch (_) {
             }
           }
         });
-        import_fs32.default.copyFileSync(STAGING_DB_PATH2, DB_PATH14);
+        import_fs34.default.copyFileSync(STAGING_DB_PATH2, DB_PATH15);
         try {
           const Database6 = (await import("better-sqlite3")).default;
-          const checkDb = new Database6(DB_PATH14, { readonly: true });
+          const checkDb = new Database6(DB_PATH15, { readonly: true });
           let checkResult;
           try {
             checkResult = checkDb.pragma("integrity_check");
@@ -44544,20 +48803,20 @@ var init_migration = __esm({
             throw new Error(`Integrity check failed: ${JSON.stringify(checkResult)}`);
           }
           try {
-            import_fs32.default.unlinkSync(STAGING_DB_PATH2);
+            import_fs34.default.unlinkSync(STAGING_DB_PATH2);
           } catch (_) {
           }
         } catch (integrityErr) {
           if (String(integrityErr?.message).includes("vtable constructor failed")) {
             console.warn("[Migration Finalize] Swapped app.db has a damaged search index; will rebuild index on connection boot.");
             try {
-              import_fs32.default.unlinkSync(STAGING_DB_PATH2);
+              import_fs34.default.unlinkSync(STAGING_DB_PATH2);
             } catch (_) {
             }
           } else {
             console.error("[Migration Finalize] Swapped app.db integrity check failed:", integrityErr);
-            if (backupPath && import_fs32.default.existsSync(backupPath)) {
-              import_fs32.default.copyFileSync(backupPath, DB_PATH14);
+            if (backupPath && import_fs34.default.existsSync(backupPath)) {
+              import_fs34.default.copyFileSync(backupPath, DB_PATH15);
             }
             throw new Error(`Swapped database integrity check failed. Restored from backup. Details: ${integrityErr.message}`);
           }
@@ -44635,8 +48894,8 @@ var init_migration = __esm({
         console.error("[Migration Finalize] Error during finalize:", e);
         dbManager.resume();
         try {
-          if (backupPath && import_fs32.default.existsSync(backupPath) && !import_fs32.default.existsSync(DB_PATH14)) {
-            import_fs32.default.copyFileSync(backupPath, DB_PATH14);
+          if (backupPath && import_fs34.default.existsSync(backupPath) && !import_fs34.default.existsSync(DB_PATH15)) {
+            import_fs34.default.copyFileSync(backupPath, DB_PATH15);
           }
           await dbManager.getConnection();
         } catch (restoreErr) {
@@ -44650,25 +48909,25 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/local-backups", async (_req, res) => {
+    router7.get("/local-backups", async (_req, res) => {
       try {
         const backupDirs = [
           { path: "D:\\redbook\\DGH_Backup", label: "DGH Backup Folder" },
           { path: "D:\\redbook", label: "RedBook Root" },
           { path: MIGRATION_DIR2, label: "Migration Sample Folder" },
-          { path: import_path35.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
+          { path: import_path37.default.resolve(getAppDataDir(), "data", "archived_migrations"), label: "Archived Migrations" }
         ];
         const backups = [];
         const ALLOWED_BACKUP_EXT = /\.(zip|sql|gz|tgz|db)$/i;
         for (const dirObj of backupDirs) {
-          if (import_fs32.default.existsSync(dirObj.path)) {
+          if (import_fs34.default.existsSync(dirObj.path)) {
             try {
-              const files = import_fs32.default.readdirSync(dirObj.path);
+              const files = import_fs34.default.readdirSync(dirObj.path);
               for (const f of files) {
                 if (ALLOWED_BACKUP_EXT.test(f)) {
-                  const fullPath = import_path35.default.join(dirObj.path, f);
+                  const fullPath = import_path37.default.join(dirObj.path, f);
                   try {
-                    const stat = import_fs32.default.statSync(fullPath);
+                    const stat = import_fs34.default.statSync(fullPath);
                     if (stat.isFile()) {
                       backups.push({
                         name: f,
@@ -44676,7 +48935,7 @@ var init_migration = __esm({
                         sourceLabel: dirObj.label,
                         sizeBytes: stat.size,
                         lastModified: stat.mtime.toISOString(),
-                        ext: import_path35.default.extname(f).toLowerCase().replace(".", ""),
+                        ext: import_path37.default.extname(f).toLowerCase().replace(".", ""),
                         isDbDump: true
                       });
                     }
@@ -44694,21 +48953,21 @@ var init_migration = __esm({
         res.status(500).json({ error: "Failed to scan local backups", details: err.message });
       }
     });
-    router6.post("/run-local-backup", async (req, res) => {
+    router7.post("/run-local-backup", async (req, res) => {
       try {
         const { fullPath, fileName } = req.body;
         let targetPath = fullPath;
         let targetName = fileName;
         if (!targetPath && targetName) {
-          targetPath = import_path35.default.join(MIGRATION_DIR2, targetName);
+          targetPath = import_path37.default.join(MIGRATION_DIR2, targetName);
         }
-        if (!targetPath || !import_fs32.default.existsSync(targetPath)) {
+        if (!targetPath || !import_fs34.default.existsSync(targetPath)) {
           return res.status(404).json({ error: "Local backup file not found at: " + targetPath });
         }
-        targetName = import_path35.default.basename(targetPath);
-        const destPath = import_path35.default.join(MIGRATION_DIR2, targetName);
-        if (import_path35.default.resolve(targetPath) !== import_path35.default.resolve(destPath)) {
-          import_fs32.default.copyFileSync(targetPath, destPath);
+        targetName = import_path37.default.basename(targetPath);
+        const destPath = import_path37.default.join(MIGRATION_DIR2, targetName);
+        if (import_path37.default.resolve(targetPath) !== import_path37.default.resolve(destPath)) {
+          import_fs34.default.copyFileSync(targetPath, destPath);
         }
         runManualMigration(targetName, "inventory").catch((err) => {
           console.error("Local backup background migration error:", err);
@@ -44722,7 +48981,7 @@ var init_migration = __esm({
         res.status(500).json({ error: "Failed to run local backup migration", details: err.message });
       }
     });
-    router6.get("/projects", async (_req, res) => {
+    router7.get("/projects", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -44733,7 +48992,7 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/projects", async (req, res) => {
+    router7.post("/projects", async (req, res) => {
       const { name } = req.body;
       if (!name || !String(name).trim()) {
         return res.status(400).json({ error: "name is required" });
@@ -44752,7 +49011,7 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.delete("/projects/:id", async (req, res) => {
+    router7.delete("/projects/:id", async (req, res) => {
       const id = Number(req.params.id);
       if (!id) return res.status(400).json({ error: "Invalid project id" });
       try {
@@ -44763,7 +49022,7 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.get("/templates", async (_req, res) => {
+    router7.get("/templates", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -44777,7 +49036,7 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    router6.post("/templates", async (req, res) => {
+    router7.post("/templates", async (req, res) => {
       const { name, moduleType, mappings } = req.body;
       if (!name || !moduleType || !mappings) {
         return res.status(400).json({ error: "name, moduleType, and mappings are required" });
@@ -44796,136 +49055,7 @@ var init_migration = __esm({
         res.status(500).json({ error: e.message });
       }
     });
-    migration_default = router6;
-  }
-});
-
-// src/services/searchCache.ts
-var searchCache_exports = {};
-__export(searchCache_exports, {
-  SearchCache: () => SearchCache,
-  searchCache: () => searchCache
-});
-var import_fs33, import_path36, PERSIST_FILE, SAVE_DEBOUNCE_MS, STALE_MAX_AGE_MS, SearchCache, searchCache;
-var init_searchCache = __esm({
-  "src/services/searchCache.ts"() {
-    "use strict";
-    import_fs33 = __toESM(require("fs"), 1);
-    import_path36 = __toESM(require("path"), 1);
-    init_config();
-    PERSIST_FILE = import_path36.default.join(getAppDataDir(), "data", "search-cache.json");
-    SAVE_DEBOUNCE_MS = 2e3;
-    STALE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-    SearchCache = class {
-      cache = /* @__PURE__ */ new Map();
-      CACHE_TTL = 5 * 60 * 1e3;
-      // fresh window
-      MAX_CACHE_SIZE = 100;
-      saveTimer = null;
-      constructor() {
-        this.loadFromDisk();
-        process.once("exit", () => this.flushToDisk());
-      }
-      /**
-       * Fresh hit → { items, stale: false }. Expired-but-present hit (≤7 days) →
-       * { items, stale: true } so the route can serve instantly and revalidate in
-       * background. Miss/empty → null.
-       */
-      lookup(query, storeId, isMapped) {
-        const q = query.toLowerCase().trim();
-        if (!q) return null;
-        this.cleanup();
-        const entry = this.cache.get(this.getCacheKey(q, storeId, isMapped));
-        if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) return null;
-        return { items: entry.data, stale: Date.now() - entry.timestamp >= this.CACHE_TTL };
-      }
-      set(query, storeId, isMapped, data) {
-        const q = query.toLowerCase().trim();
-        if (!q) return;
-        const cacheKey = this.getCacheKey(q, storeId, isMapped);
-        if (this.cache.size >= this.MAX_CACHE_SIZE && !this.cache.has(cacheKey)) {
-          let oldestKey = null;
-          let oldestTime = Infinity;
-          for (const [key, entry] of this.cache.entries()) {
-            if (entry.timestamp < oldestTime) {
-              oldestTime = entry.timestamp;
-              oldestKey = key;
-            }
-          }
-          if (oldestKey) {
-            this.cache.delete(oldestKey);
-          }
-        }
-        this.cache.set(cacheKey, {
-          timestamp: Date.now(),
-          data
-        });
-        this.scheduleSave();
-      }
-      clear() {
-        this.cache.clear();
-        this.scheduleSave();
-      }
-      entries() {
-        return this.cache.entries();
-      }
-      /** Canonical key — lets callers (e.g. single-flight revalidation) key their maps identically. */
-      keyFor(query, storeId, isMapped) {
-        return this.getCacheKey(query.toLowerCase().trim(), storeId, isMapped);
-      }
-      getCacheKey(query, storeId, isMapped) {
-        return query + this.getCacheKeySuffix(storeId, isMapped);
-      }
-      getCacheKeySuffix(storeId, isMapped) {
-        return storeId ? `_store_${storeId}_mapped_${isMapped}` : "";
-      }
-      // Only prune ancient entries — expired-but-present entries stay available as
-      // stale-while-revalidate hits. The TTL check itself happens in lookup().
-      cleanup() {
-        const now = Date.now();
-        for (const [key, entry] of this.cache.entries()) {
-          if (now - entry.timestamp > STALE_MAX_AGE_MS) {
-            this.cache.delete(key);
-          }
-        }
-      }
-      loadFromDisk() {
-        try {
-          if (!import_fs33.default.existsSync(PERSIST_FILE)) return;
-          const raw = JSON.parse(import_fs33.default.readFileSync(PERSIST_FILE, "utf-8"));
-          if (!Array.isArray(raw)) return;
-          const now = Date.now();
-          for (const pair of raw) {
-            if (!Array.isArray(pair) || typeof pair[0] !== "string") continue;
-            const [key, entry] = pair;
-            if (!entry || !Array.isArray(entry.data) || entry.data.length === 0) continue;
-            if (typeof entry.timestamp !== "number" || now - entry.timestamp > STALE_MAX_AGE_MS) continue;
-            this.cache.set(key, { timestamp: entry.timestamp, data: entry.data });
-          }
-          if (this.cache.size > this.MAX_CACHE_SIZE) {
-            const newest = [...this.cache.entries()].sort((a, b) => b[1].timestamp - a[1].timestamp).slice(0, this.MAX_CACHE_SIZE);
-            this.cache = new Map(newest);
-          }
-        } catch {
-        }
-      }
-      scheduleSave() {
-        if (this.saveTimer) return;
-        this.saveTimer = setTimeout(() => {
-          this.saveTimer = null;
-          this.flushToDisk();
-        }, SAVE_DEBOUNCE_MS);
-        this.saveTimer.unref?.();
-      }
-      flushToDisk() {
-        try {
-          import_fs33.default.mkdirSync(import_path36.default.dirname(PERSIST_FILE), { recursive: true });
-          import_fs33.default.writeFileSync(PERSIST_FILE, JSON.stringify([...this.cache.entries()]));
-        } catch {
-        }
-      }
-    };
-    searchCache = new SearchCache();
+    migration_default = router7;
   }
 });
 
@@ -44934,16 +49064,16 @@ var utilities_exports = {};
 __export(utilities_exports, {
   default: () => utilities_default
 });
-var import_express7, import_path37, import_url29, import_fs34, import_pdfkit4, import_qrcode3, import_better_sqlite34, import_adm_zip3, __filename27, __dirname27, getDbPath4, router7, utilities_default;
+var import_express8, import_path38, import_url30, import_fs35, import_pdfkit4, import_qrcode3, import_better_sqlite34, import_adm_zip3, __filename28, __dirname28, getDbPath4, router8, utilities_default;
 var init_utilities = __esm({
   "src/routes/utilities.ts"() {
     "use strict";
-    import_express7 = __toESM(require("express"), 1);
+    import_express8 = __toESM(require("express"), 1);
     init_connection();
-    import_path37 = __toESM(require("path"), 1);
-    import_url29 = require("url");
+    import_path38 = __toESM(require("path"), 1);
+    import_url30 = require("url");
     init_config();
-    import_fs34 = __toESM(require("fs"), 1);
+    import_fs35 = __toESM(require("fs"), 1);
     import_pdfkit4 = __toESM(require("pdfkit"), 1);
     import_qrcode3 = __toESM(require("qrcode"), 1);
     init_barcodeService();
@@ -44952,11 +49082,11 @@ var init_utilities = __esm({
     init_messageDAO();
     import_better_sqlite34 = __toESM(require("better-sqlite3"), 1);
     import_adm_zip3 = __toESM(require("adm-zip"), 1);
-    __filename27 = (0, import_url29.fileURLToPath)(import_meta_url);
-    __dirname27 = import_path37.default.dirname(__filename27);
+    __filename28 = (0, import_url30.fileURLToPath)(import_meta_url);
+    __dirname28 = import_path38.default.dirname(__filename28);
     getDbPath4 = () => config.dbPath;
-    router7 = import_express7.default.Router();
-    router7.post("/backup", async (_req, res) => {
+    router8 = import_express8.default.Router();
+    router8.post("/backup", async (_req, res) => {
       try {
         const result = await createBackup("Manual");
         res.json({ success: true, message: "Backup created successfully", backupFilename: result.filename });
@@ -44965,7 +49095,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to create backup" });
       }
     });
-    router7.get("/backup/list", async (_req, res) => {
+    router8.get("/backup/list", async (_req, res) => {
       try {
         const backups = listBackups();
         res.json({ success: true, backups });
@@ -44974,7 +49104,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to list backups" });
       }
     });
-    router7.delete("/backup/:filename", async (req, res) => {
+    router8.delete("/backup/:filename", async (req, res) => {
       try {
         deleteBackup(req.params.filename);
         res.json({ success: true, message: "Backup deleted" });
@@ -44983,7 +49113,7 @@ var init_utilities = __esm({
         res.status(400).json({ error: error.message || "Failed to delete backup" });
       }
     });
-    router7.get("/backup/schedule", async (_req, res) => {
+    router8.get("/backup/schedule", async (_req, res) => {
       try {
         const frequency = await getScheduleConfig();
         res.json({ success: true, frequency });
@@ -44992,7 +49122,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to get backup schedule" });
       }
     });
-    router7.post("/backup/schedule", async (req, res) => {
+    router8.post("/backup/schedule", async (req, res) => {
       try {
         const { frequency } = req.body;
         if (!frequency) {
@@ -45005,19 +49135,19 @@ var init_utilities = __esm({
         res.status(400).json({ error: error.message || "Failed to set backup schedule" });
       }
     });
-    router7.post("/barcode", async (req, res) => {
+    router8.post("/barcode", async (req, res) => {
       const { items } = req.body;
       if (!items || !Array.isArray(items)) {
         return res.status(400).json({ error: "Items array is required" });
       }
       try {
-        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs34.default.existsSync(uploadsDir)) {
-          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path38.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs35.default.existsSync(uploadsDir)) {
+          import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ margin: 30 });
-        const pdfPath = import_path37.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
-        const stream = import_fs34.default.createWriteStream(pdfPath);
+        const pdfPath = import_path38.default.join(uploadsDir, `barcodes_${Date.now()}.pdf`);
+        const stream = import_fs35.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.fontSize(13).text("Medicine Barcode Stickers (QR + Code128)", { align: "center" });
         doc.moveDown(0.5);
@@ -45056,23 +49186,23 @@ var init_utilities = __esm({
         }
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path38.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
         res.status(500).json({ error: "Failed to generate barcodes" });
       }
     });
-    router7.get("/barcode/:code", async (req, res) => {
+    router8.get("/barcode/:code", async (req, res) => {
       const { code } = req.params;
       try {
-        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs34.default.existsSync(uploadsDir)) {
-          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path38.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs35.default.existsSync(uploadsDir)) {
+          import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default();
-        const pdfPath = import_path37.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
-        const stream = import_fs34.default.createWriteStream(pdfPath);
+        const pdfPath = import_path38.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
+        const stream = import_fs35.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         const qrBuffer = await import_qrcode3.default.toBuffer(code, { width: 200, margin: 1 });
         doc.fontSize(20).text("Invoice / Bill Barcode Label", { align: "center", underline: true });
@@ -45084,20 +49214,20 @@ var init_utilities = __esm({
         doc.image(qrBuffer, xPos, doc.y, { width: imageWidth, height: imageWidth });
         doc.end();
         stream.on("finish", () => {
-          res.json({ success: true, pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}` });
+          res.json({ success: true, pdfUrl: `/uploads/${import_path38.default.basename(pdfPath)}` });
         });
       } catch (error) {
         console.error("Barcode generation failed:", error);
         res.status(500).json({ error: "Failed to generate barcode" });
       }
     });
-    router7.post("/cloud/push", async (req, res) => {
+    router8.post("/cloud/push", async (req, res) => {
       try {
         const { default: AWS } = await import("aws-sdk");
         const s3 = new AWS.S3();
         const bucketName = process.env.S3_BUCKET_NAME || "ai-pharmacy-backups";
         const key = `backups/app_${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.db`;
-        const fileStream = import_fs34.default.createReadStream(getDbPath4());
+        const fileStream = import_fs35.default.createReadStream(getDbPath4());
         const uploadParams = {
           Bucket: bucketName,
           Key: key,
@@ -45112,7 +49242,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to push to cloud" });
       }
     });
-    router7.post("/backup/restore", async (req, res) => {
+    router8.post("/backup/restore", async (req, res) => {
       try {
         let { filename } = req.body || {};
         if (!filename) {
@@ -45129,7 +49259,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to restore backup: " + e.message });
       }
     });
-    router7.post("/restore", async (_req, res) => {
+    router8.post("/restore", async (_req, res) => {
       try {
         const backups = listBackups();
         if (backups.length === 0) {
@@ -45142,7 +49272,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to restore backup: " + e.message });
       }
     });
-    router7.get("/backup/status", async (req, res) => {
+    router8.get("/backup/status", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -45176,14 +49306,14 @@ var init_utilities = __esm({
           }
         }
         const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path37.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path37.default.join(BACKUP_DIR3, "archives");
+        const SNAPSHOTS_DIR2 = import_path38.default.join(BACKUP_DIR3, "snapshots");
+        const ARCHIVES_DIR2 = import_path38.default.join(BACKUP_DIR3, "archives");
         let totalSize = 0;
         const calculateFolderSize = (dir) => {
-          if (import_fs34.default.existsSync(dir)) {
-            import_fs34.default.readdirSync(dir).forEach((f) => {
+          if (import_fs35.default.existsSync(dir)) {
+            import_fs35.default.readdirSync(dir).forEach((f) => {
               try {
-                const stats = import_fs34.default.statSync(import_path37.default.join(dir, f));
+                const stats = import_fs35.default.statSync(import_path38.default.join(dir, f));
                 if (stats.isFile()) {
                   totalSize += stats.size;
                 }
@@ -45222,7 +49352,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to retrieve backup status: " + err.message });
       }
     });
-    router7.post("/backup/fresh-install", async (req, res) => {
+    router8.post("/backup/fresh-install", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('backup_fresh_installed', 'true')");
@@ -45231,7 +49361,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to set fresh installation mode: " + err.message });
       }
     });
-    router7.post("/backup/archive/restore", async (req, res) => {
+    router8.post("/backup/archive/restore", async (req, res) => {
       const { filename } = req.body;
       if (!filename) {
         return res.status(400).json({ error: "filename parameter is required" });
@@ -45244,7 +49374,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Restore failed: " + err.message });
       }
     });
-    router7.delete("/backup/archive/:filename", async (req, res) => {
+    router8.delete("/backup/archive/:filename", async (req, res) => {
       try {
         backupRecoveryService.deleteArchive(req.params.filename);
         res.json({ success: true, message: "Archive deleted successfully" });
@@ -45252,32 +49382,32 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to delete archive: " + err.message });
       }
     });
-    router7.post("/backup/manual", async (req, res) => {
+    router8.post("/backup/manual", async (req, res) => {
       try {
         const BACKUP_DIR3 = config.backupDir;
-        const SNAPSHOTS_DIR2 = import_path37.default.join(BACKUP_DIR3, "snapshots");
-        const ARCHIVES_DIR2 = import_path37.default.join(BACKUP_DIR3, "archives");
+        const SNAPSHOTS_DIR2 = import_path38.default.join(BACKUP_DIR3, "snapshots");
+        const ARCHIVES_DIR2 = import_path38.default.join(BACKUP_DIR3, "archives");
         const archiveName = `archive_manual_${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}_${Date.now()}.zip`;
-        const archivePath = import_path37.default.join(ARCHIVES_DIR2, archiveName);
+        const archivePath = import_path38.default.join(ARCHIVES_DIR2, archiveName);
         const snapshotFile = await backupRecoveryService.createSnapshot();
-        const files = import_fs34.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
+        const files = import_fs35.default.readdirSync(SNAPSHOTS_DIR2).filter((f) => f.startsWith("snapshot_") && (f.endsWith(".db") || f.endsWith(".db.gz")));
         if (files.length > 0) {
           const zip = new import_adm_zip3.default();
-          files.forEach((f) => zip.addLocalFile(import_path37.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => zip.addLocalFile(import_path38.default.join(SNAPSHOTS_DIR2, f)));
           zip.writeZip(archivePath);
-          files.forEach((f) => import_fs34.default.unlinkSync(import_path37.default.join(SNAPSHOTS_DIR2, f)));
+          files.forEach((f) => import_fs35.default.unlinkSync(import_path38.default.join(SNAPSHOTS_DIR2, f)));
           await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
         } else {
           const tempDbFile = `snapshot_manual_${Date.now()}.db`;
-          const tempDbPath = import_path37.default.join(SNAPSHOTS_DIR2, tempDbFile);
+          const tempDbPath = import_path38.default.join(SNAPSHOTS_DIR2, tempDbFile);
           const tempDb = new import_better_sqlite34.default(getDbPath4());
           await tempDb.backup(tempDbPath);
           tempDb.close();
           const zip = new import_adm_zip3.default();
           zip.addLocalFile(tempDbPath);
           zip.writeZip(archivePath);
-          import_fs34.default.unlinkSync(tempDbPath);
+          import_fs35.default.unlinkSync(tempDbPath);
           await backupRecoveryService.uploadArchive(archiveName);
           await backupRecoveryService.enforceRetention();
         }
@@ -45287,7 +49417,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Manual backup failed: " + err.message });
       }
     });
-    router7.post("/backup/toggle-pause", async (req, res) => {
+    router8.post("/backup/toggle-pause", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get("SELECT value FROM app_settings WHERE key = 'backup_is_paused'");
@@ -45299,7 +49429,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to toggle pause: " + err.message });
       }
     });
-    router7.get("/gmail/test", async (req, res) => {
+    router8.get("/gmail/test", async (req, res) => {
       try {
         console.log("TEST_CONNECTION_GMAIL");
         const db2 = await dbManager.getConnection();
@@ -45310,7 +49440,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Gmail test connection failed" });
       }
     });
-    router7.get("/whatsapp/test", async (req, res) => {
+    router8.get("/whatsapp/test", async (req, res) => {
       try {
         console.log("TEST_CONNECTION_WHATSAPP");
         const db2 = await dbManager.getConnection();
@@ -45321,7 +49451,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "WhatsApp test connection failed" });
       }
     });
-    router7.post("/whatsapp/send", async (req, res) => {
+    router8.post("/whatsapp/send", async (req, res) => {
       if (process.env.NODE_ENV === "production") {
         return res.status(403).json({ error: "Mock test message endpoint is disabled in production" });
       }
@@ -45334,7 +49464,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to send WhatsApp test message" });
       }
     });
-    router7.get("/test-connection", async (req, res) => {
+    router8.get("/test-connection", async (req, res) => {
       try {
         const service = req.query.service || "";
         const actionType = service ? `TEST_CONNECTION_${service.toUpperCase()}` : "TEST_CONNECTION";
@@ -45352,7 +49482,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Connection test failed" });
       }
     });
-    router7.get("/data-counts", async (req, res) => {
+    router8.get("/data-counts", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const safe = async (sql) => {
@@ -45374,7 +49504,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to fetch data counts" });
       }
     });
-    router7.post("/reset-data", async (req, res) => {
+    router8.post("/reset-data", async (req, res) => {
       try {
         const wipeAll = req.body?.wipeAll === true;
         let appSettingsRows = [];
@@ -45515,33 +49645,33 @@ var init_utilities = __esm({
           } catch (_) {
           }
         }
-        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
-        const attachmentsDir = import_path37.default.resolve(getAppDataDir(), "attachments");
-        const reportsDir = import_path37.default.resolve(getAppDataDir(), "reports");
-        const dataUploadsDir = import_path37.default.resolve(getAppDataDir(), "data", "uploads");
-        const dataAttachmentsDir = import_path37.default.resolve(getAppDataDir(), "data", "attachments");
-        const dataReportsDir = import_path37.default.resolve(getAppDataDir(), "data", "reports");
-        const rawDir = import_path37.default.resolve(getAppDataDir(), "catalogue", "raw");
-        const migrationReportsDir = import_path37.default.resolve(getAppDataDir(), "data", "migration_reports");
-        const auditImagesDir = import_path37.default.resolve(getAppDataDir(), "data", "audit_images");
+        const uploadsDir = import_path38.default.resolve(getAppDataDir(), "uploads");
+        const attachmentsDir = import_path38.default.resolve(getAppDataDir(), "attachments");
+        const reportsDir = import_path38.default.resolve(getAppDataDir(), "reports");
+        const dataUploadsDir = import_path38.default.resolve(getAppDataDir(), "data", "uploads");
+        const dataAttachmentsDir = import_path38.default.resolve(getAppDataDir(), "data", "attachments");
+        const dataReportsDir = import_path38.default.resolve(getAppDataDir(), "data", "reports");
+        const rawDir = import_path38.default.resolve(getAppDataDir(), "catalogue", "raw");
+        const migrationReportsDir = import_path38.default.resolve(getAppDataDir(), "data", "migration_reports");
+        const auditImagesDir = import_path38.default.resolve(getAppDataDir(), "data", "audit_images");
         const clearDir = (dirPath, preserveFiles = []) => {
-          if (!import_fs34.default.existsSync(dirPath)) return;
-          const files = import_fs34.default.readdirSync(dirPath);
+          if (!import_fs35.default.existsSync(dirPath)) return;
+          const files = import_fs35.default.readdirSync(dirPath);
           for (const file of files) {
-            const filePath = import_path37.default.join(dirPath, file);
-            const stat = import_fs34.default.statSync(filePath);
+            const filePath = import_path38.default.join(dirPath, file);
+            const stat = import_fs35.default.statSync(filePath);
             if (stat.isDirectory()) {
               clearDir(filePath, preserveFiles);
               try {
-                if (import_fs34.default.readdirSync(filePath).length === 0) {
-                  import_fs34.default.rmdirSync(filePath);
+                if (import_fs35.default.readdirSync(filePath).length === 0) {
+                  import_fs35.default.rmdirSync(filePath);
                 }
               } catch (_) {
               }
             } else {
               if (!preserveFiles.includes(file)) {
                 try {
-                  import_fs34.default.unlinkSync(filePath);
+                  import_fs35.default.unlinkSync(filePath);
                 } catch (_) {
                 }
               }
@@ -45560,9 +49690,9 @@ var init_utilities = __esm({
         if (wipeAll) {
           const backupDir = config.backupDir;
           clearDir(backupDir);
-          const dataDir = import_path37.default.resolve(getAppDataDir(), "data");
-          const stagingDbPath = import_path37.default.join(dataDir, "staging.db");
-          if (import_fs34.default.existsSync(stagingDbPath)) {
+          const dataDir = import_path38.default.resolve(getAppDataDir(), "data");
+          const stagingDbPath = import_path38.default.join(dataDir, "staging.db");
+          if (import_fs35.default.existsSync(stagingDbPath)) {
             try {
               const { open: open6 } = await import("sqlite");
               const { default: sqlite37 } = await import("sqlite3");
@@ -45590,7 +49720,7 @@ var init_utilities = __esm({
           const stagingDbFiles = ["staging.db", "staging.db-wal", "staging.db-shm"];
           for (const f of stagingDbFiles) {
             try {
-              if (import_fs34.default.existsSync(import_path37.default.join(dataDir, f))) import_fs34.default.unlinkSync(import_path37.default.join(dataDir, f));
+              if (import_fs35.default.existsSync(import_path38.default.join(dataDir, f))) import_fs35.default.unlinkSync(import_path38.default.join(dataDir, f));
             } catch (_) {
             }
           }
@@ -45599,13 +49729,13 @@ var init_utilities = __esm({
             unlockStagingDb2();
           } catch (_) {
           }
-          const migrationSampelDir = import_path37.default.resolve(getAppDataDir(), "MIGRATION SAMPEL");
+          const migrationSampelDir = import_path38.default.resolve(getAppDataDir(), "MIGRATION SAMPEL");
           clearDir(migrationSampelDir);
           const tempDirs = [
-            import_path37.default.resolve(getAppDataDir(), "data", "temp_migration"),
-            import_path37.default.resolve(getAppDataDir(), "data", "temp_ocr"),
-            import_path37.default.resolve(getAppDataDir(), "data", "search_screenshots"),
-            import_path37.default.resolve(getAppDataDir(), "data", "archived_migrations")
+            import_path38.default.resolve(getAppDataDir(), "data", "temp_migration"),
+            import_path38.default.resolve(getAppDataDir(), "data", "temp_ocr"),
+            import_path38.default.resolve(getAppDataDir(), "data", "search_screenshots"),
+            import_path38.default.resolve(getAppDataDir(), "data", "archived_migrations")
           ];
           for (const d of tempDirs) clearDir(d);
           try {
@@ -45613,20 +49743,20 @@ var init_utilities = __esm({
             stopEmailPoller2();
           } catch (_) {
           }
-          if (import_fs34.default.existsSync(dataDir)) {
-            for (const f of import_fs34.default.readdirSync(dataDir)) {
+          if (import_fs35.default.existsSync(dataDir)) {
+            for (const f of import_fs35.default.readdirSync(dataDir)) {
               if (f === "app.db" || f === "app.db-wal" || f === "app.db-shm") continue;
               if (f === "models") continue;
-              const fullPath = import_path37.default.join(dataDir, f);
-              const stat = import_fs34.default.statSync(fullPath);
+              const fullPath = import_path38.default.join(dataDir, f);
+              const stat = import_fs35.default.statSync(fullPath);
               if (stat.isDirectory()) continue;
               try {
-                import_fs34.default.unlinkSync(fullPath);
+                import_fs35.default.unlinkSync(fullPath);
               } catch (_) {
               }
             }
           }
-          const catalogueDir = import_path37.default.resolve(getAppDataDir(), "catalogue");
+          const catalogueDir = import_path38.default.resolve(getAppDataDir(), "catalogue");
           clearDir(catalogueDir);
           try {
             const { destroyClient: destroyClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
@@ -45634,13 +49764,13 @@ var init_utilities = __esm({
           } catch (err) {
             console.warn("[Reset] Failed to destroy WhatsApp client before wipe:", err.message);
           }
-          const wwwebAuthDir = import_path37.default.resolve(getAppDataDir(), ".wwebjs_auth");
-          const wwwebCacheDir = import_path37.default.resolve(getAppDataDir(), ".wwebjs_cache");
+          const wwwebAuthDir = import_path38.default.resolve(getAppDataDir(), ".wwebjs_auth");
+          const wwwebCacheDir = import_path38.default.resolve(getAppDataDir(), ".wwebjs_cache");
           const removeDirWithRetry = async (dirPath, attempts = 3) => {
-            if (!import_fs34.default.existsSync(dirPath)) return;
+            if (!import_fs35.default.existsSync(dirPath)) return;
             for (let i = 0; i < attempts; i++) {
               try {
-                import_fs34.default.rmSync(dirPath, { recursive: true, force: true });
+                import_fs35.default.rmSync(dirPath, { recursive: true, force: true });
                 return;
               } catch (err) {
                 if (i === attempts - 1) {
@@ -45659,16 +49789,16 @@ var init_utilities = __esm({
           } catch (err) {
             console.warn("[Reset] Failed to kill Chrome processes:", err.message);
           }
-          const pharmarackProfilePath = import_path37.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const pharmarackProfilePath = import_path38.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
           await removeDirWithRetry(pharmarackProfilePath);
-          if (import_fs34.default.existsSync(dataDir)) {
-            for (const entry of import_fs34.default.readdirSync(dataDir)) {
+          if (import_fs35.default.existsSync(dataDir)) {
+            for (const entry of import_fs35.default.readdirSync(dataDir)) {
               if (entry.startsWith("pharmarack_profile_temp_")) {
-                await removeDirWithRetry(import_path37.default.join(dataDir, entry));
+                await removeDirWithRetry(import_path38.default.join(dataDir, entry));
               }
             }
           }
-          const cachePath = import_path37.default.resolve(getAppDataDir(), "data", "cache");
+          const cachePath = import_path38.default.resolve(getAppDataDir(), "data", "cache");
           await removeDirWithRetry(cachePath);
           try {
             const { searchCache: searchCache2 } = await Promise.resolve().then(() => (init_searchCache(), searchCache_exports));
@@ -45677,10 +49807,10 @@ var init_utilities = __esm({
           }
           const accidentalDirs = ["PHARMACY", "WORKING", "ON", "PROJECT"];
           for (const d of accidentalDirs) {
-            const fullPath = import_path37.default.resolve(__dirname27, "..", "..", d);
-            if (import_fs34.default.existsSync(fullPath)) {
+            const fullPath = import_path38.default.resolve(__dirname28, "..", "..", d);
+            if (import_fs35.default.existsSync(fullPath)) {
               try {
-                import_fs34.default.rmSync(fullPath, { recursive: true, force: true });
+                import_fs35.default.rmSync(fullPath, { recursive: true, force: true });
               } catch (_) {
               }
             }
@@ -45697,29 +49827,29 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to reset data: " + error.message });
       }
     });
-    router7.post("/clear-cache", async (req, res) => {
+    router8.post("/clear-cache", async (req, res) => {
       try {
-        const dataDir = import_path37.default.resolve(getAppDataDir(), "data");
-        const cachePath = import_path37.default.join(dataDir, "cache");
-        if (import_fs34.default.existsSync(cachePath)) {
+        const dataDir = import_path38.default.resolve(getAppDataDir(), "data");
+        const cachePath = import_path38.default.join(dataDir, "cache");
+        if (import_fs35.default.existsSync(cachePath)) {
           try {
-            import_fs34.default.rmSync(cachePath, { recursive: true, force: true });
+            import_fs35.default.rmSync(cachePath, { recursive: true, force: true });
           } catch (err) {
             console.warn("[Clear Cache] Failed to delete cache directory:", err);
           }
         }
         const tempDirs = [
-          import_path37.default.join(dataDir, "temp_migration"),
-          import_path37.default.join(dataDir, "temp_ocr"),
-          import_path37.default.join(dataDir, "search_screenshots")
+          import_path38.default.join(dataDir, "temp_migration"),
+          import_path38.default.join(dataDir, "temp_ocr"),
+          import_path38.default.join(dataDir, "search_screenshots")
         ];
         for (const d of tempDirs) {
-          if (import_fs34.default.existsSync(d)) {
+          if (import_fs35.default.existsSync(d)) {
             try {
-              const files = import_fs34.default.readdirSync(d);
+              const files = import_fs35.default.readdirSync(d);
               for (const file of files) {
                 try {
-                  import_fs34.default.unlinkSync(import_path37.default.join(d, file));
+                  import_fs35.default.unlinkSync(import_path38.default.join(d, file));
                 } catch (_) {
                 }
               }
@@ -45734,7 +49864,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to clear cache: " + error.message });
       }
     });
-    router7.post("/db/unlock", async (req, res) => {
+    router8.post("/db/unlock", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("ROLLBACK");
@@ -45748,7 +49878,7 @@ var init_utilities = __esm({
         }
       }
     });
-    router7.get("/sale-invoice-barcode/:invoiceNo", async (req, res) => {
+    router8.get("/sale-invoice-barcode/:invoiceNo", async (req, res) => {
       const { invoiceNo } = req.params;
       if (!invoiceNo) {
         return res.status(400).json({ error: "Invoice number is required" });
@@ -45772,14 +49902,14 @@ var init_utilities = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path37.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs34.default.existsSync(uploadsDir)) {
-          import_fs34.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path38.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs35.default.existsSync(uploadsDir)) {
+          import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit4.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path37.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs34.default.createWriteStream(pdfPath);
+        const pdfPath = import_path38.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs35.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -45805,7 +49935,7 @@ var init_utilities = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path37.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path38.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -45813,7 +49943,7 @@ var init_utilities = __esm({
         res.status(500).json({ error: "Failed to generate sale invoice barcode: " + error.message });
       }
     });
-    utilities_default = router7;
+    utilities_default = router8;
   }
 });
 
@@ -45822,14 +49952,14 @@ var scan_exports = {};
 __export(scan_exports, {
   default: () => scan_default
 });
-var import_express8, router8, scan_default;
+var import_express9, router9, scan_default;
 var init_scan = __esm({
   "src/routes/scan.ts"() {
     "use strict";
-    import_express8 = __toESM(require("express"), 1);
+    import_express9 = __toESM(require("express"), 1);
     init_connection();
-    router8 = import_express8.default.Router();
-    router8.get("/resolve", async (req, res) => {
+    router9 = import_express9.default.Router();
+    router9.get("/resolve", async (req, res) => {
       const raw = (req.query.text || "").toString().trim().slice(0, 300);
       if (!raw) {
         return res.status(400).json({ error: "Scanned text is required" });
@@ -45893,7 +50023,7 @@ var init_scan = __esm({
         res.status(500).json({ error: "Failed to resolve scanned code: " + message });
       }
     });
-    router8.post("/attach-barcode", async (req, res) => {
+    router9.post("/attach-barcode", async (req, res) => {
       const code = (req.body?.code || "").toString().trim().slice(0, 64);
       const medicineId = Number(req.body?.medicine_id);
       if (!code) {
@@ -45923,17 +50053,17 @@ var init_scan = __esm({
         res.status(500).json({ error: "Failed to attach barcode: " + message });
       }
     });
-    scan_default = router8;
+    scan_default = router9;
   }
 });
 
 // src/utils/password.ts
 function hashPassword(password) {
-  const salt = import_crypto3.default.randomBytes(16).toString("hex");
+  const salt = import_crypto4.default.randomBytes(16).toString("hex");
   const iterations = 1e5;
   const keylen = 64;
   const digest = "sha512";
-  const hash = import_crypto3.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
+  const hash = import_crypto4.default.pbkdf2Sync(password, salt, iterations, keylen, digest).toString("hex");
   return `pbkdf2:${iterations}:${salt}:${hash}`;
 }
 function verifyPassword(providedPass, storedPass) {
@@ -45945,22 +50075,22 @@ function verifyPassword(providedPass, storedPass) {
     const salt = parts[2];
     const storedHash = parts[3];
     if (isNaN(iterations) || !salt || !storedHash) return false;
-    const testHash = import_crypto3.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
+    const testHash = import_crypto4.default.pbkdf2Sync(providedPass, salt, iterations, 64, "sha512").toString("hex");
     const bufA2 = Buffer.from(testHash, "hex");
     const bufB2 = Buffer.from(storedHash, "hex");
     if (bufA2.length !== bufB2.length) return false;
-    return import_crypto3.default.timingSafeEqual(bufA2, bufB2);
+    return import_crypto4.default.timingSafeEqual(bufA2, bufB2);
   }
   const bufA = Buffer.from(providedPass);
   const bufB = Buffer.from(storedPass);
   if (bufA.length !== bufB.length) return false;
-  return import_crypto3.default.timingSafeEqual(bufA, bufB);
+  return import_crypto4.default.timingSafeEqual(bufA, bufB);
 }
-var import_crypto3;
+var import_crypto4;
 var init_password = __esm({
   "src/utils/password.ts"() {
     "use strict";
-    import_crypto3 = __toESM(require("crypto"), 1);
+    import_crypto4 = __toESM(require("crypto"), 1);
   }
 });
 
@@ -45969,21 +50099,21 @@ var security_exports = {};
 __export(security_exports, {
   default: () => security_default
 });
-var import_crypto4, import_express9, import_path38, import_url30, __filename28, __dirname28, DB_PATH15, router9, security_default;
+var import_crypto5, import_express10, import_path39, import_url31, __filename29, __dirname29, DB_PATH16, router10, security_default;
 var init_security = __esm({
   "src/routes/security.ts"() {
     "use strict";
-    import_crypto4 = __toESM(require("crypto"), 1);
-    import_express9 = __toESM(require("express"), 1);
-    import_path38 = __toESM(require("path"), 1);
-    import_url30 = require("url");
+    import_crypto5 = __toESM(require("crypto"), 1);
+    import_express10 = __toESM(require("express"), 1);
+    import_path39 = __toESM(require("path"), 1);
+    import_url31 = require("url");
     init_connection();
     init_password();
-    __filename28 = (0, import_url30.fileURLToPath)(import_meta_url);
-    __dirname28 = import_path38.default.dirname(__filename28);
-    DB_PATH15 = process.env.DB_PATH || import_path38.default.resolve(__dirname28, "..", "..", "data", "app.db");
-    router9 = import_express9.default.Router();
-    router9.post("/admin/login", async (req, res) => {
+    __filename29 = (0, import_url31.fileURLToPath)(import_meta_url);
+    __dirname29 = import_path39.default.dirname(__filename29);
+    DB_PATH16 = process.env.DB_PATH || import_path39.default.resolve(__dirname29, "..", "..", "data", "app.db");
+    router10 = import_express10.default.Router();
+    router10.post("/admin/login", async (req, res) => {
       if (!req.body) {
         return res.status(400).json({ error: "Missing request body." });
       }
@@ -46020,7 +50150,7 @@ var init_security = __esm({
         let tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'license_session_token'");
         let sessionToken = tokenRow?.value;
         if (!sessionToken) {
-          sessionToken = import_crypto4.default.randomUUID();
+          sessionToken = import_crypto5.default.randomUUID();
           await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('license_session_token', ?)", [sessionToken]);
         }
         await db2.run(
@@ -46033,7 +50163,7 @@ var init_security = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router9.post("/admin/reset-device", async (req, res) => {
+    router10.post("/admin/reset-device", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");
@@ -46048,7 +50178,7 @@ var init_security = __esm({
         res.status(500).json({ error: "Failed to reset device: " + error.message });
       }
     });
-    security_default = router9;
+    security_default = router10;
   }
 });
 
@@ -46057,23 +50187,23 @@ var email_exports = {};
 __export(email_exports, {
   default: () => email_default
 });
-var import_express10, import_path39, import_url31, import_fs35, __filename29, __dirname29, getUploadsDir2, router10, email_default;
+var import_express11, import_path40, import_url32, import_fs36, __filename30, __dirname30, getUploadsDir2, router11, email_default;
 var init_email = __esm({
   "src/routes/email.ts"() {
     "use strict";
-    import_express10 = __toESM(require("express"), 1);
+    import_express11 = __toESM(require("express"), 1);
     init_connection();
-    import_path39 = __toESM(require("path"), 1);
-    import_url31 = require("url");
+    import_path40 = __toESM(require("path"), 1);
+    import_url32 = require("url");
     init_emailService();
     init_eventService();
     init_config();
-    import_fs35 = __toESM(require("fs"), 1);
-    __filename29 = (0, import_url31.fileURLToPath)(import_meta_url);
-    __dirname29 = import_path39.default.dirname(__filename29);
-    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path39.default.resolve(getAppDataDir(), "uploads");
-    router10 = import_express10.default.Router();
-    router10.post("/", async (req, res) => {
+    import_fs36 = __toESM(require("fs"), 1);
+    __filename30 = (0, import_url32.fileURLToPath)(import_meta_url);
+    __dirname30 = import_path40.default.dirname(__filename30);
+    getUploadsDir2 = () => process.env.UPLOADS_DIR || import_path40.default.resolve(getAppDataDir(), "uploads");
+    router11 = import_express11.default.Router();
+    router11.post("/", async (req, res) => {
       const { subject, from, body, attachments } = req.body;
       if (!subject || !from) {
         return res.status(400).json({ error: "subject and from are required" });
@@ -46108,7 +50238,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to process email" });
       }
     });
-    router10.get("/inbox", async (req, res) => {
+    router11.get("/inbox", async (req, res) => {
       const limit = req.query.limit ? parseInt(req.query.limit) : 30;
       const since = req.query.since;
       try {
@@ -46119,7 +50249,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to fetch email inbox" });
       }
     });
-    router10.get("/:id/body", async (req, res) => {
+    router11.get("/:id/body", async (req, res) => {
       const uid = parseInt(req.params.id);
       if (isNaN(uid)) {
         return res.status(400).json({ error: "Invalid email UID (must be a number)" });
@@ -46132,7 +50262,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to fetch email body" });
       }
     });
-    router10.get("/status", async (_req, res) => {
+    router11.get("/status", async (_req, res) => {
       try {
         const status = await emailService.getImapStatus();
         res.json(status);
@@ -46140,7 +50270,7 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to check email status" });
       }
     });
-    router10.post("/:id/seen", async (req, res) => {
+    router11.post("/:id/seen", async (req, res) => {
       const emailId = req.params.id;
       const uid = parseInt(emailId);
       if (isNaN(uid)) {
@@ -46155,7 +50285,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to mark email as seen" });
       }
     });
-    router10.post("/sync", async (req, res) => {
+    router11.post("/sync", async (req, res) => {
       try {
         const synced = await emailService.syncNewEmailsFromIMAP();
         await emailService.pruneOldEmails();
@@ -46165,7 +50295,7 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to sync emails" });
       }
     });
-    router10.post("/prune", async (_req, res) => {
+    router11.post("/prune", async (_req, res) => {
       try {
         const result = await emailService.pruneOldEmails();
         res.json({ success: true, deletedCount: result.deletedCount, message: `Pruned ${result.deletedCount} old email(s)` });
@@ -46174,7 +50304,7 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to prune emails" });
       }
     });
-    router10.post("/:uid/saved", async (req, res) => {
+    router11.post("/:uid/saved", async (req, res) => {
       const uid = parseInt(req.params.uid);
       if (isNaN(uid)) {
         return res.status(400).json({ error: "Invalid email UID" });
@@ -46187,7 +50317,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to mark email as saved" });
       }
     });
-    router10.delete("/:uid", async (req, res) => {
+    router11.delete("/:uid", async (req, res) => {
       const uid = parseInt(req.params.uid);
       if (isNaN(uid)) {
         return res.status(400).json({ error: "Invalid email UID" });
@@ -46203,7 +50333,7 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to delete email" });
       }
     });
-    router10.post("/import-manual", async (req, res) => {
+    router11.post("/import-manual", async (req, res) => {
       const { subject, from, body, date, attachments } = req.body;
       if (!subject || !from) {
         return res.status(400).json({ error: "subject and from are required" });
@@ -46223,16 +50353,16 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to manually import email invoice" });
       }
     });
-    router10.get("/attachments", async (req, res) => {
+    router11.get("/attachments", async (req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs35.default.existsSync(uploadsDir)) {
-          import_fs35.default.mkdirSync(uploadsDir, { recursive: true });
+        if (!import_fs36.default.existsSync(uploadsDir)) {
+          import_fs36.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const files = import_fs35.default.readdirSync(uploadsDir);
+        const files = import_fs36.default.readdirSync(uploadsDir);
         const attachments = files.map((filename) => {
-          const filePath = import_path39.default.join(uploadsDir, filename);
-          const stats = import_fs35.default.statSync(filePath);
+          const filePath = import_path40.default.join(uploadsDir, filename);
+          const stats = import_fs36.default.statSync(filePath);
           return {
             filename,
             size: stats.size,
@@ -46245,7 +50375,7 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to retrieve attachments" });
       }
     });
-    router10.get("/:id/attachments", async (req, res) => {
+    router11.get("/:id/attachments", async (req, res) => {
       try {
         const emailId = req.params.id;
         const uid = parseInt(emailId);
@@ -46259,32 +50389,32 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to retrieve attachments" });
       }
     });
-    router10.get("/attachments/preview", async (req, res) => {
+    router11.get("/attachments/preview", async (req, res) => {
       const filename = req.query.filename;
       if (!filename) {
         return res.status(400).json({ error: "filename is required" });
       }
       try {
         const uploadsDir = getUploadsDir2();
-        const filePath = import_path39.default.resolve(uploadsDir, filename);
+        const filePath = import_path40.default.resolve(uploadsDir, filename);
         if (!filePath.startsWith(uploadsDir)) {
           return res.status(403).json({ error: "Access denied" });
         }
-        if (!import_fs35.default.existsSync(filePath)) {
+        if (!import_fs36.default.existsSync(filePath)) {
           return res.status(404).json({ error: "Attachment file not found" });
         }
-        const ext = import_path39.default.extname(filename).toLowerCase();
+        const ext = import_path40.default.extname(filename).toLowerCase();
         if (ext === ".txt" || ext === ".csv") {
-          const text = await import_fs35.default.promises.readFile(filePath, "utf-8");
+          const text = await import_fs36.default.promises.readFile(filePath, "utf-8");
           res.json({ success: true, type: "text", content: text.substring(0, 5e4) });
         } else if (ext === ".pdf") {
           const { default: pdfParse3 } = await import("pdf-parse");
-          const dataBuffer = await import_fs35.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs36.default.promises.readFile(filePath);
           const data = await pdfParse3(dataBuffer);
           res.json({ success: true, type: "text", content: data.text });
         } else if (ext === ".xlsx" || ext === ".xls") {
           const { default: XLSX7 } = await import("xlsx");
-          const dataBuffer = await import_fs35.default.promises.readFile(filePath);
+          const dataBuffer = await import_fs36.default.promises.readFile(filePath);
           const workbook = XLSX7.read(dataBuffer, { type: "buffer" });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
@@ -46298,20 +50428,20 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to generate file preview" });
       }
     });
-    router10.post("/attachments/parse", async (req, res) => {
+    router11.post("/attachments/parse", async (req, res) => {
       const { filename, importData = true } = req.body;
       if (!filename) {
         return res.status(400).json({ error: "filename is required" });
       }
       try {
-        let filePath = import_path39.default.resolve(getUploadsDir2(), filename);
-        if (!import_fs35.default.existsSync(filePath)) {
+        let filePath = import_path40.default.resolve(getUploadsDir2(), filename);
+        if (!import_fs36.default.existsSync(filePath)) {
           const db2 = await dbManager.getConnection();
           const att = await db2.get(
             "SELECT local_path FROM email_attachments WHERE filename = ? OR filename LIKE ? OR local_path LIKE ?",
             [filename, `%${filename}%`, `%${filename}%`]
           );
-          if (att && att.local_path && import_fs35.default.existsSync(att.local_path)) {
+          if (att && att.local_path && import_fs36.default.existsSync(att.local_path)) {
             filePath = att.local_path;
           } else {
             return res.status(404).json({ error: "Attachment file not found" });
@@ -46326,18 +50456,18 @@ var init_email = __esm({
         res.status(500).json({ error: "Failed to parse attachment: " + (error.message || "") });
       }
     });
-    router10.delete("/attachments/cache", async (req, res) => {
+    router11.delete("/attachments/cache", async (req, res) => {
       try {
         const uploadsDir = getUploadsDir2();
-        if (!import_fs35.default.existsSync(uploadsDir)) {
+        if (!import_fs36.default.existsSync(uploadsDir)) {
           return res.json({ success: true, count: 0, message: "Uploads directory does not exist" });
         }
-        const files = import_fs35.default.readdirSync(uploadsDir);
+        const files = import_fs36.default.readdirSync(uploadsDir);
         let count = 0;
         for (const filename of files) {
           if (filename.startsWith("att-")) {
-            const filePath = import_path39.default.join(uploadsDir, filename);
-            import_fs35.default.unlinkSync(filePath);
+            const filePath = import_path40.default.join(uploadsDir, filename);
+            import_fs36.default.unlinkSync(filePath);
             count++;
           }
         }
@@ -46348,7 +50478,7 @@ var init_email = __esm({
         res.status(500).json({ error: error.message || "Failed to clear attachments cache" });
       }
     });
-    router10.get("/auth/google", async (req, res) => {
+    router11.get("/auth/google", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const clientIdRow = await db2.get("SELECT value FROM app_settings WHERE key = 'google_client_id'");
@@ -46366,7 +50496,7 @@ var init_email = __esm({
         res.status(500).send("Failed to initiate Gmail authentication: " + error.message);
       }
     });
-    router10.get("/auth/google/callback", async (req, res) => {
+    router11.get("/auth/google/callback", async (req, res) => {
       const { code, state } = req.query;
       if (!code) {
         return res.status(400).send("Authorization code not provided");
@@ -46481,7 +50611,7 @@ var init_email = __esm({
         res.status(500).send("Authentication Callback Failed: " + err.message);
       }
     });
-    email_default = router10;
+    email_default = router11;
   }
 });
 
@@ -46806,14 +50936,14 @@ var verification_exports = {};
 __export(verification_exports, {
   default: () => verification_default
 });
-var import_express11, router11, verification_default;
+var import_express12, router12, verification_default;
 var init_verification = __esm({
   "src/routes/verification.ts"() {
     "use strict";
-    import_express11 = __toESM(require("express"), 1);
+    import_express12 = __toESM(require("express"), 1);
     init_verificationService();
-    router11 = import_express11.default.Router();
-    router11.get("/health", async (req, res) => {
+    router12 = import_express12.default.Router();
+    router12.get("/health", async (req, res) => {
       try {
         const dbHealth = await verificationService.verifyDatabaseHealth();
         res.json({
@@ -46835,7 +50965,7 @@ var init_verification = __esm({
         });
       }
     });
-    router11.post("/validate-bill", async (req, res) => {
+    router12.post("/validate-bill", async (req, res) => {
       try {
         const result = await verificationService.verifyPOSBill(req.body);
         if (!result.success) {
@@ -46851,7 +50981,7 @@ var init_verification = __esm({
         });
       }
     });
-    router11.get("/verify-sales-history/:invoiceNo", async (req, res) => {
+    router12.get("/verify-sales-history/:invoiceNo", async (req, res) => {
       try {
         const invoiceNo = req.params.invoiceNo;
         if (!invoiceNo) {
@@ -46875,780 +51005,7 @@ var init_verification = __esm({
         });
       }
     });
-    verification_default = router11;
-  }
-});
-
-// src/services/distributorDispatchReminderWorker.ts
-var distributorDispatchReminderWorker_exports = {};
-__export(distributorDispatchReminderWorker_exports, {
-  allocateDynamicReminderTimes: () => allocateDynamicReminderTimes,
-  checkAndSendAfternoonDeliveryBoyReminder: () => checkAndSendAfternoonDeliveryBoyReminder,
-  checkAndSendAutoReminders: () => checkAndSendAutoReminders,
-  purgeStaleOfflineReminders: () => purgeStaleOfflineReminders,
-  startDistributorDispatchReminderWorker: () => startDistributorDispatchReminderWorker,
-  stopDistributorDispatchReminderWorker: () => stopDistributorDispatchReminderWorker,
-  syncTodayActiveDistributors: () => syncTodayActiveDistributors
-});
-async function ensureReminderSchema(db2) {
-  if (reminderSchemaEnsured) return;
-  try {
-    const cols = await db2.all("PRAGMA table_info(distributor_dispatch_reminders)");
-    const colNames = new Set(cols.map((c) => c.name.toLowerCase()));
-    if (!colNames.has("scheduled_send_time")) {
-      await db2.run("ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL");
-    }
-    reminderSchemaEnsured = true;
-  } catch (_e) {
-  }
-}
-function getTodayDateString() {
-  const now = /* @__PURE__ */ new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-async function syncTodayActiveDistributors() {
-  const db2 = await dbManager.getConnection();
-  const todayStr2 = getTodayDateString();
-  try {
-    await ensureReminderSchema(db2);
-    await db2.run(
-      `DELETE FROM distributor_dispatch_reminders 
-       WHERE id NOT IN (
-         SELECT MAX(id) 
-         FROM distributor_dispatch_reminders 
-         GROUP BY date, LOWER(TRIM(distributor_name))
-       )`
-    );
-    const pharmarackOrders = await db2.all(
-      `SELECT DISTINCT po.store_name as store_name
-       FROM pharmarack_placed_orders po
-       WHERE po.order_date = ? OR DATE(po.placed_at / 1000, 'unixepoch') = ?`,
-      [todayStr2, todayStr2]
-    );
-    const pharmarackDistributors = [];
-    for (const po of pharmarackOrders) {
-      const storeName = (po.store_name || "").trim();
-      if (!storeName) continue;
-      const contact = await resolveDistributorContact(db2, storeName);
-      pharmarackDistributors.push({
-        store_name: storeName,
-        distributor_id: contact.distributor_id,
-        distributor_name: storeName,
-        distributor_phone: contact.distributor_phone || ""
-      });
-    }
-    const purchases = await db2.all(
-      `SELECT DISTINCT d.name as store_name, d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
-       FROM purchases p
-       JOIN distributors d ON p.distributor_id = d.id
-       WHERE p.date IS NOT NULL AND DATE(p.date) = ?`,
-      [todayStr2]
-    );
-    const purchaseDistributors = purchases.map((d) => ({
-      store_name: d.store_name,
-      distributor_id: d.distributor_id,
-      distributor_name: d.distributor_name,
-      distributor_phone: (d.distributor_phone || d.distributor_contact || "").replace(/\D/g, "").slice(-10)
-    }));
-    const emailDistributors = await db2.all(
-      `SELECT DISTINCT d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
-       FROM distributors d
-       WHERE d.id IN (
-         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
-         UNION
-         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
-       )
-       OR LOWER(TRIM(d.name)) IN (
-         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
-       )
-       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
-         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
-       ))
-       OR EXISTS (
-         SELECT 1 FROM emails e 
-         WHERE (
-           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
-           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
-           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
-         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
-       )`,
-      [todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2]
-    );
-    const distMap = /* @__PURE__ */ new Map();
-    for (const d of [...pharmarackDistributors, ...purchaseDistributors]) {
-      const name = d.distributor_name || d.store_name;
-      if (name && !distMap.has(name.toLowerCase().trim())) {
-        distMap.set(name.toLowerCase().trim(), {
-          id: d.distributor_id || null,
-          name: name.trim(),
-          phone: d.distributor_phone || "",
-          hasEmailToday: false
-        });
-      }
-    }
-    for (const d of emailDistributors) {
-      const name = d.distributor_name;
-      if (name) {
-        const key = name.toLowerCase().trim();
-        const existing = distMap.get(key);
-        const p = (d.distributor_phone || d.distributor_contact || "").replace(/\D/g, "").slice(-10);
-        if (existing) {
-          existing.hasEmailToday = true;
-          if (!existing.phone && p) existing.phone = p;
-        } else {
-          distMap.set(key, {
-            id: d.distributor_id || null,
-            name: name.trim(),
-            phone: p || "",
-            hasEmailToday: true
-          });
-        }
-      }
-    }
-    for (const dist of distMap.values()) {
-      let activePhone = dist.phone;
-      let activeId = dist.id;
-      if (!activePhone) {
-        const resolved = await resolveDistributorContact(db2, dist.name);
-        if (resolved.distributor_phone) {
-          activePhone = resolved.distributor_phone;
-          activeId = activeId || resolved.distributor_id;
-        }
-      }
-      const existing = await db2.get(
-        `SELECT id, status, distributor_phone, distributor_id FROM distributor_dispatch_reminders WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
-        [dist.name, todayStr2]
-      );
-      if (!existing) {
-        const initialStatus = dist.hasEmailToday ? "Dispatched" : "Pending";
-        await db2.run(
-          `INSERT INTO distributor_dispatch_reminders (distributor_id, distributor_name, distributor_phone, date, status, auto_remind, order_source, email_received_at)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-          [
-            activeId,
-            dist.name,
-            activePhone || "",
-            todayStr2,
-            initialStatus,
-            dist.hasEmailToday ? "email" : "pharmarack",
-            dist.hasEmailToday ? (/* @__PURE__ */ new Date()).toISOString() : null
-          ]
-        );
-      } else {
-        if (dist.hasEmailToday && existing.status === "Pending") {
-          await db2.run(
-            `UPDATE distributor_dispatch_reminders SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [existing.id]
-          );
-        }
-        const phoneToUpdate = activePhone || existing.distributor_phone || "";
-        const idToUpdate = activeId || existing.distributor_id || null;
-        await db2.run(
-          `UPDATE distributor_dispatch_reminders 
-           SET distributor_id = COALESCE(distributor_id, ?),
-               distributor_phone = CASE WHEN ? != '' THEN ? ELSE distributor_phone END,
-               distributor_name = CASE WHEN ? != '' THEN ? ELSE distributor_name END
-           WHERE id = ?`,
-          [idToUpdate, phoneToUpdate, phoneToUpdate, dist.name, dist.name, existing.id]
-        );
-      }
-    }
-    const activeNames = Array.from(distMap.values()).map((d) => d.name.toLowerCase().trim());
-    if (activeNames.length > 0) {
-      const placeholders = activeNames.map(() => "?").join(",");
-      await db2.run(
-        `DELETE FROM distributor_dispatch_reminders
-         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
-           AND NOT (status = 'Dispatched' AND order_source != 'email')
-           AND LOWER(TRIM(distributor_name)) NOT IN (${placeholders})`,
-        [todayStr2, ...activeNames]
-      );
-    } else {
-      await db2.run(
-        `DELETE FROM distributor_dispatch_reminders
-         WHERE date = ? AND order_source != 'phone_call' AND status != 'Collected'
-           AND NOT (status = 'Dispatched' AND order_source != 'email')`,
-        [todayStr2]
-      );
-    }
-    const todayEmailDistributors = await db2.all(
-      `SELECT DISTINCT d.id as dist_id, LOWER(TRIM(d.name)) as dist_name
-       FROM distributors d
-       WHERE d.id IN (
-         SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
-         UNION
-         SELECT distributor_id FROM purchases WHERE DATE(date) = ?
-       )
-       OR LOWER(TRIM(d.name)) IN (
-         SELECT LOWER(TRIM(distributor_name)) FROM email_order_reviews WHERE DATE(created_at, 'localtime') = ? OR DATE(email_date) = ?
-       )
-       OR (d.email IS NOT NULL AND d.email != '' AND EXISTS (
-         SELECT 1 FROM action_logs WHERE (LOWER(description) LIKE '%' || LOWER(d.email) || '%' OR LOWER(description) LIKE '%' || LOWER(d.name) || '%') AND DATE(created_at, 'localtime') = ?
-       ))
-       OR EXISTS (
-         SELECT 1 FROM processed_files pf WHERE (LOWER(pf.file_path) LIKE '%' || LOWER(d.name) || '%' OR (d.email IS NOT NULL AND d.email != '' AND LOWER(pf.file_path) LIKE '%' || LOWER(d.email) || '%')) AND DATE(pf.last_processed, 'localtime') = ?
-       )
-       OR EXISTS (
-         SELECT 1 FROM emails e 
-         WHERE (
-           (d.email IS NOT NULL AND d.email != '' AND LOWER(e.from_addr) LIKE '%' || LOWER(d.email) || '%')
-           OR (e.distributor_name IS NOT NULL AND LOWER(TRIM(e.distributor_name)) = LOWER(TRIM(d.name)))
-           OR (e.extracted_distributor IS NOT NULL AND LOWER(TRIM(e.extracted_distributor)) = LOWER(TRIM(d.name)))
-         ) AND (DATE(e.date) = ? OR DATE(e.date, 'localtime') = ?)
-       )`,
-      [todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2, todayStr2]
-    );
-    for (const match of todayEmailDistributors) {
-      if (match.dist_name || match.dist_id) {
-        await db2.run(
-          `UPDATE distributor_dispatch_reminders
-           SET status = 'Dispatched', email_received_at = CURRENT_TIMESTAMP
-           WHERE date = ? AND (distributor_id = ? OR LOWER(TRIM(distributor_name)) = ?) AND status = 'Pending'`,
-          [todayStr2, match.dist_id || null, match.dist_name || ""]
-        );
-      }
-    }
-    await allocateDynamicReminderTimes(db2, todayStr2);
-    const todayReminders = await db2.all(
-      `SELECT r.id, r.distributor_id,
-              COALESCE(NULLIF(d.name, ''), r.distributor_name) as distributor_name,
-              COALESCE(NULLIF(d.phone, ''), r.distributor_phone) as distributor_phone,
-              r.date, r.status, r.auto_remind, r.delivery_boy_id, r.last_reminded_at, r.scheduled_send_time, r.created_at,
-              db.name as delivery_boy_name, db.whatsapp_number as delivery_boy_phone,
-              1 as has_pharmarack_order_today,
-              1 as has_order_today,
-              (
-                SELECT n.status FROM automation_notifications n
-                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
-                  AND DATE(n.created_at) = ?
-                ORDER BY n.id DESC LIMIT 1
-              ) as latest_notif_status,
-              (
-                SELECT n.error_message FROM automation_notifications n
-                WHERE (n.recipient_name = COALESCE(NULLIF(d.name, ''), r.distributor_name) OR n.recipient_phone = COALESCE(NULLIF(d.phone, ''), r.distributor_phone))
-                  AND DATE(n.created_at) = ? AND (n.status = 'failed' OR n.status = 'error')
-                ORDER BY n.id DESC LIMIT 1
-              ) as latest_notif_error
-       FROM distributor_dispatch_reminders r
-       LEFT JOIN distributors d ON r.distributor_id = d.id
-       LEFT JOIN delivery_boys db ON r.delivery_boy_id = db.id
-       WHERE r.date = ?
-       ORDER BY r.status DESC, r.created_at DESC`,
-      [todayStr2, todayStr2, todayStr2]
-    );
-    for (const r of todayReminders) {
-      if (!r.distributor_phone || r.distributor_phone.trim() === "") {
-        const resolved = await resolveDistributorContact(db2, r.distributor_name);
-        if (resolved.distributor_phone) {
-          r.distributor_phone = resolved.distributor_phone;
-          r.distributor_id = r.distributor_id || resolved.distributor_id;
-          try {
-            await db2.run(
-              `UPDATE distributor_dispatch_reminders 
-               SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
-               WHERE id = ?`,
-              [resolved.distributor_phone, resolved.distributor_id, r.id]
-            );
-          } catch (_) {
-          }
-        }
-      }
-    }
-    const existingNamesSet = /* @__PURE__ */ new Set();
-    for (const tr of todayReminders) {
-      if (tr.distributor_name) existingNamesSet.add(tr.distributor_name.toLowerCase().trim());
-    }
-    try {
-      const allMasterDistributors = await db2.all(
-        `SELECT d.id, d.name, d.phone, d.contact 
-         FROM distributors d 
-         WHERE d.name IS NOT NULL AND d.name != ''
-         ORDER BY d.name ASC`
-      );
-      let syntheticCounter = 8e5;
-      for (const md of allMasterDistributors) {
-        const normName = md.name.toLowerCase().trim();
-        if (!existingNamesSet.has(normName)) {
-          existingNamesSet.add(normName);
-          const phone = (md.phone || md.contact || "").replace(/\D/g, "").slice(-10);
-          todayReminders.push({
-            id: md.id ? 8e5 + md.id : ++syntheticCounter,
-            distributor_id: md.id || null,
-            distributor_name: md.name.trim(),
-            distributor_phone: phone,
-            date: todayStr2,
-            status: "No Order Today",
-            auto_remind: 0,
-            delivery_boy_id: null,
-            last_reminded_at: null,
-            scheduled_send_time: null,
-            created_at: (/* @__PURE__ */ new Date()).toISOString(),
-            delivery_boy_name: null,
-            delivery_boy_phone: null,
-            has_pharmarack_order_today: 0,
-            has_order_today: 0,
-            latest_notif_status: null,
-            latest_notif_error: null
-          });
-        }
-      }
-      const pharmarackMappings = await db2.all(
-        `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
-      );
-      for (const pm of pharmarackMappings) {
-        const normName = pm.store_name.toLowerCase().trim();
-        if (!existingNamesSet.has(normName)) {
-          existingNamesSet.add(normName);
-          const phone = (pm.phone || "").replace(/\D/g, "").slice(-10);
-          todayReminders.push({
-            id: ++syntheticCounter,
-            distributor_id: pm.distributor_id || null,
-            distributor_name: pm.store_name.trim(),
-            distributor_phone: phone,
-            date: todayStr2,
-            status: "No Order Today",
-            auto_remind: 0,
-            delivery_boy_id: null,
-            last_reminded_at: null,
-            scheduled_send_time: null,
-            created_at: (/* @__PURE__ */ new Date()).toISOString(),
-            delivery_boy_name: null,
-            delivery_boy_phone: null,
-            has_pharmarack_order_today: 0,
-            has_order_today: 0,
-            latest_notif_status: null,
-            latest_notif_error: null
-          });
-        }
-      }
-    } catch (err) {
-      console.warn("[DistributorReminderWorker] Error merging master saved distributors:", err.message);
-    }
-    try {
-      const todayPlacedOrders = await db2.all(
-        `SELECT id, order_date, store_id, store_name, items_json, placed_at 
-         FROM pharmarack_placed_orders 
-         WHERE order_date = ? OR DATE(placed_at / 1000, 'unixepoch') = ? OR DATE(placed_at / 1000, 'unixepoch', 'localtime') = ?
-         ORDER BY placed_at ASC`,
-        [todayStr2, todayStr2, todayStr2]
-      );
-      const todayPurchases = await db2.all(
-        `SELECT p.id, p.invoice_no, p.date, d.name as distributor_name, d.id as distributor_id
-         FROM purchases p
-         JOIN distributors d ON p.distributor_id = d.id
-         WHERE (p.date IS NOT NULL AND (DATE(p.date) = ? OR DATE(p.date, 'localtime') = ?))
-         ORDER BY p.id ASC`,
-        [todayStr2, todayStr2]
-      );
-      for (const r of todayReminders) {
-        const normDistName = (r.distributor_name || "").toLowerCase().trim();
-        const distId = r.distributor_id;
-        const matchingPlaced = todayPlacedOrders.filter(
-          (po) => po.store_name && po.store_name.toLowerCase().trim() === normDistName || distId && po.store_id === distId
-        );
-        const matchingPurchases = todayPurchases.filter(
-          (p) => p.distributor_name && p.distributor_name.toLowerCase().trim() === normDistName || distId && p.distributor_id === distId
-        );
-        const ordersList = [];
-        let totalItems = 0;
-        for (const po of matchingPlaced) {
-          let itemsArr = [];
-          try {
-            itemsArr = typeof po.items_json === "string" ? JSON.parse(po.items_json) : Array.isArray(po.items_json) ? po.items_json : [];
-          } catch (_) {
-          }
-          totalItems += itemsArr.length;
-          const timeStr = po.placed_at ? new Date(Number(po.placed_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-          const previews = itemsArr.slice(0, 5).map((it) => `${it.productName || it.name || "Item"} (Qty: ${it.qty || it.Quantity || 1})`);
-          ordersList.push({
-            id: `pharma_${po.id}`,
-            source: "pharmarack",
-            order_time: timeStr,
-            items_count: itemsArr.length,
-            items_preview: previews
-          });
-        }
-        for (const p of matchingPurchases) {
-          const timeStr = p.date ? new Date(p.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Today";
-          ordersList.push({
-            id: `purch_${p.id}`,
-            source: "purchase",
-            order_time: timeStr,
-            items_count: 1,
-            items_preview: [`Purchase Bill #${p.invoice_no || p.id}`]
-          });
-        }
-        const totalCount = ordersList.length;
-        r.order_count = totalCount > 0 ? totalCount : r.has_order_today && r.status !== "No Order Today" ? 1 : 0;
-        r.orders_list = ordersList;
-        r.total_items_count = totalItems;
-      }
-    } catch (countErr) {
-      console.warn("[DistributorReminderWorker] Error calculating order counts:", countErr.message);
-    }
-    return todayReminders || [];
-  } catch (err) {
-    console.error("[DistributorReminderWorker] Error syncing today active distributors:", err.message);
-    return [];
-  }
-}
-async function allocateDynamicReminderTimes(db2, todayStr2) {
-  try {
-    await ensureReminderSchema(db2);
-    const [startSetting, endSetting] = await Promise.all([
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'")
-    ]);
-    const startTimeStr = startSetting?.value || "12:30";
-    const endTimeStr = endSetting?.value || "13:00";
-    const [startH, startM] = startTimeStr.split(":").map(Number);
-    const [endH, endM] = endTimeStr.split(":").map(Number);
-    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
-    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
-    const windowDuration = Math.max(10, endMinutesTotal - startMinutesTotal);
-    const reminders = await db2.all(
-      `SELECT id, distributor_name, scheduled_send_time, last_reminded_at, status
-       FROM distributor_dispatch_reminders
-       WHERE date = ? AND status = 'Pending'
-       ORDER BY id ASC`,
-      [todayStr2]
-    );
-    if (reminders.length === 0) return;
-    const pastThirtyDaysDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3).toISOString().split("T")[0];
-    const pastReminders = await db2.all(
-      `SELECT LOWER(TRIM(distributor_name)) as dist_name, last_reminded_at, scheduled_send_time, date
-       FROM distributor_dispatch_reminders
-       WHERE date >= ? AND date < ? AND (last_reminded_at IS NOT NULL OR scheduled_send_time IS NOT NULL)`,
-      [pastThirtyDaysDate, todayStr2]
-    );
-    const pastMinutesMap = /* @__PURE__ */ new Map();
-    for (const pr of pastReminders) {
-      const name = pr.dist_name;
-      if (!name) continue;
-      let minuteOfDay = null;
-      if (pr.last_reminded_at) {
-        const d = new Date(pr.last_reminded_at);
-        if (!isNaN(d.getTime())) {
-          minuteOfDay = d.getHours() * 60 + d.getMinutes();
-        }
-      }
-      if (minuteOfDay === null && pr.scheduled_send_time && pr.scheduled_send_time.includes(":")) {
-        const [ph, pm] = pr.scheduled_send_time.split(":").map(Number);
-        if (!isNaN(ph) && !isNaN(pm)) {
-          minuteOfDay = ph * 60 + pm;
-        }
-      }
-      if (minuteOfDay !== null) {
-        if (!pastMinutesMap.has(name)) pastMinutesMap.set(name, []);
-        pastMinutesMap.get(name).push(minuteOfDay);
-      }
-    }
-    const assignedSlotsToday = /* @__PURE__ */ new Set();
-    for (const r of reminders) {
-      if (r.scheduled_send_time && r.scheduled_send_time.includes(":")) {
-        const [h, m] = r.scheduled_send_time.split(":").map(Number);
-        if (!isNaN(h) && !isNaN(m)) {
-          assignedSlotsToday.add(h * 60 + m);
-        }
-      }
-    }
-    const unassigned = reminders.filter((r) => !r.scheduled_send_time);
-    if (unassigned.length === 0) return;
-    const totalSlotsNeeded = unassigned.length;
-    const step = windowDuration / (totalSlotsNeeded + 1);
-    for (let i = 0; i < unassigned.length; i++) {
-      const rem = unassigned[i];
-      const normName = (rem.distributor_name || "").toLowerCase().trim();
-      const pastMinutes = pastMinutesMap.get(normName) || [];
-      const jitter = Math.floor(Math.random() * 9) - 4;
-      let targetMin = Math.round(startMinutesTotal + (i + 1) * step + jitter);
-      targetMin = Math.max(startMinutesTotal, Math.min(endMinutesTotal - 1, targetMin));
-      let bestMin = targetMin;
-      let bestScore = -Infinity;
-      for (let offset = -15; offset <= 15; offset++) {
-        const candidate = targetMin + offset;
-        if (candidate < startMinutesTotal || candidate >= endMinutesTotal) continue;
-        let collisionToday = false;
-        for (const assigned of assignedSlotsToday) {
-          if (Math.abs(assigned - candidate) < 2) {
-            collisionToday = true;
-            break;
-          }
-        }
-        if (collisionToday) continue;
-        let minPastDist = 999;
-        for (const pm of pastMinutes) {
-          const diff = Math.abs(pm - candidate);
-          if (diff < minPastDist) minPastDist = diff;
-        }
-        const score = minPastDist * 2 - Math.abs(offset);
-        if (score > bestScore) {
-          bestScore = score;
-          bestMin = candidate;
-        }
-      }
-      assignedSlotsToday.add(bestMin);
-      const resH = Math.floor(bestMin / 60);
-      const resM = bestMin % 60;
-      const formattedTime = `${String(resH).padStart(2, "0")}:${String(resM).padStart(2, "0")}`;
-      await db2.run(
-        `UPDATE distributor_dispatch_reminders SET scheduled_send_time = ? WHERE id = ?`,
-        [formattedTime, rem.id]
-      );
-      rem.scheduled_send_time = formattedTime;
-    }
-  } catch (err) {
-    console.error("[DistributorReminderWorker] Error allocating dynamic reminder times:", err.message);
-  }
-}
-async function checkAndSendAutoReminders() {
-  if (isWorkerRunning) return;
-  isWorkerRunning = true;
-  try {
-    const db2 = await dbManager.getConnection();
-    const [globalAuto, triggerSetting, startSetting, endSetting, pausedDatesRow] = await Promise.all([
-      db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_start'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_time_end'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'")
-    ]);
-    const isGlobalEnabled = !globalAuto || globalAuto.value === "true";
-    const isTriggerEnabled = triggerSetting?.value === "true";
-    if (!isGlobalEnabled || !isTriggerEnabled) {
-      isWorkerRunning = false;
-      return;
-    }
-    const todayStr2 = getTodayDateString();
-    if (pausedDatesRow?.value) {
-      try {
-        const pausedDates = JSON.parse(pausedDatesRow.value);
-        if (Array.isArray(pausedDates) && pausedDates.includes(todayStr2)) {
-          isWorkerRunning = false;
-          return;
-        }
-      } catch (_) {
-      }
-    }
-    const now = /* @__PURE__ */ new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const startTimeStr = startSetting?.value || "12:30";
-    const endTimeStr = endSetting?.value || "13:00";
-    const [startH, startM] = startTimeStr.split(":").map(Number);
-    const [endH, endM] = endTimeStr.split(":").map(Number);
-    const currentMinutesTotal = hours * 60 + minutes;
-    const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
-    const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
-    const isWithinWindow = currentMinutesTotal >= startMinutesTotal && currentMinutesTotal <= endMinutesTotal + 15;
-    if (!isWithinWindow) {
-      isWorkerRunning = false;
-      return;
-    }
-    await syncTodayActiveDistributors();
-    await allocateDynamicReminderTimes(db2, todayStr2);
-    const activeReminders = await db2.all(
-      `SELECT r.id, r.distributor_name, r.distributor_phone, r.scheduled_send_time, d.phone as master_phone
-       FROM distributor_dispatch_reminders r
-       LEFT JOIN distributors d ON r.distributor_id = d.id
-       WHERE r.date = ? AND r.status = 'Pending'
-         AND (r.last_reminded_at IS NULL OR DATE(r.last_reminded_at, 'localtime') != ?)`,
-      [todayStr2, todayStr2]
-    );
-    const dueReminders = [];
-    const missingPhone = [];
-    for (const item of activeReminders) {
-      const p = (item.distributor_phone || item.master_phone || "").replace(/\D/g, "").slice(-10);
-      if (!p || p.length !== 10) {
-        missingPhone.push({ id: item.id, distributor_name: item.distributor_name });
-        continue;
-      }
-      let isDue = true;
-      if (item.scheduled_send_time && item.scheduled_send_time.includes(":")) {
-        const [schH, schM] = item.scheduled_send_time.split(":").map(Number);
-        if (!isNaN(schH) && !isNaN(schM)) {
-          const schMinutes = schH * 60 + schM;
-          if (currentMinutesTotal < schMinutes) {
-            isDue = false;
-          }
-        }
-      }
-      if (isDue) {
-        dueReminders.push({ id: item.id, distributor_name: item.distributor_name });
-      }
-    }
-    if (dueReminders.length > 0) {
-      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
-      try {
-        const { ensureWhatsAppReady: ensureWhatsAppReady2, isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-        if (!await isWhatsAppAutoConnectAllowed2()) {
-          console.log("[DistributorReminderWorker] WhatsApp not configured \u2014 skipping reminder dispatch.");
-          isWorkerRunning = false;
-          return;
-        }
-        const isReady2 = await ensureWhatsAppReady2(3e4);
-        if (!isReady2) {
-          console.warn("[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.");
-          isWorkerRunning = false;
-          return;
-        }
-      } catch (waReadyErr) {
-        console.warn("[DistributorReminderWorker] WhatsApp readiness check warning:", waReadyErr?.message || waReadyErr);
-      }
-      for (const item of dueReminders) {
-        await notificationService.sendDistributorDispatchReminder(item.id);
-        await new Promise((res) => setTimeout(res, 1e3));
-      }
-    }
-    if (missingPhone.length > 0) {
-      const alreadyAlerted = await db2.get(
-        `SELECT id FROM automation_notifications 
-         WHERE type = 'admin_missing_distributor_phones' AND DATE(created_at) = ?
-         LIMIT 1`,
-        [todayStr2]
-      );
-      if (!alreadyAlerted) {
-        console.log(`[DistributorReminderWorker] Alerting pharmacy admin of ${missingPhone.length} missing distributor phone numbers.`);
-        await notificationService.sendMissingDistributorPhonesAdminAlert(
-          missingPhone.map((m) => ({ name: m.distributor_name }))
-        );
-      }
-    }
-  } catch (err) {
-    console.error("[DistributorReminderWorker] Error during auto reminder run:", err.message);
-  } finally {
-    isWorkerRunning = false;
-  }
-}
-async function checkAndSendAfternoonDeliveryBoyReminder() {
-  try {
-    const db2 = await dbManager.getConnection();
-    const todayStr2 = getTodayDateString();
-    const [globalAuto, enabledSetting] = await Promise.all([
-      db2.get("SELECT value FROM app_settings WHERE key = 'automation_enabled'"),
-      db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_enabled'")
-    ]);
-    const isGlobalEnabled = !globalAuto || globalAuto.value === "true";
-    if (!isGlobalEnabled || enabledSetting?.value !== "true") return;
-    const timeSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'trigger_afternoon_dispatch_reminder_time'");
-    const targetTime = timeSetting?.value || "14:00";
-    const [targetH, targetM] = targetTime.split(":").map(Number);
-    const now = /* @__PURE__ */ new Date();
-    const currentH = now.getHours();
-    const currentM = now.getMinutes();
-    const isTargetHour = currentH === (targetH || 14);
-    const isWithinMinutes = currentM >= (targetM || 0) && currentM <= (targetM || 0) + 15;
-    if (!isTargetHour || !isWithinMinutes) {
-      return;
-    }
-    const alreadySent = await db2.get(
-      `SELECT id FROM automation_notifications 
-       WHERE type = 'afternoon_delivery_boy_dispatch' AND DATE(created_at) = ? AND status = 'sent'
-       LIMIT 1`,
-      [todayStr2]
-    );
-    if (alreadySent) {
-      return;
-    }
-    console.log(`[DistributorReminderWorker] Triggering scheduled afternoon Delivery Boy consolidated dispatch at ${targetTime}...`);
-    try {
-      const { ensureWhatsAppReady: ensureWhatsAppReady2, isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-      if (!await isWhatsAppAutoConnectAllowed2()) {
-        console.log("[DistributorReminderWorker] WhatsApp not configured \u2014 skipping afternoon delivery boy dispatch.");
-        return;
-      }
-      await ensureWhatsAppReady2(3e4);
-    } catch (_) {
-    }
-    const todayReminders = await syncTodayActiveDistributors();
-    const result = await notificationService.sendConsolidatedDeliveryBoyDispatch(todayReminders);
-    console.log("[DistributorReminderWorker] Afternoon Delivery Boy dispatch result:", result);
-  } catch (err) {
-    console.error("[DistributorReminderWorker] Error in checkAndSendAfternoonDeliveryBoyReminder:", err.message);
-  }
-}
-async function purgeStaleOfflineReminders() {
-  const db2 = await dbManager.getConnection();
-  const todayStr2 = getTodayDateString();
-  try {
-    const staleRecords = await db2.all(
-      `SELECT id, distributor_name, distributor_phone, date
-       FROM distributor_dispatch_reminders
-       WHERE date < ? AND status = 'Pending'`,
-      [todayStr2]
-    );
-    if (staleRecords.length > 0) {
-      console.log(`[DistributorReminderWorker] Purging/expiring ${staleRecords.length} past-due reminders from PC offline period.`);
-      for (const item of staleRecords) {
-        await db2.run(
-          `UPDATE distributor_dispatch_reminders SET status = 'Skipped (PC Offline)' WHERE id = ?`,
-          [item.id]
-        );
-        await db2.run(
-          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            "distributor_dispatch_reminder",
-            item.distributor_name,
-            item.distributor_phone || "",
-            `Skipped automatically because PC was offline on ${item.date}`,
-            "skipped_offline",
-            `reminder_stale_${item.id}_${item.date}`
-          ]
-        );
-      }
-    }
-    return staleRecords.length;
-  } catch (err) {
-    console.error("[DistributorReminderWorker] Error purging stale offline reminders:", err.message);
-    return 0;
-  }
-}
-function startDistributorDispatchReminderWorker() {
-  if (checkIntervalTimer) return;
-  purgeStaleOfflineReminders().catch(() => {
-  });
-  syncTodayActiveDistributors().catch(() => {
-  });
-  checkAndSendAutoReminders().catch(() => {
-  });
-  checkAndSendAfternoonDeliveryBoyReminder().catch(() => {
-  });
-  checkIntervalTimer = setInterval(async () => {
-    try {
-      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
-      if (activityTracker2.isIdle()) return;
-    } catch (_) {
-    }
-    purgeStaleOfflineReminders().catch(() => {
-    });
-    checkAndSendAutoReminders().catch(() => {
-    });
-    checkAndSendAfternoonDeliveryBoyReminder().catch(() => {
-    });
-  }, 60 * 1e3);
-  console.log("[DistributorReminderWorker] Distributor dispatch reminder background worker initialized with dynamic 30-day staggered scheduler & PC offline protection.");
-}
-function stopDistributorDispatchReminderWorker() {
-  if (checkIntervalTimer) {
-    clearInterval(checkIntervalTimer);
-    checkIntervalTimer = null;
-    console.log("[DistributorReminderWorker] Distributor dispatch reminder background worker stopped.");
-  }
-}
-var isWorkerRunning, checkIntervalTimer, reminderSchemaEnsured;
-var init_distributorDispatchReminderWorker = __esm({
-  "src/services/distributorDispatchReminderWorker.ts"() {
-    "use strict";
-    init_connection();
-    init_notificationService();
-    init_distributorSyncHelper();
-    isWorkerRunning = false;
-    checkIntervalTimer = null;
-    reminderSchemaEnsured = false;
+    verification_default = router12;
   }
 });
 
@@ -47747,14 +51104,14 @@ __export(bouncedAlertService_exports, {
   BouncedAlertService: () => BouncedAlertService,
   bouncedAlertService: () => bouncedAlertService
 });
-var import_fs36, BouncedAlertService, bouncedAlertService;
+var import_fs37, BouncedAlertService, bouncedAlertService;
 var init_bouncedAlertService = __esm({
   "src/services/bouncedAlertService.ts"() {
     "use strict";
     init_connection();
     init_emailService();
     init_whatsappQueueWorker();
-    import_fs36 = __toESM(require("fs"), 1);
+    import_fs37 = __toESM(require("fs"), 1);
     BouncedAlertService = class {
       /**
        * Run the bounced products check for order emails received in the last 30 hours,
@@ -47807,7 +51164,7 @@ var init_bouncedAlertService = __esm({
             );
             let attachmentParsed = false;
             for (const att of attachments) {
-              if (att.local_path && import_fs36.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs37.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -48644,244 +52001,6 @@ var init_triggerSchedulerService = __esm({
   }
 });
 
-// src/services/medicineSalesMetricsService.ts
-var medicineSalesMetricsService_exports = {};
-__export(medicineSalesMetricsService_exports, {
-  applyPurchaseDelta: () => applyPurchaseDelta,
-  applySaleDelta: () => applySaleDelta,
-  computeReorderSuggestion: () => computeReorderSuggestion,
-  ensureMedicineSalesMetricsSchema: () => ensureMedicineSalesMetricsSchema,
-  getReorderWindowMonths: () => getReorderWindowMonths,
-  reconcileAllMedicineSalesMetrics: () => reconcileAllMedicineSalesMetrics
-});
-async function ensureMedicineSalesMetricsSchema(db2) {
-  if (schemaEnsured) return;
-  await db2.run(`
-    CREATE TABLE IF NOT EXISTS medicine_sales_metrics (
-      medicine_id INTEGER PRIMARY KEY,
-      sales_2d_qty REAL NOT NULL DEFAULT 0,
-      sales_window_qty REAL NOT NULL DEFAULT 0,
-      purchases_window_qty REAL NOT NULL DEFAULT 0,
-      last_sold_date TEXT,
-      last_purchase_date TEXT,
-      last_purchase_ptr REAL DEFAULT 0,
-      last_distributor_id INTEGER,
-      last_distributor_name TEXT,
-      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
-      FOREIGN KEY (medicine_id) REFERENCES medicines(id)
-    )
-  `);
-  try {
-    const cols = await db2.all("PRAGMA table_info(medicine_sales_metrics)");
-    const colNames = new Set(cols.map((c) => c.name));
-    if (cols.length > 0 && !colNames.has("last_purchase_date")) {
-      await db2.run("ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT");
-    }
-  } catch (_) {
-  }
-  await db2.run(`
-    CREATE INDEX IF NOT EXISTS idx_msm_activity
-    ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)
-  `);
-  schemaEnsured = true;
-}
-async function applySaleDelta(db2, medicineId, soldQty) {
-  if (!medicineId || !soldQty) return;
-  await ensureMedicineSalesMetricsSchema(db2);
-  await db2.run(
-    `INSERT INTO medicine_sales_metrics (medicine_id, sales_2d_qty, sales_window_qty, last_sold_date, updated_at)
-     VALUES (?, ?, ?, DATETIME('now'), DATETIME('now'))
-     ON CONFLICT(medicine_id) DO UPDATE SET
-       sales_2d_qty = sales_2d_qty + excluded.sales_2d_qty,
-       sales_window_qty = sales_window_qty + excluded.sales_window_qty,
-       last_sold_date = excluded.last_sold_date,
-       updated_at = excluded.updated_at`,
-    [medicineId, soldQty, soldQty]
-  );
-}
-async function applyPurchaseDelta(db2, medicineId, purchasedQty, ptr, distributorId, distributorName) {
-  if (!medicineId) return;
-  await ensureMedicineSalesMetricsSchema(db2);
-  await db2.run(
-    `INSERT INTO medicine_sales_metrics (
-       medicine_id, purchases_window_qty, last_purchase_date,
-       last_purchase_ptr, last_distributor_id, last_distributor_name, updated_at
-     )
-     VALUES (?, ?, DATETIME('now'), ?, ?, ?, DATETIME('now'))
-     ON CONFLICT(medicine_id) DO UPDATE SET
-       purchases_window_qty = purchases_window_qty + excluded.purchases_window_qty,
-       last_purchase_date = excluded.last_purchase_date,
-       last_purchase_ptr = CASE WHEN excluded.last_purchase_ptr > 0 THEN excluded.last_purchase_ptr ELSE medicine_sales_metrics.last_purchase_ptr END,
-       last_distributor_id = COALESCE(excluded.last_distributor_id, medicine_sales_metrics.last_distributor_id),
-       last_distributor_name = COALESCE(excluded.last_distributor_name, medicine_sales_metrics.last_distributor_name),
-       updated_at = excluded.updated_at`,
-    [medicineId, purchasedQty || 0, ptr || 0, distributorId || null, distributorName || null]
-  );
-  const numericPtr = Number(ptr) || 0;
-  await db2.run(
-    `UPDATE medicines SET
-       last_purchase_date = DATETIME('now'),
-       last_purchase_ptr = CASE WHEN ? > 0 THEN ? ELSE last_purchase_ptr END,
-       last_distributor_name = COALESCE(?, last_distributor_name),
-       lowest_purchase_ptr = CASE 
-         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
-         THEN ? 
-         ELSE lowest_purchase_ptr 
-       END,
-       lowest_distributor_name = CASE 
-         WHEN ? > 0 AND (lowest_purchase_ptr IS NULL OR lowest_purchase_ptr <= 0 OR ? < lowest_purchase_ptr) 
-         THEN COALESCE(?, lowest_distributor_name) 
-         ELSE lowest_distributor_name 
-       END
-     WHERE id = ?`,
-    [
-      numericPtr,
-      numericPtr,
-      distributorName || null,
-      numericPtr,
-      numericPtr,
-      numericPtr,
-      numericPtr,
-      numericPtr,
-      distributorName || null,
-      medicineId
-    ]
-  ).catch(() => {
-  });
-}
-async function getReorderWindowMonths(dbInstance) {
-  try {
-    const db2 = dbInstance || await dbManager.getConnection();
-    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_reorder_window_months'");
-    const val = row && row.value ? parseInt(row.value, 10) : NaN;
-    if ([2, 4, 6, 8].includes(val)) return val;
-  } catch (err) {
-    console.warn("[MedicineSalesMetrics] Error resolving reorder window months:", err);
-  }
-  return 2;
-}
-function computeReorderSuggestion(metrics, windowMonths) {
-  const { sales2dQty, salesWindowQty, purchasesWindowQty, currentStock } = metrics;
-  const monthlyWeightedConsumption = Math.round((0.7 * purchasesWindowQty + 0.3 * salesWindowQty) / windowMonths);
-  const isHotMover = monthlyWeightedConsumption >= 10 || sales2dQty >= 5;
-  const isLowStockSafety = currentStock <= 2 && (purchasesWindowQty >= 6 || salesWindowQty >= 6);
-  const included = sales2dQty > 0 || isLowStockSafety || monthlyWeightedConsumption > 0 && currentStock <= monthlyWeightedConsumption;
-  let suggestedQty = 1;
-  if (monthlyWeightedConsumption > currentStock) {
-    suggestedQty = Math.max(1, Math.ceil(monthlyWeightedConsumption - currentStock));
-  } else if (sales2dQty > 0) {
-    suggestedQty = Math.max(1, sales2dQty * 2);
-  } else if (isLowStockSafety) {
-    suggestedQty = Math.max(1, 10 - currentStock);
-  }
-  return { monthlyWeightedConsumption, isHotMover, isLowStockSafety, included, suggestedQty };
-}
-async function reconcileAllMedicineSalesMetrics(db2, windowMonths) {
-  await ensureMedicineSalesMetricsSchema(db2);
-  const windowDays = windowMonths * 30;
-  const salesRows = await db2.all(
-    `SELECT im.medicine_id, SUM(si.quantity) as window_qty, MAX(inv.date) as last_sold_date
-     FROM sale_items si
-     JOIN sales_invoices inv ON si.invoice_id = inv.id
-     JOIN inventory_master im ON si.inventory_id = im.id
-     WHERE inv.date >= DATETIME('now', ?)
-     GROUP BY im.medicine_id`,
-    [`-${windowDays} days`]
-  );
-  const twoDayRows = await db2.all(
-    `SELECT im.medicine_id, SUM(si.quantity) as two_day_qty
-     FROM sale_items si
-     JOIN sales_invoices inv ON si.invoice_id = inv.id
-     JOIN inventory_master im ON si.inventory_id = im.id
-     WHERE inv.date >= DATETIME('now', '-2 days')
-     GROUP BY im.medicine_id`
-  );
-  const purchaseRows = await db2.all(
-    `SELECT pi.medicine_id, SUM(pi.quantity) as window_qty, MAX(p.date) as last_purchase_date
-     FROM purchase_items pi
-     JOIN purchases p ON pi.purchase_id = p.id
-     WHERE p.date >= DATETIME('now', ?)
-     GROUP BY pi.medicine_id`,
-    [`-${windowDays} days`]
-  );
-  const lastPurchaseDetailRows = await db2.all(
-    `SELECT pi.medicine_id, pi.cost_price as ptr, p.distributor_id, d.name as distributor_name, p.date
-     FROM purchase_items pi
-     JOIN purchases p ON pi.purchase_id = p.id
-     LEFT JOIN distributors d ON d.id = p.distributor_id
-     WHERE p.date >= DATETIME('now', ?)
-     ORDER BY p.date DESC`,
-    [`-${windowDays} days`]
-  );
-  const lastPurchaseDetailByMed = {};
-  for (const row of lastPurchaseDetailRows) {
-    if (!lastPurchaseDetailByMed[row.medicine_id]) lastPurchaseDetailByMed[row.medicine_id] = row;
-  }
-  const medicineIds = /* @__PURE__ */ new Set();
-  for (const r of salesRows) medicineIds.add(r.medicine_id);
-  for (const r of twoDayRows) medicineIds.add(r.medicine_id);
-  for (const r of purchaseRows) medicineIds.add(r.medicine_id);
-  const salesByMed = Object.fromEntries(salesRows.map((r) => [r.medicine_id, r]));
-  const twoDayByMed = Object.fromEntries(twoDayRows.map((r) => [r.medicine_id, r]));
-  const purchaseByMed = Object.fromEntries(purchaseRows.map((r) => [r.medicine_id, r]));
-  await db2.run("BEGIN IMMEDIATE TRANSACTION");
-  try {
-    await db2.run("DELETE FROM medicine_sales_metrics");
-    for (const medId of medicineIds) {
-      const sales = salesByMed[medId];
-      const twoDay = twoDayByMed[medId];
-      const purchase = purchaseByMed[medId];
-      const lastPurchase = lastPurchaseDetailByMed[medId];
-      await db2.run(
-        `INSERT INTO medicine_sales_metrics
-           (medicine_id, sales_2d_qty, sales_window_qty, purchases_window_qty,
-            last_sold_date, last_purchase_date, last_purchase_ptr, last_distributor_id, last_distributor_name, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now'))`,
-        [
-          medId,
-          Number(twoDay?.two_day_qty || 0),
-          Number(sales?.window_qty || 0),
-          Number(purchase?.window_qty || 0),
-          sales?.last_sold_date || null,
-          lastPurchase?.date || null,
-          Number(lastPurchase?.ptr || 0),
-          lastPurchase?.distributor_id || null,
-          lastPurchase?.distributor_name || null
-        ]
-      );
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK").catch(() => {
-    });
-    throw err;
-  }
-}
-var schemaEnsured;
-var init_medicineSalesMetricsService = __esm({
-  "src/services/medicineSalesMetricsService.ts"() {
-    "use strict";
-    init_connection();
-    schemaEnsured = false;
-    setTimeout(() => {
-      (async () => {
-        try {
-          const db2 = await dbManager.getConnection();
-          await ensureMedicineSalesMetricsSchema(db2);
-          const row = await db2.get("SELECT COUNT(*) as c FROM medicine_sales_metrics");
-          if (!row || Number(row.c) === 0) {
-            const windowMonths = await getReorderWindowMonths(db2);
-            await reconcileAllMedicineSalesMetrics(db2, windowMonths);
-            console.log("[MedicineSalesMetrics] Initial backfill complete.");
-          }
-        } catch (err) {
-          console.error("[MedicineSalesMetrics] Initial backfill failed:", err);
-        }
-      })();
-    }, 6e4);
-  }
-});
-
 // src/services/paymentQrService.ts
 var DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
 var init_paymentQrService = __esm({
@@ -49044,14 +52163,14 @@ var settings_exports = {};
 __export(settings_exports, {
   default: () => settings_default
 });
-var import_express12, import_path40, import_fs37, import_url32, __filename30, __dirname30, DB_PATH16, UPLOADS_DIR2, router12, settings_default;
+var import_express13, import_path41, import_fs38, import_url33, __filename31, __dirname31, DB_PATH17, UPLOADS_DIR2, router13, settings_default;
 var init_settings = __esm({
   "src/routes/settings.ts"() {
     "use strict";
-    import_express12 = __toESM(require("express"), 1);
-    import_path40 = __toESM(require("path"), 1);
-    import_fs37 = __toESM(require("fs"), 1);
-    import_url32 = require("url");
+    import_express13 = __toESM(require("express"), 1);
+    import_path41 = __toESM(require("path"), 1);
+    import_fs38 = __toESM(require("fs"), 1);
+    import_url33 = require("url");
     init_connection();
     init_telegramBot();
     init_emailSanitizer();
@@ -49062,12 +52181,12 @@ var init_settings = __esm({
     init_medicineSalesMetricsService();
     init_paymentQrService();
     init_eventService();
-    __filename30 = (0, import_url32.fileURLToPath)(import_meta_url);
-    __dirname30 = import_path40.default.dirname(__filename30);
-    DB_PATH16 = process.env.DB_PATH || import_path40.default.resolve(__dirname30, "..", "..", "data", "app.db");
-    UPLOADS_DIR2 = import_path40.default.resolve(getAppDataDir(), "uploads");
-    router12 = import_express12.default.Router();
-    router12.use((req, res, next) => {
+    __filename31 = (0, import_url33.fileURLToPath)(import_meta_url);
+    __dirname31 = import_path41.default.dirname(__filename31);
+    DB_PATH17 = process.env.DB_PATH || import_path41.default.resolve(__dirname31, "..", "..", "data", "app.db");
+    UPLOADS_DIR2 = import_path41.default.resolve(getAppDataDir(), "uploads");
+    router13 = import_express13.default.Router();
+    router13.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -49082,7 +52201,7 @@ var init_settings = __esm({
       }
       next();
     });
-    router12.get("/", async (_req, res) => {
+    router13.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM app_settings");
@@ -49108,10 +52227,10 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch settings" });
       }
     });
-    router12.get("/telegram-status", async (_req, res) => {
+    router13.get("/telegram-status", async (_req, res) => {
       res.json({ isReady: telegramBotService.isReady() });
     });
-    router12.post("/test-gemini-key", async (req, res) => {
+    router13.post("/test-gemini-key", async (req, res) => {
       const { apiKey } = req.body;
       if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
         return res.status(400).json({ success: false, error: "API key is required" });
@@ -49132,7 +52251,7 @@ var init_settings = __esm({
         return res.status(500).json({ success: false, error: err.message || "Connection to Google AI Studio failed" });
       }
     });
-    router12.post("/", async (req, res) => {
+    router13.post("/", async (req, res) => {
       const { key, value } = req.body;
       if (!key) return res.status(400).json({ error: "key required" });
       try {
@@ -49174,7 +52293,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save setting" });
       }
     });
-    router12.post("/save-single", async (req, res) => {
+    router13.post("/save-single", async (req, res) => {
       const { key, value } = req.body;
       if (!key) return res.status(400).json({ error: "key required" });
       try {
@@ -49230,7 +52349,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save setting" });
       }
     });
-    router12.post("/save", async (req, res) => {
+    router13.post("/save", async (req, res) => {
       const payload = req.body;
       if (!payload || typeof payload !== "object") return res.status(400).json({ error: "payload required" });
       try {
@@ -49446,11 +52565,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save settings" });
       }
     });
-    router12.get("/stamp", async (_req, res) => {
+    router13.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs37.default.existsSync(stampPath)) {
-          const data = import_fs37.default.readFileSync(stampPath);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs38.default.existsSync(stampPath)) {
+          const data = import_fs38.default.readFileSync(stampPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -49459,17 +52578,17 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to read stamp status" });
       }
     });
-    router12.post("/upload-stamp", async (req, res) => {
+    router13.post("/upload-stamp", async (req, res) => {
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) {
-          import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs38.default.existsSync(UPLOADS_DIR2)) {
+          import_fs38.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs37.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs38.default.writeFileSync(stampPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'true')");
         res.json({ success: true, message: "Custom stamp uploaded and enabled" });
@@ -49478,11 +52597,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to upload stamp" });
       }
     });
-    router12.delete("/stamp", async (_req, res) => {
+    router13.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs37.default.existsSync(stampPath)) {
-          import_fs37.default.unlinkSync(stampPath);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs38.default.existsSync(stampPath)) {
+          import_fs38.default.unlinkSync(stampPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_stamp', 'false')");
@@ -49491,11 +52610,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete stamp" });
       }
     });
-    router12.get("/signature", async (_req, res) => {
+    router13.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs37.default.existsSync(sigPath)) {
-          const data = import_fs37.default.readFileSync(sigPath);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs38.default.existsSync(sigPath)) {
+          const data = import_fs38.default.readFileSync(sigPath);
           const base64 = `data:image/png;base64,${data.toString("base64")}`;
           return res.json({ exists: true, dataUrl: base64 });
         }
@@ -49504,17 +52623,17 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to read signature status" });
       }
     });
-    router12.post("/upload-signature", async (req, res) => {
+    router13.post("/upload-signature", async (req, res) => {
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
         const base64Data = image.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) {
-          import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs38.default.existsSync(UPLOADS_DIR2)) {
+          import_fs38.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         }
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs37.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs38.default.writeFileSync(sigPath, buffer);
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'true')");
         res.json({ success: true, message: "Custom signature uploaded and enabled" });
@@ -49523,11 +52642,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to upload signature" });
       }
     });
-    router12.delete("/signature", async (_req, res) => {
+    router13.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs37.default.existsSync(sigPath)) {
-          import_fs37.default.unlinkSync(sigPath);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs38.default.existsSync(sigPath)) {
+          import_fs38.default.unlinkSync(sigPath);
         }
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('use_custom_signature', 'false')");
@@ -49536,7 +52655,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete signature" });
       }
     });
-    router12.get("/distributors", async (_req, res) => {
+    router13.get("/distributors", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const list = await db2.all(`
@@ -49555,7 +52674,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch distributors" });
       }
     });
-    router12.post("/distributors", async (req, res) => {
+    router13.post("/distributors", async (req, res) => {
       const { name, phone, email, address, state_code } = req.body;
       if (!name) return res.status(400).json({ error: "Distributor name is required" });
       try {
@@ -49616,7 +52735,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save distributor: " + error.message });
       }
     });
-    router12.put("/distributors/:id", async (req, res) => {
+    router13.put("/distributors/:id", async (req, res) => {
       const { id } = req.params;
       const { name, phone, email, address, state_code } = req.body;
       if (!name) return res.status(400).json({ error: "Distributor name is required" });
@@ -49637,7 +52756,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to update distributor" });
       }
     });
-    router12.delete("/distributors/:id", async (req, res) => {
+    router13.delete("/distributors/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -49649,7 +52768,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete distributor: " + error.message });
       }
     });
-    router12.post("/distributors/merge", async (req, res) => {
+    router13.post("/distributors/merge", async (req, res) => {
       const { primaryId, secondaryIds: rawSecondaryIds, secondaryId, newName } = req.body;
       const secondaryIds = Array.isArray(rawSecondaryIds) ? rawSecondaryIds.map(Number).filter((n) => !isNaN(n) && n > 0) : secondaryId && !isNaN(Number(secondaryId)) && Number(secondaryId) > 0 ? [Number(secondaryId)] : [];
       if (!primaryId || isNaN(Number(primaryId)) || secondaryIds.length === 0) {
@@ -49716,7 +52835,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to merge distributors: " + error.message });
       }
     });
-    router12.post("/google/disconnect", async (_req, res) => {
+    router13.post("/google/disconnect", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
@@ -49739,7 +52858,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to disconnect Google account" });
       }
     });
-    router12.get("/registered-devices", async (_req, res) => {
+    router13.get("/registered-devices", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         try {
@@ -49780,7 +52899,7 @@ var init_settings = __esm({
         res.json({ success: true, devices: [] });
       }
     });
-    router12.delete("/registered-devices/:token", async (req, res) => {
+    router13.delete("/registered-devices/:token", async (req, res) => {
       const { token } = req.params;
       if (!token) {
         return res.status(400).json({ error: "Token is required" });
@@ -49802,7 +52921,7 @@ var init_settings = __esm({
         res.status(500).json({ error: err.message || "Failed to remove device" });
       }
     });
-    router12.put("/registered-devices/rename", async (req, res) => {
+    router13.put("/registered-devices/rename", async (req, res) => {
       const { token, device_name } = req.body;
       if (!token || !device_name) {
         return res.status(400).json({ error: "Token and device_name are required" });
@@ -49816,7 +52935,7 @@ var init_settings = __esm({
         res.status(500).json({ error: err.message || "Failed to rename device" });
       }
     });
-    router12.get("/storage-locations", async (_req, res) => {
+    router13.get("/storage-locations", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const locations = await db2.all("SELECT * FROM storage_locations ORDER BY is_default DESC, name ASC");
@@ -49826,7 +52945,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch storage locations" });
       }
     });
-    router12.post("/storage-locations", async (req, res) => {
+    router13.post("/storage-locations", async (req, res) => {
       const { name, code, type, description, is_default, is_active } = req.body;
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Storage location name is required" });
@@ -49850,7 +52969,7 @@ var init_settings = __esm({
         res.status(500).json({ error: error.message || "Failed to create storage location" });
       }
     });
-    router12.put("/storage-locations/:id", async (req, res) => {
+    router13.put("/storage-locations/:id", async (req, res) => {
       const { id } = req.params;
       const { name, code, type, description, is_default, is_active } = req.body;
       try {
@@ -49886,7 +53005,7 @@ var init_settings = __esm({
         res.status(500).json({ error: error.message || "Failed to update storage location" });
       }
     });
-    router12.delete("/storage-locations/:id", async (req, res) => {
+    router13.delete("/storage-locations/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -49900,11 +53019,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete storage location" });
       }
     });
-    router12.get("/stamp", async (_req, res) => {
+    router13.get("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs37.default.existsSync(stampPath)) {
-          const buffer = import_fs37.default.readFileSync(stampPath);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs38.default.existsSync(stampPath)) {
+          const buffer = import_fs38.default.readFileSync(stampPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -49914,26 +53033,26 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to retrieve stamp" });
       }
     });
-    router12.post("/upload-stamp", async (req, res) => {
+    router13.post("/upload-stamp", async (req, res) => {
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs38.default.existsSync(UPLOADS_DIR2)) import_fs38.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        import_fs37.default.writeFileSync(stampPath, buffer);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        import_fs38.default.writeFileSync(stampPath, buffer);
         res.json({ success: true, message: "Stamp uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload stamp:", error);
         res.status(500).json({ error: "Failed to save stamp image" });
       }
     });
-    router12.delete("/stamp", async (_req, res) => {
+    router13.delete("/stamp", async (_req, res) => {
       try {
-        const stampPath = import_path40.default.join(UPLOADS_DIR2, "custom_stamp.png");
-        if (import_fs37.default.existsSync(stampPath)) {
-          import_fs37.default.unlinkSync(stampPath);
+        const stampPath = import_path41.default.join(UPLOADS_DIR2, "custom_stamp.png");
+        if (import_fs38.default.existsSync(stampPath)) {
+          import_fs38.default.unlinkSync(stampPath);
         }
         res.json({ success: true, message: "Stamp deleted successfully" });
       } catch (error) {
@@ -49941,11 +53060,11 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete stamp" });
       }
     });
-    router12.get("/signature", async (_req, res) => {
+    router13.get("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs37.default.existsSync(sigPath)) {
-          const buffer = import_fs37.default.readFileSync(sigPath);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs38.default.existsSync(sigPath)) {
+          const buffer = import_fs38.default.readFileSync(sigPath);
           const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
           return res.json({ exists: true, dataUrl });
         }
@@ -49955,26 +53074,26 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to retrieve signature" });
       }
     });
-    router12.post("/upload-signature", async (req, res) => {
+    router13.post("/upload-signature", async (req, res) => {
       try {
         const { image } = req.body;
         if (!image) return res.status(400).json({ error: "Image data required" });
-        if (!import_fs37.default.existsSync(UPLOADS_DIR2)) import_fs37.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
+        if (!import_fs38.default.existsSync(UPLOADS_DIR2)) import_fs38.default.mkdirSync(UPLOADS_DIR2, { recursive: true });
         const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        import_fs37.default.writeFileSync(sigPath, buffer);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        import_fs38.default.writeFileSync(sigPath, buffer);
         res.json({ success: true, message: "Signature uploaded successfully" });
       } catch (error) {
         console.error("Failed to upload signature:", error);
         res.status(500).json({ error: "Failed to save signature image" });
       }
     });
-    router12.delete("/signature", async (_req, res) => {
+    router13.delete("/signature", async (_req, res) => {
       try {
-        const sigPath = import_path40.default.join(UPLOADS_DIR2, "custom_signature.png");
-        if (import_fs37.default.existsSync(sigPath)) {
-          import_fs37.default.unlinkSync(sigPath);
+        const sigPath = import_path41.default.join(UPLOADS_DIR2, "custom_signature.png");
+        if (import_fs38.default.existsSync(sigPath)) {
+          import_fs38.default.unlinkSync(sigPath);
         }
         res.json({ success: true, message: "Signature deleted successfully" });
       } catch (error) {
@@ -49982,7 +53101,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete signature" });
       }
     });
-    router12.get("/payment-qrs", async (_req, res) => {
+    router13.get("/payment-qrs", async (_req, res) => {
       try {
         const configs = await paymentQrService.getQrConfigs();
         res.json({ success: true, configs });
@@ -49991,7 +53110,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to load QR configurations" });
       }
     });
-    router12.post("/payment-qrs", async (req, res) => {
+    router13.post("/payment-qrs", async (req, res) => {
       try {
         const { configs } = req.body;
         if (!Array.isArray(configs) || configs.length === 0) {
@@ -50004,7 +53123,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save QR configurations" });
       }
     });
-    router12.get("/delivery-config", async (_req, res) => {
+    router13.get("/delivery-config", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get("SELECT value FROM app_settings WHERE key = 'delivery_enabled'");
@@ -50015,7 +53134,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch delivery configuration" });
       }
     });
-    router12.post("/delivery-config", async (req, res) => {
+    router13.post("/delivery-config", async (req, res) => {
       try {
         const { delivery_enabled } = req.body;
         const db2 = await dbManager.getConnection();
@@ -50029,7 +53148,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to update delivery configuration" });
       }
     });
-    router12.get("/holidays", async (req, res) => {
+    router13.get("/holidays", async (req, res) => {
       try {
         const storeId = parseInt(String(req.query.store_id || "1"), 10) || 1;
         const db2 = await dbManager.getConnection();
@@ -50050,7 +53169,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch holidays" });
       }
     });
-    router12.post("/holidays", async (req, res) => {
+    router13.post("/holidays", async (req, res) => {
       try {
         const {
           holiday_date,
@@ -50091,7 +53210,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to save holiday: " + error.message });
       }
     });
-    router12.delete("/holidays/:id", async (req, res) => {
+    router13.delete("/holidays/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) return res.status(400).json({ error: "Invalid holiday ID" });
@@ -50103,7 +53222,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to delete holiday" });
       }
     });
-    router12.get("/:key", async (req, res) => {
+    router13.get("/:key", async (req, res) => {
       const { key } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -50115,2215 +53234,7 @@ var init_settings = __esm({
         res.status(500).json({ error: "Failed to fetch setting" });
       }
     });
-    settings_default = router12;
-  }
-});
-
-// src/routes/pharmarack.ts
-var pharmarack_exports = {};
-__export(pharmarack_exports, {
-  default: () => pharmarack_default,
-  invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
-  performPharmarackSearch: () => performPharmarackSearch,
-  warmupStartupCart: () => warmupStartupCart
-});
-function findChromePath2() {
-  return findChromePath({ includeEdge: true });
-}
-async function getPharmarackSettings() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all("SELECT key, value FROM app_settings WHERE key LIKE 'pharmarack_%' OR key = 'combine_pharmarack_pharmacy_search'");
-  const settings = {};
-  rows.forEach((r) => {
-    settings[r.key] = r.value;
-  });
-  return settings;
-}
-async function fetchPharmarack(url, options = {}) {
-  const settings = await getPharmarackSettings();
-  let token = settings["pharmarack_session_token"] || "";
-  const getHeaders = (t) => {
-    const authHeader = t.startsWith("Bearer ") ? t : `Bearer ${t}`;
-    return {
-      "Authorization": authHeader,
-      "Content-Type": "application/json",
-      "devicetype": "web",
-      "Accept": "application/json, text/plain, */*",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Referer": "https://retailers.pharmarack.com/",
-      "Origin": "https://retailers.pharmarack.com",
-      ...options.headers || {}
-    };
-  };
-  const executeFetch = async (t) => {
-    return await fetch(url, {
-      ...options,
-      headers: getHeaders(t)
-    });
-  };
-  let response = await executeFetch(token);
-  if ((response.status === 401 || response.status === 403) && token) {
-    console.log(`[Pharmarack Fetch] API ${url} returned ${response.status}. Marking session status 'expired' (manual re-auth required).`);
-    try {
-      const db2 = await dbManager.getConnection();
-      await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')");
-    } catch (dbErr) {
-      console.error("Failed to mark session expired:", dbErr);
-    }
-  }
-  return response;
-}
-function cleanSearchQuery(query) {
-  const stopwords = [
-    "drop",
-    "drops",
-    "eye drop",
-    "eye drops",
-    "ear drop",
-    "ear drops",
-    "tab",
-    "tabs",
-    "tablet",
-    "tablets",
-    "cap",
-    "caps",
-    "capsule",
-    "capsules",
-    "syp",
-    "syrup",
-    "syrups",
-    "suspension",
-    "liquid",
-    "liquids",
-    "solution",
-    "solutions",
-    "emulsion",
-    "emulsions",
-    "elixir",
-    "elixirs",
-    "tonic",
-    "tonics",
-    "cream",
-    "gel",
-    "gels",
-    "ointment",
-    "ointments",
-    "lotion",
-    "lotions",
-    "liniment",
-    "liniments",
-    "paste",
-    "pastes",
-    "spray",
-    "sprays",
-    "gargle",
-    "gargles",
-    "mouthwash",
-    "mouthwashes",
-    "inj",
-    "injection",
-    "injections",
-    "powder",
-    "powders",
-    "sachet",
-    "sachets",
-    "granules",
-    "patch",
-    "patches",
-    "inhaler",
-    "inhalers"
-  ];
-  let cleaned = query;
-  const detectedForms = [];
-  for (const word of stopwords) {
-    const regex = new RegExp(`\\b${word}\\b`, "gi");
-    if (regex.test(query)) {
-      detectedForms.push(word);
-    }
-    cleaned = cleaned.replace(regex, "");
-  }
-  return { cleaned: cleaned.replace(/\s+/g, " ").trim(), detectedForms };
-}
-async function searchOfflineCatalogFallback(q, storeId, isMapped) {
-  try {
-    const results = [];
-    const seenKeys = /* @__PURE__ */ new Set();
-    try {
-      const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
-      const combined = [...offlineResults.mapped, ...offlineResults.nonMapped];
-      let filtered = combined;
-      if (storeId !== null && storeId !== void 0 && !isNaN(storeId)) {
-        filtered = combined.filter((p) => p.storeId === storeId && (isMapped === void 0 || p.isMapped === isMapped));
-      }
-      for (const p of filtered) {
-        const key = `${(p.name || "").toLowerCase()}|${p.storeId}|${p.distributorPrice}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          results.push({
-            name: p.name,
-            shortName: p.name,
-            fullName: p.name,
-            packaging: p.packaging || "",
-            distributor: p.distributor || "Distributor",
-            rate: p.distributorPrice !== null && p.distributorPrice !== void 0 ? Number(p.distributorPrice) : null,
-            mrp: p.mrp !== null && p.mrp !== void 0 ? Number(p.mrp) : null,
-            mapped: p.isMapped,
-            stock: "Offline",
-            scheme: "",
-            productId: p.storeId ? p.storeId * 1e5 + 1 : 1,
-            productCode: "",
-            company: p.manufacturer || "",
-            storeId: p.storeId || 1,
-            isOffline: true
-          });
-        }
-      }
-    } catch (_) {
-    }
-    const db2 = await dbManager.getConnection();
-    const settings = await getPharmarackSettings();
-    const isCombineEnabled = settings["combine_pharmarack_pharmacy_search"] !== "false";
-    if (isCombineEnabled) {
-      try {
-        const qClean = q.trim();
-        const tokens = qClean.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
-        if (tokens.length > 0) {
-          const likeClauses = tokens.map(() => "m.name LIKE ?").join(" AND ");
-          const likeParams = tokens.map((t) => `%${t}%`);
-          let storeFilterSql = "";
-          const extraParams = [];
-          if (storeId !== null && storeId !== void 0 && !isNaN(storeId)) {
-            storeFilterSql = " AND d.id = ?";
-            extraParams.push(storeId);
-          }
-          const localPurchases = await db2.all(`
-            SELECT 
-              m.id as medicineId,
-              m.name as medicineName,
-              COALESCE(m.packaging, m.pack_size, '') as packaging,
-              COALESCE(m.manufacturer, m.marketed_by, '') as company,
-              d.id as distributorId,
-              d.name as distributorName,
-              pi.cost_price as rate,
-              pi.mrp as mrp,
-              pi.scheme_per as scheme,
-              (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock,
-              MAX(p.date) as lastPurchaseDate,
-              CASE WHEN dlp.distributor_id IS NOT NULL THEN 1 ELSE 0 END as isMappedProfile
-            FROM purchase_items pi
-            JOIN purchases p ON pi.purchase_id = p.id
-            JOIN distributors d ON p.distributor_id = d.id
-            JOIN medicines m ON pi.medicine_id = m.id
-            LEFT JOIN distributor_learning_profiles dlp ON d.id = dlp.distributor_id
-            WHERE (${likeClauses})${storeFilterSql}
-            GROUP BY m.id, d.id, pi.cost_price, pi.mrp
-            ORDER BY lastPurchaseDate DESC
-            LIMIT 30
-          `, [...likeParams, ...extraParams]).catch(() => []);
-          for (const lp of localPurchases) {
-            const key = `${(lp.medicineName || "").toLowerCase()}|${lp.distributorId}|${lp.rate}`;
-            if (!seenKeys.has(key)) {
-              seenKeys.add(key);
-              const mappedStatus = isMapped !== void 0 ? isMapped : lp.isMappedProfile === 1;
-              const stockDisplay = lp.currentStock > 0 ? lp.currentStock >= 10 ? "High" : String(lp.currentStock) : "Low";
-              results.push({
-                name: lp.medicineName,
-                shortName: lp.medicineName,
-                fullName: lp.medicineName,
-                packaging: lp.packaging || "",
-                distributor: lp.distributorName || "Local Distributor",
-                rate: lp.rate !== null && lp.rate !== void 0 ? Number(lp.rate) : null,
-                mrp: lp.mrp !== null && lp.mrp !== void 0 ? Number(lp.mrp) : null,
-                mapped: mappedStatus,
-                stock: "Offline",
-                scheme: lp.scheme ? `${lp.scheme}%` : "",
-                productId: lp.medicineId || 1,
-                productCode: String(lp.medicineId || ""),
-                company: lp.company || "",
-                storeId: lp.distributorId || 1,
-                isLocalPharmacy: true,
-                isOffline: true
-              });
-            }
-          }
-          if (results.length === 0) {
-            const baseMedicines = await db2.all(`
-              SELECT 
-                m.id as medicineId,
-                m.name as medicineName,
-                COALESCE(m.packaging, m.pack_size, '') as packaging,
-                COALESCE(m.manufacturer, m.marketed_by, '') as company,
-                m.mrp as mrp,
-                (SELECT COALESCE(SUM(inv.quantity), 0) FROM inventory inv WHERE inv.medicine_id = m.id) as currentStock
-              FROM medicines m
-              WHERE (${likeClauses})
-              LIMIT 15
-            `, likeParams).catch(() => []);
-            const defaultDistributor = await db2.get("SELECT id, name FROM distributors ORDER BY id ASC LIMIT 1").catch(() => null);
-            for (const bm of baseMedicines) {
-              const key = `${(bm.medicineName || "").toLowerCase()}|${defaultDistributor?.id || 1}|${bm.mrp}`;
-              if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                results.push({
-                  name: bm.medicineName,
-                  shortName: bm.medicineName,
-                  fullName: bm.medicineName,
-                  packaging: bm.packaging || "",
-                  distributor: defaultDistributor?.name || "Local Pharmacy",
-                  rate: bm.mrp ? Number((bm.mrp * 0.8).toFixed(2)) : null,
-                  mrp: bm.mrp ? Number(bm.mrp) : null,
-                  mapped: true,
-                  stock: "Offline",
-                  scheme: "",
-                  productId: bm.medicineId || 1,
-                  productCode: String(bm.medicineId || ""),
-                  company: bm.company || "",
-                  storeId: defaultDistributor?.id || 1,
-                  isLocalPharmacy: true,
-                  isOffline: true
-                });
-              }
-            }
-          }
-        }
-      } catch (_) {
-      }
-    }
-    return results;
-  } catch (e) {
-    return [];
-  }
-}
-async function performPharmarackSearch(qRaw, storeId, isMapped) {
-  const hasStoreFilter = storeId !== null && !isNaN(storeId);
-  let settings = {};
-  try {
-    activityTracker.recordActivity();
-    settings = await getPharmarackSettings();
-    let token = settings["pharmarack_session_token"] || "";
-    if (!token) {
-      const offline2 = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline2.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline2);
-        return { status: "ok", items: offline2 };
-      }
-      if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-        return { status: "ok", items: [] };
-      }
-      return { status: "need_login" };
-    }
-    const buildPayload = (keyword) => ({
-      SearchKeyword: keyword,
-      StoreId: hasStoreFilter && isMapped ? [storeId] : [],
-      NonMappedStoreId: hasStoreFilter && !isMapped ? [storeId] : [],
-      Count: 100,
-      SkipCount: 0,
-      isMappedSearch: hasStoreFilter ? isMapped : null,
-      IsStock: 2,
-      IsScheme: 2,
-      IsSort: 1,
-      CartSource: "MOVP"
-    });
-    let response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-      method: "POST",
-      body: JSON.stringify(buildPayload(qRaw)),
-      signal: AbortSignal.timeout(5e3)
-    });
-    let data = response.ok ? await response.json().catch(() => null) : null;
-    const cleanedTerm = qRaw.replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm.length >= 2) {
-      response = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-        method: "POST",
-        body: JSON.stringify(buildPayload(cleanedTerm)),
-        signal: AbortSignal.timeout(4e3)
-      });
-      if (response.ok) {
-        data = await response.json().catch(() => null);
-      }
-    }
-    if (data && Array.isArray(data.data) && data.data.length > 0) {
-      const results = data.data.map((p) => {
-        const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || "";
-        return {
-          name: rawName,
-          shortName: rawName,
-          fullName: rawName,
-          packaging: p.Packing || "",
-          distributor: p.StoreName || "",
-          rate: p.PTR !== void 0 ? p.PTR : null,
-          mrp: p.MRP !== void 0 ? p.MRP : null,
-          mapped: p.IsMapped === 1 || p.Ismapped === 1 || p.isMapped === true || p.isMapped === 1 || String(p.IsMapped) === "1" || String(p.Ismapped) === "1",
-          stock: p.Stock !== void 0 ? String(p.Stock) : "High",
-          scheme: p.Scheme || p.SchemeDescription || p.ProductScheme || "",
-          productId: p.ProductId || p.PrProductId || p.ProductCode,
-          productCode: p.ProductCode || "",
-          company: p.Company || "",
-          storeId: p.StoreId
-        };
-      });
-      const qLower = qRaw.toLowerCase().trim();
-      results.sort((a, b) => {
-        const aMapped = Boolean(a.mapped);
-        const bMapped = Boolean(b.mapped);
-        if (aMapped && !bMapped) return -1;
-        if (!aMapped && bMapped) return 1;
-        const nameA = String(a.name || "").toLowerCase();
-        const nameB = String(b.name || "").toLowerCase();
-        const aStarts = nameA.startsWith(qLower);
-        const bStarts = nameB.startsWith(qLower);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
-      });
-      searchCache.set(qRaw, storeId, isMapped, results);
-      return { status: "ok", items: results };
-    }
-    const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-    if (offline.length > 0) {
-      const qLower = qRaw.toLowerCase().trim();
-      offline.sort((a, b) => {
-        const aMapped = Boolean(a.mapped);
-        const bMapped = Boolean(b.mapped);
-        if (aMapped && !bMapped) return -1;
-        if (!aMapped && bMapped) return 1;
-        const nameA = String(a.name || "").toLowerCase();
-        const nameB = String(b.name || "").toLowerCase();
-        const aStarts = nameA.startsWith(qLower);
-        const bStarts = nameB.startsWith(qLower);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
-      });
-      searchCache.set(qRaw, storeId, isMapped, offline);
-    }
-    return { status: "ok", items: offline };
-  } catch (err) {
-    console.error("Pharmarack direct live API search failed:", err.message);
-    try {
-      const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
-      if (offline.length > 0) {
-        searchCache.set(qRaw, storeId, isMapped, offline);
-        return { status: "ok", items: offline };
-      }
-    } catch (_) {
-    }
-    if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-      return { status: "ok", items: [] };
-    }
-    return { status: "connection_error" };
-  }
-}
-function revalidateStaleSearch(qRaw, storeId, isMapped) {
-  const key = searchCache.keyFor(qRaw, storeId, isMapped);
-  if (searchRevalidations.has(key)) return;
-  const p = performPharmarackSearch(qRaw, storeId, isMapped).catch(() => {
-  }).finally(() => {
-    searchRevalidations.delete(key);
-  });
-  searchRevalidations.set(key, p);
-}
-async function probeUserCartDetails(timeoutMs) {
-  const now = Date.now();
-  if (userCartProbeCache && now - userCartProbeCache.ts < USER_CART_PROBE_TTL_MS) {
-    return userCartProbeCache;
-  }
-  const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
-    method: "GET",
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-  let data = null;
-  if (response.ok) {
-    data = await response.json().catch(() => null);
-  }
-  const entry = { ts: Date.now(), ok: response.ok, status: response.status, data };
-  if (response.ok || response.status === 401 || response.status === 403) {
-    userCartProbeCache = entry;
-  }
-  return entry;
-}
-async function loadLiveCartCore() {
-  const settings = await getPharmarackSettings();
-  const token = settings["pharmarack_session_token"] || "";
-  if (!token) {
-    throw Object.assign(new Error("Need to login"), { code: "NEED_LOGIN" });
-  }
-  const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
-    method: "GET",
-    signal: AbortSignal.timeout(15e3)
-  });
-  if (response.status === 401 || response.status === 403) {
-    throw Object.assign(
-      new Error("Session expired. Please re-login from the Learning page."),
-      { code: "SESSION_EXPIRED" }
-    );
-  }
-  if (!response.ok) {
-    throw Object.assign(new Error(`Pharmarack API returned ${response.status}`), { httpStatus: 503 });
-  }
-  const cartData = await response.json().catch(() => null);
-  let rawList = [];
-  if (cartData) {
-    if (Array.isArray(cartData)) {
-      rawList = cartData;
-    } else {
-      const targetObj = cartData.data || cartData.Data || cartData;
-      if (Array.isArray(targetObj)) {
-        rawList = targetObj;
-      } else if (typeof targetObj === "object") {
-        const keysToTry = [
-          "IList",
-          "ilist",
-          "StoreWiseCartDetails",
-          "storeWiseCartDetails",
-          "CartDetails",
-          "cartDetails",
-          "Stores",
-          "stores",
-          "StoreList",
-          "storeList",
-          "CartList",
-          "cartList",
-          "Items",
-          "items",
-          "Products",
-          "products"
-        ];
-        for (const k of keysToTry) {
-          if (Array.isArray(targetObj[k])) {
-            rawList = targetObj[k];
-            break;
-          }
-        }
-        if (rawList.length === 0 && typeof cartData === "object") {
-          for (const k of keysToTry) {
-            if (Array.isArray(cartData[k])) {
-              rawList = cartData[k];
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-  let distributors = [];
-  if (rawList.length > 0) {
-    const firstEntry = rawList[0];
-    const hasNestedItems = Boolean(
-      firstEntry.lineItems && Array.isArray(firstEntry.lineItems) || firstEntry.LineItems && Array.isArray(firstEntry.LineItems) || firstEntry.items && Array.isArray(firstEntry.items) || firstEntry.Items && Array.isArray(firstEntry.Items) || firstEntry.products && Array.isArray(firstEntry.products) || firstEntry.Products && Array.isArray(firstEntry.Products) || firstEntry.ProductList && Array.isArray(firstEntry.ProductList) || firstEntry.productList && Array.isArray(firstEntry.productList) || firstEntry.CartItemList && Array.isArray(firstEntry.CartItemList) || firstEntry.cartItemList && Array.isArray(firstEntry.cartItemList)
-    );
-    if (hasNestedItems) {
-      distributors = rawList.map((store) => {
-        const rawItems = store.lineItems || store.LineItems || store.items || store.Items || store.products || store.Products || store.ProductList || store.productList || store.CartItemList || store.cartItemList || [];
-        return {
-          storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
-          storeName: store.StoreName || store.storeName || store.Name || store.name || "Unknown Distributor",
-          lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
-          deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d) => ({
-            name: d.SalesmanName || d.name || d.Salesman || "",
-            code: d.SalesmanCode || d.code || ""
-          })),
-          items: rawItems.map((item) => ({
-            productId: item.ProductId || item.productId || item.Id || item.id,
-            storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
-            productCode: item.ProductCode || item.productCode || "",
-            productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
-            company: item.Company || item.company || "",
-            packaging: item.Packing || item.packaging || item.CasePacking || "",
-            qty: item.Quantity || item.qty || item.quantity || 1,
-            ptr: item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0,
-            mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
-            scheme: item.Scheme || item.scheme || "",
-            stock: item.Stock ?? item.stock ?? null,
-            amount: item.ProductWiseAmount || item.amount || item.LineTotal || 0,
-            cartSource: item.CartSource || item.cartSource || "",
-            isChecked: item.IsProductChecked === 1 || item.isChecked === true,
-            createdDate: item.CreatedDate || item.createdDate || ""
-          }))
-        };
-      });
-    } else {
-      const storeMap = /* @__PURE__ */ new Map();
-      for (const item of rawList) {
-        const storeId = item.StoreId || item.storeId || item.Id || item.id || 0;
-        const storeName = item.StoreName || item.storeName || item.Name || item.name || "Unknown Distributor";
-        const storeKey = `${storeId}_${storeName}`;
-        if (!storeMap.has(storeKey)) {
-          storeMap.set(storeKey, {
-            storeId,
-            storeName,
-            lineTotal: 0,
-            deliveryPersons: (item.DeliveryPersonList || item.deliveryPersons || []).map((d) => ({
-              name: d.SalesmanName || d.name || "",
-              code: d.SalesmanCode || d.code || ""
-            })),
-            items: []
-          });
-        }
-        const storeObj = storeMap.get(storeKey);
-        const itemQty = item.Quantity || item.qty || item.quantity || 1;
-        const itemPtr = item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0;
-        const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || itemPtr * itemQty;
-        storeObj.lineTotal += itemAmt;
-        storeObj.items.push({
-          productId: item.ProductId || item.productId || item.Id || item.id,
-          storeId,
-          productCode: item.ProductCode || item.productCode || "",
-          productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
-          company: item.Company || item.company || "",
-          packaging: item.Packing || item.packaging || item.CasePacking || "",
-          qty: itemQty,
-          ptr: itemPtr,
-          mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
-          scheme: item.Scheme || item.scheme || "",
-          stock: item.Stock ?? item.stock ?? null,
-          amount: itemAmt,
-          cartSource: item.CartSource || item.cartSource || "",
-          isChecked: item.IsProductChecked === 1 || item.isChecked === true,
-          createdDate: item.CreatedDate || item.createdDate || ""
-        });
-      }
-      distributors = Array.from(storeMap.values());
-    }
-  }
-  distributors.forEach((dist) => {
-    if (Array.isArray(dist.items)) {
-      dist.items.sort(
-        (a, b) => String(a.productName || "").localeCompare(String(b.productName || ""), void 0, { sensitivity: "base" })
-      );
-    }
-  });
-  distributors.sort(
-    (a, b) => String(a.storeName || "").localeCompare(String(b.storeName || ""), void 0, { sensitivity: "base" })
-  );
-  const totalItems = distributors.reduce((s, d) => s + d.items.length, 0);
-  return { distributors, totalItems };
-}
-async function warmupStartupCart() {
-  if (isWarmingUpCart || startupCartWarmedUp) return;
-  isWarmingUpCart = true;
-  try {
-    const settings = await getPharmarackSettings();
-    const token = settings["pharmarack_session_token"] || "";
-    if (!token) {
-      console.log("[StartupSync] No Pharmarack token configured. Marking startup cart sync complete.");
-      startupCartWarmedUp = true;
-      startupSyncCoordinator.markCartLoaded();
-      return;
-    }
-    const { checkConnectivity: checkConnectivity2 } = await Promise.resolve().then(() => (init_networkDetector(), networkDetector_exports));
-    const isOnline = await checkConnectivity2();
-    if (!isOnline) {
-      console.log("[StartupSync] Offline: skipping boot cart warm-up.");
-      return;
-    }
-    const { distributors, totalItems } = await loadLiveCartCore();
-    serverCartCache = { distributors, totalItems, ts: Date.now() };
-    startupCartWarmedUp = true;
-    startupSyncCoordinator.markCartLoaded();
-    console.log(`[StartupSync] Boot cart warm-up complete (${totalItems} item(s) across ${distributors.length} store(s)).`);
-  } catch (err) {
-    console.warn("[StartupSync] Boot cart warm-up could not load live cart:", err?.message || err);
-  } finally {
-    isWarmingUpCart = false;
-  }
-}
-async function executeSingleItemDelete(item) {
-  const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = item;
-  try {
-    const settings = await getPharmarackSettings();
-    let token = settings["pharmarack_session_token"] || "";
-    if (!token) return false;
-    let deleteSuccess = false;
-    let lastError = "";
-    let resolvedProductId = (() => {
-      if (!productId) return 0;
-      const n = Number(productId);
-      if (!isNaN(n) && n > 0) return n;
-      const stripped = String(productId).replace(/^PR/i, "");
-      const sn = Number(stripped);
-      return !isNaN(sn) && sn > 0 ? sn : 0;
-    })();
-    let resolvedProductCode = productCode || "";
-    let resolvedCompany = company || "";
-    let resolvedPtr = Number(ptr || 0);
-    let resolvedMrp = Number(mrp || 0);
-    if ((!resolvedProductId || !resolvedProductCode) && token) {
-      try {
-        let cleanKeyword = (productName || "").trim().replace(/\s*\([^)]*\)\s*$/, "").trim();
-        if (cleanKeyword) {
-          const searchPayload = {
-            SearchKeyword: cleanKeyword,
-            StoreId: storeId ? [Number(storeId)] : [],
-            NonMappedStoreId: [],
-            Count: 10,
-            SkipCount: 0,
-            isMappedSearch: null,
-            IsStock: 2,
-            IsScheme: 2,
-            IsSort: 1,
-            CartSource: "MOVP"
-          };
-          const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-            method: "POST",
-            body: JSON.stringify(searchPayload),
-            signal: AbortSignal.timeout(6e3)
-            // Increased buffer for slow connections
-          });
-          if (searchRes.ok) {
-            const searchData = await searchRes.json().catch(() => null);
-            if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-              const matched = searchData.data.find((p) => Number(p.StoreId) === Number(storeId)) || searchData.data[0];
-              if (matched) {
-                resolvedProductId = Number(matched.PrProductId || matched.ProductId || resolvedProductId);
-                resolvedProductCode = matched.ProductCode || resolvedProductCode;
-                resolvedCompany = matched.Company || resolvedCompany;
-                resolvedPtr = Number(matched.PTR || resolvedPtr);
-                resolvedMrp = Number(matched.MRP || resolvedMrp);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("[Pharmarack Delete Worker] Search enrichment warning:", e);
-      }
-    }
-    if (resolvedProductCode) {
-      try {
-        const deleteUrl = new URL("https://pharmretail-api.pharmarack.com/cart/api/v1/DeleteUserCartDetailByStoreIdV2");
-        deleteUrl.searchParams.set("StoreId", String(storeId));
-        deleteUrl.searchParams.set("ProductCode", String(resolvedProductCode));
-        const secRes = await fetchPharmarack(deleteUrl.toString(), {
-          method: "GET",
-          signal: AbortSignal.timeout(1e4)
-        });
-        if (secRes.ok) {
-          const secJson = await secRes.json().catch(() => ({}));
-          const isSecOk = secJson && (secJson.StatusCode === 200 || secJson.statusCode === 200 || String(secJson.StatusCode) === "200" || secJson.status === 200 || secJson.status === "success" || secJson.code === 200 || secJson.success === true || secJson.Message && String(secJson.Message).toLowerCase().includes("delete") || secJson.message && String(secJson.message).toLowerCase().includes("delete"));
-          if (isSecOk || secRes.status === 200) {
-            deleteSuccess = true;
-          }
-        } else {
-          lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
-        }
-      } catch (err) {
-        lastError = err.message;
-      }
-    }
-    if (deleteSuccess) {
-      invalidatePharmarackCartCache();
-      eventService.broadcast("pharmarack_cart_changed", { action: "remove", at: Date.now(), productName: productName || "" });
-      console.log(`[Pharmarack Delete Worker] Successfully removed "${productName || resolvedProductCode}" from live cart.`);
-      return true;
-    } else {
-      console.warn(`[Pharmarack Delete Worker] Direct cart deletion did not succeed for "${productName || resolvedProductCode}":`, lastError);
-      return false;
-    }
-  } catch (err) {
-    console.error(`[Pharmarack Delete Worker] Fatal error deleting "${productName}":`, err);
-    return false;
-  }
-}
-async function verifyOrderPlacedInPharmarack(storeId) {
-  try {
-    const today = /* @__PURE__ */ new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const todayStr2 = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-    const payload = {
-      FromDate: todayStr2,
-      ToDate: todayStr2,
-      SkipCount: 0,
-      Count: 15
-    };
-    const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/order/api/v1/GetOrderList", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-    if (response.ok) {
-      const data = await response.json();
-      let orders = [];
-      if (data) {
-        if (Array.isArray(data.data)) {
-          orders = data.data;
-        } else if (data.data && Array.isArray(data.data.Orders)) {
-          orders = data.data.Orders;
-        } else if (Array.isArray(data.Orders)) {
-          orders = data.Orders;
-        }
-      }
-      const matchingOrder = orders.find((order) => Number(order.StoreId) === storeId || Number(order.Storeid) === storeId);
-      if (matchingOrder) {
-        return true;
-      }
-    }
-  } catch (err) {
-    console.error("[Pharmarack Order Verify] Failed to verify order list:", err.message);
-  }
-  return false;
-}
-var import_express13, import_path41, import_url33, import_fs38, import_child_process6, import_util3, execAsync3, __filename31, __dirname31, DB_PATH17, router13, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
-var init_pharmarack = __esm({
-  "src/routes/pharmarack.ts"() {
-    "use strict";
-    import_express13 = __toESM(require("express"), 1);
-    import_path41 = __toESM(require("path"), 1);
-    import_url33 = require("url");
-    import_fs38 = __toESM(require("fs"), 1);
-    init_connection();
-    init_eventService();
-    init_notificationService();
-    init_searchCache();
-    init_tokenRefreshScheduler();
-    import_child_process6 = require("child_process");
-    import_util3 = require("util");
-    init_config();
-    init_distributorSyncHelper();
-    init_distributorDispatchReminderWorker();
-    init_pharmarackCatalogCache();
-    init_startupSyncCoordinator();
-    init_chromeBrowser();
-    init_activityTracker();
-    execAsync3 = (0, import_util3.promisify)(import_child_process6.exec);
-    __filename31 = (0, import_url33.fileURLToPath)(import_meta_url);
-    __dirname31 = import_path41.default.dirname(__filename31);
-    DB_PATH17 = process.env.DB_PATH || import_path41.default.resolve(__dirname31, "..", "..", "data", "app.db");
-    router13 = import_express13.default.Router();
-    searchRevalidations = /* @__PURE__ */ new Map();
-    router13.get("/search", async (req, res) => {
-      const qRaw = (req.query.q || "").trim();
-      if (!qRaw) {
-        return res.json([]);
-      }
-      const storeId = req.query.storeId ? Number(req.query.storeId) : null;
-      const isMapped = req.query.isMapped === "true";
-      const cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
-      if (cachedHit) {
-        if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
-        return res.json(cachedHit.items);
-      }
-      const outcome = await performPharmarackSearch(qRaw, storeId, isMapped);
-      if (outcome.status === "need_login") {
-        return res.status(401).json({ error: "Need to login", code: "NEED_LOGIN" });
-      }
-      if (outcome.status === "connection_error") {
-        return res.status(503).json({ error: "Connection error, please check internet or reconnect", code: "CONNECTION_ERROR" });
-      }
-      return res.json(outcome.items);
-    });
-    router13.get("/distributors", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(`
-      SELECT 
-        d.id as storeId,
-        d.name as storeName,
-        COALESCE(d.phone, d.contact, '') as mobileNumber,
-        COALESCE(d.email, '') as email,
-        COALESCE(d.address, '') as address,
-        COALESCE(d.gstin, '') as partyCode,
-        p.distributor_id as profileId
-      FROM distributors d
-      LEFT JOIN distributor_learning_profiles p ON d.id = p.distributor_id
-      ORDER BY d.name ASC
-      LIMIT 1000
-    `);
-        const stores = rows.map((s) => {
-          const hasPhone = Boolean(s.mobileNumber && s.mobileNumber.trim());
-          const hasProfile = Boolean(s.profileId);
-          const isMapped = hasPhone || hasProfile;
-          return {
-            storeId: s.storeId,
-            storeName: s.storeName || "Unknown Store",
-            isMapped,
-            partyCode: s.partyCode || "",
-            address: s.address || "",
-            city: "",
-            mobileNumber: s.mobileNumber || "",
-            email: s.email || "",
-            contactPerson: "",
-            remarks: ""
-          };
-        });
-        const mapped = stores.filter((s) => s.isMapped);
-        const nonMapped = stores.filter((s) => !s.isMapped);
-        return res.json({ success: true, mode: "Local", mapped, nonMapped });
-      } catch (err) {
-        console.error("Local distributors fetch error:", err);
-        return res.status(500).json({ error: "Internal server error: " + err.message });
-      }
-    });
-    router13.get("/distributor-mappings", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(`
-      SELECT 
-        m.store_name, 
-        COALESCE(m.distributor_id, d.id) as distributor_id, 
-        COALESCE(d.phone, d.contact, m.phone) as phone, 
-        COALESCE(d.name, m.store_name) as distributor_name, 
-        COALESCE(d.phone, d.contact, m.phone) as distributor_phone
-      FROM pharmarack_distributor_mappings m
-      LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
-      UNION
-      SELECT 
-        d.name as store_name, 
-        d.id as distributor_id, 
-        COALESCE(d.phone, d.contact) as phone, 
-        d.name as distributor_name, 
-        COALESCE(d.phone, d.contact) as distributor_phone
-      FROM distributors d
-      WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
-        AND LOWER(TRIM(d.name)) NOT IN (
-          SELECT LOWER(TRIM(store_name)) FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL
-        )
-    `);
-        res.json({ success: true, mappings: rows || [] });
-      } catch (error) {
-        console.error("Failed to fetch distributor mappings:", error);
-        res.status(500).json({ error: "Failed to fetch distributor mappings" });
-      }
-    });
-    router13.post("/distributor-mappings", async (req, res) => {
-      const { store_name, distributor_id, phone } = req.body;
-      if (!store_name) {
-        return res.status(400).json({ error: "store_name is required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        await syncDistributorPhoneAcrossTables(db2, {
-          id: distributor_id ? Number(distributor_id) : void 0,
-          store_name,
-          phone
-        });
-        res.json({ success: true, message: "Store mapping saved successfully" });
-      } catch (error) {
-        console.error("Failed to save distributor mapping:", error);
-        res.status(500).json({ error: "Failed to save distributor mapping: " + error.message });
-      }
-    });
-    router13.post("/catalog/sync", async (_req, res) => {
-      try {
-        const { pharmarackCatalogCache: pharmarackCatalogCache2 } = await Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports));
-        res.json({ success: true, message: "Catalog sync started in background" });
-        pharmarackCatalogCache2.syncCatalog().then((result) => console.log(`[Pharmarack] Manual catalog sync complete:`, result)).catch((err) => console.error("[Pharmarack] Manual catalog sync failed:", err));
-      } catch (err) {
-        res.status(500).json({ error: "Failed to start catalog sync: " + err.message });
-      }
-    });
-    router13.post("/session/warmup", async (_req, res) => {
-      res.json({ success: true, message: "Session warm-up probe triggered" });
-      tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
-      });
-    });
-    router13.post("/login-window", async (req, res) => {
-      const chromePath = findChromePath2();
-      if (!chromePath) {
-        return res.status(404).json({ error: "Google Chrome was not found on your system. Please install Google Chrome to use this feature." });
-      }
-      if (tokenRefreshScheduler.isLoginWindowActive) {
-        return res.json({ success: true, message: "Chrome login window is already open." });
-      }
-      tokenRefreshScheduler.isLoginWindowActive = true;
-      res.json({ success: true, message: "Opening login window..." });
-      (async () => {
-        const mainProfilePath = import_path41.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        try {
-          console.log("[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...");
-          await killOrphanChromeProcesses("pharmarack_profile");
-          if (!import_fs38.default.existsSync(mainProfilePath)) import_fs38.default.mkdirSync(mainProfilePath, { recursive: true });
-          cleanProfileLockFiles(mainProfilePath);
-          console.log("[LoginWindow] Spawning Chrome natively from:", chromePath);
-          const { spawn: spawnProc } = await import("child_process");
-          const chromeProc = spawnProc(chromePath, [
-            `--user-data-dir=${mainProfilePath}`,
-            "--start-maximized",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--disable-dev-shm-usage",
-            "--disable-extensions",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-background-networking",
-            "--disable-sync",
-            "--mute-audio",
-            "https://retailers.pharmarack.com/loginotp"
-          ], { detached: false, stdio: "ignore" });
-          chromeProc.on("error", (e) => {
-            console.warn("[LoginWindow] Chrome spawn error:", e.message);
-            tokenRefreshScheduler.isLoginWindowActive = false;
-          });
-          chromeProc.on("exit", async () => {
-            console.log("[LoginWindow] Chrome login window closed. Extracting session token...");
-            tokenRefreshScheduler.isLoginWindowActive = false;
-            await new Promise((r) => setTimeout(r, 1200));
-            let token = extractTokenFromProfile(mainProfilePath);
-            if (token) {
-              console.log("[LoginWindow] Successfully captured token from profile storage:", token.substring(0, 15) + "...");
-              try {
-                const db2 = await dbManager.getConnection();
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-                await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
-                Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.ensureCatalogSyncCron()).catch(() => {
-                });
-              } catch (dbErr) {
-                console.error("[LoginWindow] Failed to persist token:", dbErr.message);
-              }
-            } else {
-              console.log("[LoginWindow] Direct profile scan did not find token. Running executeRefresh fallback...");
-              token = await tokenRefreshScheduler.executeRefresh().catch(() => null);
-            }
-            await tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
-            });
-            try {
-              const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
-              const db2 = await dbManager.getConnection();
-              const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
-              const hasToken = !!tokenRow?.value;
-              eventService2.broadcast("pharmarack_session_refreshed", {
-                status: hasToken ? "success" : "failed",
-                error: hasToken ? null : "Login window closed without capturing token"
-              });
-            } catch (_) {
-            }
-            console.log("[LoginWindow] Pharmarack login window session ended.");
-          });
-        } catch (err) {
-          console.error("[LoginWindow] Error during Pharmarack login window:", err.message);
-          tokenRefreshScheduler.isLoginWindowActive = false;
-        }
-      })();
-    });
-    serverCartCache = null;
-    userCartProbeCache = null;
-    USER_CART_PROBE_TTL_MS = 1e4;
-    invalidatePharmarackCartCache = () => {
-      serverCartCache = null;
-      userCartProbeCache = null;
-    };
-    isWarmingUpCart = false;
-    startupCartWarmedUp = false;
-    router13.post("/cart/add", async (req, res) => {
-      const { items } = req.body;
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "No items provided" });
-      }
-      try {
-        const settings = await getPharmarackSettings();
-        const token = settings["pharmarack_session_token"] || "";
-        if (!token) {
-          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-            return res.json({
-              success: true,
-              offline: true,
-              message: "Item saved to distributor cart (offline mode). Sync will occur when connected."
-            });
-          }
-          return res.status(401).json({ error: "Need to login to Pharmarack to add items to cart", code: "NEED_LOGIN" });
-        }
-        for (const item of items) {
-          if (!item.productCode || !item.productName) {
-            for (const [_, cacheEntry] of searchCache.entries()) {
-              const matched = cacheEntry.data.find((p) => p.productId === item.productId && p.storeId === item.storeId);
-              if (matched) {
-                item.productCode = matched.productCode;
-                item.productName = matched.name;
-                item.storeName = matched.distributor;
-                item.company = matched.company;
-                item.mrp = matched.mrp;
-                item.rate = matched.rate;
-                break;
-              }
-            }
-          }
-          const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
-          if (!hasValidId && token) {
-            try {
-              let cleanKeyword = (item.productName || item.product || item.name || "").trim();
-              cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
-              const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
-              const wantName = norm(cleanKeyword);
-              const wantStore = String(item.storeName || "").toLowerCase().trim();
-              if (wantName) {
-                let best = null;
-                let bestIsStoreMatch = false;
-                for (const [_, cacheEntry] of searchCache.entries()) {
-                  for (const p of cacheEntry.data || []) {
-                    const nShort = norm(p.shortName || p.name);
-                    const nFull = norm(p.fullName || p.name);
-                    if (nShort !== wantName && nFull !== wantName) continue;
-                    const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
-                    if (!best || storeMatch && !bestIsStoreMatch) {
-                      best = p;
-                      bestIsStoreMatch = storeMatch;
-                    }
-                    if (bestIsStoreMatch) break;
-                  }
-                  if (bestIsStoreMatch) break;
-                }
-                if (best) {
-                  item.productId = Number(best.productId || item.productId || 0);
-                  item.storeId = Number(best.storeId || item.storeId || 0);
-                  item.productCode = best.productCode || item.productCode || "";
-                  item.storeName = best.distributor || item.storeName || "";
-                  item.company = best.company || item.company || "";
-                  item.mrp = Number(best.mrp || item.mrp || 0);
-                  item.rate = Number(best.rate || item.rate || 0);
-                  continue;
-                }
-              }
-              if (cleanKeyword) {
-                const searchPayload = {
-                  SearchKeyword: cleanKeyword,
-                  StoreId: item.storeId ? [Number(item.storeId)] : [],
-                  NonMappedStoreId: [],
-                  Count: 10,
-                  SkipCount: 0,
-                  isMappedSearch: null,
-                  IsStock: 2,
-                  IsScheme: 2,
-                  IsSort: 1,
-                  CartSource: "MOVP"
-                };
-                const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-                  method: "POST",
-                  body: JSON.stringify(searchPayload),
-                  signal: AbortSignal.timeout(4e3)
-                });
-                if (searchRes.ok) {
-                  const searchData = await searchRes.json().catch(() => null);
-                  if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-                    const matched = searchData.data.find(
-                      (p) => (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) && Number(p.StoreId) === Number(item.storeId)
-                    ) || searchData.data.find((p) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
-                    if (matched) {
-                      item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
-                      item.storeId = Number(matched.StoreId || item.storeId || 0);
-                      item.productCode = matched.ProductCode || item.productCode || "";
-                      item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || "";
-                      item.storeName = matched.StoreName || item.storeName || "";
-                      item.company = matched.Company || item.company || "";
-                      item.mrp = Number(matched.MRP || item.mrp || 0);
-                      item.rate = Number(matched.PTR || item.rate || 0);
-                    }
-                  }
-                }
-              }
-            } catch (err) {
-              console.error("On-the-fly search enrichment failed:", err);
-            }
-          }
-        }
-        let cartSuccess = false;
-        let lastError = "";
-        try {
-          for (const item of items) {
-            const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
-            const payload = {
-              StoreId: Number(item.storeId) || 0,
-              StoreName: item.storeName || "",
-              ProductCode: item.productCode || "",
-              Quantity: Number(item.qty || item.Quantity || 1),
-              PTR: rateVal,
-              Free: 0,
-              HiddenPTR: rateVal,
-              NetRate: rateVal,
-              Scheme: item.scheme || "",
-              SchemeType: "",
-              GSTPercentage: 0,
-              ItemGSTValue: 0,
-              CartSource: "MOVP",
-              DeliveryOption: "",
-              RemarkForStore: "",
-              ProductAddedBy: 0,
-              Priority: "",
-              OrderPlaced: 0,
-              OrderPlacedBy: 0,
-              CreatedBy: 0,
-              ProductName: item.productName || item.product || "",
-              StoreProductName: item.productName || item.product || "",
-              StoreWiseAmount: 0,
-              StoreWiseGSTAmount: 0,
-              IsDeleted: 0,
-              AllowMinQty: 0,
-              AllowMaxQty: 0,
-              StepUpValue: 1,
-              AllowMOQ: true,
-              MinItemLimit: 0,
-              MaxItemLimit: 0,
-              MinAmountLimit: 0,
-              MaxAmountLimit: 0,
-              DODIsPrefenceSet: 0,
-              IsDODPreferenceSet: 0,
-              DisplayHalfSchemeOn: "",
-              DisplayHalfScheme: "0",
-              RetailerSchemePreference: 1,
-              HalfSchemeValueToRetailer: 0,
-              RoundOffDisplayHS: "",
-              MinOrderQuantity: 0,
-              MaxOrderQuantity: 0,
-              IsDODProduct: 0,
-              IsDODProductCheck: 0,
-              IsDODProductSelected: 0,
-              OrderDeliveryModeStatus: 1,
-              OrderRemarks: 1,
-              SpecialRate: 0,
-              Stock: 999,
-              RShowPtr: 1,
-              IsPartyLocked: 0,
-              RewardSchemeId: 0,
-              IsProductChecked: 1,
-              DeliveryPerson: "",
-              DeliveryPersonCode: "",
-              RShowPtrForAllCompanies: 1,
-              Company: item.company || "",
-              IsGroupWisePTR: 0,
-              IsGroupWisePTRRetailer: 0,
-              RateValidity: null,
-              IsShowNonMappedOrderStock: 1,
-              RStockVisibility: 0,
-              IsMapped: item.mapped === false || item.isMapped === false ? 0 : 1,
-              ProductId: (() => {
-                const v = item.productId;
-                if (!v) return 0;
-                const n = Number(v);
-                if (!isNaN(n) && n > 0) return n;
-                const stripped = String(v).replace(/^PR/i, "");
-                const sn = Number(stripped);
-                return !isNaN(sn) && sn > 0 ? sn : 0;
-              })(),
-              MRP: String(item.mrp || 0),
-              ProductWiseAmount: 0,
-              ProductWiseGSTAmount: 0,
-              ProductWiseSchemeAmount: 0,
-              ProductWiseSchemeGSTAmount: 0,
-              StoreWiseSchemeAmount: 0,
-              StoreWiseSchemeGSTAmount: 0,
-              ProductLock: 0,
-              BoxPacking: "0",
-              CasePacking: item.packaging || item.Packing || "1 strip",
-              Packing: item.packaging || item.Packing || "1 strip"
-            };
-            const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
-              method: "POST",
-              body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(15e3)
-            });
-            if (response.ok) {
-              const resJson = await response.json().catch(() => ({}));
-              const isOk = resJson && (resJson.StatusCode === 200 || resJson.statusCode === 200 || String(resJson.StatusCode) === "200" || resJson.status === 200 || resJson.status === "success" || resJson.success === true || resJson.Message && String(resJson.Message).toLowerCase().includes("success") || resJson.message && String(resJson.message).toLowerCase().includes("success"));
-              if (isOk) {
-                cartSuccess = true;
-              } else {
-                lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
-                cartSuccess = false;
-                break;
-              }
-            } else {
-              const errText = await response.text().catch(() => "");
-              lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
-              cartSuccess = false;
-              break;
-            }
-          }
-        } catch (err) {
-          lastError = err.message;
-          cartSuccess = false;
-        }
-        if (!cartSuccess) {
-          console.warn("[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:", lastError);
-        }
-        if (cartSuccess) {
-          invalidatePharmarackCartCache();
-          eventService.broadcast("pharmarack_cart_changed", { action: "add", at: Date.now() });
-          return res.json({ success: true, message: "Successfully added to Pharmarack cart!", mode: "Live" });
-        } else {
-          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-            return res.json({
-              success: true,
-              offline: true,
-              message: "Item saved to distributor cart (offline mode)."
-            });
-          }
-          return res.status(503).json({ error: "Failed to add items to actual Pharmarack cart", details: lastError });
-        }
-      } catch (err) {
-        console.error("Pharmarack cart route error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    pharmarackDeleteChain = Promise.resolve();
-    router13.post("/delete-cart-item", async (req, res) => {
-      const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = req.body;
-      if (!storeId || !productId && !productCode && !productName) {
-        return res.status(400).json({ error: "Missing required item details for cart deletion" });
-      }
-      const deleteItem = {
-        storeId: Number(storeId),
-        productId,
-        productCode,
-        productName,
-        company,
-        packaging,
-        ptr,
-        mrp,
-        storeName
-      };
-      try {
-        const task = pharmarackDeleteChain.catch(() => {
-        }).then(() => executeSingleItemDelete(deleteItem));
-        pharmarackDeleteChain = task;
-        const success = await task;
-        if (success) {
-          return res.json({ success: true, message: "Item deleted from Pharmarack live cart" });
-        } else {
-          return res.status(500).json({ success: false, error: "Failed to delete item from Pharmarack live cart" });
-        }
-      } catch (err) {
-        console.error("[Pharmarack Delete Worker] Runner error:", err);
-        return res.status(500).json({ success: false, error: err.message || "Internal error deleting item" });
-      }
-    });
-    router13.post("/cart/notify-manual", async (req, res) => {
-      const { storeId, storeName, deliveryPersons, items, skipDistributor } = req.body;
-      if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "Missing distributor info or items list" });
-      }
-      try {
-        const result = await notificationService.notifyDistributorCartOrder(
-          storeName,
-          Number(storeId),
-          items,
-          deliveryPersons || [],
-          { skipDistributor: !!skipDistributor }
-        );
-        if (result.ok) {
-          res.json({ success: true, message: "Notifications processed successfully via WhatsApp!", sentCount: result.sentCount, suppressedCount: result.suppressedCount });
-        } else {
-          res.status(500).json({ error: "Failed to send WhatsApp messages." });
-        }
-      } catch (err) {
-        console.error("Manual notification route error:", err);
-        res.status(500).json({ error: "Internal server error: " + err.message });
-      }
-    });
-    router13.post("/cart/notify-delivery-boys-batch", async (req, res) => {
-      const { orders } = req.body;
-      if (!orders || !Array.isArray(orders) || orders.length === 0) {
-        return res.status(400).json({ error: "Missing or empty orders array" });
-      }
-      try {
-        const success = await notificationService.notifyDeliveryBoysBatch(orders);
-        if (success) {
-          res.json({ success: true, message: `Delivery boy batch notification sent for ${orders.length} order(s)!` });
-        } else {
-          res.status(500).json({ error: "Failed to send delivery boy batch notification. No delivery boy contacts found." });
-        }
-      } catch (err) {
-        console.error("Batch delivery boy notification error:", err);
-        res.status(500).json({ error: "Internal server error: " + err.message });
-      }
-    });
-    router13.get("/cart", async (req, res) => {
-      try {
-        const forceRefresh = req.query.fresh === "true" || req.query.refresh === "true";
-        if (!forceRefresh && serverCartCache && Date.now() - serverCartCache.ts < 3e4) {
-          return res.json({
-            success: true,
-            mode: "Live",
-            distributors: serverCartCache.distributors,
-            totalItems: serverCartCache.totalItems,
-            cached: true
-          });
-        }
-        let distributors = [];
-        let totalItems = 0;
-        try {
-          ({ distributors, totalItems } = await loadLiveCartCore());
-        } catch (cartErr) {
-          if (cartErr?.code === "NEED_LOGIN") {
-            return res.status(401).json({ error: "Need to login", code: "NEED_LOGIN" });
-          }
-          if (cartErr?.code === "SESSION_EXPIRED") {
-            return res.status(401).json({ error: "Session expired. Please re-login from the Learning page.", code: "SESSION_EXPIRED" });
-          }
-          if (cartErr?.httpStatus === 503) {
-            return res.status(503).json({ error: cartErr.message });
-          }
-          throw cartErr;
-        }
-        try {
-          const db2 = await dbManager.getConnection();
-          const snapshots = await db2.all("SELECT store_id, store_name, items_json, delivery_persons_json FROM pharmarack_cart_snapshots");
-          const snapshotMap = /* @__PURE__ */ new Map();
-          snapshots.forEach((s) => {
-            snapshotMap.set(s.store_id, {
-              storeName: s.store_name,
-              items: JSON.parse(s.items_json),
-              deliveryPersons: JSON.parse(s.delivery_persons_json)
-            });
-          });
-          const activeStoreIds = new Set(distributors.map((d) => d.storeId));
-          for (const [storeId, snap] of snapshotMap.entries()) {
-            if (!activeStoreIds.has(storeId) && snap.items.length > 0) {
-              console.log(`[AutoNotif] Detected empty cart transition for store ${storeId} (${snap.storeName})`);
-              const isOrderPlaced = await verifyOrderPlacedInPharmarack(storeId);
-              if (isOrderPlaced) {
-                console.log(`[AutoNotif] Order placement verified for store ${storeId}. Triggering auto notifications...`);
-                await notificationService.notifyDistributorCartOrder(snap.storeName, storeId, snap.items, snap.deliveryPersons);
-              } else {
-                console.log(`[AutoNotif] No order verified for store ${storeId}. Assuming manual cart clear/deletion. Skipping.`);
-              }
-              await db2.run("DELETE FROM pharmarack_cart_snapshots WHERE store_id = ?", [storeId]);
-            }
-          }
-        } catch (dbErr) {
-          console.error("[AutoNotif] Error running automatic cart transition checks:", dbErr);
-        }
-        startupSyncCoordinator.markCartLoaded();
-        Promise.resolve().then(() => (init_pharmarackDailyDispatchService(), pharmarackDailyDispatchService_exports)).then((m) => m.handleCartPageVisit()).catch((err) => console.warn("[PharmarackBatch] handleCartPageVisit error:", err));
-        serverCartCache = {
-          distributors,
-          totalItems,
-          ts: Date.now()
-        };
-        return res.json({ success: true, mode: "Live", distributors, totalItems });
-      } catch (err) {
-        console.error("Pharmarack cart fetch error:", err);
-        res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router13.get("/startup-sync-status", (req, res) => {
-      res.json({ success: true, ...startupSyncCoordinator.getStatus() });
-    });
-    router13.get("/live-cart-summary", async (req, res) => {
-      try {
-        const settings = await getPharmarackSettings();
-        const token = settings["pharmarack_session_token"] || "";
-        let cartDistributors = [];
-        if (token) {
-          try {
-            const probe = await probeUserCartDetails(2e4);
-            if (probe.ok) {
-              const cartData = probe.data;
-              let rawList = [];
-              if (cartData) {
-                if (Array.isArray(cartData)) {
-                  rawList = cartData;
-                } else {
-                  const targetObj = cartData.data || cartData.Data || cartData;
-                  if (Array.isArray(targetObj)) {
-                    rawList = targetObj;
-                  } else if (typeof targetObj === "object") {
-                    const keysToTry = [
-                      "IList",
-                      "ilist",
-                      "StoreWiseCartDetails",
-                      "storeWiseCartDetails",
-                      "CartDetails",
-                      "cartDetails",
-                      "Stores",
-                      "stores",
-                      "StoreList",
-                      "storeList",
-                      "CartList",
-                      "cartList",
-                      "Items",
-                      "items",
-                      "Products",
-                      "products"
-                    ];
-                    for (const k of keysToTry) {
-                      if (Array.isArray(targetObj[k])) {
-                        rawList = targetObj[k];
-                        break;
-                      }
-                    }
-                    if (rawList.length === 0 && typeof cartData === "object") {
-                      for (const k of keysToTry) {
-                        if (Array.isArray(cartData[k])) {
-                          rawList = cartData[k];
-                          break;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-              if (rawList.length > 0) {
-                const firstEntry = rawList[0];
-                const hasNestedItems = Boolean(
-                  firstEntry.lineItems && Array.isArray(firstEntry.lineItems) || firstEntry.LineItems && Array.isArray(firstEntry.LineItems) || firstEntry.items && Array.isArray(firstEntry.items) || firstEntry.Items && Array.isArray(firstEntry.Items) || firstEntry.products && Array.isArray(firstEntry.products) || firstEntry.Products && Array.isArray(firstEntry.Products) || firstEntry.ProductList && Array.isArray(firstEntry.ProductList) || firstEntry.productList && Array.isArray(firstEntry.productList) || firstEntry.CartItemList && Array.isArray(firstEntry.CartItemList) || firstEntry.cartItemList && Array.isArray(firstEntry.cartItemList)
-                );
-                if (hasNestedItems) {
-                  cartDistributors = rawList.map((store) => {
-                    const rawItems = store.lineItems || store.LineItems || store.items || store.Items || store.products || store.Products || store.ProductList || store.productList || store.CartItemList || store.cartItemList || [];
-                    return {
-                      storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
-                      storeName: store.StoreName || store.storeName || store.Name || store.name || "Unknown Distributor",
-                      lineTotal: store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0,
-                      deliveryPersons: (store.DeliveryPersonList || store.deliveryPersons || store.deliveryPersonList || []).map((d) => ({
-                        name: d.SalesmanName || d.name || d.Salesman || "",
-                        code: d.SalesmanCode || d.code || ""
-                      })),
-                      items: rawItems.map((item) => ({
-                        productId: item.ProductId || item.productId || item.Id || item.id,
-                        storeId: item.StoreId || item.storeId || store.StoreId || store.storeId,
-                        productCode: item.ProductCode || item.productCode || "",
-                        productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
-                        company: item.Company || item.company || "",
-                        packaging: item.Packing || item.packaging || item.CasePacking || "",
-                        qty: item.Quantity || item.qty || item.quantity || 1,
-                        ptr: item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0,
-                        mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
-                        scheme: item.Scheme || item.scheme || "",
-                        stock: item.Stock ?? item.stock ?? null,
-                        amount: item.ProductWiseAmount || item.amount || item.LineTotal || 0,
-                        cartSource: item.CartSource || item.cartSource || "",
-                        isChecked: item.IsProductChecked === 1 || item.isChecked === true,
-                        createdDate: item.CreatedDate || item.createdDate || ""
-                      }))
-                    };
-                  });
-                } else {
-                  const storeMap = /* @__PURE__ */ new Map();
-                  for (const item of rawList) {
-                    const storeId = item.StoreId || item.storeId || item.Id || item.id || 0;
-                    const storeName = item.StoreName || item.storeName || item.Name || item.name || "Unknown Distributor";
-                    const storeKey = `${storeId}_${storeName}`;
-                    if (!storeMap.has(storeKey)) {
-                      storeMap.set(storeKey, {
-                        storeId,
-                        storeName,
-                        lineTotal: 0,
-                        deliveryPersons: (item.DeliveryPersonList || item.deliveryPersons || []).map((d) => ({
-                          name: d.SalesmanName || d.name || "",
-                          code: d.SalesmanCode || d.code || ""
-                        })),
-                        items: []
-                      });
-                    }
-                    const storeObj = storeMap.get(storeKey);
-                    const itemQty = item.Quantity || item.qty || item.quantity || 1;
-                    const itemPtr = item.PTR || item.ptr || item.HiddenPTR || item.NetRate || 0;
-                    const itemAmt = item.ProductWiseAmount || item.amount || item.LineTotal || itemPtr * itemQty;
-                    storeObj.lineTotal += itemAmt;
-                    storeObj.items.push({
-                      productId: item.ProductId || item.productId || item.Id || item.id,
-                      storeId,
-                      productCode: item.ProductCode || item.productCode || "",
-                      productName: item.ProductName || item.productName || item.Name || item.name || "Unknown Product",
-                      company: item.Company || item.company || "",
-                      packaging: item.Packing || item.packaging || item.CasePacking || "",
-                      qty: itemQty,
-                      ptr: itemPtr,
-                      mrp: item.MRP ? parseFloat(item.MRP) : item.mrp || 0,
-                      scheme: item.Scheme || item.scheme || "",
-                      stock: item.Stock ?? item.stock ?? null,
-                      amount: itemAmt,
-                      cartSource: item.CartSource || item.cartSource || "",
-                      isChecked: item.IsProductChecked === 1 || item.isChecked === true,
-                      createdDate: item.CreatedDate || item.createdDate || ""
-                    });
-                  }
-                  cartDistributors = Array.from(storeMap.values());
-                }
-              }
-            }
-          } catch (err) {
-            console.warn("Live cart details fetch error in summary route:", err.message);
-          }
-        }
-        const db2 = await dbManager.getConnection();
-        const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
-          db2.all("SELECT * FROM special_orders WHERE status = 'Pending' OR status = 'Ordered' ORDER BY id DESC"),
-          db2.all("SELECT word FROM permanently_ignored_words").catch(() => []),
-          db2.all(`
-        SELECT 
-          LOWER(TRIM(m.store_name)) as store_name_lower, 
-          COALESCE(d.phone, d.contact, m.phone) as phone
-        FROM pharmarack_distributor_mappings m
-        LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
-        UNION
-        SELECT 
-          LOWER(TRIM(d.name)) as store_name_lower, 
-          COALESCE(d.phone, d.contact) as phone
-        FROM distributors d
-        WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
-      `).catch(() => [])
-        ]);
-        const ignoredWordsSet = new Set((ignoredRows || []).map((r) => String(r.word || "").toLowerCase().trim()).filter(Boolean));
-        const filteredOrders = (pendingOrders || []).filter((o) => {
-          const p = (o.product || "").toLowerCase().trim();
-          return p && !ignoredWordsSet.has(p);
-        });
-        const phoneMap = /* @__PURE__ */ new Map();
-        for (const r of mappingRows || []) {
-          if (r.store_name_lower && r.phone) {
-            const cleanP = String(r.phone).replace(/\D/g, "").slice(-10);
-            if (cleanP && cleanP.length === 10) {
-              phoneMap.set(r.store_name_lower, cleanP);
-            }
-          }
-        }
-        let missingDistributorsCount = 0;
-        for (const dist of cartDistributors) {
-          const sLower = String(dist.storeName || "").toLowerCase().trim();
-          const mappedPhone = phoneMap.get(sLower) || "";
-          dist.phone = mappedPhone;
-          const cleanP = mappedPhone.replace(/\D/g, "").slice(-10);
-          if (!cleanP || cleanP.length !== 10) {
-            missingDistributorsCount++;
-          }
-        }
-        const totalItems = cartDistributors.reduce((sum, d) => sum + (d.items?.length || 0), 0);
-        return res.json({
-          success: true,
-          cart: { distributors: cartDistributors },
-          distributors: cartDistributors,
-          totalItems,
-          missingDistributorsCount,
-          orders: filteredOrders,
-          autoRefills: []
-        });
-      } catch (err) {
-        console.error("Error in /api/pharmarack/live-cart-summary:", err);
-        return res.status(500).json({ error: "Failed to fetch live cart summary: " + err.message });
-      }
-    });
-    router13.get("/auto-verify", async (req, res) => {
-      try {
-        const settings = await getPharmarackSettings();
-        const token = settings["pharmarack_session_token"] || "";
-        if (!token) {
-          const db3 = await dbManager.getConnection();
-          await db3.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-          return res.json({ healthy: false, mode: "Live", reason: "NO_TOKEN", needs_login: true, message: "No session token found" });
-        }
-        let healthy = false;
-        let reason = "EXPIRED";
-        let message = "Session expired";
-        try {
-          const probe = await probeUserCartDetails(6e3);
-          if (probe.ok) {
-            healthy = true;
-          } else if (probe.status === 401 || probe.status === 403) {
-            reason = "EXPIRED";
-            message = "Session expired or invalid token";
-          } else {
-            reason = "SERVER_ERROR";
-            message = `Server returned status ${probe.status}`;
-          }
-        } catch (err) {
-          reason = "NETWORK_ERROR";
-          message = err.message || "Network timeout/connection error";
-        }
-        const db2 = await dbManager.getConnection();
-        if (healthy) {
-          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-          return res.json({ healthy: true, mode: "Live", message: "Session active and verified" });
-        } else {
-          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-          return res.json({ healthy: false, mode: "Live", reason, needs_login: true, message });
-        }
-      } catch (err) {
-        console.error("Session auto-verify error:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router13.get("/session-status", async (req, res) => {
-      try {
-        const isRefreshing = tokenRefreshScheduler.getStatus().isRefreshing;
-        const settings = await getPharmarackSettings();
-        const token = settings["pharmarack_session_token"] || "";
-        if (!token) {
-          return res.json({ healthy: false, mode: "Live", isRefreshing, daysLeft: null, expiresAt: null, reason: "NO_TOKEN", message: "Session not linked" });
-        }
-        let healthy = false;
-        let reason = "EXPIRED";
-        let message = "Session expired";
-        let daysLeft = null;
-        let expiresAt = null;
-        try {
-          const cleanToken = token.replace(/^Bearer\s+/i, "").trim();
-          const parts = cleanToken.split(".");
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
-            if (payload.exp && typeof payload.exp === "number") {
-              const expMs = payload.exp * 1e3;
-              expiresAt = new Date(expMs).toISOString();
-              const diffMs = expMs - Date.now();
-              daysLeft = Math.max(0, Math.ceil(diffMs / (1e3 * 60 * 60 * 24)));
-            }
-          }
-        } catch {
-        }
-        try {
-          const probe = await probeUserCartDetails(6e3);
-          if (probe.ok) {
-            healthy = true;
-          } else if (probe.status === 401 || probe.status === 403) {
-            reason = "EXPIRED";
-            message = "Session expired or invalid token";
-          } else {
-            reason = "SERVER_ERROR";
-            message = `Server returned status ${probe.status}`;
-          }
-        } catch (err) {
-          reason = "NETWORK_ERROR";
-          message = err.message || "Network timeout/connection error";
-        }
-        return res.json({
-          healthy,
-          mode: "Live",
-          isRefreshing,
-          daysLeft,
-          expiresAt,
-          reason: healthy ? void 0 : reason,
-          message: healthy ? "Session active" : message
-        });
-      } catch (err) {
-        console.error("Session status check error:", err);
-        return res.status(500).json({ error: "Internal server error" });
-      }
-    });
-    router13.post("/logout", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
-        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
-        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
-        Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
-        });
-        await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-        const pharmarackProfilePath = import_path41.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (import_fs38.default.existsSync(pharmarackProfilePath)) {
-          import_fs38.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
-          console.log("Cleared Pharmarack Puppeteer profile directory.");
-        }
-        res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
-      } catch (err) {
-        console.error("Error during Pharmarack logout:", err);
-        res.status(500).json({ error: "Failed to clear session: " + err.message });
-      }
-    });
-    router13.get("/sent-orders/dates", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          'SELECT DISTINCT order_date FROM pharmarack_placed_orders WHERE order_date IS NOT NULL AND order_date <> "" ORDER BY order_date DESC'
-        );
-        const dates = rows.map((r) => r.order_date);
-        res.json({ success: true, dates });
-      } catch (err) {
-        console.error("Error fetching Pharmarack sent order dates:", err);
-        res.status(500).json({ error: "Failed to fetch sent order dates: " + err.message });
-      }
-    });
-    router13.get("/sent-orders", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        let targetDate = (req.query.date || "").trim();
-        if (!targetDate) {
-          targetDate = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-        }
-        const rows = await db2.all(
-          "SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC",
-          [targetDate]
-        );
-        const parsedOrders = rows.map((r) => {
-          let items = [];
-          let deliveryPersons = [];
-          try {
-            items = JSON.parse(r.items_json || "[]");
-          } catch (_) {
-          }
-          try {
-            deliveryPersons = JSON.parse(r.delivery_persons_json || "[]");
-          } catch (_) {
-          }
-          return {
-            id: r.id,
-            order_date: r.order_date,
-            store_id: r.store_id,
-            store_name: r.store_name,
-            items,
-            delivery_persons: deliveryPersons,
-            placed_at: r.placed_at,
-            batch_sent: r.batch_sent === 1,
-            batch_sent_at: r.batch_sent_at
-          };
-        });
-        res.json({ success: true, date: targetDate, is_recent_fallback: false, orders: parsedOrders });
-      } catch (err) {
-        console.error("Error fetching Pharmarack sent orders:", err);
-        res.status(500).json({ error: "Failed to fetch sent orders: " + err.message });
-      }
-    });
-    router13.get("/sent-orders/latest-map", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1e3;
-        const cutoff = Date.now() - THREE_DAYS_MS;
-        const rows = await db2.all(
-          `SELECT * FROM pharmarack_placed_orders 
-       WHERE COALESCE(placed_at, batch_sent_at, 0) >= ? 
-       ORDER BY placed_at DESC`,
-          [cutoff]
-        );
-        const sentMap = {};
-        rows.forEach((r) => {
-          let items = [];
-          try {
-            items = JSON.parse(r.items_json || "[]");
-          } catch (_) {
-          }
-          const storeKey = r.store_id ? String(r.store_id) : (r.store_name || "").toLowerCase().trim();
-          const normNameKey = (r.store_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          const placedAt = Number(r.placed_at || r.batch_sent_at || 0);
-          const parsedItems = items.map((i) => ({
-            productCode: i.productCode || i.product_code || "",
-            productName: i.productName || i.product || i.name || "",
-            qty: i.qty || i.quantity || 1,
-            placedAt: Number(i.placedAt || i.placed_at || placedAt || 0)
-          })).filter((i) => i.placedAt >= cutoff);
-          if (parsedItems.length === 0) return;
-          const updateKey = (key) => {
-            if (!key) return;
-            if (!sentMap[key]) {
-              sentMap[key] = {
-                storeId: r.store_id || null,
-                storeName: r.store_name || "",
-                placedAt,
-                items: [...parsedItems]
-              };
-            } else {
-              if (placedAt > sentMap[key].placedAt) {
-                sentMap[key].placedAt = placedAt;
-              }
-              parsedItems.forEach((pi) => {
-                const piNormName = (pi.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                const existingIndex = sentMap[key].items.findIndex((ex) => {
-                  if (pi.productCode && ex.productCode && pi.productCode === ex.productCode) return true;
-                  const exNormName = (ex.productName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                  return piNormName && exNormName && piNormName === exNormName;
-                });
-                if (existingIndex === -1) {
-                  sentMap[key].items.push(pi);
-                } else if (pi.placedAt > (sentMap[key].items[existingIndex].placedAt || 0)) {
-                  sentMap[key].items[existingIndex].placedAt = pi.placedAt;
-                }
-              });
-            }
-          };
-          updateKey(storeKey);
-          if (normNameKey) updateKey(normNameKey);
-        });
-        res.json({ success: true, sentMap });
-      } catch (err) {
-        console.error("Error fetching Pharmarack latest sent map:", err);
-        res.status(500).json({ error: "Failed to fetch latest sent map: " + err.message });
-      }
-    });
-    router13.get("/reorder-recent", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const { getReorderWindowMonths: getReorderWindowMonths2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
-        const queryMonths = parseInt(req.query.months || "", 10);
-        const months = [2, 4, 6, 8].includes(queryMonths) ? queryMonths : await getReorderWindowMonths2(db2);
-        const windowDays = months * 30;
-        const rows = await db2.all(
-          `SELECT * FROM pharmarack_placed_orders
-       WHERE order_date >= DATE('now', ?)
-       ORDER BY placed_at DESC`,
-          [`-${windowDays} days`]
-        );
-        const byMedicine = /* @__PURE__ */ new Map();
-        for (const row of rows) {
-          let items = [];
-          try {
-            items = JSON.parse(row.items_json || "[]");
-          } catch (_) {
-            continue;
-          }
-          for (const item of items) {
-            const name = (item.productName || item.name || "").trim();
-            if (!name || byMedicine.has(name)) continue;
-            byMedicine.set(name, {
-              medicineName: name,
-              lastOrderedDate: row.order_date,
-              lastQty: Number(item.qty || item.quantity || 1),
-              lastDistributorName: row.store_name || ""
-            });
-          }
-        }
-        res.json({ success: true, items: Array.from(byMedicine.values()) });
-      } catch (err) {
-        console.error("Error fetching recently reordered medicines:", err);
-        res.status(500).json({ error: "Failed to fetch recently reordered medicines: " + err.message });
-      }
-    });
-    router13.post("/log-placed-order", async (req, res) => {
-      try {
-        const { store_id, store_name, items, delivery_persons } = req.body;
-        if (!store_name || !items) {
-          return res.status(400).json({ error: "store_name and items are required" });
-        }
-        const db2 = await dbManager.getConnection();
-        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-        const placedAt = Date.now();
-        await db2.run(
-          `INSERT INTO pharmarack_placed_orders (order_date, store_id, store_name, items_json, delivery_persons_json, placed_at, batch_sent, batch_sent_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-          [
-            today,
-            store_id || null,
-            store_name,
-            JSON.stringify(items),
-            delivery_persons ? JSON.stringify(delivery_persons) : null,
-            placedAt,
-            placedAt
-          ]
-        );
-        if (Array.isArray(items) && items.length > 0) {
-          try {
-            const pendingOrders = await db2.all("SELECT id, product FROM special_orders WHERE status = 'Pending'");
-            for (const item of items) {
-              const prodName = (item.productName || item.product || item.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              if (!prodName) continue;
-              for (const order of pendingOrders) {
-                const reqName = (order.product || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                if (reqName && (reqName === prodName || reqName.length >= 4 && prodName.length >= 4 && (reqName.includes(prodName) || prodName.includes(reqName)))) {
-                  await db2.run("UPDATE special_orders SET status = 'Ordered', pharmarack_distributor = ? WHERE id = ?", [store_name, order.id]);
-                }
-              }
-            }
-          } catch (orderErr) {
-            console.warn("Error auto-updating special orders status on placed order:", orderErr);
-          }
-        }
-        try {
-          await resolveDistributorContact(db2, store_name);
-          syncTodayActiveDistributors().catch((err) => console.warn("Background sync reminders error on placed order:", err));
-        } catch (_) {
-        }
-        eventService.broadcast("dispatch_updated", { at: Date.now(), source: "log_placed_order", store_name });
-        eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
-        res.json({ success: true });
-      } catch (err) {
-        console.error("Error logging placed order:", err);
-        res.status(500).json({ error: err.message });
-      }
-    });
-    router13.post("/check-overstock", async (req, res) => {
-      try {
-        const { productName, company, packaging, distributorStoreId, requestedQty = 1 } = req.body;
-        if (!productName || typeof productName !== "string") {
-          return res.status(400).json({ error: "productName is required" });
-        }
-        const db2 = await dbManager.getConnection();
-        const rawClean = productName.replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
-        const { cleaned } = cleanSearchQuery(productName);
-        const brandTokens = rawClean.replace(/\b(new|tab|tabs|tablet|tablets|cap|caps|capsule|inj|syrup|10tab|15tab|10s|15s|10|15|30|60|100)\b/gi, "").replace(/[\s\-_.\/]+/g, " ").trim();
-        const alphaNumericOnly = rawClean.replace(/[^a-z0-9]/g, "");
-        let matchingMeds = await db2.all(
-          `SELECT id, name, generic_name, max_stock_level FROM medicines 
-       WHERE LOWER(name) = ? OR LOWER(generic_name) = ? OR LOWER(name) = ?`,
-          [productName.toLowerCase(), rawClean, cleaned.toLowerCase()]
-        );
-        if (matchingMeds.length === 0 && brandTokens.length >= 2) {
-          matchingMeds = await db2.all(
-            `SELECT id, name, generic_name, max_stock_level FROM medicines 
-         WHERE LOWER(name) LIKE ? OR LOWER(generic_name) LIKE ?
-         ORDER BY LENGTH(name) ASC LIMIT 10`,
-            [`%${brandTokens}%`, `%${brandTokens}%`]
-          );
-        }
-        if (matchingMeds.length === 0 && alphaNumericOnly.length >= 3) {
-          const strippedBrand = alphaNumericOnly.replace(/(new|tab|tablet|cap|capsule|inj|syrup|10tab|15tab|10s|15s)/g, "");
-          if (strippedBrand.length >= 3) {
-            matchingMeds = await db2.all(
-              `SELECT id, name, generic_name, max_stock_level FROM medicines 
-           WHERE REPLACE(REPLACE(REPLACE(REPLACE(LOWER(name), ' ', ''), '-', ''), '.', ''), '/', '') LIKE ?
-           ORDER BY LENGTH(name) ASC LIMIT 10`,
-              [`%${strippedBrand}%`]
-            );
-          }
-        }
-        if (matchingMeds.length === 0) {
-          const firstWord = rawClean.split(/\s+/)[0];
-          if (firstWord && firstWord.length >= 3 && !["new", "tab", "tablet", "cap", "capsule"].includes(firstWord)) {
-            matchingMeds = await db2.all(
-              `SELECT id, name, generic_name, max_stock_level FROM medicines 
-           WHERE LOWER(name) LIKE ? 
-           ORDER BY LENGTH(name) ASC LIMIT 10`,
-              [`%${firstWord}%`]
-            );
-          }
-        }
-        let currentStock = 0;
-        let maxStockLevel = null;
-        let sales30d = 0;
-        let matchedName = matchingMeds.length > 0 ? matchingMeds[0].name : productName;
-        const matchedIds = matchingMeds.map((m) => m.id);
-        if (matchedIds.length > 0) {
-          const placeholders = matchedIds.map(() => "?").join(",");
-          const stockRow = await db2.get(
-            `SELECT COALESCE(SUM(quantity), 0) as total_qty, MAX(max_stock_level) as inv_max 
-         FROM inventory_master WHERE medicine_id IN (${placeholders})`,
-            matchedIds
-          );
-          if (stockRow) {
-            currentStock = Number(stockRow.total_qty || 0);
-            if (stockRow.inv_max !== null) {
-              maxStockLevel = Number(stockRow.inv_max);
-            }
-          }
-          const salesRow = await db2.get(
-            `SELECT COALESCE(SUM(si.quantity), 0) as sales_qty 
-         FROM sale_items si
-         JOIN sales_invoices inv ON si.invoice_id = inv.id
-         WHERE si.inventory_id IN (SELECT id FROM inventory_master WHERE medicine_id IN (${placeholders}))
-         AND inv.date >= datetime('now', '-30 days')`,
-            matchedIds
-          );
-          if (salesRow) {
-            sales30d = Number(salesRow.sales_qty || 0);
-          }
-        }
-        let maxLimit = 30;
-        if (maxStockLevel !== null && maxStockLevel > 0) {
-          maxLimit = maxStockLevel;
-        } else if (sales30d > 0) {
-          maxLimit = Math.max(10, Math.ceil(sales30d * 1.25));
-        }
-        let lastPurchasePTR = null;
-        let lowestPurchasePTR = null;
-        try {
-          if (matchedIds.length > 0) {
-            const placeholders = matchedIds.map(() => "?").join(",");
-            const lastPriceRow = await db2.get(
-              `SELECT cost_price FROM purchase_items 
-           WHERE medicine_id IN (${placeholders}) AND cost_price > 0 
-           ORDER BY id DESC LIMIT 1`,
-              matchedIds
-            );
-            if (lastPriceRow && lastPriceRow.cost_price != null) {
-              lastPurchasePTR = Number(lastPriceRow.cost_price);
-            }
-            const minPriceRow = await db2.get(
-              `SELECT MIN(cost_price) as min_rate FROM purchase_items 
-           WHERE medicine_id IN (${placeholders}) AND cost_price > 0`,
-              matchedIds
-            );
-            if (minPriceRow && minPriceRow.min_rate != null) {
-              lowestPurchasePTR = Number(minPriceRow.min_rate);
-            }
-          }
-        } catch (_) {
-        }
-        let cartQty = 0;
-        try {
-          const settings = await getPharmarackSettings();
-          const token = settings["pharmarack_session_token"] || "";
-          if (token) {
-            const cartRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
-              method: "GET",
-              signal: AbortSignal.timeout(5e3)
-            });
-            if (cartRes.ok) {
-              const cartData = await cartRes.json();
-              const rawList = Array.isArray(cartData?.IList) ? cartData.IList : Array.isArray(cartData?.data) ? cartData.data : Array.isArray(cartData?.Data) ? cartData.Data : cartData?.data?.Stores || cartData?.Data?.Stores || [];
-              const targetNames = matchingMeds.map((m) => m.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
-              targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ""));
-              targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ""));
-              for (const store of rawList) {
-                const items = store.lineItems || store.items || store.Products || store.line_items || [];
-                for (const item of items) {
-                  const itemTitle = (item.productName || item.ProductName || item.ProductFullName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                  const matchesAny = targetNames.some((tn) => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
-                  if (matchesAny) {
-                    cartQty += Number(item.qty || item.Quantity || item.quantity || 0);
-                  }
-                }
-              }
-            }
-          }
-        } catch (_) {
-        }
-        const totalInHandAndCart = currentStock + cartQty;
-        const reqQtyNum = Number(requestedQty) || 1;
-        const isOverstock = totalInHandAndCart + reqQtyNum > maxLimit;
-        const isExistingInStock = currentStock > 0;
-        const isDuplicateInCart = cartQty > 0;
-        let warningMessage = null;
-        if (isOverstock) {
-          warningMessage = `Overstock Notice: You already have ${currentStock} in stock and ${cartQty} in cart. Based on sales velocity (${sales30d}/mo), recommended cap is ${maxLimit} units.`;
-        } else if (isExistingInStock && isDuplicateInCart) {
-          warningMessage = `Note: ${currentStock} units in stock and ${cartQty} units already in cart.`;
-        } else if (isExistingInStock) {
-          warningMessage = `Note: You already have ${currentStock} units in store inventory.`;
-        } else if (isDuplicateInCart) {
-          warningMessage = `Note: ${cartQty} units already added in live cart across distributors.`;
-        }
-        return res.json({
-          success: true,
-          matchedLocalMedicineName: matchedName,
-          currentStock,
-          cartQty,
-          sales30d,
-          maxLimit,
-          recommendedQty: Math.max(0, maxLimit - totalInHandAndCart),
-          isOverstock,
-          isExistingInStock,
-          isDuplicateInCart,
-          lastPurchasePTR,
-          lowestPurchasePTR,
-          warningMessage
-        });
-      } catch (err) {
-        console.error("Error in /api/pharmarack/check-overstock:", err);
-        return res.status(500).json({ error: "Failed to check overstock status: " + err.message });
-      }
-    });
-    router13.get("/auto-refill-suggestions", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        let rows = await db2.all(`
-      SELECT 
-        m.id as medicine_id,
-        m.name as medicine_name,
-        m.manufacturer,
-        m.packaging,
-        psm.total_units_pool as current_stock,
-        psm.low_stock_flag,
-        psm.daily_sales_velocity,
-        psm.burn_rate_ratio,
-        psm.heavy_sell_flag,
-        psm.suggested_refill_qty
-      FROM precalculated_stock_metrics psm
-      JOIN medicines m ON m.id = psm.medicine_id
-      WHERE (psm.low_stock_flag = 1 OR psm.heavy_sell_flag = 1)
-      ORDER BY psm.burn_rate_ratio DESC, psm.daily_sales_velocity DESC
-      LIMIT 25
-    `);
-        if (rows.length === 0) {
-          Promise.resolve().then(() => (init_stockCalculatorWorker(), stockCalculatorWorker_exports)).then((w) => w.recalculateTargetedStockMetrics()).catch((err) => console.error("Failed to trigger background stock calculation:", err));
-        }
-        const suggestions = rows.map((r) => {
-          const stock = Number(r.current_stock || 0);
-          const sales30d = Math.round(Number(r.daily_sales_velocity || 0) * 30);
-          const recQty = Number(r.suggested_refill_qty) > 0 ? Number(r.suggested_refill_qty) : Math.max(1, 10 - stock);
-          return {
-            medicine_id: r.medicine_id,
-            medicine_name: r.medicine_name,
-            manufacturer: r.manufacturer || "",
-            packaging: r.packaging || "",
-            current_stock: stock,
-            sales_30d: sales30d,
-            reorder_level: 5,
-            recommended_qty: recQty
-          };
-        });
-        res.json({ success: true, suggestions });
-      } catch (err) {
-        console.error("Error fetching auto refill suggestions:", err);
-        res.status(500).json({ error: "Failed to fetch auto-refill suggestions: " + err.message });
-      }
-    });
-    router13.get("/session-logs", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const sixtyDaysAgo = Date.now() - 60 * 86400 * 1e3;
-        const logs = await db2.all(
-          `SELECT id, timestamp, trigger_type, next_scheduled_minutes, status, error_message
-       FROM session_refresh_logs
-       WHERE timestamp >= ?
-       ORDER BY timestamp DESC
-       LIMIT 100`,
-          [sixtyDaysAgo]
-        );
-        res.json({ success: true, logs });
-      } catch (err) {
-        console.error("Error fetching session refresh logs:", err);
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-    router13.get("/dispatch-schedule", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const pausedRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'");
-        const timerRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_pacing_min_ms'");
-        let pausedDates = [];
-        if (pausedRow?.value) {
-          try {
-            pausedDates = JSON.parse(pausedRow.value);
-          } catch (_) {
-          }
-        }
-        const timerSec = timerRow?.value ? Math.round(Number(timerRow.value) / 1e3) : 10;
-        res.json({
-          success: true,
-          pausedDates,
-          timerSec
-        });
-      } catch (err) {
-        console.error("Error fetching dispatch schedule:", err);
-        res.status(500).json({ error: "Failed to fetch schedule: " + err.message });
-      }
-    });
-    router13.post("/dispatch-schedule", async (req, res) => {
-      try {
-        const { pausedDates, timerSec } = req.body;
-        const db2 = await dbManager.getConnection();
-        if (Array.isArray(pausedDates)) {
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES ('pharmarack_paused_dispatch_dates', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [JSON.stringify(pausedDates)]
-          );
-        }
-        if (typeof timerSec === "number" && timerSec > 0) {
-          const minMs = timerSec * 1e3;
-          const maxMs = minMs + 2e3;
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES ('whatsapp_pacing_min_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [minMs.toString()]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES ('whatsapp_pacing_max_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [maxMs.toString()]
-          );
-        }
-        res.json({ success: true, message: "Dispatch schedule updated successfully" });
-      } catch (err) {
-        console.error("Error updating dispatch schedule:", err);
-        res.status(500).json({ error: "Failed to update schedule: " + err.message });
-      }
-    });
-    handleManualReauth = async (_req, res) => {
-      try {
-        console.log("[Pharmarack Re-auth] Manual re-auth requested. Checking session...");
-        const token = await tokenRefreshScheduler.triggerImmediateCheck("manual_reauth");
-        if (token) {
-          return res.json({ success: true, message: "Pharmarack live B2B session refreshed successfully." });
-        } else {
-          const status = tokenRefreshScheduler.getStatus();
-          return res.json({
-            success: false,
-            needs_login: true,
-            message: status.lastError || "Session expired or needs manual OTP login. Please open the login window."
-          });
-        }
-      } catch (err) {
-        console.error("[Pharmarack Re-auth] Error during manual reauth:", err);
-        return res.status(500).json({ success: false, error: err.message });
-      }
-    };
-    router13.post("/trigger-reauth", handleManualReauth);
-    router13.post("/login", handleManualReauth);
-    router13.post("/refresh-token", handleManualReauth);
-    pharmarack_default = router13;
+    settings_default = router13;
   }
 });
 
@@ -57498,7 +58409,7 @@ function createStaffToken(data) {
   const timestamp = Date.now();
   const perms = (data.permissions || ["*"]).join(",");
   const payload = `${data.userId}:${data.storeId}:${data.role}:${data.username}:${perms}:${timestamp}`;
-  const signature = import_crypto5.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+  const signature = import_crypto6.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 function verifyStaffToken(tokenStr) {
@@ -57514,8 +58425,8 @@ function verifyStaffToken(tokenStr) {
     if (isNaN(userId) || isNaN(storeId) || isNaN(timestamp)) return null;
     if (Date.now() - timestamp > TOKEN_TTL_MS) return null;
     const payload = `${userIdStr}:${storeIdStr}:${role}:${username}:${permsStr}:${timestampStr}`;
-    const expectedSignature = import_crypto5.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
-    if (import_crypto5.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    const expectedSignature = import_crypto6.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+    if (import_crypto6.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return {
         userId,
         storeId,
@@ -57578,11 +58489,11 @@ async function tenantAuthMiddleware(req, res, next) {
     res.status(500).json({ error: "Internal tenant authorization error" });
   }
 }
-var import_crypto5, AUTH_SECRET, TOKEN_TTL_MS;
+var import_crypto6, AUTH_SECRET, TOKEN_TTL_MS;
 var init_tenantAuth = __esm({
   "src/middleware/tenantAuth.ts"() {
     "use strict";
-    import_crypto5 = __toESM(require("crypto"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
     init_connection();
     init_storeContextService();
     AUTH_SECRET = process.env.STAFF_AUTH_SECRET || "ai_pharmacy_staff_auth_secret_2026";
@@ -57596,22 +58507,22 @@ __export(auth_exports, {
   default: () => auth_default
 });
 function hashPassword2(password, salt) {
-  return import_crypto6.default.pbkdf2Sync(password, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto7.default.pbkdf2Sync(password, salt, 1e3, 32, "sha256").toString("hex");
 }
 function verifyPassword2(password, expectedHash, salt) {
   const computed = hashPassword2(password, salt);
   try {
-    return import_crypto6.default.timingSafeEqual(Buffer.from(computed, "utf8"), Buffer.from(expectedHash, "utf8"));
+    return import_crypto7.default.timingSafeEqual(Buffer.from(computed, "utf8"), Buffer.from(expectedHash, "utf8"));
   } catch (_) {
     return false;
   }
 }
-var import_express23, import_crypto6, router23, auth_default;
+var import_express23, import_crypto7, router23, auth_default;
 var init_auth = __esm({
   "src/routes/auth.ts"() {
     "use strict";
     import_express23 = __toESM(require("express"), 1);
-    import_crypto6 = __toESM(require("crypto"), 1);
+    import_crypto7 = __toESM(require("crypto"), 1);
     init_connection();
     init_tenantAuth();
     init_storeContextService();
@@ -59564,16 +60475,17 @@ __export(cloudflareTunnelService_exports, {
   cloudflareTunnelService: () => cloudflareTunnelService,
   default: () => cloudflareTunnelService_default
 });
-var import_child_process7, import_http, import_fs48, import_path51, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var import_child_process8, import_http, import_fs48, import_path51, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
 var init_cloudflareTunnelService = __esm({
   "src/services/cloudflareTunnelService.ts"() {
     "use strict";
-    import_child_process7 = require("child_process");
+    import_child_process8 = require("child_process");
     import_http = __toESM(require("http"), 1);
     import_fs48 = __toESM(require("fs"), 1);
     import_path51 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
+    init_config();
     CloudflareTunnelService = class _CloudflareTunnelService {
       static instance;
       childProcess = null;
@@ -59698,13 +60610,16 @@ var init_cloudflareTunnelService = __esm({
             this.publicUrl = settings.customDomain.startsWith("http") ? settings.customDomain : `https://${settings.customDomain}`;
           }
         } else {
-          let targetPort = parseInt(process.env.PORT || "5174", 10);
-          const is5175 = await this.checkPort(5175);
-          if (is5175) {
-            targetPort = 5175;
-          } else {
-            const is5174 = await this.checkPort(5174);
-            if (is5174) targetPort = 5174;
+          let targetPort = config.port || parseInt(process.env.PORT || "5175", 10);
+          const isTargetActive = await this.checkPort(targetPort);
+          if (!isTargetActive) {
+            const is5175 = await this.checkPort(5175);
+            if (is5175) {
+              targetPort = 5175;
+            } else {
+              const is5174 = await this.checkPort(5174);
+              if (is5174) targetPort = 5174;
+            }
           }
           const localTarget = `http://127.0.0.1:${targetPort}`;
           const hostHeader = `127.0.0.1:${targetPort}`;
@@ -59719,7 +60634,7 @@ var init_cloudflareTunnelService = __esm({
         const isWindows = process.platform === "win32";
         if (isWindows) {
           try {
-            (0, import_child_process7.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+            (0, import_child_process8.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
           } catch (_) {
           }
         }
@@ -59727,7 +60642,7 @@ var init_cloudflareTunnelService = __esm({
         const spawnArgs = [...spawnArgsPrefix, ...args];
         console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
         try {
-          this.childProcess = (0, import_child_process7.spawn)(binary, spawnArgs, {
+          this.childProcess = (0, import_child_process8.spawn)(binary, spawnArgs, {
             stdio: ["ignore", "pipe", "pipe"],
             shell: useShell,
             detached: false
@@ -59788,7 +60703,7 @@ var init_cloudflareTunnelService = __esm({
           try {
             if (process.platform === "win32") {
               try {
-                (0, import_child_process7.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+                (0, import_child_process8.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
               } catch (_) {
               }
             } else {
@@ -59928,7 +60843,7 @@ function normalizePhone(raw) {
 }
 function hashPin(pin) {
   const salt = "pharmacy_portal_salt_2026";
-  return import_crypto7.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto8.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
 }
 function generateRandomPin() {
   return Math.floor(1e3 + Math.random() * 9e3).toString();
@@ -59936,11 +60851,11 @@ function generateRandomPin() {
 function generateRandomOtp() {
   return Math.floor(1e5 + Math.random() * 9e5).toString();
 }
-var import_crypto7, SESSION_SECRET, CustomerAuthService, customerAuthService;
+var import_crypto8, SESSION_SECRET, CustomerAuthService, customerAuthService;
 var init_customerAuthService = __esm({
   "src/services/auth/customerAuthService.ts"() {
     "use strict";
-    import_crypto7 = __toESM(require("crypto"), 1);
+    import_crypto8 = __toESM(require("crypto"), 1);
     init_connection();
     init_whatsappQueueWorker();
     init_logger();
@@ -59953,7 +60868,7 @@ var init_customerAuthService = __esm({
        */
       async createSession(customerId, phone, channel = "portal", reqMetadata) {
         const payload = `${customerId}:${phone}:${Date.now()}`;
-        const signature = import_crypto7.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+        const signature = import_crypto8.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
         const token = Buffer.from(`${payload}:${signature}`).toString("base64");
         try {
           const db2 = await dbManager.getConnection();
@@ -59992,8 +60907,8 @@ var init_customerAuthService = __esm({
           const timestamp = parseInt(timestampStr, 10);
           if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
           const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-          const expectedSignature = import_crypto7.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
-          if (import_crypto7.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+          const expectedSignature = import_crypto8.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
+          if (import_crypto8.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
             return { customerId, phone };
           }
         } catch (_) {
@@ -60294,6 +61209,209 @@ Valid for 10 minutes. Do not share this OTP with anyone.`;
   }
 });
 
+// src/services/cloudCatalogSyncService.ts
+var cloudCatalogSyncService_exports = {};
+__export(cloudCatalogSyncService_exports, {
+  pullCloudOrdersToLocal: () => pullCloudOrdersToLocal,
+  pushLocalCatalogToCloud: () => pushLocalCatalogToCloud
+});
+async function pushLocalCatalogToCloud() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(`
+    SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
+           m.mrp, m.sell_price, m.packaging as pack,
+           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+    FROM medicines m
+    LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+    WHERE (pcv.is_portal_visible = 1 OR pcv.is_website_visible = 1 OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0)
+    ORDER BY m.name ASC
+    LIMIT 1000
+  `);
+  if (!rows || rows.length === 0) {
+    return { success: false, message: "No medicines found to publish to cloud." };
+  }
+  const storeRows = await db2.all(`SELECT key, value FROM app_settings WHERE key LIKE 'pharmacy_%'`);
+  const storeMap = {};
+  storeRows.forEach((r) => {
+    storeMap[r.key] = r.value;
+  });
+  const storeInfo = {
+    name: storeMap["pharmacy_name"] || "Pune City Pharmacy",
+    tagline: storeMap["pharmacy_tagline"] || "Genuine Medicines & 24/7 Online Refill Store",
+    phone: storeMap["pharmacy_phone"] || "+91 98765 43210",
+    whatsapp: storeMap["pharmacy_whatsapp"] || "919876543210",
+    address: storeMap["pharmacy_address"] || "Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001",
+    hours: "Open 8:00 AM \u2013 11:00 PM (Orders accepted 24/7)",
+    deliveryAvailable: true
+  };
+  const medicines = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    composition: r.composition || "",
+    category: r.category || "General",
+    manufacturer: r.manufacturer || "Pharmacy Stock",
+    pack: r.pack || "Standard Pack",
+    mrp: Number(r.mrp || 0),
+    sell_price: Number(r.sell_price || r.mrp || 0),
+    in_stock: Number(r.stock_qty || 0) > 0,
+    stock_qty: Number(r.stock_qty || 0)
+  }));
+  const customerBills = {};
+  try {
+    const recentSales = await db2.all(`
+      SELECT si.id, si.invoice_no, si.total_amount, si.date, c.phone as customer_phone
+      FROM sales_invoices si
+      JOIN customers c ON c.id = si.customer_id
+      WHERE c.phone IS NOT NULL AND (si.status IS NULL OR si.status != 'cancelled')
+      ORDER BY si.date DESC LIMIT 150
+    `);
+    for (const s of recentSales) {
+      const cleanPhone = String(s.customer_phone).replace(/\D/g, "");
+      if (cleanPhone.length >= 10) {
+        if (!customerBills[cleanPhone]) customerBills[cleanPhone] = [];
+        if (customerBills[cleanPhone].length < 5) {
+          const items = await db2.all(`
+            SELECT sit.quantity as qty, sit.unit_price as price, sit.medicine_name as name
+            FROM sale_items sit WHERE sit.invoice_id = ?
+          `, [s.id]).catch(() => []);
+          customerBills[cleanPhone].push({
+            invoiceNo: s.invoice_no,
+            date: s.date,
+            storeName: storeInfo.name,
+            totalAmount: s.total_amount,
+            items
+          });
+        }
+      }
+    }
+  } catch (_) {
+  }
+  const customerRefills = {};
+  try {
+    const refills = await db2.all(`
+      SELECT pr.id, pr.refill_interval_days, pr.quantity_needed, pr.next_refill_date,
+             m.name as medicineName, m.packaging as pack, m.sell_price as price,
+             c.phone as customer_phone
+      FROM patient_refills pr
+      JOIN medicines m ON m.id = pr.medicine_id
+      JOIN customers c ON c.id = pr.customer_id
+      WHERE pr.is_active = 1 AND c.phone IS NOT NULL
+    `);
+    for (const r of refills) {
+      const cleanPhone = String(r.customer_phone).replace(/\D/g, "");
+      if (cleanPhone.length >= 10) {
+        if (!customerRefills[cleanPhone]) customerRefills[cleanPhone] = [];
+        customerRefills[cleanPhone].push({
+          id: `RFL-${r.id}`,
+          medicineName: r.medicineName,
+          pack: r.pack || "Standard",
+          dosage: "Prescribed Daily Dosage",
+          daysInterval: r.refill_interval_days || 30,
+          nextDueDate: r.next_refill_date || "Monthly",
+          price: r.price
+        });
+      }
+    }
+  } catch (_) {
+  }
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": ADMIN_SECRET
+      },
+      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return {
+        success: true,
+        message: `Successfully synchronized ${medicines.length} medicines to 24/7 Cloud Shop!`,
+        count: medicines.length
+      };
+    }
+    return { success: false, message: data.error || "Failed to sync to cloud" };
+  } catch (err) {
+    console.error("[CloudCatalogSync] push error:", err);
+    return { success: false, message: err.message };
+  }
+}
+async function pullCloudOrdersToLocal() {
+  const db2 = await dbManager.getConnection();
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+      headers: { "x-admin-secret": ADMIN_SECRET }
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, message: data.error || "Failed to fetch cloud orders" };
+    }
+    const orders = data.orders || [];
+    if (orders.length === 0) {
+      return { success: true, message: "Zero pending orders in cloud queue.", ordersImported: 0 };
+    }
+    const importedIds = [];
+    for (const o of orders) {
+      const exists = await db2.get(`SELECT id FROM special_orders WHERE sync_id = ?`, [o.orderId]);
+      if (!exists) {
+        const itemsSummary = (o.items || []).map((it) => `${it.name} (x${it.qty})`).join(", ");
+        const addressNotes = o.address ? `Delivery Address: ${o.address}` : "Counter Store Pickup";
+        const fullNotes = o.notes ? `${addressNotes} | Notes: ${o.notes}` : addressNotes;
+        await db2.run(
+          `INSERT INTO special_orders (
+            store_id, requester, phone, notes, product, medicine_name, qty,
+            status, priority, customer_order_source, order_type, total_amount, sync_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            1,
+            o.customerName || "Online Customer",
+            o.phone || "",
+            fullNotes,
+            itemsSummary,
+            itemsSummary,
+            o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
+            "Pending",
+            "High",
+            "website_247",
+            o.orderType || "DELIVERY",
+            o.totalAmount || 0,
+            o.orderId
+          ]
+        );
+      }
+      importedIds.push(o.orderId);
+    }
+    if (importedIds.length > 0) {
+      await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": ADMIN_SECRET
+        },
+        body: JSON.stringify({ orderIds: importedIds })
+      });
+    }
+    return {
+      success: true,
+      message: `Successfully imported ${importedIds.length} new online order(s) into counter queue!`,
+      ordersImported: importedIds.length
+    };
+  } catch (err) {
+    console.error("[CloudCatalogSync] pull error:", err);
+    return { success: false, message: err.message };
+  }
+}
+var CLOUD_SERVER_URL, ADMIN_SECRET;
+var init_cloudCatalogSyncService = __esm({
+  "src/services/cloudCatalogSyncService.ts"() {
+    "use strict";
+    init_connection();
+    CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+    ADMIN_SECRET = process.env.ADMIN_SECRET || "admin@pharmacy2026";
+  }
+});
+
 // src/routes/customerPortal.ts
 var customerPortal_exports = {};
 __export(customerPortal_exports, {
@@ -60332,7 +61450,7 @@ function normalizePhone2(raw) {
 }
 function hashPin2(pin) {
   const salt = "pharmacy_portal_salt_2026";
-  return import_crypto8.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+  return import_crypto9.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
 }
 function generateRandomPin2() {
   return Math.floor(1e3 + Math.random() * 9e3).toString();
@@ -60342,7 +61460,7 @@ function generateRandomOtp2() {
 }
 function createCustomerToken(customerId, phone) {
   const payload = `${customerId}:${phone}:${Date.now()}`;
-  const signature = import_crypto8.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
+  const signature = import_crypto9.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 function verifyCustomerToken(tokenStr) {
@@ -60356,8 +61474,8 @@ function verifyCustomerToken(tokenStr) {
     const timestamp = parseInt(timestampStr, 10);
     if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
     const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-    const expectedSignature = import_crypto8.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
-    if (import_crypto8.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    const expectedSignature = import_crypto9.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
+    if (import_crypto9.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return { customerId, phone };
     }
   } catch (_) {
@@ -60448,12 +61566,12 @@ function loadCatalogAndImages() {
   lastCacheLoad = now;
   return { catalog: catalogCache || [], images: imageStateCache || {} };
 }
-var import_express26, import_crypto8, import_fs49, import_path52, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var import_express26, import_crypto9, import_fs49, import_path52, router26, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
 var init_customerPortal = __esm({
   "src/routes/customerPortal.ts"() {
     "use strict";
     import_express26 = __toESM(require("express"), 1);
-    import_crypto8 = __toESM(require("crypto"), 1);
+    import_crypto9 = __toESM(require("crypto"), 1);
     import_fs49 = __toESM(require("fs"), 1);
     import_path52 = __toESM(require("path"), 1);
     init_connection();
@@ -62073,6 +63191,24 @@ ${upiUri}
         res.status(500).json({ error: "Failed to publish in-stock medicines" });
       }
     });
+    router26.post("/cloud/sync-catalog", async (req, res) => {
+      try {
+        const { pushLocalCatalogToCloud: pushLocalCatalogToCloud2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
+        const result = await pushLocalCatalogToCloud2();
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+    router26.post("/cloud/pull-orders", async (req, res) => {
+      try {
+        const { pullCloudOrdersToLocal: pullCloudOrdersToLocal2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
+        const result = await pullCloudOrdersToLocal2();
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
     customerPortal_default = router26;
   }
 });
@@ -63319,6 +64455,148 @@ var init_sync = __esm({
   }
 });
 
+// src/services/autoUpdateService.ts
+var autoUpdateService_exports = {};
+__export(autoUpdateService_exports, {
+  autoUpdateService: () => autoUpdateService
+});
+var BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var init_autoUpdateService = __esm({
+  "src/services/autoUpdateService.ts"() {
+    "use strict";
+    init_connection();
+    init_licenseService();
+    init_eventService();
+    init_activityTracker();
+    BOOT_DELAY_MS = 6e4;
+    POLL_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+    AutoUpdateService = class _AutoUpdateService {
+      static instance;
+      intervalHandle = null;
+      lastResult = null;
+      static getInstance() {
+        if (!_AutoUpdateService.instance) _AutoUpdateService.instance = new _AutoUpdateService();
+        return _AutoUpdateService.instance;
+      }
+      /** Start the scheduler. Called once from server.ts after schema is ready. */
+      start() {
+        setTimeout(() => this.runCheck("auto"), BOOT_DELAY_MS);
+        this.intervalHandle = setInterval(async () => {
+          if (!activityTracker.isIdle(30 * 60 * 1e3)) return;
+          await this.runCheck("auto");
+        }, POLL_INTERVAL_MS);
+      }
+      stop() {
+        if (this.intervalHandle) {
+          clearInterval(this.intervalHandle);
+          this.intervalHandle = null;
+        }
+      }
+      /** Manual trigger from Settings "Check Now" button. Always runs regardless of interval. */
+      async triggerCheck() {
+        await this.runCheck("manual");
+        return this.lastResult;
+      }
+      async runCheck(reason) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const row = await db2.get("SELECT last_checked_at, check_interval_days FROM update_checks WHERE id = 1");
+          if (reason === "auto" && row?.last_checked_at) {
+            const lastMs = new Date(row.last_checked_at).getTime();
+            const intervalDays = row.check_interval_days ?? 15;
+            const intervalMs = intervalDays * 24 * 60 * 60 * 1e3;
+            if (Date.now() - lastMs < intervalMs) return;
+          }
+          const result = await checkForUpdate();
+          if (!result) return;
+          this.lastResult = result;
+          if (result.hasUpdate) {
+            console.log(`[AutoUpdate] New version available: ${result.latestVersion}`);
+            eventService.broadcast("update_available", {
+              latestVersion: result.latestVersion,
+              downloadUrl: result.downloadUrl,
+              changelog: result.changelog,
+              reason
+            });
+          } else {
+            if (reason === "manual") {
+              eventService.broadcast("update_check_complete", {
+                hasUpdate: false,
+                latestVersion: result.latestVersion,
+                reason
+              });
+            }
+            console.log(`[AutoUpdate] App is up to date (${result.latestVersion}).`);
+          }
+        } catch (err) {
+          console.warn("[AutoUpdate] Check failed (offline?):", err.message);
+        }
+      }
+      getLastResult() {
+        return this.lastResult;
+      }
+    };
+    autoUpdateService = AutoUpdateService.getInstance();
+  }
+});
+
+// src/routes/license.ts
+var license_exports = {};
+__export(license_exports, {
+  default: () => license_default
+});
+var import_express31, router31, license_default;
+var init_license = __esm({
+  "src/routes/license.ts"() {
+    "use strict";
+    import_express31 = require("express");
+    init_licenseService();
+    init_autoUpdateService();
+    router31 = (0, import_express31.Router)();
+    router31.get("/status", async (req, res) => {
+      try {
+        const status = await checkLicense();
+        res.json(status);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router31.post("/activate", async (req, res) => {
+      const { licenseId, licenseKey } = req.body || {};
+      if (!licenseId?.trim() || !licenseKey?.trim()) {
+        return res.status(400).json({ error: "licenseId and licenseKey are required" });
+      }
+      try {
+        const result = await activateLicense(licenseId.trim(), licenseKey.trim());
+        if (result.success) {
+          res.json({ success: true, pharmacyName: result.pharmacyName });
+        } else {
+          res.status(400).json({ success: false, error: result.error });
+        }
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router31.get("/machine-id", (req, res) => {
+      try {
+        const machineId = getMachineId();
+        res.json({ machineId: machineId.substring(0, 8) + "..." });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router31.post("/check-update", async (req, res) => {
+      try {
+        const result = await autoUpdateService.triggerCheck();
+        res.json(result || { hasUpdate: false, latestVersion: null });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    license_default = router31;
+  }
+});
+
 // src/routes/sales.ts
 var sales_exports = {};
 __export(sales_exports, {
@@ -63443,11 +64721,11 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express31, import_path53, import_fs50, import_pdfkit5, router31, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express32, import_path53, import_fs50, import_pdfkit5, router32, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
-    import_express31 = __toESM(require("express"), 1);
+    import_express32 = __toESM(require("express"), 1);
     init_inventoryActive();
     init_connection();
     init_productNameFilterService();
@@ -63468,8 +64746,8 @@ var init_sales = __esm({
     init_tenantAuth();
     init_storeContextService();
     init_imageCompressionService();
-    router31 = import_express31.default.Router();
-    router31.use(tenantAuthMiddleware);
+    router32 = import_express32.default.Router();
+    router32.use(tenantAuthMiddleware);
     normalizeNumericSearch = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -63567,7 +64845,7 @@ var init_sales = __esm({
         itemTaxBreakdowns
       };
     };
-    router31.get("/next-invoice", async (req, res) => {
+    router32.get("/next-invoice", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -63584,7 +64862,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/", async (req, res) => {
+    router32.post("/", async (req, res) => {
       let db2;
       try {
         const verification = await verificationService.verifyPOSBill(req.body);
@@ -64254,7 +65532,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router31.post("/hold", async (req, res) => {
+    router32.post("/hold", async (req, res) => {
       let db2;
       try {
         if (!req.body) {
@@ -64379,7 +65657,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to hold bill" });
       }
     });
-    router31.get("/recommend-quantity", async (req, res) => {
+    router32.get("/recommend-quantity", async (req, res) => {
       const medicineName = req.query.medicineName;
       if (!medicineName) {
         return res.status(400).json({ error: "medicineName query parameter required" });
@@ -64432,7 +65710,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router31.get("/recommend-quantity/batch", async (req, res) => {
+    router32.get("/recommend-quantity/batch", async (req, res) => {
       const namesParam = req.query.medicineNames;
       if (!namesParam) {
         return res.status(400).json({ error: "medicineNames query parameter required" });
@@ -64542,7 +65820,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to analyze previous sales data" });
       }
     });
-    router31.get("/list", async (req, res) => {
+    router32.get("/list", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -64683,7 +65961,7 @@ var init_sales = __esm({
         return res.status(500).json({ error: "Internal server error", details: err.message });
       }
     });
-    router31.get("/search-medicine", async (req, res) => {
+    router32.get("/search-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -65123,7 +66401,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/suggest-medicine", async (req, res) => {
+    router32.get("/suggest-medicine", async (req, res) => {
       const query = req.query.q;
       if (!query || query.trim().length < 2) {
         return res.json([]);
@@ -65154,7 +66432,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.post("/queue-from-pos", async (req, res) => {
+    router32.post("/queue-from-pos", async (req, res) => {
       const { medicine_id } = req.body;
       if (!medicine_id) {
         return res.status(400).json({ error: "medicine_id is required" });
@@ -65178,7 +66456,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/universal-search", async (req, res) => {
+    router32.get("/universal-search", async (req, res) => {
       const query = req.query.q;
       if (!query) {
         return res.json([]);
@@ -65200,7 +66478,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.get("/hold", async (req, res) => {
+    router32.get("/hold", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -65211,7 +66489,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to retrieve held bills" });
       }
     });
-    router31.post("/staged", async (req, res) => {
+    router32.post("/staged", async (req, res) => {
       try {
         const { patient_name, patient_phone, discount = 0, items } = req.body;
         if (!patient_name || !items || !Array.isArray(items) || items.length === 0) {
@@ -65256,7 +66534,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to create staged sale" });
       }
     });
-    router31.get("/staged", async (req, res) => {
+    router32.get("/staged", async (req, res) => {
       const { all } = req.query;
       let db2;
       try {
@@ -65337,9 +66615,9 @@ var init_sales = __esm({
         res.status(500).json({ error: "Failed to generate sale invoice barcode: " + error.message });
       }
     };
-    router31.get("/invoice-barcode", handleInvoiceBarcode);
-    router31.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
-    router31.get("/:id", async (req, res, next) => {
+    router32.get("/invoice-barcode", handleInvoiceBarcode);
+    router32.get("/invoice-barcode/:invoiceNo", handleInvoiceBarcode);
+    router32.get("/:id", async (req, res, next) => {
       const rawId = req.params.id;
       if (!/^\d+$/.test(rawId)) {
         return next();
@@ -65397,7 +66675,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error", details: error.message });
       }
     });
-    router31.put("/:id", async (req, res) => {
+    router32.put("/:id", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -65586,7 +66864,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router31.delete("/:id", async (req, res) => {
+    router32.delete("/:id", async (req, res) => {
       try {
         const { id } = req.params;
         let notFound = false;
@@ -65660,7 +66938,7 @@ var init_sales = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router31.delete("/hold/:id", async (req, res) => {
+    router32.delete("/hold/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -65715,7 +66993,7 @@ var init_sales = __esm({
     });
     stagedDeviceColumnsReady = false;
     syncDedupeTableReady = false;
-    router31.post("/sync", async (req, res) => {
+    router32.post("/sync", async (req, res) => {
       let db2;
       try {
         const { sales = [], deviceName = "", device_uuid = "" } = req.body;
@@ -65764,7 +67042,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline sales" });
       }
     });
-    router31.post("/staged/:id/approve", async (req, res) => {
+    router32.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, patient_name, patient_phone, discount = 0 } = req.body;
       let db2;
@@ -65859,7 +67137,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged sale" });
       }
     });
-    router31.post("/staged/:id/reject", async (req, res) => {
+    router32.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -65873,7 +67151,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged sale" });
       }
     });
-    router31.post("/staged/:id/consume", async (req, res) => {
+    router32.post("/staged/:id/consume", async (req, res) => {
       const { id } = req.params;
       const invoiceNo = typeof req.body?.invoice_no === "string" ? req.body.invoice_no.slice(0, 64) : null;
       let db2;
@@ -65892,7 +67170,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to consume staged sale" });
       }
     });
-    router31.get("/credit-dues", async (req, res) => {
+    router32.get("/credit-dues", async (req, res) => {
       const customerId = Number(req.query.customer_id) || 0;
       const phone = typeof req.query.phone === "string" ? req.query.phone.trim() : "";
       const refillId = Number(req.query.refill_id) || 0;
@@ -65934,7 +67212,7 @@ var init_sales = __esm({
         res.status(500).json({ error: error.message || "Failed to load credit dues" });
       }
     });
-    router31.get("/reorder-suggestions", async (_req, res) => {
+    router32.get("/reorder-suggestions", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { ensureMedicineSalesMetricsSchema: ensureMedicineSalesMetricsSchema2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
@@ -66019,7 +67297,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch reorder suggestions" });
       }
     });
-    router31.post("/reorder-suggestions/snooze", async (req, res) => {
+    router32.post("/reorder-suggestions/snooze", async (req, res) => {
       try {
         const { medicineId, snoozeDays = 7, snoozeType = "7_days", reason = "" } = req.body;
         if (!medicineId) {
@@ -66042,7 +67320,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to snooze reorder suggestion" });
       }
     });
-    router31.post("/reorder-suggestions/unsnooze", async (req, res) => {
+    router32.post("/reorder-suggestions/unsnooze", async (req, res) => {
       try {
         const { medicineId } = req.body;
         if (!medicineId) {
@@ -66056,7 +67334,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to unsnooze reorder suggestion" });
       }
     });
-    router31.get("/reorder-suggestions/snoozed", async (_req, res) => {
+    router32.get("/reorder-suggestions/snoozed", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -66111,7 +67389,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch snoozed reorders" });
       }
     });
-    router31.get("/medicine-refill-info/:medicineId", async (req, res) => {
+    router32.get("/medicine-refill-info/:medicineId", async (req, res) => {
       const { medicineId } = req.params;
       const medId = parseInt(medicineId, 10);
       if (isNaN(medId) || medId <= 0) {
@@ -66201,7 +67479,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get medicine refill info" });
       }
     });
-    router31.get("/patient-refill-medicines", async (req, res) => {
+    router32.get("/patient-refill-medicines", async (req, res) => {
       const { customerId, phone, name } = req.query;
       if (!customerId && !phone && !name) {
         return res.status(400).json({ error: "customerId, phone, or name is required" });
@@ -66373,7 +67651,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to get patient refill medicines" });
       }
     });
-    router31.post("/prescription/upload", async (req, res) => {
+    router32.post("/prescription/upload", async (req, res) => {
       try {
         const { image, fileName } = req.body;
         if (!image) {
@@ -66395,7 +67673,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to upload prescription" });
       }
     });
-    router31.post("/:id/prescription", async (req, res) => {
+    router32.post("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       const { prescription_image } = req.body;
       if (!prescription_image) {
@@ -66413,7 +67691,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to attach prescription" });
       }
     });
-    router31.get("/:id/prescription", async (req, res) => {
+    router32.get("/:id/prescription", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -66436,7 +67714,7 @@ var init_sales = __esm({
         res.status(500).json({ error: err.message || "Failed to fetch prescription" });
       }
     });
-    sales_default = router31;
+    sales_default = router32;
   }
 });
 
@@ -66445,19 +67723,19 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express32, import_path54, import_url40, __filename38, __dirname38, DB_PATH24, router32, dashboard_default;
+var import_express33, import_path54, import_url40, __filename38, __dirname38, DB_PATH24, router33, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
-    import_express32 = __toESM(require("express"), 1);
+    import_express33 = __toESM(require("express"), 1);
     init_connection();
     import_path54 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
     __dirname38 = import_path54.default.dirname(__filename38);
     DB_PATH24 = process.env.DB_PATH || import_path54.default.resolve(__dirname38, "..", "..", "data", "app.db");
-    router32 = import_express32.default.Router();
-    router32.get("/", async (_req, res) => {
+    router33 = import_express33.default.Router();
+    router33.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const [salesTodayRow, lowStockCount, pendingTasksCount, alerts, storageLocationsCount, pendingSpecialOrdersCount, activeDeliveryBoysCount, purchasesTodayRow, recentSales, recentCommunications] = await Promise.all([
@@ -66508,7 +67786,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router32.delete("/alerts/:id", async (req, res) => {
+    router33.delete("/alerts/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -66519,7 +67797,7 @@ var init_dashboard = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    dashboard_default = router32;
+    dashboard_default = router33;
   }
 });
 
@@ -66541,6 +67819,31 @@ async function seedMasterMedicines(force = false) {
     }
     const csvPath = import_path55.default.join(process.cwd(), "data", "reference_medicines.csv");
     if (!import_fs51.default.existsSync(csvPath)) {
+      const templateCandidates = [
+        import_path55.default.join(process.cwd(), "data", "app.db"),
+        import_path55.default.join(import_path55.default.dirname(process.execPath), "data", "app.db")
+      ];
+      for (const tPath of templateCandidates) {
+        if (import_fs51.default.existsSync(tPath) && import_path55.default.resolve(tPath) !== import_path55.default.resolve(config.dbPath)) {
+          try {
+            const normalized = tPath.replace(/\\/g, "/");
+            await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
+            const res = await db2.run(`INSERT OR IGNORE INTO medicines SELECT * FROM templateDb.medicines`);
+            await db2.run(`DETACH DATABASE templateDb`);
+            const loaded2 = res?.changes || 0;
+            if (loaded2 > 0) {
+              console.log(`[MasterSeed] Successfully synced ${loaded2} master medicines from template DB (${tPath}).`);
+              return { loaded: loaded2 };
+            }
+          } catch (e) {
+            console.warn("[MasterSeed] Template DB copy failed:", e.message);
+            try {
+              await db2.run(`DETACH DATABASE templateDb`);
+            } catch {
+            }
+          }
+        }
+      }
       console.warn("[MasterSeed] Reference CSV not found at:", csvPath);
       return { loaded: 0 };
     }
@@ -66690,6 +67993,7 @@ var init_masterMedicinesSeedService = __esm({
     import_path55 = __toESM(require("path"), 1);
     import_readline3 = __toESM(require("readline"), 1);
     init_connection();
+    init_config();
   }
 });
 
@@ -66927,11 +68231,11 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios2, import_fs52, import_path56, import_tesseract4, InvoiceVisionService, invoiceVisionService;
+var import_axios3, import_fs52, import_path56, import_tesseract4, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
-    import_axios2 = __toESM(require("axios"), 1);
+    import_axios3 = __toESM(require("axios"), 1);
     import_fs52 = __toESM(require("fs"), 1);
     import_path56 = __toESM(require("path"), 1);
     import_tesseract4 = require("tesseract.js");
@@ -67051,7 +68355,7 @@ Rules:
             response_mime_type: "application/json"
           }
         };
-        const response = await import_axios2.default.post(url, requestPayload, { timeout: 45e3 });
+        const response = await import_axios3.default.post(url, requestPayload, { timeout: 45e3 });
         const candidates = response.data?.candidates;
         if (!candidates || candidates.length === 0) {
           throw new Error("Empty response from Gemini Vision API");
@@ -67540,11 +68844,11 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express33, import_path57, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs53, __filename39, __dirname39, DB_PATH25, router33, upload2, purchases_default;
+var import_express34, import_path57, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs53, __filename39, __dirname39, DB_PATH25, router34, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
-    import_express33 = __toESM(require("express"), 1);
+    import_express34 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
     import_path57 = __toESM(require("path"), 1);
@@ -67572,9 +68876,9 @@ var init_purchases = __esm({
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
     __dirname39 = import_path57.default.dirname(__filename39);
     DB_PATH25 = process.env.DB_PATH || import_path57.default.resolve(__dirname39, "..", "..", "data", "app.db");
-    router33 = import_express33.default.Router();
+    router34 = import_express34.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
-    router33.get("/summary", async (_req, res) => {
+    router34.get("/summary", async (_req, res) => {
       try {
         const cached = await getSummaryCache("purchase_summary");
         if (cached) {
@@ -67587,7 +68891,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/upload", upload2.single("file"), async (req, res) => {
+    router34.post("/upload", upload2.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -67628,7 +68932,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to process invoice file: " + err.message });
       }
     });
-    router33.get("/", async (req, res) => {
+    router34.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const months = parseInt(req.query.months) || 0;
@@ -67728,7 +69032,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/earliest-date", async (req, res) => {
+    router34.get("/earliest-date", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(`
@@ -67744,7 +69048,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/manual", async (req, res) => {
+    router34.post("/manual", async (req, res) => {
       const { distributor, distributor_id, invoice_no, date, cd_per, extra_credit, cn_amount, cn_number, reconcile_expiry_return_id, items, source_filename, source_file_headers, mapping_config, email_uid } = req.body;
       let db2;
       try {
@@ -68130,7 +69434,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message, stack: error.stack });
       }
     });
-    router33.get("/items/all", async (req, res) => {
+    router34.get("/items/all", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limit = parseInt(req.query.limit) || 1e3;
@@ -68163,10 +69467,10 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.put("/:id/full", async (req, res) => {
+    router34.put("/:id/full", async (req, res) => {
       return handleUpdatePurchaseFull(req, res);
     });
-    router33.put("/:id", async (req, res) => {
+    router34.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { distributor, invoice_no, total_amount, date } = req.body;
       try {
@@ -68190,7 +69494,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.delete("/:id", async (req, res) => {
+    router34.delete("/:id", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -68230,7 +69534,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/bulk-action", async (req, res) => {
+    router34.post("/bulk-action", async (req, res) => {
       const { action, ids = [] } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -68244,7 +69548,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/last-purchase", async (req, res) => {
+    router34.get("/last-purchase", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -68323,7 +69627,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/medicine-batches", async (req, res) => {
+    router34.get("/medicine-batches", async (req, res) => {
       let db2;
       try {
         const medicineIdParam = req.query.medicine_id;
@@ -68471,7 +69775,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/price-history", async (req, res) => {
+    router34.get("/price-history", async (req, res) => {
       let db2;
       try {
         const name = req.query.name;
@@ -68554,7 +69858,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/batch-last-purchase", async (req, res) => {
+    router34.post("/batch-last-purchase", async (req, res) => {
       let db2;
       try {
         const { medicines, distributor_id } = req.body;
@@ -68622,7 +69926,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/history-prefill", async (req, res) => {
+    router34.get("/history-prefill", async (req, res) => {
       let db2;
       try {
         const name = String(req.query.name || "").trim();
@@ -68705,7 +70009,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/:id/pdf", async (req, res) => {
+    router34.get("/:id/pdf", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -68824,7 +70128,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/reconciliation", async (req, res) => {
+    router34.get("/reconciliation", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const aliasRows = await db2.all(
@@ -69098,7 +70402,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/ignored-words", async (req, res) => {
+    router34.get("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT id, word, source, created_at FROM permanently_ignored_words ORDER BY created_at DESC");
@@ -69108,7 +70412,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/ignored-words", async (req, res) => {
+    router34.post("/ignored-words", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { word, source = "recon" } = req.body;
@@ -69127,7 +70431,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.delete("/ignored-words/:id", async (req, res) => {
+    router34.delete("/ignored-words/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = Number(req.params.id);
@@ -69141,7 +70445,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/reconciliation/learn-mapping", async (req, res) => {
+    router34.post("/reconciliation/learn-mapping", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { distributor_id, distributor_name, mapping_config } = req.body;
@@ -69160,7 +70464,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to save distributor mapping template" });
       }
     });
-    router33.post("/reconciliation/resolve", async (req, res) => {
+    router34.post("/reconciliation/resolve", async (req, res) => {
       const { email_uid } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -69182,7 +70486,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.get("/reconciliation/preview/:email_uid", async (req, res) => {
+    router34.get("/reconciliation/preview/:email_uid", async (req, res) => {
       try {
         const { email_uid } = req.params;
         const db2 = await dbManager.getConnection();
@@ -69265,7 +70569,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: err.message });
       }
     });
-    router33.post("/reconciliation/reissue", async (req, res) => {
+    router34.post("/reconciliation/reissue", async (req, res) => {
       const { email_uid, invoice_date: bodyInvoiceDate } = req.body;
       if (!email_uid) {
         return res.status(400).json({ error: "email_uid is required" });
@@ -69532,7 +70836,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     });
-    router33.post("/match-items", async (req, res) => {
+    router34.post("/match-items", async (req, res) => {
       try {
         const { names, distributor_id } = req.body || {};
         if (!Array.isArray(names) || names.length === 0) {
@@ -69569,7 +70873,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "match-items failed" });
       }
     });
-    router33.get("/staged", async (req, res) => {
+    router34.get("/staged", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -69585,7 +70889,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to retrieve staged purchases" });
       }
     });
-    router33.get("/reconciliation/bounced", async (req, res) => {
+    router34.get("/reconciliation/bounced", async (req, res) => {
       try {
         const { bouncedAlertService: bouncedAlertService2 } = await Promise.resolve().then(() => (init_bouncedAlertService(), bouncedAlertService_exports));
         const sent = await bouncedAlertService2.checkAndSendBouncedProductsAlert();
@@ -69595,7 +70899,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router33.get("/bill-barcode/:purchaseId", async (req, res) => {
+    router34.get("/bill-barcode/:purchaseId", async (req, res) => {
       const purchaseId = Number(req.params.purchaseId);
       if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
         return res.status(400).json({ error: "Valid purchase id is required" });
@@ -69669,7 +70973,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Failed to generate purchase bill barcode: " + message });
       }
     });
-    router33.get("/:id", async (req, res) => {
+    router34.get("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -69702,7 +71006,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router33.post("/sync", async (req, res) => {
+    router34.post("/sync", async (req, res) => {
       let db2;
       try {
         const { purchases = [] } = req.body;
@@ -69743,7 +71047,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to sync offline purchases" });
       }
     });
-    router33.post("/staged/:id/approve", async (req, res) => {
+    router34.post("/staged/:id/approve", async (req, res) => {
       const { id } = req.params;
       const { items, distributor_name, invoice_no, date, total_amount } = req.body;
       let db2;
@@ -69897,7 +71201,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to approve staged purchase" });
       }
     });
-    router33.post("/staged/:id/reject", async (req, res) => {
+    router34.post("/staged/:id/reject", async (req, res) => {
       const { id } = req.params;
       let db2;
       try {
@@ -69911,7 +71215,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to reject staged purchase" });
       }
     });
-    router33.post("/scan-bill", upload2.single("file"), async (req, res) => {
+    router34.post("/scan-bill", upload2.single("file"), async (req, res) => {
       try {
         const { invoiceVisionService: invoiceVisionService2 } = await Promise.resolve().then(() => (init_invoiceVisionService(), invoiceVisionService_exports));
         let buffer = null;
@@ -69937,7 +71241,7 @@ var init_purchases = __esm({
         res.status(500).json({ error: error.message || "Failed to process purchase bill image" });
       }
     });
-    purchases_default = router33;
+    purchases_default = router34;
   }
 });
 
@@ -69946,15 +71250,15 @@ var sellPrice_exports = {};
 __export(sellPrice_exports, {
   default: () => sellPrice_default
 });
-var import_express34, router34, sellPrice_default;
+var import_express35, router35, sellPrice_default;
 var init_sellPrice = __esm({
   "src/routes/sellPrice.ts"() {
     "use strict";
-    import_express34 = __toESM(require("express"), 1);
+    import_express35 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
-    router34 = import_express34.default.Router();
-    router34.post("/bulk-update", async (req, res) => {
+    router35 = import_express35.default.Router();
+    router35.post("/bulk-update", async (req, res) => {
       let db2;
       try {
         const items = Array.isArray(req.body) ? req.body : req.body?.items || [];
@@ -70003,7 +71307,7 @@ var init_sellPrice = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    sellPrice_default = router34;
+    sellPrice_default = router35;
   }
 });
 
@@ -70034,11 +71338,11 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express35, import_path58, import_fs54, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router35, returns_default;
+var import_express36, import_path58, import_fs54, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router36, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
-    import_express35 = __toESM(require("express"), 1);
+    import_express36 = __toESM(require("express"), 1);
     init_connection();
     import_path58 = __toESM(require("path"), 1);
     import_fs54 = __toESM(require("fs"), 1);
@@ -70052,8 +71356,8 @@ var init_returns = __esm({
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
     __dirname40 = import_path58.default.dirname(__filename40);
     DB_PATH26 = process.env.DB_PATH || import_path58.default.resolve(__dirname40, "..", "..", "data", "app.db");
-    router35 = import_express35.default.Router();
-    router35.use((req, res, next) => {
+    router36 = import_express36.default.Router();
+    router36.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -70071,7 +71375,7 @@ var init_returns = __esm({
       }
       next();
     });
-    router35.get("/", async (req, res) => {
+    router36.get("/", async (req, res) => {
       let db2;
       try {
         const { search, date_from, date_to, min_amount, max_amount } = req.query;
@@ -70154,7 +71458,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/", async (req, res) => {
+    router36.post("/", async (req, res) => {
       let db2;
       try {
         const { return_no, original_invoice_id, type, total_amount, distributor_id, is_expiry, loss_percentage, return_invoice_id, return_sub_type, return_date_time } = req.body;
@@ -70188,7 +71492,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.get("/near-expiry", async (req, res) => {
+    router36.get("/near-expiry", async (req, res) => {
       let db2;
       try {
         const monthsStr = req.query.months || "6";
@@ -70248,7 +71552,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/financial-note", async (req, res) => {
+    router36.post("/financial-note", async (req, res) => {
       let pdfDoc;
       let stream;
       try {
@@ -70292,7 +71596,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/ai-camera/process", async (req, res) => {
+    router36.post("/ai-camera/process", async (req, res) => {
       try {
         if (!req.body || !req.body.image) {
           return res.status(400).json({ error: "Image data is required" });
@@ -70316,7 +71620,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error during OCR processing" });
       }
     });
-    router35.get("/lookup-purchases", async (req, res) => {
+    router36.get("/lookup-purchases", async (req, res) => {
       let db2;
       try {
         const { name, batch, distributor_id, distributor_name } = req.query;
@@ -70424,7 +71728,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/process-returns", async (req, res) => {
+    router36.post("/process-returns", async (req, res) => {
       let db2;
       try {
         const {
@@ -70606,7 +71910,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/export-pdf-report", async (req, res) => {
+    router36.post("/export-pdf-report", async (req, res) => {
       try {
         const { items, return_sub_type: pdfSubType, reason: pdfReason } = req.body;
         if (!items || !Array.isArray(items) || items.length === 0) {
@@ -70687,7 +71991,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.get("/:id/items", async (req, res) => {
+    router36.get("/:id/items", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -70720,7 +72024,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.get("/:id/resolve-missing", async (req, res) => {
+    router36.get("/:id/resolve-missing", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -70808,7 +72112,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.put("/:id", async (req, res) => {
+    router36.put("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -70835,7 +72139,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.delete("/:id", async (req, res) => {
+    router36.delete("/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -70851,7 +72155,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.get("/expiry-reviews", async (req, res) => {
+    router36.get("/expiry-reviews", async (req, res) => {
       let db2;
       try {
         const { status, search, date_from, date_to } = req.query;
@@ -70914,7 +72218,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router35.post("/expiry-reviews/scan", async (req, res) => {
+    router36.post("/expiry-reviews/scan", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { scanAndCreateExpiryReviews: scanAndCreateExpiryReviews2 } = await Promise.resolve().then(() => (init_returnsService(), returnsService_exports));
@@ -70929,7 +72233,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to run expiry scan" });
       }
     });
-    router35.post("/expiry-reviews/:id/approve", async (req, res) => {
+    router36.post("/expiry-reviews/:id/approve", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -71069,7 +72373,7 @@ var init_returns = __esm({
         res.status(500).json({ error: err.message || "Failed to approve return review" });
       }
     });
-    router35.post("/expiry-reviews/:id/reject", async (req, res) => {
+    router36.post("/expiry-reviews/:id/reject", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -71108,7 +72412,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to reject expiry review" });
       }
     });
-    router35.post("/expiry-reviews/bulk-approve", async (req, res) => {
+    router36.post("/expiry-reviews/bulk-approve", async (req, res) => {
       let db2;
       try {
         const { ids, loss_percentage } = req.body;
@@ -71241,7 +72545,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to bulk approve expiry reviews" });
       }
     });
-    router35.get("/expiry-reviews/audit-history", async (req, res) => {
+    router36.get("/expiry-reviews/audit-history", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const logs = await db2.all(`
@@ -71256,7 +72560,7 @@ var init_returns = __esm({
         res.status(500).json({ error: "Failed to fetch audit history" });
       }
     });
-    returns_default = router35;
+    returns_default = router36;
   }
 });
 
@@ -71277,17 +72581,17 @@ var customerReturns_exports = {};
 __export(customerReturns_exports, {
   default: () => customerReturns_default
 });
-var import_express36, router36, broadcastCustomerReturn, customerReturns_default;
+var import_express37, router37, broadcastCustomerReturn, customerReturns_default;
 var init_customerReturns = __esm({
   "src/routes/customerReturns.ts"() {
     "use strict";
-    import_express36 = __toESM(require("express"), 1);
+    import_express37 = __toESM(require("express"), 1);
     init_connection();
     init_asyncHandler();
     init_inventoryCache();
     init_stockRebuild();
     init_eventService();
-    router36 = import_express36.default.Router();
+    router37 = import_express37.default.Router();
     broadcastCustomerReturn = () => {
       try {
         eventService.broadcast("return_created", { at: Date.now(), type: "customer_return" });
@@ -71295,7 +72599,7 @@ var init_customerReturns = __esm({
       } catch (_) {
       }
     };
-    router36.get("/search-invoice", asyncHandler(async (req, res) => {
+    router37.get("/search-invoice", asyncHandler(async (req, res) => {
       const { invoice_no } = req.query;
       if (!invoice_no) {
         return res.status(400).json({ error: "invoice_no required" });
@@ -71329,7 +72633,7 @@ var init_customerReturns = __esm({
       await dbManager.close();
       res.json({ invoice, items, previousReturns });
     }));
-    router36.post("/", asyncHandler(async (req, res) => {
+    router37.post("/", asyncHandler(async (req, res) => {
       const { original_invoice_id, return_items, reason } = req.body;
       if (!original_invoice_id || !Array.isArray(return_items) || return_items.length === 0) {
         return res.status(400).json({ error: "Invalid return data" });
@@ -71455,7 +72759,7 @@ var init_customerReturns = __esm({
       broadcastCustomerReturn();
       res.json({ success: true, return_no: result.returnNo, total_refund: result.totalRefund });
     }));
-    router36.get("/history", asyncHandler(async (req, res) => {
+    router37.get("/history", asyncHandler(async (req, res) => {
       const db2 = await dbManager.getConnection();
       const start = req.query.start;
       const end = req.query.end;
@@ -71535,7 +72839,7 @@ var init_customerReturns = __esm({
         res.json(rows);
       }
     }));
-    customerReturns_default = router36;
+    customerReturns_default = router37;
   }
 });
 
@@ -71616,11 +72920,54 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   });
   return true;
 }
-var import_express37, import_path59, import_fs55, import_url43, __filename41, __dirname41, DB_PATH27, router37, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+async function cancelPendingWhatsAppForOrder(db2, order) {
+  const cleanPhone = order.phone ? order.phone.replace(/\D/g, "") : "";
+  const last10 = cleanPhone.slice(-10);
+  const reqName = (order.requester || "").trim();
+  const prodName = (order.product || "").trim();
+  try {
+    const matchConditions = [];
+    const matchArgs = [];
+    if (last10 && last10.length >= 7) {
+      matchConditions.push("number LIKE ?");
+      matchArgs.push(`%${last10}%`);
+    }
+    if (reqName) {
+      matchConditions.push("target_name = ?");
+      matchArgs.push(reqName);
+    }
+    if (prodName) {
+      matchConditions.push("message LIKE ?");
+      matchArgs.push(`%${prodName}%`);
+    }
+    if (matchConditions.length > 0) {
+      await db2.run(
+        `DELETE FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'admin_shortage_reminder', 'whatsapp_notification')
+           AND (${matchConditions.join(" OR ")})`,
+        matchArgs
+      );
+    }
+  } catch (cancelErr) {
+    console.warn("[Orders] Could not delete pending WhatsApp queue items for order:", cancelErr);
+  }
+  try {
+    await db2.run(
+      `DELETE FROM automation_notifications 
+       WHERE reference_id IN (?, ?)
+          OR (type = 'admin_shortage_reminder' AND message LIKE ?)
+          OR (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') AND reference_id = ?)`,
+      [String(order.id), `shortage_${order.id}`, prodName ? `%${prodName}%` : "", String(order.id)]
+    );
+  } catch (_) {
+  }
+}
+var import_express38, import_path59, import_fs55, import_url43, __filename41, __dirname41, DB_PATH27, router38, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
-    import_express37 = __toESM(require("express"), 1);
+    import_express38 = __toESM(require("express"), 1);
     init_connection();
     import_path59 = __toESM(require("path"), 1);
     import_fs55 = __toESM(require("fs"), 1);
@@ -71638,7 +72985,7 @@ var init_orders = __esm({
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
     __dirname41 = import_path59.default.dirname(__filename41);
     DB_PATH27 = process.env.DB_PATH || import_path59.default.resolve(__dirname41, "..", "..", "data", "app.db");
-    router37 = import_express37.default.Router();
+    router38 = import_express38.default.Router();
     broadcastOrdersChanged2 = () => {
       try {
         eventService.broadcast("order_updated", { at: Date.now() });
@@ -71646,7 +72993,7 @@ var init_orders = __esm({
       }
     };
     ordersTableInitialized = false;
-    router37.get("/", async (req, res) => {
+    router38.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
@@ -71672,7 +73019,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.post("/batch", async (req, res) => {
+    router38.post("/batch", async (req, res) => {
       const {
         items,
         requester,
@@ -71792,7 +73139,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to create special orders: " + (err.message || "Unknown error") });
       }
     });
-    router37.post("/", async (req, res) => {
+    router38.post("/", async (req, res) => {
       const {
         requester,
         phone,
@@ -71938,7 +73285,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.get("/check-arrival-notified", async (req, res) => {
+    router38.get("/check-arrival-notified", async (req, res) => {
       try {
         const rawPhone = String(req.query.phone || "").replace(/\D/g, "");
         if (!rawPhone || rawPhone.length < 7) {
@@ -71972,7 +73319,7 @@ var init_orders = __esm({
         res.json({ recentlyNotified: false });
       }
     });
-    router37.post("/:id/notify-arrival", async (req, res) => {
+    router38.post("/:id/notify-arrival", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -72004,7 +73351,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router37.post("/batch-notify-arrival", async (req, res) => {
+    router38.post("/batch-notify-arrival", async (req, res) => {
       const { order_ids, items, custom_message, lang: reqLang, force_resend } = req.body;
       if (!Array.isArray(order_ids) || order_ids.length === 0) {
         return res.status(400).json({ error: "order_ids array is required" });
@@ -72123,7 +73470,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue consolidated notification: " + (err.message || "Unknown error") });
       }
     });
-    router37.post("/:id/resend-booking", async (req, res) => {
+    router38.post("/:id/resend-booking", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -72162,7 +73509,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to queue WhatsApp message: " + (err.message || "Unknown error") });
       }
     });
-    router37.get("/uncollected-alerts", async (_req, res) => {
+    router38.get("/uncollected-alerts", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await initOrdersTable(db2);
@@ -72177,7 +73524,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.put("/:id", async (req, res) => {
+    router38.put("/:id", async (req, res) => {
       const { id } = req.params;
       const {
         status,
@@ -72242,7 +73589,14 @@ var init_orders = __esm({
        WHERE id = ?`,
           [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, id]
         );
-        if (newStatus === "Fulfilled" || newStatus === "Cancelled") {
+        if (newStatus === "Cancelled") {
+          await cancelPendingWhatsAppForOrder(db2, {
+            id,
+            phone: newPhone || existing.phone,
+            requester: newRequester || existing.requester,
+            product: newProduct || existing.product
+          });
+        } else if (newStatus === "Fulfilled") {
           await db2.run(
             `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -72296,8 +73650,21 @@ var init_orders = __esm({
             }
           }
         }
+        let cartAdjustment = null;
+        if (newStatus === "Cancelled") {
+          try {
+            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+            cartAdjustment = await adjustSpecialOrderInLiveCart2({
+              product: newProduct || existing.product,
+              qty: newQty || existing.qty,
+              distributor: newDistributor || existing.pharmarack_distributor
+            });
+          } catch (cartErr) {
+            console.warn("[Orders] Could not auto-adjust live cart on order cancel:", cartErr);
+          }
+        }
         broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount });
+        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
       } catch (err) {
         console.error("Update order error:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -72335,7 +73702,9 @@ var init_orders = __esm({
         const newNotified = status === "Fulfilled" || whatsappQueued ? 1 : existing.notified;
         const newCount = whatsappQueued ? Number(existing.notification_count || 0) + 1 : Number(existing.notification_count || 0);
         await db2.run("UPDATE special_orders SET status = ?, notified = ?, notification_count = ? WHERE id = ?", [status, newNotified, newCount, id]);
-        if (status === "Fulfilled" || status === "Cancelled") {
+        if (status === "Cancelled") {
+          await cancelPendingWhatsAppForOrder(db2, existing);
+        } else if (status === "Fulfilled") {
           await db2.run(
             `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -72345,16 +73714,29 @@ var init_orders = __esm({
           ).catch(() => {
           });
         }
+        let cartAdjustment = null;
+        if (status === "Cancelled") {
+          try {
+            const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+            cartAdjustment = await adjustSpecialOrderInLiveCart2({
+              product: existing.product,
+              qty: existing.qty,
+              distributor: existing.pharmarack_distributor
+            });
+          } catch (cartErr) {
+            console.warn("[Orders] Could not auto-adjust live cart on order status Cancelled:", cartErr);
+          }
+        }
         broadcastOrdersChanged2();
-        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount });
+        res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
       } catch (err) {
         console.error("Update order status error:", err);
         res.status(500).json({ error: "Internal server error: " + (err?.message || "") });
       }
     };
-    router37.post("/:id/status", handleStatusUpdate);
-    router37.put("/:id/status", handleStatusUpdate);
-    router37.delete("/:id", async (req, res) => {
+    router38.post("/:id/status", handleStatusUpdate);
+    router38.put("/:id/status", handleStatusUpdate);
+    router38.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -72367,52 +73749,26 @@ var init_orders = __esm({
         if (result.changes === 0) {
           return res.status(404).json({ error: "Order not found" });
         }
-        const cleanPhone = existing.phone ? existing.phone.replace(/\D/g, "") : "";
-        const last10 = cleanPhone.slice(-10);
-        const reqName = (existing.requester || "").trim();
-        const prodName = (existing.product || "").trim();
+        await cancelPendingWhatsAppForOrder(db2, existing);
+        let cartAdjustment = null;
         try {
-          const matchConditions = [];
-          const matchArgs = [];
-          if (last10 && last10.length >= 7) {
-            matchConditions.push("number LIKE ?");
-            matchArgs.push(`%${last10}%`);
-          }
-          if (reqName) {
-            matchConditions.push("target_name = ?");
-            matchArgs.push(reqName);
-          }
-          if (prodName) {
-            matchConditions.push("message LIKE ?");
-            matchArgs.push(`%${prodName}%`);
-          }
-          if (matchConditions.length > 0) {
-            await db2.run(
-              `DELETE FROM whatsapp_send_queue 
-           WHERE status IN ('pending', 'failed_offline') 
-             AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled')
-             AND (${matchConditions.join(" OR ")})`,
-              matchArgs
-            );
-          }
-        } catch (cancelErr) {
-          console.warn("[Orders] Could not delete pending WhatsApp queue items for deleted order:", cancelErr);
+          const { adjustSpecialOrderInLiveCart: adjustSpecialOrderInLiveCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          cartAdjustment = await adjustSpecialOrderInLiveCart2({
+            product: existing.product,
+            qty: existing.qty,
+            distributor: existing.pharmarack_distributor
+          });
+        } catch (cartErr) {
+          console.warn("[Orders] Could not auto-adjust live cart on order delete:", cartErr);
         }
-        await db2.run(
-          `DELETE FROM automation_notifications 
-       WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
-         AND reference_id = ?`,
-          [String(id), String(id)]
-        ).catch(() => {
-        });
         broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order deleted successfully" });
+        res.json({ success: true, message: "Order deleted successfully", cartAdjustment });
       } catch (err) {
         console.error("Delete order error:", err);
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router37.post("/convert-to-refill", async (req, res) => {
+    router38.post("/convert-to-refill", async (req, res) => {
       const { orderId, refillIntervalDays } = req.body;
       if (!orderId || !refillIntervalDays) {
         return res.status(400).json({ error: "orderId and refillIntervalDays are required" });
@@ -72438,7 +73794,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router37.post("/:id/fulfill", async (req, res) => {
+    router38.post("/:id/fulfill", async (req, res) => {
       const { id } = req.params;
       const { invoiceNo, grandTotal, sendWhatsApp } = req.body;
       try {
@@ -72473,7 +73829,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to fulfill order: " + (err.message || "Unknown error") });
       }
     });
-    router37.post("/:id/mark-delivered", async (req, res) => {
+    router38.post("/:id/mark-delivered", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -72485,7 +73841,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to mark order delivered: " + (err.message || "Unknown error") });
       }
     });
-    router37.post("/:id/return-override", async (req, res) => {
+    router38.post("/:id/return-override", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         const { override_by = "Pharmacist", reason = "Customer accommodation" } = req.body;
@@ -72498,7 +73854,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to apply return override: " + (err.message || "Unknown error") });
       }
     });
-    router37.get("/:id/return-status", async (req, res) => {
+    router38.get("/:id/return-status", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         if (isNaN(orderId)) return res.status(400).json({ error: "Invalid order ID" });
@@ -72512,7 +73868,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to evaluate return status" });
       }
     });
-    router37.post("/:id/delivery-override", async (req, res) => {
+    router38.post("/:id/delivery-override", async (req, res) => {
       try {
         const orderId = parseInt(req.params.id, 10);
         const {
@@ -72541,7 +73897,7 @@ var init_orders = __esm({
         res.status(500).json({ error: "Failed to override delivery schedule: " + (err.message || "Unknown error") });
       }
     });
-    orders_default = router37;
+    orders_default = router38;
   }
 });
 
@@ -72550,15 +73906,15 @@ var quickAssistant_exports = {};
 __export(quickAssistant_exports, {
   default: () => quickAssistant_default
 });
-var import_express38, router38, quickAssistant_default;
+var import_express39, router39, quickAssistant_default;
 var init_quickAssistant = __esm({
   "src/routes/quickAssistant.ts"() {
     "use strict";
-    import_express38 = __toESM(require("express"), 1);
+    import_express39 = __toESM(require("express"), 1);
     init_connection();
     init_storeContextService();
-    router38 = import_express38.default.Router();
-    router38.get("/", async (req, res) => {
+    router39 = import_express39.default.Router();
+    router39.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const storeId = resolveStoreId(req);
@@ -72637,7 +73993,7 @@ var init_quickAssistant = __esm({
         res.status(500).json({ error: "Failed to fetch quick assistant summary" });
       }
     });
-    quickAssistant_default = router38;
+    quickAssistant_default = router39;
   }
 });
 
@@ -72706,11 +74062,11 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express39, import_path60, import_url44, import_fs56, __filename42, __dirname42, DB_PATH28, router39, expiry_default;
+var import_express40, import_path60, import_url44, import_fs56, __filename42, __dirname42, DB_PATH28, router40, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
-    import_express39 = __toESM(require("express"), 1);
+    import_express40 = __toESM(require("express"), 1);
     init_connection();
     import_path60 = __toESM(require("path"), 1);
     import_url44 = require("url");
@@ -72720,8 +74076,8 @@ var init_expiry = __esm({
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
     __dirname42 = import_path60.default.dirname(__filename42);
     DB_PATH28 = process.env.DB_PATH || import_path60.default.resolve(__dirname42, "..", "..", "data", "app.db");
-    router39 = import_express39.default.Router();
-    router39.get("/", async (req, res) => {
+    router40 = import_express40.default.Router();
+    router40.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
@@ -72779,7 +74135,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router39.get("/export", async (req, res) => {
+    router40.get("/export", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
       let date_to = req.query.date_to;
       if (!date_to) {
@@ -72863,7 +74219,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to generate report" });
       }
     });
-    router39.post("/create-return", async (req, res) => {
+    router40.post("/create-return", async (req, res) => {
       const { inventory_id, quantity, loss_percentage } = req.body;
       if (!inventory_id || !quantity) {
         return res.status(400).json({ error: "inventory_id and quantity are required" });
@@ -72950,7 +74306,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router39.post("/send-alerts", async (req, res) => {
+    router40.post("/send-alerts", async (req, res) => {
       const { phone, days } = req.body;
       const targetDays = days ? parseInt(days, 10) : 90;
       try {
@@ -73009,7 +74365,7 @@ var init_expiry = __esm({
         res.status(500).json({ error: "Failed to queue summary report alerts via WhatsApp" });
       }
     });
-    expiry_default = router39;
+    expiry_default = router40;
   }
 });
 
@@ -73018,19 +74374,19 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express40, import_path61, import_url45, __filename43, __dirname43, DB_PATH29, router40, compliance_default;
+var import_express41, import_path61, import_url45, __filename43, __dirname43, DB_PATH29, router41, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
-    import_express40 = __toESM(require("express"), 1);
+    import_express41 = __toESM(require("express"), 1);
     init_connection();
     import_path61 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
     __dirname43 = import_path61.default.dirname(__filename43);
     DB_PATH29 = process.env.DB_PATH || import_path61.default.resolve(__dirname43, "..", "..", "data", "app.db");
-    router40 = import_express40.default.Router();
-    router40.get("/", async (_req, res) => {
+    router41 = import_express41.default.Router();
+    router41.get("/", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const expiredCount = await db2.get(`
@@ -73054,7 +74410,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.post("/add", async (req, res) => {
+    router41.post("/add", async (req, res) => {
       const { date, product, patient_id, doctor_id, license_no, qty, bill_no } = req.body;
       if (!date || !product) return res.status(400).json({ error: "Missing required fields" });
       try {
@@ -73069,7 +74425,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.post("/add-schedule-h1", async (req, res) => {
+    router41.post("/add-schedule-h1", async (req, res) => {
       const { drug_name, patient_name, doctor_name, date, license_no, qty, bill_no } = req.body;
       if (!drug_name || !patient_name || !doctor_name) {
         return res.status(400).json({ error: "Missing required fields: drug_name, patient_name, doctor_name" });
@@ -73087,7 +74443,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.get("/dashboard", async (_req, res) => {
+    router41.get("/dashboard", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
@@ -73126,7 +74482,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Failed to load compliance dashboard metrics" });
       }
     });
-    router40.get("/h1-register", async (req, res) => {
+    router41.get("/h1-register", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { startDate, endDate, search, doctor, scheduleType } = req.query;
@@ -73161,7 +74517,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.put("/:id/doctor", async (req, res) => {
+    router41.put("/:id/doctor", async (req, res) => {
       const { id } = req.params;
       const { doctor_name, license_no } = req.body;
       if (!doctor_name) {
@@ -73191,7 +74547,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router40.get("/export", async (req, res) => {
+    router41.get("/export", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT date, drug_name, patient_name, doctor_name, license_no, qty, bill_no, schedule_type FROM compliance_logs ORDER BY id DESC");
@@ -73218,7 +74574,7 @@ var init_compliance = __esm({
         res.status(500).json({ error: "Export failed" });
       }
     });
-    compliance_default = router40;
+    compliance_default = router41;
   }
 });
 
@@ -73391,14 +74747,14 @@ function mergeMetadata(existingJson, patch) {
   }
   return JSON.stringify({ ...existing, ...patch });
 }
-var import_express41, router41, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
+var import_express42, router42, VALID_TYPES, MAX_LIMIT2, STOCK_JOIN, VALID_SAVE_TYPES, scheduleDrugs_default;
 var init_scheduleDrugs = __esm({
   "src/routes/scheduleDrugs.ts"() {
     "use strict";
-    import_express41 = __toESM(require("express"), 1);
+    import_express42 = __toESM(require("express"), 1);
     init_connection();
     init_scheduleResearchService();
-    router41 = import_express41.default.Router();
+    router42 = import_express42.default.Router();
     VALID_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
     MAX_LIMIT2 = 100;
     STOCK_JOIN = `
@@ -73408,7 +74764,7 @@ var init_scheduleDrugs = __esm({
     WHERE is_active = 1
     GROUP BY medicine_id
   ) inv ON inv.medicine_id = m.id`;
-    router41.get("/summary", async (_req, res) => {
+    router42.get("/summary", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -73429,7 +74785,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule summary" });
       }
     });
-    router41.get("/", async (req, res) => {
+    router42.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const type = normalizeType(String(req.query.type || ""));
@@ -73482,7 +74838,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load schedule medicines" });
       }
     });
-    router41.get("/unclassified", async (req, res) => {
+    router42.get("/unclassified", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const q = String(req.query.q || "").trim();
@@ -73520,7 +74876,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to load unclassified medicines" });
       }
     });
-    router41.get("/research", async (req, res) => {
+    router42.get("/research", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.query.id || ""), 10);
@@ -73550,7 +74906,7 @@ var init_scheduleDrugs = __esm({
       }
     });
     VALID_SAVE_TYPES = /* @__PURE__ */ new Set(["H1", "H", "X"]);
-    router41.post("/classify", async (req, res) => {
+    router42.post("/classify", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const id = parseInt(String(req.body?.id || ""), 10);
@@ -73580,7 +74936,7 @@ var init_scheduleDrugs = __esm({
         res.status(500).json({ error: "Failed to save classification" });
       }
     });
-    scheduleDrugs_default = router41;
+    scheduleDrugs_default = router42;
   }
 });
 
@@ -73589,14 +74945,14 @@ var emailOrderReviews_exports = {};
 __export(emailOrderReviews_exports, {
   default: () => emailOrderReviews_default
 });
-var import_express42, router42, emailOrderReviews_default;
+var import_express43, router43, emailOrderReviews_default;
 var init_emailOrderReviews = __esm({
   "src/routes/emailOrderReviews.ts"() {
     "use strict";
-    import_express42 = __toESM(require("express"), 1);
+    import_express43 = __toESM(require("express"), 1);
     init_connection();
-    router42 = import_express42.default.Router();
-    router42.get("/", async (req, res) => {
+    router43 = import_express43.default.Router();
+    router43.get("/", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { status } = req.query;
@@ -73615,7 +74971,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router42.post("/:id/dismiss", async (req, res) => {
+    router43.post("/:id/dismiss", async (req, res) => {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) {
         return res.status(400).json({ error: "Invalid review id" });
@@ -73635,7 +74991,7 @@ var init_emailOrderReviews = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    emailOrderReviews_default = router42;
+    emailOrderReviews_default = router43;
   }
 });
 
@@ -73645,12 +75001,12 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express43, import_crypto9, import_path62, import_fs57, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router43, upload_default;
+var import_express44, import_crypto10, import_path62, import_fs57, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router44, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
-    import_express43 = __toESM(require("express"), 1);
-    import_crypto9 = __toESM(require("crypto"), 1);
+    import_express44 = __toESM(require("express"), 1);
+    import_crypto10 = __toESM(require("crypto"), 1);
     import_path62 = __toESM(require("path"), 1);
     import_fs57 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
@@ -73679,7 +75035,7 @@ var init_upload = __esm({
       },
       filename: (_req, file, cb) => {
         const sanitized = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-        cb(null, Date.now() + "-" + import_crypto9.default.randomBytes(4).toString("hex") + "-" + sanitized);
+        cb(null, Date.now() + "-" + import_crypto10.default.randomBytes(4).toString("hex") + "-" + sanitized);
       }
     });
     upload3 = (0, import_multer3.default)({
@@ -73693,8 +75049,8 @@ var init_upload = __esm({
         }
       }
     });
-    router43 = import_express43.default.Router();
-    router43.post("/upload", upload3.single("file"), async (req, res) => {
+    router44 = import_express44.default.Router();
+    router44.post("/upload", upload3.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -73736,7 +75092,7 @@ var init_upload = __esm({
         res.status(500).json({ error: error.message || "Internal server error during upload" });
       }
     });
-    upload_default = router43;
+    upload_default = router44;
   }
 });
 
@@ -73745,15 +75101,15 @@ var catalogImages_exports = {};
 __export(catalogImages_exports, {
   default: () => catalogImages_default
 });
-var import_express44, router44, catalogImages_default;
+var import_express45, router45, catalogImages_default;
 var init_catalogImages = __esm({
   "src/routes/catalogImages.ts"() {
     "use strict";
-    import_express44 = __toESM(require("express"), 1);
+    import_express45 = __toESM(require("express"), 1);
     init_catalogImageService();
     init_connection();
-    router44 = import_express44.default.Router();
-    router44.get("/", async (req, res) => {
+    router45 = import_express45.default.Router();
+    router45.get("/", async (req, res) => {
       try {
         const status = typeof req.query.status === "string" ? req.query.status : void 0;
         const search = typeof req.query.search === "string" ? req.query.search : void 0;
@@ -73778,7 +75134,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch catalog images" });
       }
     });
-    router44.get("/counts", async (req, res) => {
+    router45.get("/counts", async (req, res) => {
       try {
         const counts = await catalogImageService.getCounts();
         res.json({
@@ -73790,7 +75146,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch counts" });
       }
     });
-    router44.get("/queue", async (req, res) => {
+    router45.get("/queue", async (req, res) => {
       try {
         const category = typeof req.query.category === "string" ? req.query.category : void 0;
         const search = typeof req.query.search === "string" ? req.query.search : void 0;
@@ -73813,7 +75169,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch correction queue" });
       }
     });
-    router44.get("/stats", async (req, res) => {
+    router45.get("/stats", async (req, res) => {
       try {
         const stats = await catalogImageService.getCorrectionStats();
         res.json({
@@ -73825,7 +75181,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch correction stats" });
       }
     });
-    router44.get("/:id", async (req, res) => {
+    router45.get("/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -73859,7 +75215,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch image details" });
       }
     });
-    router44.post("/:id/approve", async (req, res) => {
+    router45.post("/:id/approve", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const verifiedBy = req.body?.verified_by || "pharmacist";
@@ -73901,7 +75257,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to approve image" });
       }
     });
-    router44.post("/:id/reject", async (req, res) => {
+    router45.post("/:id/reject", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const reason = req.body?.reason || "Incorrect product image";
@@ -73919,7 +75275,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to reject image" });
       }
     });
-    router44.post("/:id/remove", async (req, res) => {
+    router45.post("/:id/remove", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const verifiedBy = req.body?.verified_by || "pharmacist";
@@ -73936,7 +75292,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to remove image" });
       }
     });
-    router44.post("/:id/replace", async (req, res) => {
+    router45.post("/:id/replace", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const { new_image_path, source_url, verified_by } = req.body;
@@ -73962,7 +75318,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
       }
     });
-    router44.post("/:id/redownload", async (req, res) => {
+    router45.post("/:id/redownload", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -73990,7 +75346,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to re-download image" });
       }
     });
-    router44.post("/sync-state", async (req, res) => {
+    router45.post("/sync-state", async (req, res) => {
       try {
         const result = await catalogImageService.syncExistingDownloadedImages();
         res.json({
@@ -74002,7 +75358,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to sync image state" });
       }
     });
-    router44.post("/audit", async (req, res) => {
+    router45.post("/audit", async (req, res) => {
       try {
         const report = await catalogImageService.auditImageHealth();
         res.json({
@@ -74014,7 +75370,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to audit images" });
       }
     });
-    router44.post("/auto-approve", async (req, res) => {
+    router45.post("/auto-approve", async (req, res) => {
       try {
         const result = await catalogImageService.autoApproveHighConfidence();
         res.json({
@@ -74027,7 +75383,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to auto-approve images" });
       }
     });
-    router44.post("/scan-local", async (req, res) => {
+    router45.post("/scan-local", async (req, res) => {
       try {
         const result = await catalogImageService.scanAndAutoMatchLocalImages();
         res.json({
@@ -74040,7 +75396,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to scan local images" });
       }
     });
-    router44.post("/cleanup", async (req, res) => {
+    router45.post("/cleanup", async (req, res) => {
       try {
         const { purgeRejected, purgeMissingFiles, purgeOrphans } = req.body || {};
         const result = await catalogImageService.cleanStaleAndRejectedImages({
@@ -74058,7 +75414,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to clean up images" });
       }
     });
-    router44.post("/audit-fix", async (req, res) => {
+    router45.post("/audit-fix", async (req, res) => {
       try {
         const result = await catalogImageService.auditAndDeactivateMismatchedImages();
         res.json({
@@ -74071,7 +75427,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to audit and fix mismatches" });
       }
     });
-    router44.post("/repair-missing", async (req, res) => {
+    router45.post("/repair-missing", async (req, res) => {
       try {
         const limit = req.body?.limit ? parseInt(String(req.body.limit), 10) : 50;
         const result = await catalogImageService.repairMissingImages(limit);
@@ -74085,7 +75441,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to repair missing images" });
       }
     });
-    router44.post("/:id/correct", async (req, res) => {
+    router45.post("/:id/correct", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const verifiedBy = req.body?.verified_by || "admin";
@@ -74099,7 +75455,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to mark correct" });
       }
     });
-    router44.post("/:id/incorrect", async (req, res) => {
+    router45.post("/:id/incorrect", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const reason = req.body?.reason || "Incorrect image";
@@ -74113,7 +75469,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to mark incorrect" });
       }
     });
-    router44.post("/:id/skip", async (req, res) => {
+    router45.post("/:id/skip", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const hours = parseInt(String(req.body?.hours || 24), 10);
@@ -74127,7 +75483,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to skip image" });
       }
     });
-    router44.post("/:id/search-candidates", async (req, res) => {
+    router45.post("/:id/search-candidates", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -74142,7 +75498,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to search candidate images" });
       }
     });
-    router44.post("/:id/replace-candidate", async (req, res) => {
+    router45.post("/:id/replace-candidate", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const { candidate_url, candidate_title, verified_by, image_type, is_primary, keep_existing } = req.body;
@@ -74165,7 +75521,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
       }
     });
-    router44.post("/medicine/:medicineId/approve-all", async (req, res) => {
+    router45.post("/medicine/:medicineId/approve-all", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
         if (!medicineId) return res.status(400).json({ success: false, error: "Invalid medicineId" });
@@ -74177,7 +75533,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to bulk approve" });
       }
     });
-    router44.post("/medicine/:medicineId/reject-all", async (req, res) => {
+    router45.post("/medicine/:medicineId/reject-all", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
         if (!medicineId) return res.status(400).json({ success: false, error: "Invalid medicineId" });
@@ -74190,7 +75546,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to bulk reject" });
       }
     });
-    router44.get("/medicine/:medicineId/gallery", async (req, res) => {
+    router45.get("/medicine/:medicineId/gallery", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
         const images = await catalogImageService.getMedicineGallery(medicineId);
@@ -74200,7 +75556,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch gallery" });
       }
     });
-    router44.post("/:id/reopen", async (req, res) => {
+    router45.post("/:id/reopen", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const verifiedBy = req.body?.verified_by || "admin";
@@ -74212,7 +75568,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to reopen image" });
       }
     });
-    router44.get("/:id/history", async (req, res) => {
+    router45.get("/:id/history", async (req, res) => {
       try {
         const id = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -74225,7 +75581,7 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch history" });
       }
     });
-    catalogImages_default = router44;
+    catalogImages_default = router45;
   }
 });
 
@@ -74234,16 +75590,16 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express45, import_fs58, router45, catalog_default;
+var import_express46, import_fs58, router46, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
-    import_express45 = __toESM(require("express"), 1);
+    import_express46 = __toESM(require("express"), 1);
     import_fs58 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
-    router45 = import_express45.default.Router();
-    router45.get("/catalog/job/:id", async (req, res) => {
+    router46 = import_express46.default.Router();
+    router46.get("/catalog/job/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const job = await db2.get(`SELECT * FROM catalog_jobs WHERE id = ?`, req.params.id);
@@ -74291,7 +75647,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error fetching job" });
       }
     });
-    router45.post("/catalog/job/:id/pause", async (req, res) => {
+    router46.post("/catalog/job/:id/pause", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -74322,7 +75678,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error pausing job" });
       }
     });
-    router45.post("/catalog/job/:id/resume", async (req, res) => {
+    router46.post("/catalog/job/:id/resume", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -74358,7 +75714,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error resuming job" });
       }
     });
-    router45.post("/catalog/import-job/:id", async (req, res) => {
+    router46.post("/catalog/import-job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const { mappings, filters } = req.body;
@@ -74395,7 +75751,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router45.post("/catalog/import", async (req, res) => {
+    router46.post("/catalog/import", async (req, res) => {
       const { medicines } = req.body;
       if (!Array.isArray(medicines)) {
         return res.status(400).json({ error: "Invalid payload, expected array of medicines" });
@@ -74425,7 +75781,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error during import" });
       }
     });
-    router45.get("/jobs", async (req, res) => {
+    router46.get("/jobs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const jobs = await db2.all("SELECT * FROM catalog_jobs ORDER BY created_at DESC LIMIT 1000");
@@ -74437,7 +75793,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router45.delete("/catalog/job/:id", async (req, res) => {
+    router46.delete("/catalog/job/:id", async (req, res) => {
       try {
         const jobId = parseInt(req.params.id, 10);
         const db2 = await dbManager.getConnection();
@@ -74461,7 +75817,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: "Internal server error deleting job" });
       }
     });
-    router45.get("/catalog/reviews/pending", async (req, res) => {
+    router46.get("/catalog/reviews/pending", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const source = req.query.source || "whatsapp";
@@ -74493,7 +75849,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router45.get("/catalog/job/:id/reviews", async (req, res) => {
+    router46.get("/catalog/job/:id/reviews", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const reviews = await db2.all(
@@ -74524,7 +75880,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router45.post("/catalog/review/:id/approve", async (req, res) => {
+    router46.post("/catalog/review/:id/approve", async (req, res) => {
       const { approvedData } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -74624,7 +75980,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router45.post("/catalog/review/:id/reject", async (req, res) => {
+    router46.post("/catalog/review/:id/reject", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run(
@@ -74645,7 +76001,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router45.post("/catalog/review/:id/enrich", async (req, res) => {
+    router46.post("/catalog/review/:id/enrich", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const review = await db2.get("SELECT * FROM staged_medicine_reviews WHERE id = ?", req.params.id);
@@ -74695,7 +76051,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router45.get("/catalog/search-status", async (req, res) => {
+    router46.get("/catalog/search-status", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const limitRow = await db2.get("SELECT value FROM app_settings WHERE key = 'google_search_daily_limit'");
@@ -74711,7 +76067,7 @@ var init_catalog = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    catalog_default = router45;
+    catalog_default = router46;
   }
 });
 
@@ -74720,16 +76076,16 @@ var medicines_exports = {};
 __export(medicines_exports, {
   default: () => medicines_default
 });
-var import_express46, router46, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
+var import_express47, router47, normalizeNumericSearch2, handleOnlineSearch, handleAutoEnrich, medicines_default;
 var init_medicines = __esm({
   "src/routes/medicines.ts"() {
     "use strict";
-    import_express46 = __toESM(require("express"), 1);
+    import_express47 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
     init_packaging();
     init_nameNormalizer();
-    router46 = import_express46.default.Router();
+    router47 = import_express47.default.Router();
     normalizeNumericSearch2 = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -74741,7 +76097,7 @@ var init_medicines = __esm({
       }
       return cleaned;
     };
-    router46.get("/medicines", async (req, res) => {
+    router47.get("/medicines", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 100;
@@ -74922,7 +76278,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.post("/medicines", async (req, res) => {
+    router47.post("/medicines", async (req, res) => {
       const {
         name,
         generic_name,
@@ -75018,7 +76374,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.post("/medicines/bulk-delete", async (req, res) => {
+    router47.post("/medicines/bulk-delete", async (req, res) => {
       const { ids, all, search, productName, mrpFilter, apiFilter, packagingFilter, distributorFilter, category } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -75105,7 +76461,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.delete("/medicines/:id", async (req, res) => {
+    router47.delete("/medicines/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -75159,8 +76515,8 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during online search" });
       }
     };
-    router46.get("/online-search", handleOnlineSearch);
-    router46.get("/medicines/online-search", handleOnlineSearch);
+    router47.get("/online-search", handleOnlineSearch);
+    router47.get("/medicines/online-search", handleOnlineSearch);
     handleAutoEnrich = async (req, res) => {
       const { name, api_reference, manufacturer } = req.body;
       if (!name || !name.trim()) {
@@ -75199,9 +76555,9 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error saving enrichment" });
       }
     };
-    router46.post("/auto-enrich", handleAutoEnrich);
-    router46.post("/medicines/auto-enrich", handleAutoEnrich);
-    router46.get("/manufacturers", async (req, res) => {
+    router47.post("/auto-enrich", handleAutoEnrich);
+    router47.post("/medicines/auto-enrich", handleAutoEnrich);
+    router47.get("/manufacturers", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -75234,7 +76590,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.get("/marketed-by", async (req, res) => {
+    router47.get("/marketed-by", async (req, res) => {
       let db2;
       try {
         const q = (req.query.q || "").trim();
@@ -75267,7 +76623,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.get("/medicines/compact", async (req, res) => {
+    router47.get("/medicines/compact", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const items = await inventoryCache.get(db2);
@@ -75279,7 +76635,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.get("/medicines/:id/quick-details", async (req, res) => {
+    router47.get("/medicines/:id/quick-details", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -75316,7 +76672,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.get("/medicines/:id/composition-intelligence", async (req, res) => {
+    router47.get("/medicines/:id/composition-intelligence", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -75439,7 +76795,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router46.post("/medicines/seed-master", async (req, res) => {
+    router47.post("/medicines/seed-master", async (req, res) => {
       try {
         const { seedMasterMedicines: seedMasterMedicines2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await seedMasterMedicines2(true);
@@ -75449,7 +76805,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to seed master medicines: " + error.message });
       }
     });
-    router46.post("/medicines/sync-from-inventory", async (req, res) => {
+    router47.post("/medicines/sync-from-inventory", async (req, res) => {
       try {
         const { syncInventoryToMaster: syncInventoryToMaster2 } = await Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports));
         const result = await syncInventoryToMaster2();
@@ -75459,7 +76815,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to sync inventory to master: " + error.message });
       }
     });
-    router46.put("/medicines/:id/quick-edit", async (req, res) => {
+    router47.put("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       const {
@@ -75679,7 +77035,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Internal server error during update" });
       }
     });
-    router46.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
+    router47.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
       try {
         const { id } = req.params;
         const { allow_loose_sale } = req.body;
@@ -75696,7 +77052,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
       }
     });
-    router46.post("/medicines/merge", async (req, res) => {
+    router47.post("/medicines/merge", async (req, res) => {
       const { primaryMedicineId, secondaryMedicineId, secondaryMedicineIds: rawSecondaryIds, distributorId, billName } = req.body;
       const secondaryIds = Array.isArray(rawSecondaryIds) ? rawSecondaryIds.map(Number).filter((n) => !isNaN(n) && n > 0) : secondaryMedicineId && !isNaN(Number(secondaryMedicineId)) && Number(secondaryMedicineId) > 0 ? [Number(secondaryMedicineId)] : [];
       if (!primaryMedicineId || isNaN(Number(primaryMedicineId)) || secondaryIds.length === 0) {
@@ -75819,7 +77175,7 @@ var init_medicines = __esm({
         res.status(500).json({ error: "Failed to merge medicines: " + error.message });
       }
     });
-    medicines_default = router46;
+    medicines_default = router47;
   }
 });
 
@@ -75828,11 +77184,11 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express47, import_fs59, import_path63, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router47, upload4, enrichment_default;
+var import_express48, import_fs59, import_path63, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router48, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
-    import_express47 = __toESM(require("express"), 1);
+    import_express48 = __toESM(require("express"), 1);
     import_fs59 = __toESM(require("fs"), 1);
     import_path63 = __toESM(require("path"), 1);
     import_url47 = require("url");
@@ -75845,9 +77201,9 @@ var init_enrichment = __esm({
     __dirname45 = import_path63.default.dirname(__filename45);
     DATA_DIR2 = import_path63.default.resolve(getAppDataDir(), "data");
     REFERENCE_CSV2 = import_path63.default.join(DATA_DIR2, "reference_medicines.csv");
-    router47 = import_express47.default.Router();
+    router48 = import_express48.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-    router47.get("/enrichment/status", async (_req, res) => {
+    router48.get("/enrichment/status", async (_req, res) => {
       try {
         const status = await getEnrichmentStatus();
         res.json(status);
@@ -75856,7 +77212,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/enrichment/start", async (_req, res) => {
+    router48.post("/enrichment/start", async (_req, res) => {
       try {
         if (getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is already running" });
@@ -75871,7 +77227,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/enrichment/stop", async (_req, res) => {
+    router48.post("/enrichment/stop", async (_req, res) => {
       try {
         if (!getEnrichmentRunningState()) {
           return res.status(409).json({ error: "Enrichment is not currently running" });
@@ -75883,7 +77239,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/enrichment/backfill-suggestions", async (_req, res) => {
+    router48.post("/enrichment/backfill-suggestions", async (_req, res) => {
       try {
         const result = await backfillSuggestedCompositions();
         res.json({ success: true, updated: result.updated });
@@ -75892,7 +77248,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
+    router48.post("/enrichment/reclassify-non-pharma", async (_req, res) => {
       try {
         const result = await reclassifyNonPharmaProducts();
         res.json({ success: true, updated: result.updated });
@@ -75901,7 +77257,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/reference/reload-from-disk", async (_req, res) => {
+    router48.post("/reference/reload-from-disk", async (_req, res) => {
       try {
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
@@ -75916,7 +77272,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/reference/import", upload4.single("file"), async (req, res) => {
+    router48.post("/reference/import", upload4.single("file"), async (req, res) => {
       try {
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
@@ -75940,7 +77296,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/enrichment/reference/export", async (_req, res) => {
+    router48.get("/enrichment/reference/export", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT name, composition1, composition2, manufacturer FROM medicine_reference ORDER BY name");
@@ -75961,7 +77317,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/enrichment/export", async (req, res) => {
+    router48.get("/enrichment/export", async (req, res) => {
       try {
         const status = req.query.status || "manual";
         const allowed = ["manual", "matched", "needs_review"];
@@ -75990,7 +77346,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/enrichment/queue", async (req, res) => {
+    router48.get("/enrichment/queue", async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -76020,7 +77376,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.put("/enrichment/queue/:id", async (req, res) => {
+    router48.put("/enrichment/queue/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         const { composition } = req.body;
@@ -76041,7 +77397,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.get("/enrichment/preview-tokens", (_req, res) => {
+    router48.get("/enrichment/preview-tokens", (_req, res) => {
       const rawName = (_req.query.name || "").trim();
       if (!rawName) {
         return res.status(400).json({ error: "name query param is required" });
@@ -76058,7 +77414,7 @@ var init_enrichment = __esm({
       const preview = tokens.filter((t) => t.included).map((t) => t.text.toUpperCase()).join(" ");
       res.json({ tokens, preview });
     });
-    router47.post("/enrichment/set-search-term", async (req, res) => {
+    router48.post("/enrichment/set-search-term", async (req, res) => {
       try {
         const id = parseInt(req.body.id);
         const searchTerm = (req.body.searchTerm || "").trim();
@@ -76079,7 +77435,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router47.post("/enrichment/trigger-online/:id", async (req, res) => {
+    router48.post("/enrichment/trigger-online/:id", async (req, res) => {
       try {
         const id = parseInt(req.params.id);
         if (!id) {
@@ -76105,7 +77461,7 @@ var init_enrichment = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    enrichment_default = router47;
+    enrichment_default = router48;
   }
 });
 
@@ -76118,16 +77474,16 @@ async function ensureContactsTable(_db) {
   if (contactsTableInitialized) return;
   contactsTableInitialized = true;
 }
-var import_express48, router48, contactsTableInitialized, contacts_default;
+var import_express49, router49, contactsTableInitialized, contacts_default;
 var init_contacts = __esm({
   "src/routes/contacts.ts"() {
     "use strict";
-    import_express48 = __toESM(require("express"), 1);
+    import_express49 = __toESM(require("express"), 1);
     init_connection();
     init_distributorSyncHelper();
-    router48 = import_express48.default.Router();
+    router49 = import_express49.default.Router();
     contactsTableInitialized = false;
-    router48.get("/", async (req, res) => {
+    router49.get("/", async (req, res) => {
       const { type, search } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -76151,7 +77507,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to fetch contacts" });
       }
     });
-    router48.post("/", async (req, res) => {
+    router49.post("/", async (req, res) => {
       const { name, type = "general", phone, email, address, gstin, notes } = req.body;
       if (!name || !name.trim()) {
         return res.status(400).json({ error: "Name is required" });
@@ -76223,7 +77579,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to save contact" });
       }
     });
-    router48.put("/:id", async (req, res) => {
+    router49.put("/:id", async (req, res) => {
       const { id } = req.params;
       const { name, type, phone, email, address, gstin, notes } = req.body;
       const cleanPhone = phone ? String(phone).replace(/\D/g, "") : "";
@@ -76279,7 +77635,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to update contact" });
       }
     });
-    router48.delete("/:id", async (req, res) => {
+    router49.delete("/:id", async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -76290,7 +77646,7 @@ var init_contacts = __esm({
         res.status(500).json({ error: "Failed to delete contact" });
       }
     });
-    contacts_default = router48;
+    contacts_default = router49;
   }
 });
 
@@ -76430,11 +77786,11 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express49, import_fs60, router49, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express50, import_fs60, router50, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
-    import_express49 = __toESM(require("express"), 1);
+    import_express50 = __toESM(require("express"), 1);
     import_fs60 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
@@ -76444,7 +77800,7 @@ var init_distributors = __esm({
     init_nameNormalizer();
     init_distributorRecommendationService();
     init_storeContextService();
-    router49 = import_express49.default.Router();
+    router50 = import_express50.default.Router();
     getDistributorsHandler = async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
@@ -76454,9 +77810,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router49.get("/distributors", getDistributorsHandler);
-    router49.get("/", getDistributorsHandler);
-    router49.get("/pharmarack-list", async (_req, res) => {
+    router50.get("/distributors", getDistributorsHandler);
+    router50.get("/", getDistributorsHandler);
+    router50.get("/pharmarack-list", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM pharmarack_distributors ORDER BY store_name ASC LIMIT 1000");
@@ -76495,8 +77851,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router49.post("/distributors", postDistributorsHandler);
-    router49.post("/", postDistributorsHandler);
+    router50.post("/distributors", postDistributorsHandler);
+    router50.post("/", postDistributorsHandler);
     putDistributorHandler = async (req, res) => {
       const { id } = req.params;
       const { name, store_name, phone, contact, email, preferred_file_format, gstin, address, state_code } = req.body;
@@ -76527,8 +77883,8 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + error.message });
       }
     };
-    router49.put("/distributors/:id", putDistributorHandler);
-    router49.put("/:id", putDistributorHandler);
+    router50.put("/distributors/:id", putDistributorHandler);
+    router50.put("/:id", putDistributorHandler);
     deleteDistributorHandler = async (req, res) => {
       const { id } = req.params;
       try {
@@ -76563,9 +77919,9 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     };
-    router49.delete("/distributors/:id", deleteDistributorHandler);
-    router49.delete("/:id", deleteDistributorHandler);
-    router49.post("/purchases", async (req, res) => {
+    router50.delete("/distributors/:id", deleteDistributorHandler);
+    router50.delete("/:id", deleteDistributorHandler);
+    router50.post("/purchases", async (req, res) => {
       const { distributor, invoice_no, total_amount } = req.body;
       try {
         const cleanDist = (distributor || "").trim();
@@ -76588,7 +77944,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router49.post("/returns/reconcile-credit", async (req, res) => {
+    router50.post("/returns/reconcile-credit", async (req, res) => {
       const { distributor_id, actual_credit_amount, purchase_id } = req.body;
       if (!distributor_id || actual_credit_amount === void 0) {
         return res.status(400).json({ error: "distributor_id and actual_credit_amount are required" });
@@ -76602,7 +77958,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router49.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
+    router50.get(["/distributors/:id/pending-returns", "/:id/pending-returns"], async (req, res) => {
       const { id } = req.params;
       try {
         const db2 = await dbManager.getConnection();
@@ -76620,7 +77976,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router49.get(["/recommendations", "/distributors/recommendations"], async (req, res) => {
+    router50.get(["/recommendations", "/distributors/recommendations"], async (req, res) => {
       try {
         const medicineId = req.query.medicine_id ? parseInt(req.query.medicine_id, 10) : void 0;
         const medicineName = req.query.medicine_name || "";
@@ -76638,7 +77994,7 @@ var init_distributors = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    distributors_default = router49;
+    distributors_default = router50;
   }
 });
 
@@ -76772,20 +78128,20 @@ async function checkDeviceConnections() {
     console.error("Error during periodic device monitoring:", err);
   }
 }
-var import_express50, import_qrcode5, import_os, router50, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
+var import_express51, import_qrcode5, import_os2, router51, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
 var init_notifications2 = __esm({
   "src/routes/notifications.ts"() {
     "use strict";
-    import_express50 = __toESM(require("express"), 1);
+    import_express51 = __toESM(require("express"), 1);
     init_eventService();
     init_connection();
     import_qrcode5 = __toESM(require("qrcode"), 1);
-    import_os = __toESM(require("os"), 1);
+    import_os2 = __toESM(require("os"), 1);
     init_config();
-    router50 = import_express50.default.Router();
-    router50.get("/notifications/connection-info", async (req, res) => {
+    router51 = import_express51.default.Router();
+    router51.get("/notifications/connection-info", async (req, res) => {
       try {
-        const interfaces = import_os.default.networkInterfaces();
+        const interfaces = import_os2.default.networkInterfaces();
         const ips = [];
         for (const interfaceName of Object.keys(interfaces)) {
           const addresses = interfaces[interfaceName];
@@ -76816,7 +78172,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to generate connection info: " + err.message });
       }
     });
-    router50.get("/notifications/download-apk", (req, res) => {
+    router51.get("/notifications/download-apk", (req, res) => {
       const fs62 = require("fs");
       const path65 = require("path");
       const candidatePaths = [
@@ -76835,7 +78191,7 @@ var init_notifications2 = __esm({
         message: "Place pharmacy-mobile.apk inside the data/ folder to enable direct mobile APK downloads."
       });
     });
-    router50.get("/notifications/stream", (req, res) => {
+    router51.get("/notifications/stream", (req, res) => {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
@@ -76864,7 +78220,7 @@ var init_notifications2 = __esm({
     deviceOnlineStateCache = /* @__PURE__ */ new Map();
     blockedNoticeAt = /* @__PURE__ */ new Map();
     deviceUuidColumnReady = false;
-    router50.post("/notifications/register-token", async (req, res) => {
+    router51.post("/notifications/register-token", async (req, res) => {
       const { token, deviceName, os: os2, device_uuid } = req.body;
       if (!token) {
         return res.status(400).json({ error: "Token is required" });
@@ -76947,7 +78303,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to register token: " + err.message });
       }
     });
-    router50.get("/notifications/devices", async (req, res) => {
+    router51.get("/notifications/devices", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await ensureDeviceUuidColumn(db2);
@@ -76983,7 +78339,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get devices: " + err.message });
       }
     });
-    router50.put("/notifications/devices/:token/block", async (req, res) => {
+    router51.put("/notifications/devices/:token/block", async (req, res) => {
       const { token } = req.params;
       const { blocked } = req.body;
       if (typeof blocked !== "boolean") {
@@ -77017,7 +78373,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to update block state: " + err.message });
       }
     });
-    router50.patch("/notifications/devices/:token/rename", async (req, res) => {
+    router51.patch("/notifications/devices/:token/rename", async (req, res) => {
       const { token } = req.params;
       const { name } = req.body;
       if (!name || !name.trim()) {
@@ -77032,7 +78388,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to rename device: " + err.message });
       }
     });
-    router50.get("/notifications/devices/logs", async (req, res) => {
+    router51.get("/notifications/devices/logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM device_connection_logs ORDER BY timestamp DESC LIMIT 150");
@@ -77042,7 +78398,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router50.post("/notifications/devices/logs/clear", async (req, res) => {
+    router51.post("/notifications/devices/logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM device_connection_logs");
@@ -77052,7 +78408,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router50.get("/notifications/action-logs", async (req, res) => {
+    router51.get("/notifications/action-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { category, status, search, limit = "250", offset = "0" } = req.query;
@@ -77098,7 +78454,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to fetch logs: " + err.message });
       }
     });
-    router50.post("/notifications/action-logs/clear", async (req, res) => {
+    router51.post("/notifications/action-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM action_logs");
@@ -77108,7 +78464,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to clear logs: " + err.message });
       }
     });
-    router50.delete("/notifications/action-logs/:id", async (req, res) => {
+    router51.delete("/notifications/action-logs/:id", async (req, res) => {
       const { id } = req.params;
       const numId = parseInt(id, 10);
       if (isNaN(numId)) {
@@ -77123,7 +78479,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to delete action log: " + err.message });
       }
     });
-    router50.post("/notifications/chat-logs", async (req, res) => {
+    router51.post("/notifications/chat-logs", async (req, res) => {
       const { sessionId, deviceName, sender, messageText, metadata } = req.body;
       if (!sessionId || !sender || !messageText) {
         return res.status(400).json({ error: "sessionId, sender and messageText are required" });
@@ -77172,7 +78528,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to save assistant chat log: " + err.message });
       }
     });
-    router50.get("/notifications/chat-logs", async (req, res) => {
+    router51.get("/notifications/chat-logs", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT * FROM assistant_chat_logs ORDER BY created_at ASC LIMIT 1000");
@@ -77182,7 +78538,7 @@ var init_notifications2 = __esm({
         res.status(500).json({ error: "Failed to get assistant chat logs: " + err.message });
       }
     });
-    router50.post("/notifications/chat-logs/clear", async (req, res) => {
+    router51.post("/notifications/chat-logs/clear", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("DELETE FROM assistant_chat_logs");
@@ -77213,7 +78569,7 @@ var init_notifications2 = __esm({
       checkDeviceConnections();
       tick();
     })();
-    notifications_default = router50;
+    notifications_default = router51;
   }
 });
 
@@ -77222,18 +78578,18 @@ var whatsappQueue_exports2 = {};
 __export(whatsappQueue_exports2, {
   default: () => whatsappQueue_default2
 });
-var import_express51, router51, whatsappQueue_default2;
+var import_express52, router52, whatsappQueue_default2;
 var init_whatsappQueue2 = __esm({
   "src/routes/whatsappQueue.ts"() {
     "use strict";
-    import_express51 = __toESM(require("express"), 1);
+    import_express52 = __toESM(require("express"), 1);
     init_whatsappQueueWorker();
     init_connection();
     init_whatsappClient();
     init_eventService();
     init_whatsappDeliveryRegister();
-    router51 = import_express51.default.Router();
-    router51.get("/status", async (_req, res) => {
+    router52 = import_express52.default.Router();
+    router52.get("/status", async (_req, res) => {
       try {
         const state = await whatsappQueueWorker.getWorkerState();
         res.json(state);
@@ -77242,7 +78598,7 @@ var init_whatsappQueue2 = __esm({
         res.status(500).json({ error: err?.message || "Failed to fetch queue status" });
       }
     });
-    router51.post("/enqueue-distributor-collection", async (req, res) => {
+    router52.post("/enqueue-distributor-collection", async (req, res) => {
       const { orderIds, deliveryBoyPhone, deliveryBoyName } = req.body;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ error: "orderIds array is required" });
@@ -77293,7 +78649,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue collection messages" });
       }
     });
-    router51.post("/enqueue-pharmarack-batch", async (req, res) => {
+    router52.post("/enqueue-pharmarack-batch", async (req, res) => {
       const { orders, deliveryBoyPhone, deliveryBoyName, storeInfo } = req.body;
       if (!orders || !Array.isArray(orders) || orders.length === 0) {
         return res.status(400).json({ error: "orders array is required" });
@@ -77436,7 +78792,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue Pharmarack batch orders" });
       }
     });
-    router51.post("/enqueue-single-distributor-order", async (req, res) => {
+    router52.post("/enqueue-single-distributor-order", async (req, res) => {
       const { storeId, storeName, phone, message, items } = req.body || {};
       if (!storeName || !phone || !message) {
         return res.status(400).json({ error: "storeName, phone, and message are required" });
@@ -77484,7 +78840,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue single distributor order" });
       }
     });
-    router51.post("/enqueue-single", async (req, res) => {
+    router52.post("/enqueue-single", async (req, res) => {
       const { number, message, type = "crm_notification", targetName, explicitScheduledAt } = req.body || {};
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
@@ -77512,7 +78868,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to enqueue WhatsApp message" });
       }
     });
-    router51.post("/flush", async (_req, res) => {
+    router52.post("/flush", async (_req, res) => {
       try {
         whatsappQueueWorker.triggerProcessing();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -77521,7 +78877,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to trigger queue processing" });
       }
     });
-    router51.post("/toggle-pause", async (_req, res) => {
+    router52.post("/toggle-pause", async (_req, res) => {
       try {
         const isPaused = whatsappQueueWorker.togglePaused();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -77530,7 +78886,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to toggle queue pause" });
       }
     });
-    router51.post("/pause", async (_req, res) => {
+    router52.post("/pause", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(true);
         const state = await whatsappQueueWorker.getWorkerState();
@@ -77539,7 +78895,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pause queue" });
       }
     });
-    router51.post("/resume", async (_req, res) => {
+    router52.post("/resume", async (_req, res) => {
       try {
         whatsappQueueWorker.setPaused(false);
         whatsappQueueWorker.triggerProcessing();
@@ -77549,7 +78905,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resume queue" });
       }
     });
-    router51.post("/retry-failed", async (_req, res) => {
+    router52.post("/retry-failed", async (_req, res) => {
       try {
         const retriedCount = await whatsappQueueWorker.retryAllFailed();
         res.json({ success: true, retriedCount, message: `Reset ${retriedCount} failed queue item(s) to pending` });
@@ -77557,7 +78913,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to retry failed items" });
       }
     });
-    router51.post("/items/:id/resend", async (req, res) => {
+    router52.post("/items/:id/resend", async (req, res) => {
       const id = Number(req.params.id);
       if (!id || isNaN(id)) {
         return res.status(400).json({ error: "Valid item id is required" });
@@ -77634,7 +78990,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to resend message" });
       }
     });
-    router51.post("/flush-next", async (_req, res) => {
+    router52.post("/flush-next", async (_req, res) => {
       try {
         const forced = await whatsappQueueWorker.forceNext();
         const state = await whatsappQueueWorker.getWorkerState();
@@ -77643,7 +78999,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to dispatch next item" });
       }
     });
-    router51.all("/pacing", async (req, res) => {
+    router52.all("/pacing", async (req, res) => {
       const { minSec, maxSec, preset } = req.body || {};
       try {
         if (preset === "turbo" || preset === "fast") {
@@ -77664,7 +79020,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update pacing" });
       }
     });
-    router51.put("/update-item", async (req, res) => {
+    router52.put("/update-item", async (req, res) => {
       const { id, number, message } = req.body;
       if (!id || !number) {
         return res.status(400).json({ error: "id and number are required" });
@@ -77679,7 +79035,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to update queue item" });
       }
     });
-    router51.all("/delete-item", async (req, res) => {
+    router52.all("/delete-item", async (req, res) => {
       const id = req.body?.id || req.query?.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -77691,7 +79047,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router51.delete("/item/:id", async (req, res) => {
+    router52.delete("/item/:id", async (req, res) => {
       const id = req.params.id;
       if (!id) {
         return res.status(400).json({ error: "id is required" });
@@ -77703,7 +79059,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to remove queue item" });
       }
     });
-    router51.post("/clear-failed", async (_req, res) => {
+    router52.post("/clear-failed", async (_req, res) => {
       try {
         const cleared = await whatsappQueueWorker.clearAllFailed();
         res.json({ success: true, clearedCount: cleared, message: `Permanently removed ${cleared} failed item(s)` });
@@ -77711,7 +79067,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to clear failed items" });
       }
     });
-    router51.post("/prewarm", async (_req, res) => {
+    router52.post("/prewarm", async (_req, res) => {
       try {
         const started = await whatsappQueueWorker.prewarm();
         res.json({ success: true, prewarmed: started });
@@ -77719,7 +79075,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to pre-warm WhatsApp" });
       }
     });
-    router51.get("/sent-register", async (req, res) => {
+    router52.get("/sent-register", async (req, res) => {
       try {
         const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 100;
         const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
@@ -77731,7 +79087,7 @@ ${order.items || "Standard Pharmacy Order"}
         res.status(500).json({ error: err?.message || "Failed to fetch sent register" });
       }
     });
-    whatsappQueue_default2 = router51;
+    whatsappQueue_default2 = router52;
   }
 });
 
@@ -78305,7 +79661,7 @@ function readAppVersion() {
 }
 function readBuildId() {
   try {
-    return (0, import_child_process8.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
+    return (0, import_child_process9.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
   } catch (_e) {
     return "unknown";
   }
@@ -78347,14 +79703,14 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs61, import_path64, import_url48, import_child_process8, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs61, import_path64, import_url48, import_child_process9, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
     import_fs61 = __toESM(require("fs"), 1);
     import_path64 = __toESM(require("path"), 1);
     import_url48 = require("url");
-    import_child_process8 = require("child_process");
+    import_child_process9 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
     __dirname46 = import_path64.default.dirname(__filename46);
@@ -78375,18 +79731,18 @@ async function logAudit(db2, report) {
   );
   return result.lastID;
 }
-var import_express52, router52, audit_default;
+var import_express53, router53, audit_default;
 var init_audit = __esm({
   "src/routes/audit.ts"() {
     "use strict";
-    import_express52 = __toESM(require("express"), 1);
+    import_express53 = __toESM(require("express"), 1);
     init_connection();
     init_auditEngine();
     init_auditLoggerService();
     init_storeContextService();
     init_eventService();
-    router52 = import_express52.default.Router();
-    router52.post("/run", async (_req, res) => {
+    router53 = import_express53.default.Router();
+    router53.post("/run", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const report = await runAudit(db2);
@@ -78401,7 +79757,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router52.get("/latest", async (_req, res) => {
+    router53.get("/latest", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -78414,7 +79770,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router52.get("/history", async (_req, res) => {
+    router53.get("/history", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(
@@ -78437,7 +79793,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router52.get("/mutations", async (req, res) => {
+    router53.get("/mutations", async (req, res) => {
       try {
         const storeId = req.query.all_stores === "true" ? void 0 : resolveStoreId(req);
         const userId = req.query.user_id ? Number(req.query.user_id) : void 0;
@@ -78461,7 +79817,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router52.get("/:id", async (req, res) => {
+    router53.get("/:id", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const row = await db2.get(
@@ -78475,7 +79831,7 @@ var init_audit = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    audit_default = router52;
+    audit_default = router53;
   }
 });
 
@@ -78484,16 +79840,16 @@ var medicineAvailability_exports = {};
 __export(medicineAvailability_exports, {
   default: () => medicineAvailability_default
 });
-var import_express53, router53, medicineAvailability_default;
+var import_express54, router54, medicineAvailability_default;
 var init_medicineAvailability = __esm({
   "src/routes/medicineAvailability.ts"() {
     "use strict";
-    import_express53 = __toESM(require("express"), 1);
+    import_express54 = __toESM(require("express"), 1);
     init_medicineAvailabilityEngine();
     init_stockCalculatorWorker();
     init_substituteCacheWorker();
-    router53 = import_express53.default.Router();
-    router53.get("/medicines/availability", async (req, res) => {
+    router54 = import_express54.default.Router();
+    router54.get("/medicines/availability", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -78513,7 +79869,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.get("/medicines/search-full", async (req, res) => {
+    router54.get("/medicines/search-full", async (req, res) => {
       try {
         const query = req.query.query || "";
         const mode = req.query.mode || "POS";
@@ -78535,7 +79891,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.get("/medicines/substitutes/:medicineId", async (req, res) => {
+    router54.get("/medicines/substitutes/:medicineId", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId);
         if (isNaN(medicineId)) {
@@ -78553,7 +79909,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.get("/medicines/emergency-stock", async (req, res) => {
+    router54.get("/medicines/emergency-stock", async (req, res) => {
       try {
         const categories = req.query.categories?.split(",") || [
           "Injured soldiers medicaments",
@@ -78567,7 +79923,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.post("/medicines/learn-correction", async (req, res) => {
+    router54.post("/medicines/learn-correction", async (req, res) => {
       try {
         const { originalQuery, correctedMedicineId, context } = req.body;
         if (!originalQuery || !correctedMedicineId) {
@@ -78584,7 +79940,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.post("/medicines/recalculate-stock", async (req, res) => {
+    router54.post("/medicines/recalculate-stock", async (req, res) => {
       try {
         await recalculateStockLimits();
         medicineAvailabilityEngine.refreshStockCache();
@@ -78594,7 +79950,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    router53.post("/medicines/rebuild-substitutes", async (req, res) => {
+    router54.post("/medicines/rebuild-substitutes", async (req, res) => {
       try {
         await precomputeSubstitutes();
         res.json({ success: true, message: "Substitutes rebuilt" });
@@ -78603,7 +79959,7 @@ var init_medicineAvailability = __esm({
         res.status(500).json({ error: error.message });
       }
     });
-    medicineAvailability_default = router53;
+    medicineAvailability_default = router54;
   }
 });
 
@@ -78829,21 +80185,21 @@ __export(server_exports, {
   extractMedicinesWithPython: () => extractMedicinesWithPython
 });
 function lazyRoute(loader, tier = "medium") {
-  let router54 = null;
+  let router55 = null;
   let loadPromise = null;
   const preload = () => {
-    if (router54) return Promise.resolve(router54);
+    if (router55) return Promise.resolve(router55);
     if (!loadPromise) {
       loadPromise = loader().then((m) => {
-        router54 = m.default;
-        return router54;
+        router55 = m.default;
+        return router55;
       });
     }
     return loadPromise;
   };
   registeredLazyRoutes.push({ preload, tier });
   return (req, res, next) => {
-    if (router54) return router54(req, res, next);
+    if (router55) return router55(req, res, next);
     preload().then((r) => r(req, res, next)).catch(next);
   };
 }
@@ -78878,7 +80234,7 @@ function extractMedicinesWithPython(messageText) {
     if (!import_fs62.default.existsSync(pythonExecutable) || !import_fs62.default.existsSync(scriptPath)) {
       return resolve([]);
     }
-    const pythonProcess = (0, import_child_process9.spawn)(pythonExecutable, [scriptPath, messageText]);
+    const pythonProcess = (0, import_child_process10.spawn)(pythonExecutable, [scriptPath, messageText]);
     let resultData = "";
     let errorData = "";
     let isSettled = false;
@@ -79012,6 +80368,12 @@ async function gracefulShutdown(signal) {
     console.error("Error stopping worker supervisor:", err);
   }
   try {
+    const { destroyClient: destroyClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+    await destroyClient2();
+  } catch (waErr) {
+    console.error("Error destroying WhatsApp client:", waErr);
+  }
+  try {
     const { stopScispacySidecar: stopScispacySidecar2 } = await Promise.resolve().then(() => (init_scispacyClient(), scispacyClient_exports));
     stopScispacySidecar2();
   } catch (err) {
@@ -79029,23 +80391,34 @@ async function gracefulShutdown(signal) {
   } catch (browserErr) {
     console.error("Error closing app browser window:", browserErr);
   }
+  if (process.platform === "win32" && signal === "CLIENT_EXIT") {
+    try {
+      const pid = process.pid;
+      const { spawn: spawn5 } = await import("child_process");
+      spawn5("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], {
+        detached: true,
+        stdio: "ignore"
+      }).unref();
+    } catch (_) {
+    }
+  }
   process.exit(0);
 }
-var import_express54, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path65, import_child_process9, import_url49, import_fs62, import_axios3, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express55, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path65, import_child_process10, import_url49, import_fs62, import_axios4, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
     init_sqlitePatch();
-    import_express54 = __toESM(require("express"), 1);
+    import_express55 = __toESM(require("express"), 1);
     import_compression = __toESM(require("compression"), 1);
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
     import_path65 = __toESM(require("path"), 1);
-    import_child_process9 = require("child_process");
+    import_child_process10 = require("child_process");
     import_url49 = require("url");
     import_fs62 = __toESM(require("fs"), 1);
-    import_axios3 = __toESM(require("axios"), 1);
+    import_axios4 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
     init_connection();
@@ -79058,7 +80431,7 @@ var init_server = __esm({
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
     __dirname47 = import_path65.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
-    import_axios3.default.defaults.timeout = 2e4;
+    import_axios4.default.defaults.timeout = 2e4;
     schemaReady = false;
     BOOT_T0 = performance.now();
     bootWorkerFailures = 0;
@@ -79067,7 +80440,7 @@ var init_server = __esm({
     registerProcessGuardian();
     process.env.DISABLE_BACKGROUND_WORKERS = process.env.DISABLE_BACKGROUND_WORKERS || "false";
     process.env.DISABLE_SELF_HEALING_WORKERS = process.env.DISABLE_SELF_HEALING_WORKERS || "false";
-    app = (0, import_express54.default)();
+    app = (0, import_express55.default)();
     app.use((0, import_compression.default)());
     inFlightRequests = 0;
     app.use((req, res, next) => {
@@ -79148,18 +80521,18 @@ var init_server = __esm({
       },
       message: { error: "Too many requests, please try again later" }
     }));
-    app.use(import_express54.default.json({ limit: "15mb" }));
+    app.use(import_express55.default.json({ limit: "15mb" }));
     app.use((err, req, res, next) => {
       if (err instanceof SyntaxError && "status" in err && err.status === 400 && "body" in err) {
         return res.status(400).json({ success: false, error: "Invalid or malformed JSON payload" });
       }
       next(err);
     });
-    app.use("/uploads", import_express54.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express54.default.static(import_path65.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express54.default.static(import_path65.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express54.default.static(import_path65.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express54.default.static(import_path65.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/uploads", import_express55.default.static(UPLOAD_DIR2));
+    app.use("/products", import_express55.default.static(import_path65.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express55.default.static(import_path65.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express55.default.static(import_path65.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express55.default.static(import_path65.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -79199,6 +80572,7 @@ var init_server = __esm({
     app.use("/api/customer", lazyRoute(() => Promise.resolve().then(() => (init_customerRoutes(), customerRoutes_exports)), "hot"));
     app.use("/api/admin", lazyRoute(() => Promise.resolve().then(() => (init_adminRoutes(), adminRoutes_exports)), "hot"));
     app.use("/api/sync", lazyRoute(() => Promise.resolve().then(() => (init_sync(), sync_exports))));
+    app.use("/api/license", lazyRoute(() => Promise.resolve().then(() => (init_license(), license_exports)), "hot"));
     app.use("/api/sales", lazyRoute(() => Promise.resolve().then(() => (init_sales(), sales_exports)), "hot"));
     app.use("/api/inventory", lazyRoute(() => Promise.resolve().then(() => (init_inventory(), inventory_exports)), "hot"));
     app.use("/api/dashboard", lazyRoute(() => Promise.resolve().then(() => (init_dashboard(), dashboard_exports)), "hot"));
@@ -79235,7 +80609,7 @@ var init_server = __esm({
       import_path65.default.resolve(appDataDir2, "dist")
     ];
     frontendDist = frontendCandidates.find((dir) => import_fs62.default.existsSync(import_path65.default.join(dir, "index.html"))) || frontendCandidates[0];
-    app.use(import_express54.default.static(frontendDist, {
+    app.use(import_express55.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
         if (filePath.includes("assets") || /\.(js|css|woff2?)$/i.test(filePath)) {
@@ -79338,6 +80712,7 @@ var init_server = __esm({
         }).catch((seedErr) => console.warn("[Boot:Phase2] Bundled reference seed failed:", seedErr));
         console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
         Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
+        Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then((m) => m.autoUpdateService.start()).catch((err) => console.warn("[Boot:Phase2] Auto-update scheduler start failed:", err));
         try {
           const prevShutdown = await db2.get("SELECT value FROM app_settings WHERE key = 'last_clean_shutdown'");
           if (prevShutdown && prevShutdown.value === "false") {
