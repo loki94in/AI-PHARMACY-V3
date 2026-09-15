@@ -416,6 +416,29 @@
           </div>
         </div>
 
+        <!-- Custom Key Specification (Optional) -->
+        <div class="border border-gray-800 rounded-xl p-3 bg-gray-950/40 space-y-2">
+          <button type="button" onclick="toggleCustomKeyFields()" class="w-full flex items-center justify-between text-xs font-semibold text-gray-300 hover:text-white">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="sliders" class="w-3.5 h-3.5 text-emerald-400"></i>
+              Custom License ID & Key (Optional)
+            </span>
+            <span id="customKeyToggleIcon" class="text-[11px] text-emerald-400 font-mono">+ Customize</span>
+          </button>
+          <div id="customKeyFields" class="hidden space-y-2.5 pt-2 border-t border-gray-800/80">
+            <div>
+              <label class="block text-[11px] font-medium text-gray-400 mb-1">Custom License ID (leave blank to auto-generate)</label>
+              <input type="text" id="newCustomLicenseId" placeholder="e.g. PHARM-APOLLO-01"
+                class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white uppercase font-mono focus:outline-none focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-gray-400 mb-1">Custom License Key (leave blank to auto-generate)</label>
+              <input type="text" id="newCustomLicenseKey" placeholder="e.g. ABCD-1234-EFGH-5678"
+                class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white uppercase font-mono focus:outline-none focus:border-emerald-500">
+            </div>
+          </div>
+        </div>
+
         <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-md mt-2">
           Generate & Save License
         </button>
@@ -436,6 +459,77 @@
         </div>
         <p class="text-[10px] text-gray-400 italic">⚠️ Save the License Key now. It is shown once and hashed on the server.</p>
       </div>
+    </div>
+  </div>
+
+  <!-- ================= EDIT LICENSE MODAL ================= -->
+  <div id="editLicenseModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+    <div class="glass-panel p-5 sm:p-6 rounded-2xl max-w-lg w-full mx-auto shadow-2xl border border-emerald-500/20 space-y-4 max-h-[92vh] overflow-y-auto custom-scroll">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i data-lucide="edit-3" class="w-4 h-4 text-emerald-400"></i>
+          Edit License: <span id="editModalLicenseId" class="font-mono text-emerald-400"></span>
+        </h3>
+        <button onclick="closeEditModal()" class="p-1 text-gray-400 hover:text-white rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="editLicenseForm" onsubmit="handleUpdateLicense(event)" class="space-y-3.5">
+        <input type="hidden" id="editLicenseId">
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1">Pharmacy / Client Name *</label>
+          <input type="text" id="editPharmacyName" required placeholder="Pharmacy Name"
+            class="w-full px-3.5 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 mb-1">Notes / Counter Reference</label>
+          <input type="text" id="editNotes" placeholder="Notes"
+            class="w-full px-3.5 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 mb-1">Expiry Date</label>
+            <input type="date" id="editExpiresAt" required
+              class="w-full px-3.5 py-2 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 mb-1">License Status</label>
+            <select id="editStatus" class="w-full px-3.5 py-2 bg-gray-900 border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500">
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="revoked">Revoked</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center">
+          <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer select-none">
+            <input type="checkbox" id="editIsPilot" class="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 bg-gray-900">
+            <span>Pilot Tester Account</span>
+          </label>
+        </div>
+
+        <!-- Optional: Replace Key -->
+        <div class="border border-gray-800 rounded-xl p-3 bg-gray-950/40 space-y-1.5">
+          <label class="block text-[11px] font-semibold text-gray-400">
+            Rotate / Replace License Key (Optional)
+          </label>
+          <input type="text" id="editNewKey" placeholder="Leave blank to keep current key"
+            class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white uppercase font-mono focus:outline-none focus:border-emerald-500">
+          <p class="text-[10px] text-gray-500">Only fill this if you need to manually replace the secret activation key.</p>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2">
+          <button type="button" onclick="closeEditModal()" class="w-1/3 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-semibold transition-colors">
+            Cancel
+          </button>
+          <button type="submit" class="w-2/3 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-md">
+            Save Changes
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -598,15 +692,21 @@
             <td class="py-3 px-4 font-mono text-gray-300">${expiryStr}</td>
             <td class="py-3 px-4">${badge}</td>
             <td class="py-3 px-4">${pilotTag}</td>
-            <td class="py-3 px-4 text-right space-x-1.5">
+            <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+              <button onclick="openEditModal('${l.licenseId}')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[11px] font-semibold transition-all border border-gray-700" title="Edit details or key">
+                ✏️ Edit
+              </button>
               <button onclick="renewLicense('${l.licenseId}', 365)" class="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded text-[11px] font-bold transition-all border border-emerald-500/30">
-                🔄 Renew +1 Yr
+                🔄 Renew
               </button>
               ${l.machineId ? `
                 <button onclick="resetMachine('${l.licenseId}')" class="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[11px] transition-all" title="Unbind hardware ID if client changed PC">
                   Unbind
                 </button>
               ` : ''}
+              <button onclick="deleteLicense('${l.licenseId}', '${(l.pharmacyName || '').replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white rounded text-[11px] font-semibold transition-all border border-rose-500/20 hover:border-rose-600" title="Permanently delete this license from server">
+                🗑️ Delete
+              </button>
             </td>
           </tr>
         `;
@@ -658,20 +758,27 @@
             </div>
 
             <!-- Action Buttons for Mobile -->
-            <div class="flex items-center gap-2 pt-1">
+            <div class="flex items-center gap-1.5 pt-1">
+              <button onclick="openEditModal('${l.licenseId}')" class="px-2.5 py-2 bg-gray-900 border border-gray-700 hover:border-gray-600 text-gray-300 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1" title="Edit license">
+                <i data-lucide="edit-3" class="w-3.5 h-3.5 text-emerald-400"></i>
+                <span>Edit</span>
+              </button>
               <button onclick="renewLicense('${l.licenseId}', 365)" class="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600 active:scale-[0.98] text-emerald-300 hover:text-white rounded-lg text-xs font-bold transition-all border border-emerald-500/30 flex items-center justify-center gap-1.5">
                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-                <span>Renew +1 Yr</span>
+                <span>Renew</span>
               </button>
-              <button onclick="togglePilot('${l.licenseId}')" class="px-3 py-2 bg-gray-900 border border-gray-700 hover:border-gray-600 text-gray-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1">
+              <button onclick="togglePilot('${l.licenseId}')" class="px-2.5 py-2 bg-gray-900 border border-gray-700 hover:border-gray-600 text-gray-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1">
                 <i data-lucide="flask-conical" class="w-3.5 h-3.5 ${l.isPilot ? 'text-purple-400' : 'text-gray-500'}"></i>
-                <span>${l.isPilot ? 'Pilot On' : 'Set Pilot'}</span>
+                <span>${l.isPilot ? 'Pilot' : 'Set Pilot'}</span>
               </button>
               ${l.machineId ? `
                 <button onclick="resetMachine('${l.licenseId}')" class="px-2.5 py-2 bg-gray-900 border border-gray-700 hover:bg-rose-500/20 hover:text-rose-300 text-gray-400 rounded-lg text-xs transition-colors" title="Unbind Hardware">
                   <i data-lucide="unlock" class="w-3.5 h-3.5"></i>
                 </button>
               ` : ''}
+              <button onclick="deleteLicense('${l.licenseId}', '${(l.pharmacyName || '').replace(/'/g, "\\'")}')" class="px-2.5 py-2 bg-rose-500/10 border border-rose-500/30 hover:bg-rose-600 text-rose-400 hover:text-white rounded-lg text-xs transition-colors" title="Delete License">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
             </div>
           </div>
         `;
@@ -752,11 +859,46 @@
       }
     }
 
-    // Modal Controls
+    async function deleteLicense(licenseId, pharmacyName) {
+      const confirmPrompt = confirm(`⚠️ Are you sure you want to PERMANENTLY DELETE license ${licenseId} (${pharmacyName || 'Unnamed'})?\n\nThis will remove it from the cloud database and revoke software access.`);
+      if (!confirmPrompt) return;
+
+      const secret = getAdminSecret();
+      try {
+        const res = await fetch('/api/license/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({ licenseId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`🗑️ ${data.message || 'License deleted successfully'}`, 'success');
+          loadLicenses();
+        } else {
+          showToast(data.error || 'Failed to delete license', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Modal Controls & Custom Key Fields
+    function toggleCustomKeyFields() {
+      const container = document.getElementById('customKeyFields');
+      const icon = document.getElementById('customKeyToggleIcon');
+      const isHidden = container.classList.toggle('hidden');
+      icon.innerText = isHidden ? '+ Customize' : '− Collapse';
+    }
+
     function openCreateModal() {
       document.getElementById('createLicenseModal').classList.remove('hidden');
       document.getElementById('createdLicenseResult').classList.add('hidden');
       document.getElementById('createLicenseForm').reset();
+      const customKeyFields = document.getElementById('customKeyFields');
+      if (customKeyFields) customKeyFields.classList.add('hidden');
+      const customKeyIcon = document.getElementById('customKeyToggleIcon');
+      if (customKeyIcon) customKeyIcon.innerText = '+ Customize';
+      lucide.createIcons();
     }
     function closeCreateModal() {
       document.getElementById('createLicenseModal').classList.add('hidden');
@@ -770,12 +912,21 @@
       const notes = document.getElementById('newNotes').value;
       const validityDays = document.getElementById('newValidityDays').value;
       const isPilot = document.getElementById('newIsPilot').checked;
+      const customLicenseId = document.getElementById('newCustomLicenseId')?.value?.trim() || undefined;
+      const customLicenseKey = document.getElementById('newCustomLicenseKey')?.value?.trim() || undefined;
 
       try {
         const res = await fetch('/api/license/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-          body: JSON.stringify({ pharmacyName, notes, validityDays, isPilot }),
+          body: JSON.stringify({
+            pharmacyName,
+            notes,
+            validityDays,
+            isPilot,
+            customLicenseId,
+            customLicenseKey,
+          }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -789,6 +940,67 @@
           lucide.createIcons();
         } else {
           showToast(data.error || 'Failed to create license', 'error');
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    // Edit License Modal Controls
+    function openEditModal(licenseId) {
+      const lic = allLicenses.find(l => l.licenseId === licenseId);
+      if (!lic) {
+        showToast('License details not found', 'error');
+        return;
+      }
+      document.getElementById('editLicenseId').value = lic.licenseId;
+      document.getElementById('editModalLicenseId').innerText = lic.licenseId;
+      document.getElementById('editPharmacyName').value = lic.pharmacyName || '';
+      document.getElementById('editNotes').value = lic.notes || '';
+      document.getElementById('editExpiresAt').value = lic.expiresAt ? lic.expiresAt.split('T')[0] : '';
+      document.getElementById('editStatus').value = lic.status || 'active';
+      document.getElementById('editIsPilot').checked = Boolean(lic.isPilot);
+      document.getElementById('editNewKey').value = '';
+      document.getElementById('editLicenseModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeEditModal() {
+      document.getElementById('editLicenseModal').classList.add('hidden');
+    }
+
+    async function handleUpdateLicense(e) {
+      e.preventDefault();
+      const secret = getAdminSecret();
+      const licenseId = document.getElementById('editLicenseId').value;
+      const pharmacyName = document.getElementById('editPharmacyName').value;
+      const notes = document.getElementById('editNotes').value;
+      const expiresAt = document.getElementById('editExpiresAt').value;
+      const status = document.getElementById('editStatus').value;
+      const isPilot = document.getElementById('editIsPilot').checked;
+      const newLicenseKey = document.getElementById('editNewKey').value.trim() || undefined;
+
+      try {
+        const res = await fetch('/api/license/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+          body: JSON.stringify({
+            licenseId,
+            pharmacyName,
+            notes,
+            expiresAt,
+            status,
+            isPilot,
+            newLicenseKey,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('License updated successfully!', 'success');
+          closeEditModal();
+          loadLicenses();
+        } else {
+          showToast(data.error || 'Failed to update license', 'error');
         }
       } catch (err) {
         showToast(err.message, 'error');

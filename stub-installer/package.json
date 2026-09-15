@@ -4,6 +4,7 @@
   "description": "AI Pharmacy — Stub Installer (Electron GUI)",
   "main": "main.js",
   "private": true,
+  "author": "AI Pharmacy",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
@@ -12,6 +13,7 @@
   "build": {
     "appId": "com.aipharmacy.installer",
     "productName": "AI Pharmacy Installer",
+    "electronVersion": "28.3.3",
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico"
@@ -39,7 +41,7 @@
     "axios": "^1.6.0"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
+    "electron": "28.3.3",
     "electron-builder": "^24.0.0"
   }
 }

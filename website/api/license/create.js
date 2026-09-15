@@ -32,13 +32,40 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { pharmacyName, notes, validityDays = 365, isPilot = false } = req.body || {};
+  const {
+    pharmacyName,
+    notes,
+    validityDays = 365,
+    isPilot = false,
+    customLicenseId,
+    customLicenseKey,
+  } = req.body || {};
   if (!pharmacyName?.trim()) {
     return res.status(400).json({ error: 'pharmacyName is required' });
   }
 
-  const licenseId = generateLicenseId();
-  const licenseKey = generateLicenseKey();
+  if (!isKvConfigured) {
+    return res.status(500).json({
+      error: 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel Environment Variables.'
+    });
+  }
+
+  const licenseId = customLicenseId?.trim() ? customLicenseId.trim().toUpperCase() : generateLicenseId();
+  const licenseKey = customLicenseKey?.trim() ? customLicenseKey.trim().toUpperCase() : generateLicenseKey();
+
+  try {
+    const existing = await kv.get(`license:${licenseId}`);
+    if (existing) {
+      return res.status(400).json({
+        error: `License ID "${licenseId}" already exists. Please choose a different ID or leave blank to auto-generate.`
+      });
+    }
+  } catch (err) {
+    return res.status(500).json({
+      error: `Storage error: ${err.message}. Check Upstash Redis credentials in Vercel.`
+    });
+  }
+
   const keyHash = crypto.createHash('sha256').update(licenseKey).digest('hex');
 
   const nowMs = Date.now();
@@ -59,13 +86,6 @@ export default async function handler(req, res) {
     createdAt: new Date(nowMs).toISOString(),
     lastValidatedAt: null,
   };
-
-  if (!isKvConfigured) {
-    return res.status(500).json({
-      error: 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel Environment Variables.'
-    });
-  }
-
   try {
     await kv.set(`license:${licenseId}`, record);
   } catch (err) {

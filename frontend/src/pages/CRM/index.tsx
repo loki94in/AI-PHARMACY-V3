@@ -14,6 +14,7 @@ import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalModal';
+import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
@@ -272,6 +273,7 @@ const RefillsSection: React.FC = () => {
   const [medicineRows, setMedicineRows] = useState<MedicineRow[]>([emptyRow()]);
   const [dropUpIndex, setDropUpIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showDelayModal, setShowDelayModal] = useState(false);
 
   // Frequency slider modal
   const [editingRefill, setEditingRefill] = useState<{ id: number; currentInterval: number; name: string } | null>(null);
@@ -998,6 +1000,15 @@ const RefillsSection: React.FC = () => {
           >
             <Plus size={14} />
             <span>+ Add Refill</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDelayModal(true)}
+            className="h-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 text-xs font-bold transition-all active:scale-95 cursor-pointer"
+            title="Broadcast delay / market-off notice to patients"
+          >
+            <Clock size={13} />
+            <span>Delay Notice</span>
           </button>
           <button
             onClick={handleCheck}
@@ -2342,6 +2353,15 @@ const RefillsSection: React.FC = () => {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Delay Notice Modal */}
+      {showDelayModal && (
+        <DelayNoticeModal
+          isOpen={showDelayModal}
+          onClose={() => setShowDelayModal(false)}
+          onDispatched={() => load(true)}
+        />
       )}
     </div>
   );
@@ -3875,6 +3895,7 @@ const SpecialOrdersSection: React.FC = () => {
     }
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
+  const [showDelayModal, setShowDelayModal] = useState(false);
 
   // Edit Request Form State
   const [editingOrder, setEditingOrder] = useState<SpecialOrderItem | null>(null);
@@ -4806,6 +4827,16 @@ const SpecialOrdersSection: React.FC = () => {
           </button>
 
           <button
+            type="button"
+            onClick={() => setShowDelayModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 text-xs font-bold transition-all cursor-pointer shadow-sm"
+            title="Send delay notice to scheduled special orders & refills"
+          >
+            <Clock size={13} />
+            <span>Delay Notice</span>
+          </button>
+
+          <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-md shadow-primary/20 transition-all"
           >
@@ -5455,6 +5486,15 @@ const SpecialOrdersSection: React.FC = () => {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Delay Notice Modal */}
+      {showDelayModal && (
+        <DelayNoticeModal
+          isOpen={showDelayModal}
+          onClose={() => setShowDelayModal(false)}
+          onDispatched={loadOrders}
+        />
       )}
     </div>
   );

@@ -8,12 +8,13 @@ contextBridge.exposeInMainWorld('installer', {
   validateLicense: (licenseId, licenseKey) =>
     ipcRenderer.invoke('validate-license', { licenseId, licenseKey }),
 
-  downloadAndInstall: (downloadUrl, pharmacyName) =>
-    ipcRenderer.invoke('download-and-install', { downloadUrl, pharmacyName }),
+  downloadAndInstall: (downloadUrl, pharmacyName, licenseId, licenseKey) =>
+    ipcRenderer.invoke('download-and-install', { downloadUrl, pharmacyName, licenseId, licenseKey }),
 
   onDownloadProgress: (cb) => ipcRenderer.on('download-progress', (_, pct) => cb(pct)),
   onInstallStatus:    (cb) => ipcRenderer.on('install-status',    (_, msg) => cb(msg)),
 
-  close:    () => ipcRenderer.send('close-app'),
-  minimize: () => ipcRenderer.send('minimize-app'),
+  launchApp: () => ipcRenderer.send('launch-app'),
+  close:     () => ipcRenderer.send('close-app'),
+  minimize:  () => ipcRenderer.send('minimize-app'),
 });

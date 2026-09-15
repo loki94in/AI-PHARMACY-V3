@@ -276,9 +276,14 @@
         AI Pharmacy has been installed successfully.<br/>
         You can now launch it from your desktop shortcut.
       </div>
-      <button class="btn btn-primary" style="margin-top:8px" onclick="window.installer.close()">
-        Close Installer
-      </button>
+      <div style="display:flex;gap:10px;width:100%;margin-top:8px">
+        <button class="btn btn-primary" style="flex:1" onclick="window.installer.launchApp()">
+          Launch AI Pharmacy
+        </button>
+        <button class="btn" style="background:var(--bg3);border:1.5px solid var(--border);color:var(--text);flex:1" onclick="window.installer.close()">
+          Close
+        </button>
+      </div>
     </div>
   </div>
 

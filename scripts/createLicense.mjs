@@ -26,14 +26,18 @@ const { values } = parseArgs({
     notes:    { type: 'string', default: '' },
     server:   { type: 'string' },
     secret:   { type: 'string' },
+    id:       { type: 'string' },
+    key:      { type: 'string' },
   },
   strict: false,
 });
 
-const pharmacyName = values.pharmacy;
-const notes        = values.notes || '';
-const serverUrl    = values.server || process.env.LICENSE_SERVER_URL;
-const adminSecret  = values.secret || process.env.ADMIN_SECRET;
+const pharmacyName     = values.pharmacy;
+const notes            = values.notes || '';
+const serverUrl        = values.server || process.env.LICENSE_SERVER_URL;
+const adminSecret      = values.secret || process.env.ADMIN_SECRET;
+const customLicenseId  = values.id;
+const customLicenseKey = values.key;
 
 if (!pharmacyName) {
   console.error('❌  --pharmacy "Pharmacy Name" is required');
@@ -50,7 +54,12 @@ if (!adminSecret) {
 
 // --- call license server ---
 const url = new URL('/api/license/create', serverUrl);
-const body = JSON.stringify({ pharmacyName, notes });
+const body = JSON.stringify({
+  pharmacyName,
+  notes,
+  customLicenseId,
+  customLicenseKey,
+});
 const lib = url.protocol === 'https:' ? https : http;
 
 const req = lib.request(

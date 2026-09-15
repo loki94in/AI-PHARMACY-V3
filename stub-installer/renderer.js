@@ -15,6 +15,8 @@ window.installer.onInstallStatus((msg) => {
     showScreen('screen-success');
     setStep(3);
   } else {
+    showScreen('screen-install');
+    setStep(3);
     document.getElementById('install-label').textContent = msg;
   }
 });
@@ -60,15 +62,26 @@ async function activate() {
     return;
   }
 
+  if (result.pharmacyName) {
+    const successMsg = document.getElementById('success-msg');
+    if (successMsg) {
+      successMsg.innerHTML = `<strong>${result.pharmacyName}</strong> has been configured.<br/>AI Pharmacy has been installed successfully.`;
+    }
+  }
+
   // License valid → move to download
   setStep(2);
   showScreen('screen-download');
 
-  // Get the download URL from the update server
-  // For now, using the configured URL from the license server
-  const downloadUrl = 'https://ai-pharmacy-license.vercel.app/api/updates/latest-download';
+  // Direct high-speed CDN download URL from GitHub release
+  const downloadUrl = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.0/AI-Pharmacy-OS-Portable-Setup-v0.1.0.exe';
 
-  const installResult = await window.installer.downloadAndInstall(downloadUrl, result.pharmacyName);
+  const installResult = await window.installer.downloadAndInstall(
+    downloadUrl,
+    result.pharmacyName,
+    licenseId,
+    licenseKey
+  );
 
   if (!installResult.success) {
     showScreen('screen-license');

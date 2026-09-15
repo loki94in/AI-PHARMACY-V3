@@ -13,13 +13,15 @@ website/
 ├── api/
 │   ├── _db.js                # Upstash Redis / Vercel KV cloud data store
 │   ├── catalog.js            # Consolidated customer portal & store API (refills, bills, orders, stores)
-│   ├── license/              # License validation, activation, creation, resets
+│   ├── license/              # License validation, activation, creation, resets, deletion, editing
 │   │   ├── activate.js
-│   │   ├── create.js
+│   │   ├── create.js         # Auto or custom-keyed license generation
+│   │   ├── delete.js         # Permanent deletion from Redis
 │   │   ├── list.js
 │   │   ├── renew.js
 │   │   ├── reset.js
 │   │   ├── toggle-pilot.js
+│   │   ├── update.js         # Manual modification of license details / secret key
 │   │   └── validate.js
 │   ├── telemetry/            # Anonymous health & usage telemetry
 │   └── updates/              # Remote app updates and version checks

@@ -12,6 +12,8 @@ import { sanitizeDoctorName } from '../utils/doctorUtils.js';
 import { getAppDataDir } from '../config/index.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { eventService } from '../services/eventService.js';
+import { getStoreMedicalName } from '../services/storeSettingsService.js';
+import { formatCustomerName } from '../utils/nameFormatter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -839,6 +841,222 @@ router.post('/ledger/pay', async (req, res) => {
       await db.run('ROLLBACK');
     } catch {}
     res.status(500).json({ error: 'Failed to process payment: ' + error.message });
+  }
+});
+
+/**
+ * GET /api/crm/delay-notice-candidates
+ * Aggregates active/pending special orders and upcoming/due refills for market-off/delay broadcasting.
+ */
+router.get('/delay-notice-candidates', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const allStores = req.query.all_stores === 'true';
+
+    const storeFilterSpecial = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
+    const storeParamsSpecial = allStores ? [] : [targetStoreId, targetStoreId];
+
+    // 1. Fetch pending/active special orders
+    const specialOrders = await db.all<any[]>(
+      `SELECT 
+        id,
+        'special_order' as type,
+        requester as patient_name,
+        phone as patient_phone,
+        COALESCE(product, medicine_name, 'Medicine') as medicine_name,
+        COALESCE(qty, 1) as qty,
+        COALESCE(estimated_delivery_start, scheduled_processing_at, date) as scheduled_date,
+        status,
+        pharmarack_distributor as distributor_name,
+        store_id
+      FROM special_orders
+      WHERE status IN ('Pending', 'Ordered', 'Waiting')
+        ${storeFilterSpecial}
+      ORDER BY id DESC LIMIT 200`,
+      storeParamsSpecial
+    );
+
+    // 2. Fetch active refills due within the next 2 days or already overdue
+    const storeFilterRefills = allStores ? '' : 'AND (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
+    const storeParamsRefills = allStores ? [] : [targetStoreId, targetStoreId];
+
+    const refills = await db.all<any[]>(
+      `SELECT 
+        pr.id,
+        'refill' as type,
+        pr.patient_name,
+        pr.patient_phone,
+        COALESCE(m.name, 'Refill Medicine') as medicine_name,
+        COALESCE(pr.quantity_needed, 1) as qty,
+        pr.next_refill_date as scheduled_date,
+        pr.status,
+        NULL as distributor_name,
+        pr.store_id
+      FROM patient_refills pr
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.is_active = 1 
+        AND pr.status = 'pending'
+        ${storeFilterRefills}
+        AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= datetime('now', '+2 days'))
+      ORDER BY pr.next_refill_date ASC LIMIT 200`,
+      storeParamsRefills
+    );
+
+    // Combine and normalize candidates
+    const candidates = [
+      ...specialOrders.map(o => ({
+        id: o.id,
+        type: 'special_order' as const,
+        patient_name: o.patient_name || 'Walk-in Customer',
+        patient_phone: (o.patient_phone || '').trim(),
+        medicine_name: o.medicine_name,
+        qty: Number(o.qty) || 1,
+        scheduled_date: o.scheduled_date || null,
+        status: o.status || 'Pending',
+        distributor_name: o.distributor_name || null,
+        store_id: o.store_id || 1,
+      })),
+      ...refills.map(r => ({
+        id: r.id,
+        type: 'refill' as const,
+        patient_name: r.patient_name || 'Customer',
+        patient_phone: (r.patient_phone || '').trim(),
+        medicine_name: r.medicine_name,
+        qty: Number(r.qty) || 1,
+        scheduled_date: r.scheduled_date || null,
+        status: r.status || 'pending',
+        distributor_name: null,
+        store_id: r.store_id || 1,
+      }))
+    ];
+
+    res.json({
+      candidates,
+      count: candidates.length,
+      special_order_count: specialOrders.length,
+      refill_count: refills.length
+    });
+  } catch (err: any) {
+    console.error('Failed to load delay notice candidates:', err);
+    res.status(500).json({ error: 'Failed to fetch delay notice candidates: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/crm/broadcast-delay-notices
+ * Dispatches personalized delay notifications to selected patients via WhatsApp queue.
+ */
+router.post('/broadcast-delay-notices', async (req, res) => {
+  const { recipients, message_template, postpone_days = 1 } = req.body || {};
+
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    return res.status(400).json({ error: 'At least one recipient must be selected.' });
+  }
+
+  if (!message_template || typeof message_template !== 'string' || !message_template.trim()) {
+    return res.status(400).json({ error: 'Message template is required.' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    const targetStoreId = (req as any).tenant?.storeId || resolveStoreId(req) || 1;
+    const storeMedicalName = (await getStoreMedicalName(db, targetStoreId)) || 'Pharmacy';
+    const postponeNum = Number(postpone_days) || 0;
+
+    let queuedCount = 0;
+    let skippedNoPhoneCount = 0;
+    const errors: string[] = [];
+
+    for (const item of recipients) {
+      const rawPhone = String(item.patient_phone || '').replace(/\D/g, '');
+      if (!rawPhone || rawPhone.length < 10) {
+        skippedNoPhoneCount++;
+        continue;
+      }
+
+      const formattedPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+      const cleanName = formatCustomerName(item.patient_name);
+      const medName = item.medicine_name || 'Medicine';
+
+      // Interpolate template placeholders
+      const personalizedMsg = message_template
+        .replace(/\{patient_name\}/gi, cleanName)
+        .replace(/\{customer_name\}/gi, cleanName)
+        .replace(/\{medicine_name\}/gi, medName)
+        .replace(/\{product_name\}/gi, medName)
+        .replace(/\{pharmacy_name\}/gi, storeMedicalName)
+        .replace(/\{store_name\}/gi, storeMedicalName)
+        .replace(/\{qty\}/gi, String(item.qty || 1));
+
+      try {
+        await whatsappQueueWorker.enqueue(
+          formattedPhone,
+          personalizedMsg,
+          'delay_notice',
+          cleanName
+        );
+
+        await db.run(
+          `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          ['delay_notice', cleanName, formattedPhone, personalizedMsg, 'queued', `${item.type}_${item.id}`]
+        );
+
+        // Advance scheduled dates if postponement requested
+        if (postponeNum > 0) {
+          if (item.type === 'special_order') {
+            await db.run(
+              `UPDATE special_orders 
+               SET estimated_delivery_start = datetime(COALESCE(estimated_delivery_start, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   estimated_delivery_end = datetime(COALESCE(estimated_delivery_end, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   scheduled_processing_at = datetime(COALESCE(scheduled_processing_at, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+              [postponeNum, postponeNum, postponeNum, item.id]
+            );
+
+            try {
+              await db.run(
+                `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+                 VALUES (?, 'delay_notice_sent', ?, 'staff', CURRENT_TIMESTAMP)`,
+                [item.id, `Delay notice queued via WhatsApp (+${postponeNum} day schedule adjustment)`]
+              );
+            } catch (_) {}
+          } else if (item.type === 'refill') {
+            await db.run(
+              `UPDATE patient_refills
+               SET next_refill_date = datetime(COALESCE(next_refill_date, CURRENT_TIMESTAMP), '+' || ? || ' days')
+               WHERE id = ?`,
+              [postponeNum, item.id]
+            );
+          }
+        }
+
+        queuedCount++;
+      } catch (err: any) {
+        errors.push(`Failed for ${cleanName} (${formattedPhone}): ${err.message}`);
+      }
+    }
+
+    if (queuedCount > 0) {
+      whatsappQueueWorker.triggerProcessing();
+      try {
+        eventService.broadcast('order_updated', { at: Date.now(), reason: 'delay_notice' });
+        eventService.broadcast('refill_updated', { at: Date.now(), reason: 'delay_notice' });
+      } catch (_) {}
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully queued delay notifications for ${queuedCount} patient${queuedCount !== 1 ? 's' : ''}${skippedNoPhoneCount > 0 ? ` (${skippedNoPhoneCount} skipped due to missing phone)` : ''}.`,
+      queued_count: queuedCount,
+      skipped_no_phone_count: skippedNoPhoneCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (err: any) {
+    console.error('Failed to broadcast delay notices:', err);
+    res.status(500).json({ error: 'Broadcast failed: ' + err.message });
   }
 });
 

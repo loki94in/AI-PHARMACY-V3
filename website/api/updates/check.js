@@ -1,7 +1,7 @@
 import { kv, isKvConfigured } from '../_db.js';
 
 const DEFAULT_LATEST_VERSION = '1.0.0';
-const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://your-tunnel.trycloudflare.com/download/ai-pharmacy-setup.exe';
+const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.0/AI-Pharmacy-OS-Portable-Setup-v0.1.0.exe';
 const DEFAULT_CHANGELOG = `
 v1.0.0 — Initial Release
 • AI-powered pharmacy management
