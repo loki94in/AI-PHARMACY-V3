@@ -743,6 +743,57 @@ router.get('/uncollected-alerts', async (_req, res) => {
   }
 });
 
+// Helper to cancel and remove any pending unsent WhatsApp queue items and notifications for an order
+async function cancelPendingWhatsAppForOrder(
+  db: any,
+  order: { phone?: string; requester?: string; product?: string; id: number | string }
+): Promise<void> {
+  const cleanPhone = order.phone ? order.phone.replace(/\D/g, '') : '';
+  const last10 = cleanPhone.slice(-10);
+  const reqName = (order.requester || '').trim();
+  const prodName = (order.product || '').trim();
+
+  try {
+    const matchConditions: string[] = [];
+    const matchArgs: any[] = [];
+
+    if (last10 && last10.length >= 7) {
+      matchConditions.push('number LIKE ?');
+      matchArgs.push(`%${last10}%`);
+    }
+    if (reqName) {
+      matchConditions.push('target_name = ?');
+      matchArgs.push(reqName);
+    }
+    if (prodName) {
+      matchConditions.push('message LIKE ?');
+      matchArgs.push(`%${prodName}%`);
+    }
+
+    if (matchConditions.length > 0) {
+      await db.run(
+        `DELETE FROM whatsapp_send_queue 
+         WHERE status IN ('pending', 'failed_offline') 
+           AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled', 'admin_shortage_reminder', 'whatsapp_notification')
+           AND (${matchConditions.join(' OR ')})`,
+        matchArgs
+      );
+    }
+  } catch (cancelErr) {
+    console.warn('[Orders] Could not delete pending WhatsApp queue items for order:', cancelErr);
+  }
+
+  try {
+    await db.run(
+      `DELETE FROM automation_notifications 
+       WHERE reference_id IN (?, ?)
+          OR (type = 'admin_shortage_reminder' AND message LIKE ?)
+          OR (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') AND reference_id = ?)`,
+      [String(order.id), `shortage_${order.id}`, prodName ? `%${prodName}%` : '', String(order.id)]
+    );
+  } catch (_) {}
+}
+
 // Update order status/details
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
@@ -810,7 +861,14 @@ router.put('/:id', async (req, res) => {
       [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, id]
     );
 
-    if (newStatus === 'Fulfilled' || newStatus === 'Cancelled') {
+    if (newStatus === 'Cancelled') {
+      await cancelPendingWhatsAppForOrder(db, {
+        id,
+        phone: newPhone || existing.phone,
+        requester: newRequester || existing.requester,
+        product: newProduct || existing.product
+      });
+    } else if (newStatus === 'Fulfilled') {
       await db.run(
         `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -932,7 +990,9 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     const newCount = whatsappQueued ? (Number(existing.notification_count || 0) + 1) : Number(existing.notification_count || 0);
     await db.run('UPDATE special_orders SET status = ?, notified = ?, notification_count = ? WHERE id = ?', [status, newNotified, newCount, id]);
 
-    if (status === 'Fulfilled' || status === 'Cancelled') {
+    if (status === 'Cancelled') {
+      await cancelPendingWhatsAppForOrder(db, existing);
+    } else if (status === 'Fulfilled') {
       await db.run(
         `UPDATE automation_notifications 
          SET lifecycle_status = 'sent', status = 'sent_manually' 
@@ -984,48 +1044,8 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // Cancel and remove any pending unsent WhatsApp queue items for this deleted order
-    const cleanPhone = existing.phone ? existing.phone.replace(/\D/g, '') : '';
-    const last10 = cleanPhone.slice(-10);
-    const reqName = (existing.requester || '').trim();
-    const prodName = (existing.product || '').trim();
-
-    try {
-      const matchConditions: string[] = [];
-      const matchArgs: any[] = [];
-
-      if (last10 && last10.length >= 7) {
-        matchConditions.push('number LIKE ?');
-        matchArgs.push(`%${last10}%`);
-      }
-      if (reqName) {
-        matchConditions.push('target_name = ?');
-        matchArgs.push(reqName);
-      }
-      if (prodName) {
-        matchConditions.push('message LIKE ?');
-        matchArgs.push(`%${prodName}%`);
-      }
-
-      if (matchConditions.length > 0) {
-        await db.run(
-          `DELETE FROM whatsapp_send_queue 
-           WHERE status IN ('pending', 'failed_offline') 
-             AND type IN ('special_order', 'special_order_batch', 'special_order_arrived', 'special_order_fulfilled')
-             AND (${matchConditions.join(' OR ')})`,
-          matchArgs
-        );
-      }
-    } catch (cancelErr) {
-      console.warn('[Orders] Could not delete pending WhatsApp queue items for deleted order:', cancelErr);
-    }
-
-    await db.run(
-      `DELETE FROM automation_notifications 
-       WHERE (type IN ('special_order_arrived', 'quick_order', 'special_order', 'quick_order_resend', 'quick_order_batch') OR reference_id = ?)
-         AND reference_id = ?`,
-      [String(id), String(id)]
-    ).catch(() => {});
+    // Cancel and remove any pending unsent WhatsApp queue items & notifications for this deleted order
+    await cancelPendingWhatsAppForOrder(db, existing);
     
     // Auto-adjust or remove from Pharmarack Live Cart
     let cartAdjustment: any = null;

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { dbManager } from '../database/connection.js';
+import { config } from '../config/index.js';
 
 /**
  * Seeds the master medicines database table from reference_medicines.csv
@@ -19,6 +20,29 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
 
     const csvPath = path.join(process.cwd(), 'data', 'reference_medicines.csv');
     if (!fs.existsSync(csvPath)) {
+      // Fallback: copy master catalog from template app.db if available
+      const templateCandidates = [
+        path.join(process.cwd(), 'data', 'app.db'),
+        path.join(path.dirname(process.execPath), 'data', 'app.db')
+      ];
+      for (const tPath of templateCandidates) {
+        if (fs.existsSync(tPath) && path.resolve(tPath) !== path.resolve(config.dbPath)) {
+          try {
+            const normalized = tPath.replace(/\\/g, '/');
+            await db.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
+            const res = await db.run(`INSERT OR IGNORE INTO medicines SELECT * FROM templateDb.medicines`);
+            await db.run(`DETACH DATABASE templateDb`);
+            const loaded = res?.changes || 0;
+            if (loaded > 0) {
+              console.log(`[MasterSeed] Successfully synced ${loaded} master medicines from template DB (${tPath}).`);
+              return { loaded };
+            }
+          } catch (e: any) {
+            console.warn('[MasterSeed] Template DB copy failed:', e.message);
+            try { await db.run(`DETACH DATABASE templateDb`); } catch {}
+          }
+        }
+      }
       console.warn('[MasterSeed] Reference CSV not found at:', csvPath);
       return { loaded: 0 };
     }

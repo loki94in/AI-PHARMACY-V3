@@ -366,14 +366,33 @@ ${customerBlock}
  ⭐ *Match Confidence*: ${Math.round(payload.confidence)}%
 ✅ *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(', ')}${relatedBlock}${contextBlock}`;
       } else {
+        const formatStockBadge = (stock: any): string => {
+          if (stock === undefined || stock === null || stock === '') return '';
+          const s = String(stock).toLowerCase().trim();
+          if (s === '0' || s.includes('out') || s.includes('no') || s.includes('unavail')) {
+            return ' | 🔴 Out of Stock';
+          }
+          const num = parseInt(s, 10);
+          if (!isNaN(num)) {
+            if (num <= 0) return ' | 🔴 Out of Stock';
+            if (num <= 5) return ` | 🟡 Low Stock (${num})`;
+            return ` | 🟢 In Stock (${num})`;
+          }
+          if (s.includes('low') || s.includes('limited')) {
+            return ` | 🟡 Low Stock (${stock})`;
+          }
+          return ` | 🟢 In Stock (${stock})`;
+        };
+
         const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
         const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
         const distLines = [...mappedTop, ...nonMappedTop]
           .map((p: any, i: number) => {
-            const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+            const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
             const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
-            const avail = p.availability ? ` | Stock: ${p.availability}` : '';
-            return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail} | ${p.distributor || p.storeName || 'Unknown'}`;
+            const avail = formatStockBadge(p.availability ?? p.stock);
+            const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
+            return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || 'Unknown'}`;
           })
           .join('\n');
         messageText = `⚠️ *Medicine Registered in DB but NOT in Physical Stock*
@@ -390,17 +409,36 @@ ${distLines ? `\n🚚 *Distributor options*:\n${distLines}\n` : ''}${relatedBloc
     } else {
       // PharmaRack outcome — mapped distributors first, then non-mapped,
       // each line: name | company | pack | MRP | distributor | match%
+      const formatStockBadge = (stock: any): string => {
+        if (stock === undefined || stock === null || stock === '') return '';
+        const s = String(stock).toLowerCase().trim();
+        if (s === '0' || s.includes('out') || s.includes('no') || s.includes('unavail')) {
+          return ' | 🔴 Out of Stock';
+        }
+        const num = parseInt(s, 10);
+        if (!isNaN(num)) {
+          if (num <= 0) return ' | 🔴 Out of Stock';
+          if (num <= 5) return ` | 🟡 Low Stock (${num})`;
+          return ` | 🟢 In Stock (${num})`;
+        }
+        if (s.includes('low') || s.includes('limited')) {
+          return ` | 🟡 Low Stock (${stock})`;
+        }
+        return ` | 🟢 In Stock (${stock})`;
+      };
+
       const fmtMatch = (p: any, idx: number) => {
         const name = p.name || p.productName || 'Unknown';
         const company = p.manufacturer || p.company || '';
         const pkg = p.packaging || p.package || '-';
         const mrp = p.mrp ?? p.MRP ?? '-';
-        const dist = p.distributor || p.storeName || 'Unknown';
-        const ptr = p.distributorPrice ?? p.ptr ?? p.PTR;
+        const dist = p.distributor || p.supplier_name || p.storeName || 'Unknown';
+        const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
         const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
-        const avail = p.availability ? ` | Stock: ${p.availability}` : '';
+        const avail = formatStockBadge(p.availability ?? p.stock);
+        const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
         const scoreStr = typeof p.score === 'number' ? ` | ${Math.round(p.score * 100)}%` : '';
-        return `${idx}. ${name}${company ? ` | ${company}` : ''} | ${pkg} | MRP ₹${mrp}${ptrStr}${avail} | ${dist}${scoreStr}`;
+        return `${idx}. ${name}${company ? ` | ${company}` : ''} | ${pkg} | MRP ₹${mrp}${ptrStr}${avail}${scheme} | ${dist}${scoreStr}`;
       };
 
       const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
@@ -518,4 +556,117 @@ export async function notifyAdminOfNonAllopathic(payload: NonAllopathicNotePaylo
   }
 }
 
-export const waAdminEscalationService = { maybeEscalate, notifyAdminOfUnprocessedMedia, resolveAdminWhatsappNumber, notifyAdminOfNonAllopathic };
+export interface UnmatchedQueryPayload {
+  customer: { id: number; name: string; phone: string } | null;
+  medicineName: string;
+  quantity?: number;
+  unit?: string;
+  messageBody?: string;
+  source: 'text' | 'ocr' | 'both';
+  msgId?: string;
+  phone?: string;
+  chatId?: string;
+  imagePath?: string;
+}
+
+/**
+ * Notifies the store owner when a customer asks for a medicine that was not found
+ * in either the local database or Pharmarack distributors.
+ */
+export async function notifyAdminOfUnmatchedQuery(payload: UnmatchedQueryPayload): Promise<void> {
+  try {
+    const db = await dbManager.getConnection();
+    const guard = await escalateGuard(db, payload.phone || payload.customer?.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+
+    const customerPhoneRaw = payload.phone || payload.customer?.phone || '';
+    if (!customerPhoneRaw) return;
+
+    const medicineKey = payload.medicineName.toLowerCase().trim();
+    const msgId = payload.msgId || '';
+    const dup = await db.get(
+      `SELECT 1 FROM wa_admin_escalations
+       WHERE status != 'failed' AND medicine_key = ?
+         AND ( (msg_id = ? AND msg_id != '')
+            OR (customer_phone = ? AND created_at > datetime('now','-24 hours')) )
+       LIMIT 1`,
+      [medicineKey, msgId, customerPhoneRaw]
+    );
+    if (dup) return;
+
+    await db.run(
+      `INSERT INTO wa_admin_escalations (msg_id, customer_phone, medicine_key, outcome, status)
+       VALUES (?, ?, ?, 'unmatched', 'pending')`,
+      [msgId, customerPhoneRaw, medicineKey]
+    );
+
+    const { display: displayPhone, waDigits } = await resolvePhone(db, customerPhoneRaw, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} — https://wa.me/${waDigits}` : displayPhone;
+
+    const messageText = `❓ *Unmatched Customer Medicine Inquiry*
+
+👤 ${payload.customer?.name || 'Customer'}
+📞 ${phoneLine}
+📝 *Original*: "${payload.messageBody || payload.medicineName}"
+
+💊 *Asked for*: ${payload.medicineName}${payload.quantity && payload.quantity > 1 ? ` × ${payload.quantity}${payload.unit ? ` ${payload.unit}` : ''}` : ''}
+❌ *Outcome*: Not found in local inventory and no distributor match in Pharmarack.
+👉 Customer may have typed a rare brand or heavy typo. Please verify manually.`;
+
+    try {
+      await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation_unmatched', 'Admin / Store Owner', undefined, payload.imagePath);
+      console.log(`[Admin Escalation] Unmatched medicine alert sent for "${payload.medicineName}" to admin ${adminWhatsapp}.`);
+    } catch (sendErr: any) {
+      console.error('[Admin Escalation] Failed to enqueue unmatched query alert:', sendErr);
+    }
+  } catch (err) {
+    console.error('[Admin Escalation] Error in notifyAdminOfUnmatchedQuery:', err);
+  }
+}
+
+export interface CustomerConfirmationPayload {
+  customer: { id: number; name: string; phone: string } | null;
+  suggestedName: string;
+  originalQuery: string;
+  phone: string;
+  chatId?: string;
+}
+
+/**
+ * Notifies the store owner when a customer replies confirming the medicine name.
+ */
+export async function notifyAdminOfCustomerConfirmation(payload: CustomerConfirmationPayload): Promise<void> {
+  try {
+    const db = await dbManager.getConnection();
+    const guard = await escalateGuard(db, payload.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+
+    const { display: displayPhone, waDigits } = await resolvePhone(db, payload.phone, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} — https://wa.me/${waDigits}` : displayPhone;
+
+    const messageText = `✅ *Customer Confirmed Medicine*
+
+👤 ${payload.customer?.name || 'Customer'}
+📞 ${phoneLine}
+
+💊 *Confirmed Item*: *${payload.suggestedName}*
+📝 *Original Inquiry*: "${payload.originalQuery}"
+👉 Customer confirmed with "Yes". Ready to fulfill or create purchase order.`;
+
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation_confirmed', 'Admin / Store Owner');
+    console.log(`[Admin Escalation] Customer confirmation forwarded for "${payload.suggestedName}".`);
+  } catch (err) {
+    console.error('[Admin Escalation] Error in notifyAdminOfCustomerConfirmation:', err);
+  }
+}
+
+export const waAdminEscalationService = {
+  maybeEscalate,
+  notifyAdminOfUnprocessedMedia,
+  resolveAdminWhatsappNumber,
+  notifyAdminOfNonAllopathic,
+  notifyAdminOfUnmatchedQuery,
+  notifyAdminOfCustomerConfirmation
+};

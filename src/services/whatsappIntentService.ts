@@ -23,8 +23,8 @@ const GATE_IMPLICIT = 0.72;    // bare text with no intent words
  * Does the best match score clear the escalation gate?
  * Exported for unit testing.
  */
-export function passesGate(bestScore: number, hasIntentWords: boolean, source: 'text' | 'ocr' | 'both'): boolean {
-  const threshold = (hasIntentWords || source !== 'text') ? GATE_WITH_INTENT : GATE_IMPLICIT;
+export function passesGate(bestScore: number, hasIntentWords: boolean, source: 'text' | 'ocr' | 'both', hasConfirmedMatch = false): boolean {
+  const threshold = (hasIntentWords || source !== 'text' || hasConfirmedMatch) ? GATE_WITH_INTENT : GATE_IMPLICIT;
   return bestScore >= threshold;
 }
 
@@ -223,6 +223,70 @@ async function getCustomerContext(
 }
 
 /**
+ * Handle customer affirmative ("yes", "haan", "ho", etc.) or negative ("no", "nahi", etc.)
+ * responses to an active pending medicine clarification inquiry.
+ */
+async function checkMedicineClarificationResponse(phone: string, body: string, customer: any, chatId?: string): Promise<boolean> {
+  const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+  if (!cleanDigits) return false;
+  try {
+    const db = await dbManager.getConnection();
+    await db.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+      phone TEXT PRIMARY KEY,
+      suggested_name TEXT NOT NULL,
+      original_query TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    const pending = await db.get(
+      `SELECT phone, suggested_name, original_query FROM wa_pending_clarifications 
+       WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`]
+    );
+    if (!pending) return false;
+
+    const lower = body.toLowerCase().trim();
+    const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay)$/i.test(lower);
+    const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
+
+    if (isAffirmative) {
+      await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+      const { getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+      const storeName = await getStoreMedicalName(db);
+      const storePhone = await getStorePhone(db);
+      const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+
+      const ackMsg = `Thank you! We have noted your confirmation for *${pending.suggested_name}*.\n` +
+        `Our pharmacist is checking stock with our distributors and will contact you shortly.${phoneSuffix}`;
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, ackMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
+
+      await waAdminEscalationService.notifyAdminOfCustomerConfirmation({
+        customer,
+        suggestedName: pending.suggested_name,
+        originalQuery: pending.original_query || pending.suggested_name,
+        phone,
+        chatId
+      });
+
+      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending.suggested_name}".`);
+      return true;
+    } else if (isNegative) {
+      await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+      const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, ackMsg, 'customer_inquiry_rejected', customer?.name || 'Customer');
+      console.log(`[Intent Service] Customer ${cleanDigits} rejected suggested medicine "${pending.suggested_name}".`);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Intent Service] Error checking medicine clarification response:', err);
+  }
+  return false;
+}
+
+/**
  * Main entry point: process an inbound WhatsApp message.
  * Called from whatsappClient.ts message_create handler.
  */
@@ -340,6 +404,11 @@ export async function handleInbound(msg: any): Promise<void> {
           return;
         }
       }
+    }
+
+    // 2c. MEDICINE CLARIFICATION CHECK ("yes", "haan", "ho", "no", "nahi", etc.)
+    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+      return;
     }
 
     // 3. TEXT PARSE
@@ -696,41 +765,59 @@ async function searchAndBroadcast(opts: {
   );
 
   // Live Pharmarack search as last resort — only with explicit intent (or a
-  // photo); a conversational word must never trigger a live API search.
+  // photo or plausible medicine name); a conversational word must never trigger a live API search.
   let livePharmarackResults: any[] | null = null;
   const nothingFound = filterResult.matches.length === 0 &&
     (!catalogResults || (catalogResults.mapped.length === 0 && catalogResults.nonMapped.length === 0));
-  if ((nothingFound || !isExactLocal || availability === 'REGISTERED_NO_STOCK') && (hasIntentWords || source !== 'text')) {
+  const isPlausible = isPlausibleMedicineName(medicineName);
+  if ((nothingFound || !isExactLocal || availability === 'REGISTERED_NO_STOCK') && (hasIntentWords || source !== 'text' || isPlausible)) {
     try {
-      const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/pharmarack/search?q=${encodeURIComponent(medicineName)}`, {
-        signal: AbortSignal.timeout(6000)
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          // Score + filter live results the same way as the offline catalog
-          const scored = data
-            .map((p: any) => ({ ...p, score: scoreProductName(medicineName, p.name || p.productName || '') }))
-            .filter((p: any) => p.score >= 0.6)
+      const { performPharmarackSearch } = await import('../routes/pharmarack.js');
+      const searchTerms = [medicineName];
+      if (filterResult.matches[0]) {
+        const cleanMatched = filterResult.matches[0].split(/\s+/).slice(0, 3).join(' ');
+        if (cleanMatched.toLowerCase() !== medicineName.toLowerCase()) {
+          searchTerms.unshift(cleanMatched);
+        }
+      }
+
+      for (const term of searchTerms) {
+        const searchRes = await performPharmarackSearch(term, null, true);
+        if (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items) && searchRes.items.length > 0) {
+          const scored = searchRes.items
+            .map((p: any) => ({
+              ...p,
+              productName: p.name,
+              supplier_name: p.distributor,
+              distributor_name: p.distributor,
+              distributorPrice: p.rate,
+              availability: p.stock,
+              score: scoreProductName(medicineName, p.name || '')
+            }))
+            .filter((p: any) => p.score >= 0.50)
             .sort((a: any, b: any) => b.score - a.score);
+
           if (scored.length > 0) {
             livePharmarackResults = scored;
             catalogResults = {
-              mapped: scored.filter((p: any) => p.mapped || p.isMapped),
-              nonMapped: scored.filter((p: any) => !(p.mapped || p.isMapped))
+              mapped: scored.filter((p: any) => p.mapped),
+              nonMapped: scored.filter((p: any) => !p.mapped)
             };
+            break;
           }
         }
       }
     } catch (liveErr) {
-      console.warn('[Intent Service] Live Pharmarack search failed:', liveErr);
+      console.warn('[Intent Service] Live performPharmarackSearch failed:', liveErr);
     }
   }
 
   // CONFIDENCE GATE — best similarity across local + catalog must clear the
   // threshold, otherwise the message is chit-chat and is silently discarded.
+  const hasConfirmedCatalog = (catalogResults?.mapped?.length || 0) > 0 || (catalogResults?.nonMapped?.length || 0) > 0;
+  const hasConfirmedMatch = filterResult.matches.length > 0 || hasConfirmedCatalog;
   const bestScore = Math.max(filterResult.topScore ?? 0, catalogTopScore());
-  if (!passesGate(bestScore, hasIntentWords, source)) {
+  if (!passesGate(bestScore, hasIntentWords, source, hasConfirmedMatch)) {
     console.log(`[Intent Service] Gate: discarding "${medicineName}" (bestScore=${bestScore.toFixed(2)}, intent=${hasIntentWords}, source=${source}). Not a medicine.`);
     // Forward the actual photo to the pharmacy when the app is unsure — an
     // image with real OCR text that still can't clear the confidence gate
@@ -746,6 +833,34 @@ async function searchAndBroadcast(opts: {
         });
       } catch (notifyErr) {
         console.error('[Intent Service] Failed to notify admin of uncertain scan:', notifyErr);
+      }
+    } else if (source === 'text' && isPlausible) {
+      // Unmatched inquiry alert: neither local DB nor Pharmarack returned any match for a plausible medicine name
+      try {
+        const db = await dbManager.getConnection();
+        await waAdminEscalationService.notifyAdminOfUnmatchedQuery({
+          customer,
+          medicineName,
+          quantity,
+          unit,
+          messageBody,
+          source,
+          msgId,
+          phone,
+          chatId,
+          imagePath
+        });
+
+        const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
+        if (!toggle || toggle.value !== 'false') {
+          const { getStoreMedicalName } = await import('./storeSettingsService.js');
+          const storeName = await getStoreMedicalName(db);
+          const ackMsg = `Namaste! We received your inquiry for "${medicineName}" at ${storeName}. Our pharmacist is checking availability with our distributors and will message you shortly.`;
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(phone || chatId || '', ackMsg, 'customer_inquiry_ack', customer?.name || 'Customer');
+        }
+      } catch (unmatchedErr) {
+        console.warn('[Intent Service] Failed to notify admin/customer of unmatched inquiry:', unmatchedErr);
       }
     }
     return;
@@ -814,6 +929,43 @@ async function searchAndBroadcast(opts: {
     relatedMedicines: opts.relatedMedicines,
     imagePath
   }).catch(err => console.error('[Intent Service] Admin escalation failed:', err));
+
+  // Customer clarification prompt (Option A):
+  // When medicine inquiry comes from text and we matched a product, ask customer to confirm
+  if (source === 'text' && phone) {
+    try {
+      const db = await dbManager.getConnection();
+      const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
+      if (!toggle || toggle.value !== 'false') {
+        const topMatched = filterResult.matches[0] || catalogResults?.mapped?.[0]?.productName || catalogResults?.mapped?.[0]?.name;
+        if (topMatched) {
+          await db.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+            phone TEXT PRIMARY KEY,
+            suggested_name TEXT NOT NULL,
+            original_query TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`);
+          const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
+          await db.run(
+            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, created_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(phone) DO UPDATE SET
+               suggested_name = excluded.suggested_name,
+               original_query = excluded.original_query,
+               created_at = CURRENT_TIMESTAMP`,
+            [cleanPhone, topMatched, medicineName]
+          );
+
+          const promptMsg = `Namaste! Did you mean *${topMatched}*? Please reply *Yes* or *No*.`;
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+          console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+        }
+      }
+    } catch (clarifyErr) {
+      console.warn('[Intent Service] Customer clarification prompt failed:', clarifyErr);
+    }
+  }
 
   // Track pending shortage request for >23 hour admin reminder if local stock
   // is missing — includes master-registered names with zero shelf stock.

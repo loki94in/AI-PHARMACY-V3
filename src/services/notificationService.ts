@@ -63,13 +63,14 @@ export class NotificationService {
     phoneNumber: string,
     message: string,
     mediaPath?: string,
-    caption?: string
+    caption?: string,
+    type: string = 'whatsapp_notification'
   ): Promise<NotificationResult> {
     try {
       const queueId = await whatsappQueueWorker.enqueue(
         phoneNumber,
         message || caption || '',
-        'whatsapp_notification',
+        type,
         undefined,
         Date.now(),
         mediaPath

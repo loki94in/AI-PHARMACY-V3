@@ -182,7 +182,7 @@ export async function checkShortageRequestsAndNotifyAdmin(db?: Database): Promis
     if (adminPhone && adminPhone.length >= 10 && shortageNoticeEnabled) {
       const formattedPhone = adminPhone.length === 10 ? `91${adminPhone}` : adminPhone;
       try {
-        await notificationService.sendWhatsApp(formattedPhone, adminMessage);
+        await notificationService.sendWhatsApp(formattedPhone, adminMessage, undefined, undefined, 'admin_shortage_reminder');
         
         // Log in action_logs for Activity Alerts
         await connection.run(
