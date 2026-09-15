@@ -910,69 +910,120 @@ async function gracefulShutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(`${signal} received. Draining in-flight requests...`);
-  // Stop accepting NEW connections immediately, but let requests already being handled
-  // finish naturally instead of racing them against dbManager.close(true) below.
-  server.close();
-  const drainStart = Date.now();
-  const DRAIN_TIMEOUT_MS = 10000;
-  while (inFlightRequests > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  if (inFlightRequests > 0) {
-    console.warn(`[Shutdown] ${inFlightRequests} request(s) still in flight after ${DRAIN_TIMEOUT_MS}ms — proceeding anyway.`);
-  }
+  console.log(`[Shutdown] ${signal} received. Closing UI window immediately...`);
 
-  console.log(`${signal} received. Creating shutdown backup...`);
-  // Mark clean shutdown BEFORE anything else that might fail
-  try {
-    const db = await dbManager.getConnection();
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
-  } catch (flagErr) {
-    console.error('[Shutdown] Could not write last_clean_shutdown=true:', flagErr);
-  }
-  try {
-    const { createBackup } = await import('./services/backupService.js');
-    const result = await createBackup(`Shutdown (${signal})`);
-    console.log(`[Backup] Shutdown backup created: ${result.filename}`);
-  } catch (err) {
-    console.error('[Backup] Shutdown backup failed:', err);
-  }
-  try {
-    const { workerSupervisor } = await import('./worker/workerSupervisor.js');
-    workerSupervisor.stop();
-  } catch (err) {
-    console.error('Error stopping worker supervisor:', err);
-  }
-  try {
-    const { destroyClient } = await import('./whatsappClient.js');
-    await destroyClient();
-  } catch (waErr) {
-    console.error('Error destroying WhatsApp client:', waErr);
-  }
-  try {
-    const { stopScispacySidecar } = await import('./services/scispacyClient.js');
-    stopScispacySidecar();
-  } catch (err) {
-    console.error('Error stopping scispaCy sidecar:', err);
-  }
-  try {
-    const { cloudflareTunnelService } = await import('./services/cloudflareTunnelService.js');
-    await cloudflareTunnelService.stop();
-  } catch (err) {
-    console.error('Error stopping cloudflare tunnel:', err);
-  }
-  await dbManager.close(true);
+  // Hard watchdog: under NO circumstance can shutdown stay hung longer than 6 seconds
+  const shutdownWatchdog = setTimeout(async () => {
+    console.warn('[Shutdown] Hard watchdog expired (6s). Forcing immediate process termination.');
+    if (process.platform === 'win32') {
+      try {
+        const pid = process.pid;
+        const { spawn } = await import('child_process');
+        spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
+      } catch (_) {}
+    }
+    process.exit(0);
+  }, 6000);
+  shutdownWatchdog.unref();
 
-  // Cleanly terminate the desktop app window if open, closing frontend and backend together
+  // 1. Immediately terminate the desktop app window so user sees window disappear without delay
   try {
     closeAppBrowser();
   } catch (browserErr) {
     console.error('Error closing app browser window:', browserErr);
   }
 
-  // On Windows client exit: ensure terminal window and child process tree are cleanly killed
-  if (process.platform === 'win32' && signal === 'CLIENT_EXIT') {
+  // 2. Stop accepting NEW connections immediately, drain in-flight requests quickly (max 1000ms)
+  try {
+    server.close();
+    (server as any).closeIdleConnections?.();
+  } catch (_) {}
+
+  const drainStart = Date.now();
+  const DRAIN_TIMEOUT_MS = 1000;
+  while (inFlightRequests > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  if (inFlightRequests > 0) {
+    console.warn(`[Shutdown] ${inFlightRequests} request(s) still in flight after ${DRAIN_TIMEOUT_MS}ms — proceeding.`);
+  }
+
+  // 3. Mark clean shutdown flag before anything else
+  try {
+    const db = await dbManager.getConnection();
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
+  } catch (flagErr) {
+    console.error('[Shutdown] Could not write last_clean_shutdown=true:', flagErr);
+  }
+
+  // 4. Create shutdown backup with strict 3.5s timeout (prevents backup from ever blocking shutdown)
+  console.log(`[Shutdown] Creating shutdown backup...`);
+  try {
+    const { createBackup } = await import('./services/backupService.js');
+    const result = await Promise.race([
+      createBackup(`Shutdown (${signal})`),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Shutdown backup timed out after 3500ms')), 3500))
+    ]);
+    if (result) {
+      console.log(`[Backup] Shutdown backup created: ${result.filename}`);
+    }
+  } catch (err: any) {
+    console.warn('[Backup] Shutdown backup notice:', err.message || err);
+  }
+
+  // 5. Concurrently clean up sidecars and background workers with timeout
+  await Promise.allSettled([
+    (async () => {
+      try {
+        const { workerSupervisor } = await import('./worker/workerSupervisor.js');
+        workerSupervisor.stop();
+      } catch (err) {
+        console.error('Error stopping worker supervisor:', err);
+      }
+    })(),
+    (async () => {
+      try {
+        const { destroyClient } = await import('./whatsappClient.js');
+        await Promise.race([
+          destroyClient(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('WhatsApp destroy timed out')), 1500))
+        ]);
+      } catch (waErr) {
+        console.error('Error destroying WhatsApp client:', waErr);
+      }
+    })(),
+    (async () => {
+      try {
+        const { stopScispacySidecar } = await import('./services/scispacyClient.js');
+        stopScispacySidecar();
+      } catch (err) {
+        console.error('Error stopping scispaCy sidecar:', err);
+      }
+    })(),
+    (async () => {
+      try {
+        const { cloudflareTunnelService } = await import('./services/cloudflareTunnelService.js');
+        await cloudflareTunnelService.stop();
+      } catch (err) {
+        console.error('Error stopping cloudflare tunnel:', err);
+      }
+    })(),
+  ]);
+
+  // 6. Safely checkpoint and close database
+  try {
+    await dbManager.close(true);
+  } catch (dbErr) {
+    console.error('Error closing database:', dbErr);
+  }
+
+  // 7. Ensure leftover browser windows are closed
+  try {
+    closeAppBrowser();
+  } catch (_) {}
+
+  // 8. On Windows: ensure terminal window and child process tree are cleanly killed
+  if (process.platform === 'win32') {
     try {
       const pid = process.pid;
       const { spawn } = await import('child_process');

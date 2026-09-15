@@ -271,6 +271,19 @@ Intentional simplifications must be marked with a `ponytail:` comment.
 
 ---
 
+## Automated Release & Deployment Contract
+
+When the user asks to deploy or release (e.g. "pilot deploy", "deploy pilot", "deploy release", "release pilot"):
+1. **Always-On Rule Pointer**: `.agents/rules/automated-release.md`
+2. **Commands**:
+   - **Pilot / Test Release**: When user says "pilot deploy", "deploy pilot", "release pilot", run `npm run release:pilot`.
+   - **Production Release**: When user says "deploy release", "release prod", "production deploy", run `npm run release`.
+3. **Execution Sequence**:
+   - Verify `npm run guardrails` passes.
+   - Commit & push changes (`git add .`, `git commit`, `git push`).
+   - Run the respective release command.
+   - Confirm to the user the new version number and rollout status.
+
 ---
 
 ## Medicine Image Accuracy & Packaging Cross-Validation Standard (MANDATORY)

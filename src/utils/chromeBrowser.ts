@@ -104,6 +104,7 @@ export async function copyProfileFolder(src: string, dest: string, logPrefix = '
  * - Direct process spawn: Eliminates lingering cmd.exe / terminal processes.
  */
 let activeAppBrowserProcess: ChildProcess | null = null;
+let activeBrowserPid: number | null = null;
 
 export function launchAppBrowser(url: string, customProfileDir?: string, onExit?: () => void): boolean {
   try {
@@ -132,6 +133,7 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
         stdio: 'ignore'
       });
       activeAppBrowserProcess = child;
+      activeBrowserPid = child.pid ?? null;
       child.on('error', (err) => {
         console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
       });
@@ -174,26 +176,30 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
  * Called during clean backend shutdown so both backend and frontend terminate together.
  */
 export function closeAppBrowser(): void {
-  if (activeAppBrowserProcess && activeAppBrowserProcess.pid) {
-    const pid = activeAppBrowserProcess.pid;
+  const pid = activeAppBrowserProcess?.pid || activeBrowserPid;
+  if (pid) {
     console.log(`[ChromeBrowser] Terminating app browser window process (PID: ${pid})...`);
     try {
       if (process.platform === 'win32') {
         execSync(`taskkill /pid ${pid} /t /f`, { stdio: 'ignore' });
-      } else {
+      } else if (activeAppBrowserProcess) {
         activeAppBrowserProcess.kill('SIGTERM');
       }
     } catch (err: any) {
       console.warn(`[ChromeBrowser] Error terminating browser process: ${err.message}`);
     }
     activeAppBrowserProcess = null;
+    activeBrowserPid = null;
   }
 
   // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile
   if (process.platform === 'win32') {
     try {
+      execSync(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy OS*"`, { stdio: 'ignore' });
+    } catch (_) {}
+    try {
       const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      execSync(killCmd, { stdio: 'ignore', timeout: 5000 });
+      execSync(killCmd, { stdio: 'ignore', timeout: 2500 });
     } catch (_) {}
   }
 }

@@ -1347,6 +1347,7 @@ function launchAppBrowser(url, customProfileDir, onExit) {
         stdio: "ignore"
       });
       activeAppBrowserProcess = child;
+      activeBrowserPid = child.pid ?? null;
       child.on("error", (err) => {
         console.warn(`[ChromeBrowser] Direct app-mode spawn error (non-fatal): ${err.message}`);
       });
@@ -1376,29 +1377,34 @@ function launchAppBrowser(url, customProfileDir, onExit) {
   }
 }
 function closeAppBrowser() {
-  if (activeAppBrowserProcess && activeAppBrowserProcess.pid) {
-    const pid = activeAppBrowserProcess.pid;
+  const pid = activeAppBrowserProcess?.pid || activeBrowserPid;
+  if (pid) {
     console.log(`[ChromeBrowser] Terminating app browser window process (PID: ${pid})...`);
     try {
       if (process.platform === "win32") {
         (0, import_child_process.execSync)(`taskkill /pid ${pid} /t /f`, { stdio: "ignore" });
-      } else {
+      } else if (activeAppBrowserProcess) {
         activeAppBrowserProcess.kill("SIGTERM");
       }
     } catch (err) {
       console.warn(`[ChromeBrowser] Error terminating browser process: ${err.message}`);
     }
     activeAppBrowserProcess = null;
+    activeBrowserPid = null;
   }
   if (process.platform === "win32") {
     try {
+      (0, import_child_process.execSync)(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy OS*"`, { stdio: "ignore" });
+    } catch (_) {
+    }
+    try {
       const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      (0, import_child_process.execSync)(killCmd, { stdio: "ignore", timeout: 5e3 });
+      (0, import_child_process.execSync)(killCmd, { stdio: "ignore", timeout: 2500 });
     } catch (_) {
     }
   }
 }
-var import_fs4, import_path4, import_child_process, PROFILE_SKIP_NAMES, activeAppBrowserProcess;
+var import_fs4, import_path4, import_child_process, PROFILE_SKIP_NAMES, activeAppBrowserProcess, activeBrowserPid;
 var init_chromeBrowser = __esm({
   "src/utils/chromeBrowser.ts"() {
     "use strict";
@@ -1424,6 +1430,7 @@ var init_chromeBrowser = __esm({
       "devtoolsactiveport"
     ]);
     activeAppBrowserProcess = null;
+    activeBrowserPid = null;
   }
 });
 
@@ -39268,15 +39275,22 @@ async function checkLicense() {
   const db2 = await dbManager.getConnection();
   const row = await db2.get("SELECT * FROM app_license WHERE id = 1");
   if (!row || row.testing_mode === 1) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
     const firstBoot = row?.activated_at ? new Date(row.activated_at).getTime() : Date.now();
-    if (!row?.activated_at) {
+    if (!row) {
+      await db2.run(
+        `INSERT INTO app_license (id, testing_mode, status, activated_at, offline_grace_days)
+         VALUES (1, 1, 'testing', ?, 7)`,
+        [now]
+      );
+    } else if (!row.activated_at) {
       await db2.run(
         "UPDATE app_license SET activated_at = ?, status = ? WHERE id = 1",
-        [(/* @__PURE__ */ new Date()).toISOString(), "testing"]
+        [now, "testing"]
       );
     }
-    const elapsed2 = Date.now() - firstBoot;
-    const remaining2 = Math.max(0, TESTING_FREE_PERIOD_MS - elapsed2);
+    const elapsed = Date.now() - firstBoot;
+    const remaining2 = Math.max(0, TESTING_FREE_PERIOD_MS - elapsed);
     const daysLeft2 = Math.floor(remaining2 / (24 * 60 * 60 * 1e3));
     return {
       valid: daysLeft2 > 0,
@@ -39296,8 +39310,8 @@ async function checkLicense() {
     if (resp.data.valid) {
       const expiresAt = resp.data.expiresAt || null;
       await db2.run(
-        "UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ? WHERE id = 1",
-        [(/* @__PURE__ */ new Date()).toISOString(), "licensed", expiresAt]
+        "UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ?, pharmacy_name = ? WHERE id = 1",
+        [(/* @__PURE__ */ new Date()).toISOString(), "licensed", expiresAt, resp.data.pharmacyName || row.pharmacy_name]
       );
       const daysLeft2 = resp.data.daysUntilExpiry ?? null;
       return {
@@ -39307,6 +39321,36 @@ async function checkLicense() {
         licenseId: row.license_id,
         daysUntilExpiry: daysLeft2,
         message: daysLeft2 !== null && daysLeft2 <= 30 ? `\u26A0\uFE0F License expires in ${daysLeft2} day${daysLeft2 !== 1 ? "s" : ""}. Please renew.` : `Licensed to ${resp.data.pharmacyName}`
+      };
+    }
+    const code = resp.data.code || "";
+    if (code === "EXPIRED") {
+      await db2.run(
+        "UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1",
+        ["expired", (/* @__PURE__ */ new Date()).toISOString()]
+      );
+      return {
+        valid: false,
+        mode: "expired",
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: 0,
+        message: "License has expired. Please renew your license."
+      };
+    }
+    if (code === "REVOKED" || resp.data.revoked) {
+      await db2.run(
+        "UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1",
+        ["revoked", (/* @__PURE__ */ new Date()).toISOString()]
+      );
+      const localDaysLeft = row.expires_at ? Math.max(0, Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 864e5)) : null;
+      return {
+        valid: localDaysLeft === null || localDaysLeft > 0,
+        mode: "revoked",
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: localDaysLeft,
+        message: "\u26A0\uFE0F License suspended by admin. Contact support to restore access."
       };
     }
   } catch (err) {
@@ -39325,12 +39369,31 @@ async function checkLicense() {
       };
     }
   }
+  if (row.expires_at) {
+    const daysLeft2 = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 864e5);
+    if (daysLeft2 > 0) {
+      return {
+        valid: true,
+        mode: "grace",
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: daysLeft2,
+        message: `Offline \u2014 license valid for ${daysLeft2} more day${daysLeft2 !== 1 ? "s" : ""}. Connect to internet to verify.`
+      };
+    }
+    return {
+      valid: false,
+      mode: "expired",
+      pharmacyName: row.pharmacy_name,
+      licenseId: row.license_id,
+      daysUntilExpiry: 0,
+      message: "License has expired. Please renew your license."
+    };
+  }
   const lastValidated = row.last_validated_at ? new Date(row.last_validated_at).getTime() : 0;
   const graceDays = row.offline_grace_days ?? 7;
-  const graceMs = graceDays * 24 * 60 * 60 * 1e3;
-  const elapsed = Date.now() - lastValidated;
-  const remaining = Math.max(0, graceMs - elapsed);
-  const daysLeft = Math.floor(remaining / (24 * 60 * 60 * 1e3));
+  const remaining = Math.max(0, graceDays * 864e5 - (Date.now() - lastValidated));
+  const daysLeft = Math.floor(remaining / 864e5);
   if (remaining > 0) {
     return {
       valid: true,
@@ -41685,7 +41748,7 @@ async function createBackup(reason = "Manual") {
   const tempDb = new import_better_sqlite32.default(DB_PATH13);
   await tempDb.backup(tempDbPath);
   tempDb.close();
-  const gzip = import_zlib2.default.createGzip();
+  const gzip = import_zlib2.default.createGzip({ level: isShutdown ? import_zlib2.default.constants.Z_BEST_SPEED : 6 });
   const source = import_fs30.default.createReadStream(tempDbPath);
   const destination = import_fs30.default.createWriteStream(backupPath);
   try {
@@ -64638,22 +64701,49 @@ var init_autoUpdateService = __esm({
         }
         const scriptPath = import_path53.default.join(updateDir, "install_and_restart.bat");
         const appDir = import_path53.default.dirname(process.execPath);
+        const currentExe = process.execPath;
+        const backupExe = currentExe + ".bak";
+        const failFlagPath = import_path53.default.join(updateDir, "update_failed.json");
+        const version = this.lastResult.latestVersion;
+        const toWin = (p) => p.replace(/\//g, "\\");
+        const winCurrentExe = toWin(currentExe);
+        const winBackupExe = toWin(backupExe);
+        const winFailFlagPath = toWin(failFlagPath);
+        const winAppDir = toWin(appDir);
         const scriptContent = `@echo off
 timeout /t 2 /nobreak >nul
 taskkill /F /IM PharmacyOS.exe >nul 2>&1
+
+rem --- Backup current executable before overwriting ---
+if exist "${winCurrentExe}" copy /Y "${winCurrentExe}" "${winBackupExe}" >nul
+
+rem --- Run new installer ---
 "%~1" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+set INSTALL_ERR=%ERRORLEVEL%
+
+if %INSTALL_ERR% NEQ 0 (
+  rem --- Install failed: write failure flag and restore backup ---
+  echo {"version":"${version}","error":"Installer exited with code %INSTALL_ERR%","ts":"%DATE% %TIME%"} > "${winFailFlagPath}"
+  if exist "${winBackupExe}" (
+    copy /Y "${winBackupExe}" "${winCurrentExe}" >nul
+  )
+  start "" "${winCurrentExe}"
+  exit /b 1
+)
+
+rem --- Install succeeded: launch new version ---
 timeout /t 3 /nobreak >nul
-if exist "%~2\\RUN-PharmacyOS-Silent.vbs" (
-  wscript.exe "%~2\\RUN-PharmacyOS-Silent.vbs"
-) else if exist "%~2\\PharmacyOS.exe" (
-  start "" "%~2\\PharmacyOS.exe"
+if exist "${winAppDir}\\RUN-PharmacyOS-Silent.vbs" (
+  wscript.exe "${winAppDir}\\RUN-PharmacyOS-Silent.vbs"
+) else if exist "${winAppDir}\\PharmacyOS.exe" (
+  start "" "${winAppDir}\\PharmacyOS.exe"
 ) else (
   start "" "%LOCALAPPDATA%\\AI Pharmacy OS\\PharmacyOS.exe"
 )
 exit
 `;
         import_fs50.default.writeFileSync(scriptPath, scriptContent, "utf8");
-        console.log("[AutoUpdate] Spawning detached installer helper script...");
+        console.log("[AutoUpdate] Spawning detached installer helper script (with rollback)...");
         const child = (0, import_child_process9.spawn)("cmd.exe", ["/c", scriptPath, updateExePath, appDir], {
           detached: true,
           stdio: "ignore"
@@ -64663,6 +64753,29 @@ exit
       }
       getLastResult() {
         return this.lastResult;
+      }
+      /**
+       * Call once on boot. Detects if previous update install failed,
+       * sends telemetry to Vercel, and returns a message to show the user.
+       */
+      async checkFailedUpdate() {
+        const failFlagPath = import_path53.default.join(import_os2.default.tmpdir(), "AIPharmacyUpdate", "update_failed.json");
+        if (!import_fs50.default.existsSync(failFlagPath)) return null;
+        try {
+          const raw = import_fs50.default.readFileSync(failFlagPath, "utf8");
+          const info = JSON.parse(raw);
+          import_fs50.default.unlinkSync(failFlagPath);
+          const { reportCrashTelemetry: reportCrashTelemetry2 } = await Promise.resolve().then(() => (init_licenseService(), licenseService_exports));
+          await reportCrashTelemetry2({
+            errorType: "UPDATE_INSTALL_FAILED",
+            message: `Update to v${info.version || "?"} failed: ${info.error || "unknown"}`
+          }).catch(() => {
+          });
+          console.warn(`[AutoUpdate] Previous update v${info.version} failed \u2014 rolled back to previous version.`);
+          return `\u26A0\uFE0F Update to v${info.version} failed. Rolled back to previous version. Our team has been notified.`;
+        } catch {
+          return null;
+        }
       }
     };
     autoUpdateService = AutoUpdateService.getInstance();
@@ -80466,61 +80579,104 @@ async function setupCrons(db2) {
 async function gracefulShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`${signal} received. Draining in-flight requests...`);
-  server.close();
+  console.log(`[Shutdown] ${signal} received. Closing UI window immediately...`);
+  const shutdownWatchdog = setTimeout(async () => {
+    console.warn("[Shutdown] Hard watchdog expired (6s). Forcing immediate process termination.");
+    if (process.platform === "win32") {
+      try {
+        const pid = process.pid;
+        const { spawn: spawn6 } = await import("child_process");
+        spawn6("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], { detached: true, stdio: "ignore" }).unref();
+      } catch (_) {
+      }
+    }
+    process.exit(0);
+  }, 6e3);
+  shutdownWatchdog.unref();
+  try {
+    closeAppBrowser();
+  } catch (browserErr) {
+    console.error("Error closing app browser window:", browserErr);
+  }
+  try {
+    server.close();
+    server.closeIdleConnections?.();
+  } catch (_) {
+  }
   const drainStart = Date.now();
-  const DRAIN_TIMEOUT_MS = 1e4;
+  const DRAIN_TIMEOUT_MS = 1e3;
   while (inFlightRequests > 0 && Date.now() - drainStart < DRAIN_TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   if (inFlightRequests > 0) {
-    console.warn(`[Shutdown] ${inFlightRequests} request(s) still in flight after ${DRAIN_TIMEOUT_MS}ms \u2014 proceeding anyway.`);
+    console.warn(`[Shutdown] ${inFlightRequests} request(s) still in flight after ${DRAIN_TIMEOUT_MS}ms \u2014 proceeding.`);
   }
-  console.log(`${signal} received. Creating shutdown backup...`);
   try {
     const db2 = await dbManager.getConnection();
     await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
   } catch (flagErr) {
     console.error("[Shutdown] Could not write last_clean_shutdown=true:", flagErr);
   }
+  console.log(`[Shutdown] Creating shutdown backup...`);
   try {
     const { createBackup: createBackup2 } = await Promise.resolve().then(() => (init_backupService(), backupService_exports));
-    const result = await createBackup2(`Shutdown (${signal})`);
-    console.log(`[Backup] Shutdown backup created: ${result.filename}`);
+    const result = await Promise.race([
+      createBackup2(`Shutdown (${signal})`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Shutdown backup timed out after 3500ms")), 3500))
+    ]);
+    if (result) {
+      console.log(`[Backup] Shutdown backup created: ${result.filename}`);
+    }
   } catch (err) {
-    console.error("[Backup] Shutdown backup failed:", err);
+    console.warn("[Backup] Shutdown backup notice:", err.message || err);
   }
+  await Promise.allSettled([
+    (async () => {
+      try {
+        const { workerSupervisor: workerSupervisor2 } = await Promise.resolve().then(() => (init_workerSupervisor(), workerSupervisor_exports));
+        workerSupervisor2.stop();
+      } catch (err) {
+        console.error("Error stopping worker supervisor:", err);
+      }
+    })(),
+    (async () => {
+      try {
+        const { destroyClient: destroyClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+        await Promise.race([
+          destroyClient2(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("WhatsApp destroy timed out")), 1500))
+        ]);
+      } catch (waErr) {
+        console.error("Error destroying WhatsApp client:", waErr);
+      }
+    })(),
+    (async () => {
+      try {
+        const { stopScispacySidecar: stopScispacySidecar2 } = await Promise.resolve().then(() => (init_scispacyClient(), scispacyClient_exports));
+        stopScispacySidecar2();
+      } catch (err) {
+        console.error("Error stopping scispaCy sidecar:", err);
+      }
+    })(),
+    (async () => {
+      try {
+        const { cloudflareTunnelService: cloudflareTunnelService2 } = await Promise.resolve().then(() => (init_cloudflareTunnelService(), cloudflareTunnelService_exports));
+        await cloudflareTunnelService2.stop();
+      } catch (err) {
+        console.error("Error stopping cloudflare tunnel:", err);
+      }
+    })()
+  ]);
   try {
-    const { workerSupervisor: workerSupervisor2 } = await Promise.resolve().then(() => (init_workerSupervisor(), workerSupervisor_exports));
-    workerSupervisor2.stop();
-  } catch (err) {
-    console.error("Error stopping worker supervisor:", err);
+    await dbManager.close(true);
+  } catch (dbErr) {
+    console.error("Error closing database:", dbErr);
   }
-  try {
-    const { destroyClient: destroyClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-    await destroyClient2();
-  } catch (waErr) {
-    console.error("Error destroying WhatsApp client:", waErr);
-  }
-  try {
-    const { stopScispacySidecar: stopScispacySidecar2 } = await Promise.resolve().then(() => (init_scispacyClient(), scispacyClient_exports));
-    stopScispacySidecar2();
-  } catch (err) {
-    console.error("Error stopping scispaCy sidecar:", err);
-  }
-  try {
-    const { cloudflareTunnelService: cloudflareTunnelService2 } = await Promise.resolve().then(() => (init_cloudflareTunnelService(), cloudflareTunnelService_exports));
-    await cloudflareTunnelService2.stop();
-  } catch (err) {
-    console.error("Error stopping cloudflare tunnel:", err);
-  }
-  await dbManager.close(true);
   try {
     closeAppBrowser();
-  } catch (browserErr) {
-    console.error("Error closing app browser window:", browserErr);
+  } catch (_) {
   }
-  if (process.platform === "win32" && signal === "CLIENT_EXIT") {
+  if (process.platform === "win32") {
     try {
       const pid = process.pid;
       const { spawn: spawn6 } = await import("child_process");
@@ -80841,7 +80997,14 @@ var init_server = __esm({
         }).catch((seedErr) => console.warn("[Boot:Phase2] Bundled reference seed failed:", seedErr));
         console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
         Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
-        Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then((m) => m.autoUpdateService.start()).catch((err) => console.warn("[Boot:Phase2] Auto-update scheduler start failed:", err));
+        Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then(async (m) => {
+          m.autoUpdateService.start();
+          const failMsg = await m.autoUpdateService.checkFailedUpdate();
+          if (failMsg) {
+            const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+            eventService2.broadcast("toast", { message: failMsg, type: "warning" });
+          }
+        }).catch((err) => console.warn("[Boot:Phase2] Auto-update scheduler start failed:", err));
         try {
           const prevShutdown = await db2.get("SELECT value FROM app_settings WHERE key = 'last_clean_shutdown'");
           if (prevShutdown && prevShutdown.value === "false") {

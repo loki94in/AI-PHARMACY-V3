@@ -55,8 +55,8 @@ export async function createBackup(reason: string = 'Manual'): Promise<{ filenam
   await tempDb.backup(tempDbPath);
   tempDb.close();
 
-  // Compress the backup using gzip (ponytail: native stdlib zlib)
-  const gzip = zlib.createGzip();
+  // Compress the backup using gzip (ponytail: native stdlib zlib - fast level 1 for shutdown to avoid hanging)
+  const gzip = zlib.createGzip({ level: isShutdown ? zlib.constants.Z_BEST_SPEED : 6 });
   const source = fs.createReadStream(tempDbPath);
   const destination = fs.createWriteStream(backupPath);
   try {
