@@ -1,0 +1,22 @@
+#!/bin/sh
+# Prevent broken builds from being pushed to remote
+echo ""
+echo "========================================================"
+echo " [Git Pre-Push Hook] Verifying Guardrails & Build..."
+echo "========================================================"
+echo ""
+
+npm run guardrails
+
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ Push blocked! Guardrails or TypeScript errors detected."
+  echo "Please fix the errors above before pushing."
+  echo ""
+  exit 1
+fi
+
+echo ""
+echo "✅ All checks passed. Proceeding with push."
+echo ""
+exit 0

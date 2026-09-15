@@ -124,7 +124,7 @@ npm run guardrails        # = node scripts/performance-guardrails.mjs
 - Default mode scans only lines ADDED/CHANGED vs git HEAD (`<2 s`). Exit `0` = pass. Exit `1` = violations that **MUST be fixed before the task is done** — no exceptions.
 - `--all` runs a full-repository legacy audit (advisory; use it when refactoring a whole subsystem).
 - `--self-test` verifies the rule engine itself (run after editing the scanner).
-- Rules enforce: no eager refetch storms (mark-stale-only), no ungated polling timers (`refetchInterval`/`setInterval`), one global SSE connection, semantic Tailwind colors only, no simulation/mock UI, zero dummy-data tokens (`B-*`, `BATCH123`, invented fallbacks), no native `alert()/confirm()`, delivery-boy data only from `delivery_boys` via `/dispatch`, async Pharmarack profile copies, and no autonomous patient messaging from cron/worker files.
+- Rules enforce: clean TypeScript compilation (`tsc --noEmit`), no syntax/regex errors, no eager refetch storms (mark-stale-only), no ungated polling timers (`refetchInterval`/`setInterval`), one global SSE connection, semantic Tailwind colors only, no simulation/mock UI, zero dummy-data tokens (`B-*`, `BATCH123`, invented fallbacks), no native `alert()/confirm()`, delivery-boy data only from `delivery_boys` via `/dispatch`, async Pharmarack profile copies, and no autonomous patient messaging from cron/worker files. Git `pre-push` hook enforces this automatically before any push to remote.
 - Sanctioned exceptions live in the `ALLOW` block of `scripts/performance-guardrails.mjs`. Extend them ONLY with a written rationale referencing the governing contract section.
 
 ---

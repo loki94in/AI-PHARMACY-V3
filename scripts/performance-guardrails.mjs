@@ -475,6 +475,21 @@ function main() {
 
   console.log('Performance Guardrails — scanning ' + jobs.length + ' file(s) (' + label + ')\n');
   if (!findings.length) {
+    const hasTsChanges = jobs.some(j => j.file.endsWith('.ts') || j.file.endsWith('.tsx'));
+    if (hasTsChanges) {
+      try {
+        process.stdout.write('Checking TypeScript compilation (tsc --noEmit)... ');
+        execSync('npx tsc --noEmit', { stdio: 'pipe' });
+        console.log('OK');
+      } catch (err) {
+        console.log('FAILED\n');
+        console.error('FAIL — TypeScript compilation error detected:');
+        if (err.stdout) console.error(err.stdout.toString().trim());
+        if (err.stderr) console.error(err.stderr.toString().trim());
+        console.error('\nFix TypeScript compilation errors before finishing the task or pushing.');
+        process.exit(1);
+      }
+    }
     console.log('PASS — no guardrail violations. Speed architecture intact.');
     return;
   }
