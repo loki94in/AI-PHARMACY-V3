@@ -211,6 +211,11 @@ class AutoUpdateService {
     const backupExe   = currentExe + '.bak';       // PharmacyOS.exe.bak
     const failFlagPath = path.join(updateDir, 'update_failed.json');
     const version      = this.lastResult.latestVersion;
+    const toWin        = (p: string) => p.replace(/\//g, '\\');
+    const winCurrentExe   = toWin(currentExe);
+    const winBackupExe    = toWin(backupExe);
+    const winFailFlagPath = toWin(failFlagPath);
+    const winAppDir       = toWin(appDir);
 
     // Bat: backup current exe → run installer → on failure restore backup + write fail flag
     const scriptContent = `@echo off
@@ -218,7 +223,7 @@ timeout /t 2 /nobreak >nul
 taskkill /F /IM PharmacyOS.exe >nul 2>&1
 
 rem --- Backup current executable before overwriting ---
-if exist "${currentExe}" copy /Y "${currentExe}" "${backupExe}" >nul
+if exist "${winCurrentExe}" copy /Y "${winCurrentExe}" "${winBackupExe}" >nul
 
 rem --- Run new installer ---
 "%~1" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
@@ -226,20 +231,20 @@ set INSTALL_ERR=%ERRORLEVEL%
 
 if %INSTALL_ERR% NEQ 0 (
   rem --- Install failed: write failure flag and restore backup ---
-  echo {"version":"${version}","error":"Installer exited with code %INSTALL_ERR%","ts":"%DATE% %TIME%"} > "${failFlagPath.replace(/\/g, '\\')}"
-  if exist "${backupExe.replace(/\/g, '\\')}" (
-    copy /Y "${backupExe.replace(/\/g, '\\')}" "${currentExe.replace(/\/g, '\\')}" >nul
+  echo {"version":"${version}","error":"Installer exited with code %INSTALL_ERR%","ts":"%DATE% %TIME%"} > "${winFailFlagPath}"
+  if exist "${winBackupExe}" (
+    copy /Y "${winBackupExe}" "${winCurrentExe}" >nul
   )
-  start "" "${currentExe.replace(/\/g, '\\')}"
+  start "" "${winCurrentExe}"
   exit /b 1
 )
 
 rem --- Install succeeded: launch new version ---
 timeout /t 3 /nobreak >nul
-if exist "${appDir.replace(/\/g, '\\')}\\RUN-PharmacyOS-Silent.vbs" (
-  wscript.exe "${appDir.replace(/\/g, '\\')}\\RUN-PharmacyOS-Silent.vbs"
-) else if exist "${appDir.replace(/\/g, '\\')}\\PharmacyOS.exe" (
-  start "" "${appDir.replace(/\/g, '\\')}\\PharmacyOS.exe"
+if exist "${winAppDir}\\RUN-PharmacyOS-Silent.vbs" (
+  wscript.exe "${winAppDir}\\RUN-PharmacyOS-Silent.vbs"
+) else if exist "${winAppDir}\\PharmacyOS.exe" (
+  start "" "${winAppDir}\\PharmacyOS.exe"
 ) else (
   start "" "%LOCALAPPDATA%\\AI Pharmacy OS\\PharmacyOS.exe"
 )
