@@ -22,7 +22,7 @@ const TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 
 export interface LicenseStatus {
   valid: boolean;
-  mode: 'testing' | 'licensed' | 'grace' | 'expired';
+  mode: 'testing' | 'licensed' | 'grace' | 'expired' | 'revoked';
   pharmacyName: string | null;
   licenseId: string | null;
   daysUntilExpiry: number | null; // null = unlimited (testing)
@@ -69,12 +69,21 @@ export async function checkLicense(): Promise<LicenseStatus> {
 
   // TESTING MODE: always valid, free for 1 year from first boot
   if (!row || row.testing_mode === 1) {
+    const now = new Date().toISOString();
     const firstBoot = row?.activated_at ? new Date(row.activated_at).getTime() : Date.now();
-    if (!row?.activated_at) {
-      // Record first boot time
+
+    if (!row) {
+      // Row was deleted — re-insert a fresh testing-mode row so UPDATE paths work correctly
+      await db.run(
+        `INSERT INTO app_license (id, testing_mode, status, activated_at, offline_grace_days)
+         VALUES (1, 1, 'testing', ?, 7)`,
+        [now]
+      );
+    } else if (!row.activated_at) {
+      // Row exists but first boot not yet recorded
       await db.run(
         'UPDATE app_license SET activated_at = ?, status = ? WHERE id = 1',
-        [new Date().toISOString(), 'testing']
+        [now, 'testing']
       );
     }
     const elapsed = Date.now() - firstBoot;
@@ -94,7 +103,7 @@ export async function checkLicense(): Promise<LicenseStatus> {
     };
   }
 
-  // LICENSED MODE: validate online (with offline grace fallback)
+  // LICENSED MODE: validate online, fall back to locally cached expires_at when offline
   const machineId = getMachineId();
 
   // Try online validation first
@@ -106,9 +115,10 @@ export async function checkLicense(): Promise<LicenseStatus> {
 
     if (resp.data.valid) {
       const expiresAt = resp.data.expiresAt || null;
+      // Also cache pharmacyName so offline display is accurate
       await db.run(
-        'UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ? WHERE id = 1',
-        [new Date().toISOString(), 'licensed', expiresAt]
+        'UPDATE app_license SET last_validated_at = ?, status = ?, expires_at = ?, pharmacy_name = ? WHERE id = 1',
+        [new Date().toISOString(), 'licensed', expiresAt, resp.data.pharmacyName || row.pharmacy_name]
       );
       const daysLeft = resp.data.daysUntilExpiry ?? null;
       return {
@@ -122,8 +132,45 @@ export async function checkLicense(): Promise<LicenseStatus> {
           : `Licensed to ${resp.data.pharmacyName}`,
       };
     }
+
+    // Server responded 200 but license is NOT valid — inspect reason code
+    const code: string = resp.data.code || '';
+
+    if (code === 'EXPIRED') {
+      await db.run(
+        'UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1',
+        ['expired', new Date().toISOString()]
+      );
+      return {
+        valid: false,
+        mode: 'expired',
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: 0,
+        message: 'License has expired. Please renew your license.',
+      };
+    }
+
+    // REVOKED / suspended by admin — soft warning, app keeps running until local expires_at
+    if (code === 'REVOKED' || resp.data.revoked) {
+      await db.run(
+        'UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1',
+        ['revoked', new Date().toISOString()]
+      );
+      const localDaysLeft = row.expires_at
+        ? Math.max(0, Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 86400000))
+        : null;
+      return {
+        valid: localDaysLeft === null || localDaysLeft > 0,
+        mode: 'revoked',
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: localDaysLeft,
+        message: '⚠️ License suspended by admin. Contact support to restore access.',
+      };
+    }
   } catch (err: any) {
-    // If server specifically returned EXPIRED, lock immediately without grace
+    // 4xx error with EXPIRED code — hard block immediately
     if (err.response?.data?.code === 'EXPIRED') {
       await db.run(
         'UPDATE app_license SET status = ?, last_validated_at = ? WHERE id = 1',
@@ -138,16 +185,39 @@ export async function checkLicense(): Promise<LicenseStatus> {
         message: 'License has expired. Please renew your license.',
       };
     }
-    // Offline — apply grace period logic
+    // Network error / offline — fall through to local expires_at check
   }
 
-  // Offline grace period check
+  // ── OFFLINE FALLBACK ────────────────────────────────────────────────────────
+  // Bug fix: use locally cached expires_at so the app runs for the FULL remaining
+  // license period without internet — not just 7 days.
+  if (row.expires_at) {
+    const daysLeft = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 86400000);
+    if (daysLeft > 0) {
+      return {
+        valid: true,
+        mode: 'grace',
+        pharmacyName: row.pharmacy_name,
+        licenseId: row.license_id,
+        daysUntilExpiry: daysLeft,
+        message: `Offline — license valid for ${daysLeft} more day${daysLeft !== 1 ? 's' : ''}. Connect to internet to verify.`,
+      };
+    }
+    return {
+      valid: false,
+      mode: 'expired',
+      pharmacyName: row.pharmacy_name,
+      licenseId: row.license_id,
+      daysUntilExpiry: 0,
+      message: 'License has expired. Please renew your license.',
+    };
+  }
+
+  // Legacy fallback: no expires_at cached yet (row from before this fix) — use 7-day grace
   const lastValidated = row.last_validated_at ? new Date(row.last_validated_at).getTime() : 0;
   const graceDays = row.offline_grace_days ?? 7;
-  const graceMs = graceDays * 24 * 60 * 60 * 1000;
-  const elapsed = Date.now() - lastValidated;
-  const remaining = Math.max(0, graceMs - elapsed);
-  const daysLeft = Math.floor(remaining / (24 * 60 * 60 * 1000));
+  const remaining = Math.max(0, (graceDays * 86400000) - (Date.now() - lastValidated));
+  const daysLeft = Math.floor(remaining / 86400000);
 
   if (remaining > 0) {
     return {
@@ -160,7 +230,6 @@ export async function checkLicense(): Promise<LicenseStatus> {
     };
   }
 
-  // Grace expired
   return {
     valid: false,
     mode: 'expired',

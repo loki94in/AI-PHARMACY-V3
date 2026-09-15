@@ -16409,13 +16409,13 @@ async function ensureSchema(dbPath) {
             if (unpopulated.length > 0) {
               console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
               const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-              const fs62 = await import("fs");
+              const fs63 = await import("fs");
               for (const email of unpopulated) {
                 try {
                   const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
                   const parsedItems = [];
                   for (const att of attachments) {
-                    if (att.local_path && fs62.existsSync(att.local_path)) {
+                    if (att.local_path && fs63.existsSync(att.local_path)) {
                       try {
                         const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
                         if (resParse && resParse.success && resParse.items) {
@@ -40463,19 +40463,19 @@ var init_messageDAO = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang, path65, values = {}) {
-  const dbValue = getTemplate(lang, path65);
+function getMessage(lang, path66, values = {}) {
+  const dbValue = getTemplate(lang, path66);
   let template = "";
   if (dbValue !== null) {
     template = dbValue;
   } else {
-    const keys = path65.split(".");
+    const keys = path66.split(".");
     let segment = ALL_MESSAGES[lang];
     for (const k of keys) {
-      if (segment == null) return `[Missing: ${path65}]`;
+      if (segment == null) return `[Missing: ${path66}]`;
       segment = segment[k];
     }
-    if (typeof segment !== "string") return `[Not a string: ${path65}]`;
+    if (typeof segment !== "string") return `[Not a string: ${path66}]`;
     template = segment;
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
@@ -50117,7 +50117,7 @@ var init_security = __esm({
       if (!req.body) {
         return res.status(400).json({ error: "Missing request body." });
       }
-      const { username, password, uniqueKey, deviceId, deviceName = "Unknown Device", os: os2 = "Unknown OS" } = req.body;
+      const { username, password, uniqueKey, deviceId, deviceName = "Unknown Device", os: os3 = "Unknown OS" } = req.body;
       if (!username || !password || !uniqueKey || !deviceId) {
         return res.status(400).json({ error: "Missing required credentials or device identifier." });
       }
@@ -50145,7 +50145,7 @@ var init_security = __esm({
         }
         if (registeredDevId === "") {
           await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', ?)", [deviceId]);
-          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', ?)", [`${deviceName} (${os2})`]);
+          await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', ?)", [`${deviceName} (${os3})`]);
         }
         let tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'license_session_token'");
         let sessionToken = tokenRow?.value;
@@ -50155,7 +50155,7 @@ var init_security = __esm({
         }
         await db2.run(
           "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-          ["ADMIN_REMOTE_LOGIN", `Admin logged in remotely from ${deviceName} (${os2})`]
+          ["ADMIN_REMOTE_LOGIN", `Admin logged in remotely from ${deviceName} (${os3})`]
         );
         res.json({ success: true, sessionToken, message: "Authentication successful. Device registered." });
       } catch (error) {
@@ -64460,20 +64460,66 @@ var autoUpdateService_exports = {};
 __export(autoUpdateService_exports, {
   autoUpdateService: () => autoUpdateService
 });
-var BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const tempDest = dest + ".tmp";
+    const client = url.startsWith("https") ? import_https.default : import_http2.default;
+    function makeRequest(currentUrl, redirectCount = 0) {
+      if (redirectCount > 5) {
+        return reject(new Error("Too many redirects while downloading update"));
+      }
+      client.get(currentUrl, (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return makeRequest(res.headers.location, redirectCount + 1);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+        }
+        const fileStream = import_fs50.default.createWriteStream(tempDest);
+        res.pipe(fileStream);
+        fileStream.on("finish", () => {
+          fileStream.close(() => {
+            try {
+              if (import_fs50.default.existsSync(dest)) import_fs50.default.unlinkSync(dest);
+              import_fs50.default.renameSync(tempDest, dest);
+              resolve();
+            } catch (renameErr) {
+              reject(renameErr);
+            }
+          });
+        });
+      }).on("error", (err) => {
+        try {
+          if (import_fs50.default.existsSync(tempDest)) import_fs50.default.unlinkSync(tempDest);
+        } catch (_) {
+        }
+        reject(err);
+      });
+    }
+    makeRequest(url);
+  });
+}
+var import_fs50, import_path53, import_os2, import_https, import_http2, import_child_process9, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
+    import_fs50 = __toESM(require("fs"), 1);
+    import_path53 = __toESM(require("path"), 1);
+    import_os2 = __toESM(require("os"), 1);
+    import_https = __toESM(require("https"), 1);
+    import_http2 = __toESM(require("http"), 1);
+    import_child_process9 = require("child_process");
     init_connection();
     init_licenseService();
     init_eventService();
     init_activityTracker();
     BOOT_DELAY_MS = 6e4;
-    POLL_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+    POLL_INTERVAL_MS = 2 * 60 * 60 * 1e3;
     AutoUpdateService = class _AutoUpdateService {
       static instance;
       intervalHandle = null;
       lastResult = null;
+      isDownloading = false;
       static getInstance() {
         if (!_AutoUpdateService.instance) _AutoUpdateService.instance = new _AutoUpdateService();
         return _AutoUpdateService.instance;
@@ -64503,21 +64549,43 @@ var init_autoUpdateService = __esm({
           const row = await db2.get("SELECT last_checked_at, check_interval_days FROM update_checks WHERE id = 1");
           if (reason === "auto" && row?.last_checked_at) {
             const lastMs = new Date(row.last_checked_at).getTime();
-            const intervalDays = row.check_interval_days ?? 15;
+            const intervalDays = row.check_interval_days ?? 1;
             const intervalMs = intervalDays * 24 * 60 * 60 * 1e3;
             if (Date.now() - lastMs < intervalMs) return;
           }
           const result = await checkForUpdate();
           if (!result) return;
-          this.lastResult = result;
+          const updateDir = import_path53.default.join(import_os2.default.tmpdir(), "AIPharmacyUpdate");
+          if (!import_fs50.default.existsSync(updateDir)) import_fs50.default.mkdirSync(updateDir, { recursive: true });
+          const updateExePath = result.latestVersion ? import_path53.default.join(updateDir, `setup_${result.latestVersion}.exe`) : null;
+          const alreadyDownloaded = updateExePath ? import_fs50.default.existsSync(updateExePath) : false;
+          this.lastResult = {
+            ...result,
+            downloading: false,
+            readyToInstall: alreadyDownloaded
+          };
           if (result.hasUpdate) {
             console.log(`[AutoUpdate] New version available: ${result.latestVersion}`);
-            eventService.broadcast("update_available", {
-              latestVersion: result.latestVersion,
-              downloadUrl: result.downloadUrl,
-              changelog: result.changelog,
-              reason
-            });
+            if (alreadyDownloaded) {
+              eventService.broadcast("update_available", {
+                latestVersion: result.latestVersion,
+                downloadUrl: result.downloadUrl,
+                changelog: result.changelog,
+                readyToInstall: true,
+                reason
+              });
+            } else if (result.downloadUrl && !this.isDownloading) {
+              eventService.broadcast("update_available", {
+                latestVersion: result.latestVersion,
+                downloadUrl: result.downloadUrl,
+                changelog: result.changelog,
+                downloading: true,
+                readyToInstall: false,
+                reason
+              });
+              this.isDownloading = true;
+              this.downloadUpdateSilently(result.downloadUrl, updateExePath, result.latestVersion, result.changelog, reason);
+            }
           } else {
             if (reason === "manual") {
               eventService.broadcast("update_check_complete", {
@@ -64531,6 +64599,67 @@ var init_autoUpdateService = __esm({
         } catch (err) {
           console.warn("[AutoUpdate] Check failed (offline?):", err.message);
         }
+      }
+      async downloadUpdateSilently(url, dest, version, changelog, reason = "auto") {
+        try {
+          console.log(`[AutoUpdate] Silently downloading update v${version} in background...`);
+          await downloadFile(url, dest);
+          this.isDownloading = false;
+          if (this.lastResult) {
+            this.lastResult.downloading = false;
+            this.lastResult.readyToInstall = true;
+          }
+          console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
+          eventService.broadcast("update_available", {
+            latestVersion: version,
+            changelog: changelog || "",
+            readyToInstall: true,
+            downloading: false,
+            reason
+          });
+        } catch (err) {
+          this.isDownloading = false;
+          console.warn("[AutoUpdate] Silent background download failed:", err.message);
+        }
+      }
+      /**
+       * 1-Click silent install & auto-restart.
+       * Spawns a detached Windows helper script that waits for current process to exit,
+       * runs the downloaded installer silently, and relaunches the app.
+       */
+      async applyUpdate() {
+        if (!this.lastResult?.latestVersion) {
+          throw new Error("No pending update found.");
+        }
+        const updateDir = import_path53.default.join(import_os2.default.tmpdir(), "AIPharmacyUpdate");
+        const updateExePath = import_path53.default.join(updateDir, `setup_${this.lastResult.latestVersion}.exe`);
+        if (!import_fs50.default.existsSync(updateExePath)) {
+          throw new Error("Update file has not finished downloading yet.");
+        }
+        const scriptPath = import_path53.default.join(updateDir, "install_and_restart.bat");
+        const appDir = import_path53.default.dirname(process.execPath);
+        const scriptContent = `@echo off
+timeout /t 2 /nobreak >nul
+taskkill /F /IM PharmacyOS.exe >nul 2>&1
+"%~1" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+timeout /t 3 /nobreak >nul
+if exist "%~2\\RUN-PharmacyOS-Silent.vbs" (
+  wscript.exe "%~2\\RUN-PharmacyOS-Silent.vbs"
+) else if exist "%~2\\PharmacyOS.exe" (
+  start "" "%~2\\PharmacyOS.exe"
+) else (
+  start "" "%LOCALAPPDATA%\\AI Pharmacy OS\\PharmacyOS.exe"
+)
+exit
+`;
+        import_fs50.default.writeFileSync(scriptPath, scriptContent, "utf8");
+        console.log("[AutoUpdate] Spawning detached installer helper script...");
+        const child = (0, import_child_process9.spawn)("cmd.exe", ["/c", scriptPath, updateExePath, appDir], {
+          detached: true,
+          stdio: "ignore"
+        });
+        child.unref();
+        return { success: true, message: "Installing update and restarting AI Pharmacy OS..." };
       }
       getLastResult() {
         return this.lastResult;
@@ -64721,7 +64850,7 @@ async function ensureSyncClientRefs(db2) {
   )`);
   syncDedupeTableReady = true;
 }
-var import_express32, import_path53, import_fs50, import_pdfkit5, router32, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
+var import_express32, import_path54, import_fs51, import_pdfkit5, router32, normalizeNumericSearch, DEFAULT_LIMIT, MAX_LIMIT, MAX_ITEMS_IN_BATCH, SQLITE_BUSY_RETRIES, SQLITE_BUSY_BASE_DELAY_MS, generateInvoiceNo, calculateSalesGstAndTotals, handleInvoiceBarcode, stagedDeviceColumnsReady, syncDedupeTableReady, sales_default;
 var init_sales = __esm({
   "src/routes/sales.ts"() {
     "use strict";
@@ -64734,8 +64863,8 @@ var init_sales = __esm({
     init_verificationService();
     init_activityLogger();
     init_eventService();
-    import_path53 = __toESM(require("path"), 1);
-    import_fs50 = __toESM(require("fs"), 1);
+    import_path54 = __toESM(require("path"), 1);
+    import_fs51 = __toESM(require("fs"), 1);
     import_pdfkit5 = __toESM(require("pdfkit"), 1);
     init_barcodeService();
     init_config();
@@ -65422,13 +65551,13 @@ var init_sales = __esm({
                 waMsg += `\u2014 AI Pharmacy OS`;
                 let pdfPath = void 0;
                 try {
-                  const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
-                  if (!import_fs50.default.existsSync(uploadsDir)) {
-                    import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
+                  const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads");
+                  if (!import_fs51.default.existsSync(uploadsDir)) {
+                    import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
                   }
                   const sanitizeNo = String(invoice_no || "").replace(/[^a-zA-Z0-9-]/g, "_");
                   const pdfFilename = `invoice_${sanitizeNo}_${Date.now()}.pdf`;
-                  const fullPdfPath = import_path53.default.join(uploadsDir, pdfFilename);
+                  const fullPdfPath = import_path54.default.join(uploadsDir, pdfFilename);
                   const { pdfInvoiceService: pdfInvoiceService2 } = await Promise.resolve().then(() => (init_pdfInvoiceService(), pdfInvoiceService_exports));
                   await pdfInvoiceService2.generateInvoicePdf(invoiceId, fullPdfPath);
                   pdfPath = fullPdfPath;
@@ -66574,14 +66703,14 @@ var init_sales = __esm({
         });
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
-        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs50.default.existsSync(uploadsDir)) {
-          import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs51.default.existsSync(uploadsDir)) {
+          import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new import_pdfkit5.default({ size: [350, 220], margin: 15 });
         const sanitizeNo = actualInvoiceNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path53.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs50.default.createWriteStream(pdfPath);
+        const pdfPath = import_path54.default.join(uploadsDir, `barcode_invoice_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs51.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -66607,7 +66736,7 @@ var init_sales = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path53.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path54.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -67657,14 +67786,14 @@ var init_sales = __esm({
         if (!image) {
           return res.status(400).json({ error: "Image data (base64) is required" });
         }
-        const uploadsDir = import_path53.default.resolve(getAppDataDir(), "uploads", "prescriptions");
-        if (!import_fs50.default.existsSync(uploadsDir)) {
-          import_fs50.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path54.default.resolve(getAppDataDir(), "uploads", "prescriptions");
+        if (!import_fs51.default.existsSync(uploadsDir)) {
+          import_fs51.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const base64Str = image.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(base64Str, "base64");
         const safeName = `Rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-        const fullPath = import_path53.default.join(uploadsDir, safeName);
+        const fullPath = import_path54.default.join(uploadsDir, safeName);
         await imageCompressionService.compressAndSave(buffer, fullPath, 1400, 82);
         const relativeUrl = `/uploads/prescriptions/${safeName}`;
         res.json({ success: true, image_path: relativeUrl });
@@ -67723,17 +67852,17 @@ var dashboard_exports = {};
 __export(dashboard_exports, {
   default: () => dashboard_default
 });
-var import_express33, import_path54, import_url40, __filename38, __dirname38, DB_PATH24, router33, dashboard_default;
+var import_express33, import_path55, import_url40, __filename38, __dirname38, DB_PATH24, router33, dashboard_default;
 var init_dashboard = __esm({
   "src/routes/dashboard.ts"() {
     "use strict";
     import_express33 = __toESM(require("express"), 1);
     init_connection();
-    import_path54 = __toESM(require("path"), 1);
+    import_path55 = __toESM(require("path"), 1);
     import_url40 = require("url");
     __filename38 = (0, import_url40.fileURLToPath)(import_meta_url);
-    __dirname38 = import_path54.default.dirname(__filename38);
-    DB_PATH24 = process.env.DB_PATH || import_path54.default.resolve(__dirname38, "..", "..", "data", "app.db");
+    __dirname38 = import_path55.default.dirname(__filename38);
+    DB_PATH24 = process.env.DB_PATH || import_path55.default.resolve(__dirname38, "..", "..", "data", "app.db");
     router33 = import_express33.default.Router();
     router33.get("/", async (_req, res) => {
       try {
@@ -67817,14 +67946,14 @@ async function seedMasterMedicines(force = false) {
         return { loaded: 0 };
       }
     }
-    const csvPath = import_path55.default.join(process.cwd(), "data", "reference_medicines.csv");
-    if (!import_fs51.default.existsSync(csvPath)) {
+    const csvPath = import_path56.default.join(process.cwd(), "data", "reference_medicines.csv");
+    if (!import_fs52.default.existsSync(csvPath)) {
       const templateCandidates = [
-        import_path55.default.join(process.cwd(), "data", "app.db"),
-        import_path55.default.join(import_path55.default.dirname(process.execPath), "data", "app.db")
+        import_path56.default.join(process.cwd(), "data", "app.db"),
+        import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "app.db")
       ];
       for (const tPath of templateCandidates) {
-        if (import_fs51.default.existsSync(tPath) && import_path55.default.resolve(tPath) !== import_path55.default.resolve(config.dbPath)) {
+        if (import_fs52.default.existsSync(tPath) && import_path56.default.resolve(tPath) !== import_path56.default.resolve(config.dbPath)) {
           try {
             const normalized = tPath.replace(/\\/g, "/");
             await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
@@ -67847,7 +67976,7 @@ async function seedMasterMedicines(force = false) {
       console.warn("[MasterSeed] Reference CSV not found at:", csvPath);
       return { loaded: 0 };
     }
-    const fileStream = import_fs51.default.createReadStream(csvPath, { encoding: "utf8" });
+    const fileStream = import_fs52.default.createReadStream(csvPath, { encoding: "utf8" });
     const rl = import_readline3.default.createInterface({
       input: fileStream,
       crlfDelay: Infinity
@@ -67985,12 +68114,12 @@ async function upsertMasterMedicine(item) {
     console.warn("[MasterSeed] Failed to upsert master medicine:", cleanName, err.message);
   }
 }
-var import_fs51, import_path55, import_readline3;
+var import_fs52, import_path56, import_readline3;
 var init_masterMedicinesSeedService = __esm({
   "src/services/masterMedicinesSeedService.ts"() {
     "use strict";
-    import_fs51 = __toESM(require("fs"), 1);
-    import_path55 = __toESM(require("path"), 1);
+    import_fs52 = __toESM(require("fs"), 1);
+    import_path56 = __toESM(require("path"), 1);
     import_readline3 = __toESM(require("readline"), 1);
     init_connection();
     init_config();
@@ -68231,13 +68360,13 @@ __export(invoiceVisionService_exports, {
   InvoiceVisionService: () => InvoiceVisionService,
   invoiceVisionService: () => invoiceVisionService
 });
-var import_axios3, import_fs52, import_path56, import_tesseract4, InvoiceVisionService, invoiceVisionService;
+var import_axios3, import_fs53, import_path57, import_tesseract4, InvoiceVisionService, invoiceVisionService;
 var init_invoiceVisionService = __esm({
   "src/services/invoiceVisionService.ts"() {
     "use strict";
     import_axios3 = __toESM(require("axios"), 1);
-    import_fs52 = __toESM(require("fs"), 1);
-    import_path56 = __toESM(require("path"), 1);
+    import_fs53 = __toESM(require("fs"), 1);
+    import_path57 = __toESM(require("path"), 1);
     import_tesseract4 = require("tesseract.js");
     init_connection();
     init_nameNormalizer();
@@ -68248,14 +68377,14 @@ var init_invoiceVisionService = __esm({
        * Parse a purchase invoice from an image buffer (JPEG/PNG/WebP/PDF).
        */
       async parseInvoiceImage(buffer, mimeType = "image/jpeg", originalFilename = "invoice.jpg") {
-        const uploadsDir = import_path56.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
-        if (!import_fs52.default.existsSync(uploadsDir)) {
-          import_fs52.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path57.default.resolve(getAppDataDir(), "uploads", "purchase_invoices");
+        if (!import_fs53.default.existsSync(uploadsDir)) {
+          import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const ext = import_path56.default.extname(originalFilename) || ".jpg";
+        const ext = import_path57.default.extname(originalFilename) || ".jpg";
         const safeFilename = `PB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
-        const savedPath = import_path56.default.join(uploadsDir, safeFilename);
-        import_fs52.default.writeFileSync(savedPath, buffer);
+        const savedPath = import_path57.default.join(uploadsDir, safeFilename);
+        import_fs53.default.writeFileSync(savedPath, buffer);
         const relativeImagePath = `/uploads/purchase_invoices/${safeFilename}`;
         let geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
         if (!geminiKey || geminiKey.trim() === "") {
@@ -68844,14 +68973,14 @@ function tokensMatchFuzzy(term1, term2, aliasMap) {
   const overlap = commonCount / Math.min(tokens1.size, tokens2.size);
   return overlap >= 0.5 || commonCount >= 2;
 }
-var import_express34, import_path57, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs53, __filename39, __dirname39, DB_PATH25, router34, upload2, purchases_default;
+var import_express34, import_path58, import_url41, import_multer2, import_pdf_parse2, import_sync3, XLSX6, import_adm_zip4, import_fs54, __filename39, __dirname39, DB_PATH25, router34, upload2, purchases_default;
 var init_purchases = __esm({
   "src/routes/purchases.ts"() {
     "use strict";
     import_express34 = __toESM(require("express"), 1);
     init_stockRebuild();
     init_connection();
-    import_path57 = __toESM(require("path"), 1);
+    import_path58 = __toESM(require("path"), 1);
     import_url41 = require("url");
     import_multer2 = __toESM(require("multer"), 1);
     import_pdf_parse2 = __toESM(require("pdf-parse"), 1);
@@ -68864,7 +68993,7 @@ var init_purchases = __esm({
     init_config();
     init_inventoryActive();
     init_inventoryCache();
-    import_fs53 = __toESM(require("fs"), 1);
+    import_fs54 = __toESM(require("fs"), 1);
     init_medicineService();
     init_orderFulfillmentService();
     init_summaryCacheService();
@@ -68874,8 +69003,8 @@ var init_purchases = __esm({
     init_barcodeService();
     init_storeContextService();
     __filename39 = (0, import_url41.fileURLToPath)(import_meta_url);
-    __dirname39 = import_path57.default.dirname(__filename39);
-    DB_PATH25 = process.env.DB_PATH || import_path57.default.resolve(__dirname39, "..", "..", "data", "app.db");
+    __dirname39 = import_path58.default.dirname(__filename39);
+    DB_PATH25 = process.env.DB_PATH || import_path58.default.resolve(__dirname39, "..", "..", "data", "app.db");
     router34 = import_express34.default.Router();
     upload2 = (0, import_multer2.default)({ storage: import_multer2.default.memoryStorage() });
     router34.get("/summary", async (_req, res) => {
@@ -68896,17 +69025,17 @@ var init_purchases = __esm({
         if (!req.file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const uploadsDir = process.env.UPLOADS_DIR || import_path57.default.join(getAppDataDir(), "uploads");
-        if (!import_fs53.default.existsSync(uploadsDir)) {
-          import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = process.env.UPLOADS_DIR || import_path58.default.join(getAppDataDir(), "uploads");
+        if (!import_fs54.default.existsSync(uploadsDir)) {
+          import_fs54.default.mkdirSync(uploadsDir, { recursive: true });
         }
-        const sanitizedFilename = import_path57.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        const tempPath = import_path57.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
-        import_fs53.default.writeFileSync(tempPath, req.file.buffer);
+        const sanitizedFilename = import_path58.default.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const tempPath = import_path58.default.join(uploadsDir, `upload-${Date.now()}-${sanitizedFilename}`);
+        import_fs54.default.writeFileSync(tempPath, req.file.buffer);
         const result = await emailService.parseAndImportAttachment(tempPath, false);
         if (!result.success) {
           try {
-            import_fs53.default.unlinkSync(tempPath);
+            import_fs54.default.unlinkSync(tempPath);
           } catch {
           }
           return res.status(400).json({ error: "Failed to parse invoice file" });
@@ -70213,7 +70342,7 @@ var init_purchases = __esm({
           if (medNames.length === 0 && !email.medicine_names) {
             const parsedItems = [];
             for (const att of attachments) {
-              if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
+              if (att.local_path && import_fs54.default.existsSync(att.local_path)) {
                 try {
                   const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                   if (resParse && resParse.success && resParse.items) {
@@ -70502,7 +70631,7 @@ var init_purchases = __esm({
         let parsedTotalAmount = 0;
         let parsedGlobalCdPer = 0;
         for (const att of dbAttachments) {
-          if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
+          if (att.local_path && import_fs54.default.existsSync(att.local_path)) {
             try {
               const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
               if (resParse && resParse.success) {
@@ -70611,7 +70740,7 @@ var init_purchases = __esm({
         if (parsedItems.length === 0) {
           const dbAttachments = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachments) {
-            if (att.local_path && import_fs53.default.existsSync(att.local_path)) {
+            if (att.local_path && import_fs54.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse && resParse.success && resParse.items && resParse.items.length > 0) {
@@ -70647,7 +70776,7 @@ var init_purchases = __esm({
         if (!resolvedInvoiceDate) {
           const dbAttachmentsForDate = await db2.all("SELECT * FROM email_attachments WHERE uid = ?", [email_uid]);
           for (const att of dbAttachmentsForDate) {
-            if (!resolvedInvoiceDate && att.local_path && import_fs53.default.existsSync(att.local_path)) {
+            if (!resolvedInvoiceDate && att.local_path && import_fs54.default.existsSync(att.local_path)) {
               try {
                 const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
                 if (resParse?.success && resParse.invoice_date) {
@@ -70928,14 +71057,14 @@ var init_purchases = __esm({
         const shopName = settings.shop_name || "AI PHARMACY OS";
         const shopPhone = settings.shop_phone || "";
         const { default: PDFDocument7 } = await import("pdfkit");
-        const uploadsDir = import_path57.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs53.default.existsSync(uploadsDir)) {
-          import_fs53.default.mkdirSync(uploadsDir, { recursive: true });
+        const uploadsDir = import_path58.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs54.default.existsSync(uploadsDir)) {
+          import_fs54.default.mkdirSync(uploadsDir, { recursive: true });
         }
         const doc = new PDFDocument7({ size: [350, 220], margin: 15 });
         const sanitizeNo = billNo.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const pdfPath = import_path57.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
-        const stream = import_fs53.default.createWriteStream(pdfPath);
+        const pdfPath = import_path58.default.join(uploadsDir, `barcode_purchase_bill_${sanitizeNo}_${Date.now()}.pdf`);
+        const stream = import_fs54.default.createWriteStream(pdfPath);
         doc.pipe(stream);
         doc.font("Helvetica-Bold").fontSize(14).fillColor("#0284c7").text(shopName, { align: "center" });
         if (shopPhone) {
@@ -70964,7 +71093,7 @@ var init_purchases = __esm({
             barcodeText: barcodeData.barcodeText,
             qrDataUrl: barcodeData.qrDataUrl,
             code128DataUrl: barcodeData.code128DataUrl,
-            pdfUrl: `/uploads/${import_path57.default.basename(pdfPath)}`
+            pdfUrl: `/uploads/${import_path58.default.basename(pdfPath)}`
           });
         });
       } catch (error) {
@@ -71338,14 +71467,14 @@ function extractMedicineInfo(text) {
   }
   return info;
 }
-var import_express36, import_path58, import_fs54, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router36, returns_default;
+var import_express36, import_path59, import_fs55, import_pdfkit6, import_url42, __filename40, __dirname40, DB_PATH26, router36, returns_default;
 var init_returns = __esm({
   "src/routes/returns.ts"() {
     "use strict";
     import_express36 = __toESM(require("express"), 1);
     init_connection();
-    import_path58 = __toESM(require("path"), 1);
-    import_fs54 = __toESM(require("fs"), 1);
+    import_path59 = __toESM(require("path"), 1);
+    import_fs55 = __toESM(require("fs"), 1);
     import_pdfkit6 = __toESM(require("pdfkit"), 1);
     import_url42 = require("url");
     init_aiCameraService();
@@ -71354,8 +71483,8 @@ var init_returns = __esm({
     init_stockRebuild();
     init_eventService();
     __filename40 = (0, import_url42.fileURLToPath)(import_meta_url);
-    __dirname40 = import_path58.default.dirname(__filename40);
-    DB_PATH26 = process.env.DB_PATH || import_path58.default.resolve(__dirname40, "..", "..", "data", "app.db");
+    __dirname40 = import_path59.default.dirname(__filename40);
+    DB_PATH26 = process.env.DB_PATH || import_path59.default.resolve(__dirname40, "..", "..", "data", "app.db");
     router36 = import_express36.default.Router();
     router36.use((req, res, next) => {
       if (req.method !== "GET") {
@@ -71562,8 +71691,8 @@ var init_returns = __esm({
         }
         pdfDoc = new import_pdfkit6.default();
         const filename = `financial-note-${Date.now()}.pdf`;
-        const outPath = import_path58.default.resolve(getAppDataDir(), "uploads", filename);
-        stream = import_fs54.default.createWriteStream(outPath);
+        const outPath = import_path59.default.resolve(getAppDataDir(), "uploads", filename);
+        stream = import_fs55.default.createWriteStream(outPath);
         pdfDoc.pipe(stream);
         pdfDoc.fontSize(20).text(`${type.charAt(0).toUpperCase() + type.slice(1)} Note`, { align: "center" });
         if (amount) {
@@ -72889,12 +73018,12 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
   const msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db2, lang);
   let pdfPath = void 0;
   try {
-    const uploadsDir = import_path59.default.resolve(getAppDataDir(), "uploads");
-    if (!import_fs55.default.existsSync(uploadsDir)) {
-      import_fs55.default.mkdirSync(uploadsDir, { recursive: true });
+    const uploadsDir = import_path60.default.resolve(getAppDataDir(), "uploads");
+    if (!import_fs56.default.existsSync(uploadsDir)) {
+      import_fs56.default.mkdirSync(uploadsDir, { recursive: true });
     }
     const pdfFilename = `special_order_slip_${order.id}_${Date.now()}.pdf`;
-    const fullPdfPath = import_path59.default.join(uploadsDir, pdfFilename);
+    const fullPdfPath = import_path60.default.join(uploadsDir, pdfFilename);
     await pdfInvoiceService.generateSpecialOrderSlipPdf(Number(order.id), fullPdfPath);
     pdfPath = fullPdfPath;
   } catch (pdfErr) {
@@ -72963,14 +73092,14 @@ async function cancelPendingWhatsAppForOrder(db2, order) {
   } catch (_) {
   }
 }
-var import_express38, import_path59, import_fs55, import_url43, __filename41, __dirname41, DB_PATH27, router38, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
+var import_express38, import_path60, import_fs56, import_url43, __filename41, __dirname41, DB_PATH27, router38, broadcastOrdersChanged2, ordersTableInitialized, handleStatusUpdate, orders_default;
 var init_orders = __esm({
   "src/routes/orders.ts"() {
     "use strict";
     import_express38 = __toESM(require("express"), 1);
     init_connection();
-    import_path59 = __toESM(require("path"), 1);
-    import_fs55 = __toESM(require("fs"), 1);
+    import_path60 = __toESM(require("path"), 1);
+    import_fs56 = __toESM(require("fs"), 1);
     import_url43 = require("url");
     init_whatsappClient();
     init_storeSettingsService();
@@ -72983,8 +73112,8 @@ var init_orders = __esm({
     init_returnWindowService();
     init_orderScheduleService();
     __filename41 = (0, import_url43.fileURLToPath)(import_meta_url);
-    __dirname41 = import_path59.default.dirname(__filename41);
-    DB_PATH27 = process.env.DB_PATH || import_path59.default.resolve(__dirname41, "..", "..", "data", "app.db");
+    __dirname41 = import_path60.default.dirname(__filename41);
+    DB_PATH27 = process.env.DB_PATH || import_path60.default.resolve(__dirname41, "..", "..", "data", "app.db");
     router38 = import_express38.default.Router();
     broadcastOrdersChanged2 = () => {
       try {
@@ -74062,20 +74191,20 @@ function isDateInRange(dateStr, startStr, endStr) {
   end.setHours(23, 59, 59, 999);
   return itemDate >= start && itemDate <= end;
 }
-var import_express40, import_path60, import_url44, import_fs56, __filename42, __dirname42, DB_PATH28, router40, expiry_default;
+var import_express40, import_path61, import_url44, import_fs57, __filename42, __dirname42, DB_PATH28, router40, expiry_default;
 var init_expiry = __esm({
   "src/routes/expiry.ts"() {
     "use strict";
     import_express40 = __toESM(require("express"), 1);
     init_connection();
-    import_path60 = __toESM(require("path"), 1);
+    import_path61 = __toESM(require("path"), 1);
     import_url44 = require("url");
-    import_fs56 = __toESM(require("fs"), 1);
+    import_fs57 = __toESM(require("fs"), 1);
     init_reportExporter();
     init_config();
     __filename42 = (0, import_url44.fileURLToPath)(import_meta_url);
-    __dirname42 = import_path60.default.dirname(__filename42);
-    DB_PATH28 = process.env.DB_PATH || import_path60.default.resolve(__dirname42, "..", "..", "data", "app.db");
+    __dirname42 = import_path61.default.dirname(__filename42);
+    DB_PATH28 = process.env.DB_PATH || import_path61.default.resolve(__dirname42, "..", "..", "data", "app.db");
     router40 = import_express40.default.Router();
     router40.get("/", async (req, res) => {
       const date_from = req.query.date_from || getTodayString();
@@ -74084,11 +74213,11 @@ var init_expiry = __esm({
         const days = req.query.days ? parseInt(req.query.days, 10) : 90;
         date_to = getNDaysAheadString(days);
       }
-      const cacheDir = import_path60.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path61.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs56.default.existsSync(cacheDir);
-        const isInitialized = cacheDirExists && import_fs56.default.existsSync(import_path60.default.join(cacheDir, "manifest.json"));
+        const cacheDirExists = import_fs57.default.existsSync(cacheDir);
+        const isInitialized = cacheDirExists && import_fs57.default.existsSync(import_path61.default.join(cacheDir, "manifest.json"));
         if (!isInitialized) {
           console.log("[ExpiryCache] Cache directory or manifest missing. Using live SQL and triggering initial rebuild.");
           const db2 = await dbManager.getConnection();
@@ -74117,10 +74246,10 @@ var init_expiry = __esm({
         }
         let items = [];
         for (const ym of months) {
-          const filePath = import_path60.default.join(cacheDir, `expiry_${ym}.json`);
-          if (import_fs56.default.existsSync(filePath)) {
+          const filePath = import_path61.default.join(cacheDir, `expiry_${ym}.json`);
+          if (import_fs57.default.existsSync(filePath)) {
             try {
-              const raw = await import_fs56.default.promises.readFile(filePath, "utf-8");
+              const raw = await import_fs57.default.promises.readFile(filePath, "utf-8");
               items = items.concat(JSON.parse(raw));
             } catch (err) {
               console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -74143,12 +74272,12 @@ var init_expiry = __esm({
         date_to = getNDaysAheadString(days);
       }
       const format = req.query.format || "pdf";
-      const cacheDir = import_path60.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const cacheDir = import_path61.default.resolve(getAppDataDir(), "data", "cache", "expiry");
       let items = [];
       try {
         const months = getMonthsInRange(date_from, date_to);
-        const cacheDirExists = import_fs56.default.existsSync(cacheDir);
-        const hasCacheFiles = cacheDirExists && import_fs56.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
+        const cacheDirExists = import_fs57.default.existsSync(cacheDir);
+        const hasCacheFiles = cacheDirExists && import_fs57.default.readdirSync(cacheDir).some((f) => f.startsWith("expiry_") && f.endsWith(".json"));
         if (!cacheDirExists || !hasCacheFiles) {
           const db2 = await dbManager.getConnection();
           items = await db2.all(`
@@ -74172,10 +74301,10 @@ var init_expiry = __esm({
           items = items.filter((item) => isDateInRange(item.expiry_date, date_from, date_to));
         } else {
           for (const ym of months) {
-            const filePath = import_path60.default.join(cacheDir, `expiry_${ym}.json`);
-            if (import_fs56.default.existsSync(filePath)) {
+            const filePath = import_path61.default.join(cacheDir, `expiry_${ym}.json`);
+            if (import_fs57.default.existsSync(filePath)) {
               try {
-                const raw = await import_fs56.default.promises.readFile(filePath, "utf-8");
+                const raw = await import_fs57.default.promises.readFile(filePath, "utf-8");
                 items = items.concat(JSON.parse(raw));
               } catch (err) {
                 console.error(`[ExpiryCache] Failed to parse cache file for ${ym}:`, err);
@@ -74374,17 +74503,17 @@ var compliance_exports = {};
 __export(compliance_exports, {
   default: () => compliance_default
 });
-var import_express41, import_path61, import_url45, __filename43, __dirname43, DB_PATH29, router41, compliance_default;
+var import_express41, import_path62, import_url45, __filename43, __dirname43, DB_PATH29, router41, compliance_default;
 var init_compliance = __esm({
   "src/routes/compliance.ts"() {
     "use strict";
     import_express41 = __toESM(require("express"), 1);
     init_connection();
-    import_path61 = __toESM(require("path"), 1);
+    import_path62 = __toESM(require("path"), 1);
     import_url45 = require("url");
     __filename43 = (0, import_url45.fileURLToPath)(import_meta_url);
-    __dirname43 = import_path61.default.dirname(__filename43);
-    DB_PATH29 = process.env.DB_PATH || import_path61.default.resolve(__dirname43, "..", "..", "data", "app.db");
+    __dirname43 = import_path62.default.dirname(__filename43);
+    DB_PATH29 = process.env.DB_PATH || import_path62.default.resolve(__dirname43, "..", "..", "data", "app.db");
     router41 = import_express41.default.Router();
     router41.get("/", async (_req, res) => {
       try {
@@ -75001,31 +75130,31 @@ __export(upload_exports, {
   default: () => upload_default,
   upload: () => upload3
 });
-var import_express44, import_crypto10, import_path62, import_fs57, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router44, upload_default;
+var import_express44, import_crypto10, import_path63, import_fs58, import_multer3, import_url46, __filename44, __dirname44, UPLOAD_DIR, TEMP_DIR4, RAW_DIR, ALLOWED_UPLOAD_EXTENSIONS, MAX_UPLOAD_SIZE, storage2, upload3, router44, upload_default;
 var init_upload = __esm({
   "src/routes/upload.ts"() {
     "use strict";
     import_express44 = __toESM(require("express"), 1);
     import_crypto10 = __toESM(require("crypto"), 1);
-    import_path62 = __toESM(require("path"), 1);
-    import_fs57 = __toESM(require("fs"), 1);
+    import_path63 = __toESM(require("path"), 1);
+    import_fs58 = __toESM(require("fs"), 1);
     import_multer3 = __toESM(require("multer"), 1);
     import_url46 = require("url");
     init_connection();
     init_config();
     __filename44 = (0, import_url46.fileURLToPath)(import_meta_url);
-    __dirname44 = import_path62.default.dirname(__filename44);
-    UPLOAD_DIR = import_path62.default.resolve(getAppDataDir(), "uploads");
-    TEMP_DIR4 = import_path62.default.join(UPLOAD_DIR, "temp");
-    RAW_DIR = import_path62.default.resolve(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs57.default.existsSync(UPLOAD_DIR)) {
-      import_fs57.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+    __dirname44 = import_path63.default.dirname(__filename44);
+    UPLOAD_DIR = import_path63.default.resolve(getAppDataDir(), "uploads");
+    TEMP_DIR4 = import_path63.default.join(UPLOAD_DIR, "temp");
+    RAW_DIR = import_path63.default.resolve(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs58.default.existsSync(UPLOAD_DIR)) {
+      import_fs58.default.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
-    if (!import_fs57.default.existsSync(TEMP_DIR4)) {
-      import_fs57.default.mkdirSync(TEMP_DIR4, { recursive: true });
+    if (!import_fs58.default.existsSync(TEMP_DIR4)) {
+      import_fs58.default.mkdirSync(TEMP_DIR4, { recursive: true });
     }
-    if (!import_fs57.default.existsSync(RAW_DIR)) {
-      import_fs57.default.mkdirSync(RAW_DIR, { recursive: true });
+    if (!import_fs58.default.existsSync(RAW_DIR)) {
+      import_fs58.default.mkdirSync(RAW_DIR, { recursive: true });
     }
     ALLOWED_UPLOAD_EXTENSIONS = /\.(csv|xlsx?|pdf|zip|jpg|jpeg|png|gif|bmp|tiff?)$/i;
     MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
@@ -75056,18 +75185,18 @@ var init_upload = __esm({
           return res.status(400).json({ error: "No file uploaded" });
         }
         const tempPath = req.file.path;
-        const originalName = req.file.originalname || import_path62.default.basename(tempPath);
+        const originalName = req.file.originalname || import_path63.default.basename(tempPath);
         const timestamp = Date.now();
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
         const rawFileName = `${timestamp}-${sanitizedName}`;
-        const rawPath = import_path62.default.join(RAW_DIR, rawFileName);
-        import_fs57.default.copyFileSync(tempPath, rawPath);
+        const rawPath = import_path63.default.join(RAW_DIR, rawFileName);
+        import_fs58.default.copyFileSync(tempPath, rawPath);
         try {
-          import_fs57.default.unlinkSync(tempPath);
+          import_fs58.default.unlinkSync(tempPath);
         } catch (err) {
           console.warn("Failed to delete temporary upload file:", err);
         }
-        const ext = import_path62.default.extname(originalName).toLowerCase();
+        const ext = import_path63.default.extname(originalName).toLowerCase();
         if (![".csv", ".xlsx", ".xls", ".pdf"].includes(ext)) {
           return res.status(400).json({ error: "Unsupported file format. Please upload a CSV, PDF, or Excel file." });
         }
@@ -75590,12 +75719,12 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express46, import_fs58, router46, catalog_default;
+var import_express46, import_fs59, router46, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
     import_express46 = __toESM(require("express"), 1);
-    import_fs58 = __toESM(require("fs"), 1);
+    import_fs59 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
     router46 = import_express46.default.Router();
@@ -75802,9 +75931,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs58.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs59.default.existsSync(job.file_path)) {
           try {
-            import_fs58.default.unlinkSync(job.file_path);
+            import_fs59.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -77184,13 +77313,13 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express48, import_fs59, import_path63, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router48, upload4, enrichment_default;
+var import_express48, import_fs60, import_path64, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router48, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
     import_express48 = __toESM(require("express"), 1);
-    import_fs59 = __toESM(require("fs"), 1);
-    import_path63 = __toESM(require("path"), 1);
+    import_fs60 = __toESM(require("fs"), 1);
+    import_path64 = __toESM(require("path"), 1);
     import_url47 = require("url");
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
@@ -77198,9 +77327,9 @@ var init_enrichment = __esm({
     init_onlineDataEnricher();
     init_config();
     __filename45 = (0, import_url47.fileURLToPath)(import_meta_url);
-    __dirname45 = import_path63.default.dirname(__filename45);
-    DATA_DIR2 = import_path63.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path63.default.join(DATA_DIR2, "reference_medicines.csv");
+    __dirname45 = import_path64.default.dirname(__filename45);
+    DATA_DIR2 = import_path64.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path64.default.join(DATA_DIR2, "reference_medicines.csv");
     router48 = import_express48.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
     router48.get("/enrichment/status", async (_req, res) => {
@@ -77281,8 +77410,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs59.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs59.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs60.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs60.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -77786,12 +77915,12 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express50, import_fs60, router50, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express50, import_fs61, router50, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
     import_express50 = __toESM(require("express"), 1);
-    import_fs60 = __toESM(require("fs"), 1);
+    import_fs61 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
@@ -77892,9 +78021,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs60.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs61.default.existsSync(f.file_path)) {
               try {
-                import_fs60.default.unlinkSync(f.file_path);
+                import_fs61.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -78055,18 +78184,18 @@ async function checkDeviceConnections() {
       )
     `);
     for (const row of rows) {
-      const { token, device_id, device_name, os: os2, is_online } = row;
+      const { token, device_id, device_name, os: os3, is_online } = row;
       const cached = deviceOnlineStateCache.get(device_id);
       if (cached !== void 0) {
         if (cached === 0 && is_online === 1) {
           deviceOnlineStateCache.set(device_id, 1);
           await db2.run(
             "INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)",
-            [token, device_name, os2, "connected"]
+            [token, device_name, os3, "connected"]
           );
           await db2.run(
             "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-            ["DEVICE_CONNECT", `Mobile device "${device_name}" (${os2}) connected successfully`]
+            ["DEVICE_CONNECT", `Mobile device "${device_name}" (${os3}) connected successfully`]
           );
           eventService.emit("server_event", {
             type: "notification",
@@ -78079,17 +78208,17 @@ async function checkDeviceConnections() {
           });
           eventService.emit("server_event", {
             type: "device_status_change",
-            payload: { token, device_id, device_name, os: os2, status: "connected", timestamp: (/* @__PURE__ */ new Date()).toISOString() }
+            payload: { token, device_id, device_name, os: os3, status: "connected", timestamp: (/* @__PURE__ */ new Date()).toISOString() }
           });
         } else if (cached === 1 && is_online === 0) {
           deviceOnlineStateCache.set(device_id, 0);
           await db2.run(
             "INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)",
-            [token, device_name, os2, "disconnected"]
+            [token, device_name, os3, "disconnected"]
           );
           await db2.run(
             "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-            ["DEVICE_DISCONNECT", `Mobile device "${device_name}" (${os2}) disconnected`]
+            ["DEVICE_DISCONNECT", `Mobile device "${device_name}" (${os3}) disconnected`]
           );
           eventService.emit("server_event", {
             type: "notification",
@@ -78102,7 +78231,7 @@ async function checkDeviceConnections() {
           });
           eventService.emit("server_event", {
             type: "device_status_change",
-            payload: { token, device_id, device_name, os: os2, status: "disconnected", timestamp: (/* @__PURE__ */ new Date()).toISOString() }
+            payload: { token, device_id, device_name, os: os3, status: "disconnected", timestamp: (/* @__PURE__ */ new Date()).toISOString() }
           });
         }
       } else {
@@ -78115,11 +78244,11 @@ async function checkDeviceConnections() {
         if (!lastLog || lastLog.status !== status) {
           await db2.run(
             "INSERT INTO device_connection_logs (token, device_name, os, status) VALUES (?, ?, ?, ?)",
-            [token, device_name, os2, status]
+            [token, device_name, os3, status]
           );
           await db2.run(
             "INSERT INTO action_logs (action_type, description) VALUES (?, ?)",
-            [is_online === 1 ? "DEVICE_CONNECT" : "DEVICE_DISCONNECT", `Mobile device "${device_name}" (${os2}) is initial ${status}`]
+            [is_online === 1 ? "DEVICE_CONNECT" : "DEVICE_DISCONNECT", `Mobile device "${device_name}" (${os3}) is initial ${status}`]
           );
         }
       }
@@ -78128,7 +78257,7 @@ async function checkDeviceConnections() {
     console.error("Error during periodic device monitoring:", err);
   }
 }
-var import_express51, import_qrcode5, import_os2, router51, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
+var import_express51, import_qrcode5, import_os3, router51, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
 var init_notifications2 = __esm({
   "src/routes/notifications.ts"() {
     "use strict";
@@ -78136,12 +78265,12 @@ var init_notifications2 = __esm({
     init_eventService();
     init_connection();
     import_qrcode5 = __toESM(require("qrcode"), 1);
-    import_os2 = __toESM(require("os"), 1);
+    import_os3 = __toESM(require("os"), 1);
     init_config();
     router51 = import_express51.default.Router();
     router51.get("/notifications/connection-info", async (req, res) => {
       try {
-        const interfaces = import_os2.default.networkInterfaces();
+        const interfaces = import_os3.default.networkInterfaces();
         const ips = [];
         for (const interfaceName of Object.keys(interfaces)) {
           const addresses = interfaces[interfaceName];
@@ -78173,15 +78302,15 @@ var init_notifications2 = __esm({
       }
     });
     router51.get("/notifications/download-apk", (req, res) => {
-      const fs62 = require("fs");
-      const path65 = require("path");
+      const fs63 = require("fs");
+      const path66 = require("path");
       const candidatePaths = [
-        path65.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path65.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path65.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path65.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path66.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path66.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path66.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path66.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs62.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs63.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -78221,7 +78350,7 @@ var init_notifications2 = __esm({
     blockedNoticeAt = /* @__PURE__ */ new Map();
     deviceUuidColumnReady = false;
     router51.post("/notifications/register-token", async (req, res) => {
-      const { token, deviceName, os: os2, device_uuid } = req.body;
+      const { token, deviceName, os: os3, device_uuid } = req.body;
       if (!token) {
         return res.status(400).json({ error: "Token is required" });
       }
@@ -78229,7 +78358,7 @@ var init_notifications2 = __esm({
         const db2 = await dbManager.getConnection();
         await ensureDeviceUuidColumn(db2);
         const devName = deviceName || "Unknown";
-        const devOs = os2 || "Unknown";
+        const devOs = os3 || "Unknown";
         const identity = device_uuid || token;
         const blockRow = await db2.get(
           "SELECT is_blocked FROM push_tokens WHERE (device_uuid IS NOT NULL AND device_uuid = ?) OR token = ? LIMIT 1",
@@ -79428,9 +79557,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path64.default.resolve(__dirname46, "..", "telegramBot.ts");
-    if (import_fs61.default.existsSync(botPath)) {
-      const src = import_fs61.default.readFileSync(botPath, "utf8");
+    const botPath = import_path65.default.resolve(__dirname46, "..", "telegramBot.ts");
+    if (import_fs62.default.existsSync(botPath)) {
+      const src = import_fs62.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -79647,12 +79776,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path64.default.resolve(__dirname46, "..", "..", "package.json"),
-    import_path64.default.resolve(process.cwd(), "package.json")
+    import_path65.default.resolve(__dirname46, "..", "..", "package.json"),
+    import_path65.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg2 = JSON.parse(import_fs61.default.readFileSync(p, "utf8"));
+      const pkg2 = JSON.parse(import_fs62.default.readFileSync(p, "utf8"));
       if (pkg2?.version) return String(pkg2.version);
     } catch (_e) {
     }
@@ -79661,7 +79790,7 @@ function readAppVersion() {
 }
 function readBuildId() {
   try {
-    return (0, import_child_process9.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
+    return (0, import_child_process10.execSync)("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).toString().trim() || "unknown";
   } catch (_e) {
     return "unknown";
   }
@@ -79703,17 +79832,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs61, import_path64, import_url48, import_child_process9, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs62, import_path65, import_url48, import_child_process10, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs61 = __toESM(require("fs"), 1);
-    import_path64 = __toESM(require("path"), 1);
+    import_fs62 = __toESM(require("fs"), 1);
+    import_path65 = __toESM(require("path"), 1);
     import_url48 = require("url");
-    import_child_process9 = require("child_process");
+    import_child_process10 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
-    __dirname46 = import_path64.default.dirname(__filename46);
+    __dirname46 = import_path65.default.dirname(__filename46);
     BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
@@ -80229,12 +80358,12 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path65.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path65.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs62.default.existsSync(pythonExecutable) || !import_fs62.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path66.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path66.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs63.default.existsSync(pythonExecutable) || !import_fs63.default.existsSync(scriptPath)) {
       return resolve([]);
     }
-    const pythonProcess = (0, import_child_process10.spawn)(pythonExecutable, [scriptPath, messageText]);
+    const pythonProcess = (0, import_child_process11.spawn)(pythonExecutable, [scriptPath, messageText]);
     let resultData = "";
     let errorData = "";
     let isSettled = false;
@@ -80394,8 +80523,8 @@ async function gracefulShutdown(signal) {
   if (process.platform === "win32" && signal === "CLIENT_EXIT") {
     try {
       const pid = process.pid;
-      const { spawn: spawn5 } = await import("child_process");
-      spawn5("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], {
+      const { spawn: spawn6 } = await import("child_process");
+      spawn6("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], {
         detached: true,
         stdio: "ignore"
       }).unref();
@@ -80404,7 +80533,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express55, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path65, import_child_process10, import_url49, import_fs62, import_axios4, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express55, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path66, import_child_process11, import_url49, import_fs63, import_axios4, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -80414,10 +80543,10 @@ var init_server = __esm({
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path65 = __toESM(require("path"), 1);
-    import_child_process10 = require("child_process");
+    import_path66 = __toESM(require("path"), 1);
+    import_child_process11 = require("child_process");
     import_url49 = require("url");
-    import_fs62 = __toESM(require("fs"), 1);
+    import_fs63 = __toESM(require("fs"), 1);
     import_axios4 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -80429,7 +80558,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
-    __dirname47 = import_path65.default.dirname(__filename47);
+    __dirname47 = import_path66.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
     import_axios4.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -80467,15 +80596,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path65.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs62.default.existsSync(UPLOAD_DIR2)) {
-      import_fs62.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path66.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs63.default.existsSync(UPLOAD_DIR2)) {
+      import_fs63.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs62.default.existsSync(TEMP_DIR5)) {
-      import_fs62.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs63.default.existsSync(TEMP_DIR5)) {
+      import_fs63.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs62.default.existsSync(RAW_DIR2)) {
-      import_fs62.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs63.default.existsSync(RAW_DIR2)) {
+      import_fs63.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
@@ -80529,10 +80658,10 @@ var init_server = __esm({
       next(err);
     });
     app.use("/uploads", import_express55.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express55.default.static(import_path65.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express55.default.static(import_path65.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express55.default.static(import_path65.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express55.default.static(import_path65.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/products", import_express55.default.static(import_path66.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express55.default.static(import_path66.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express55.default.static(import_path66.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express55.default.static(import_path66.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -80601,14 +80730,14 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path65.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path65.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path65.default.resolve(__dirname47, "..", "frontend", "dist"),
-      import_path65.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
-      import_path65.default.resolve(process.cwd(), "dist"),
-      import_path65.default.resolve(appDataDir2, "dist")
+      import_path66.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path66.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path66.default.resolve(__dirname47, "..", "frontend", "dist"),
+      import_path66.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
+      import_path66.default.resolve(process.cwd(), "dist"),
+      import_path66.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs62.default.existsSync(import_path65.default.join(dir, "index.html"))) || frontendCandidates[0];
+    frontendDist = frontendCandidates.find((dir) => import_fs63.default.existsSync(import_path66.default.join(dir, "index.html"))) || frontendCandidates[0];
     app.use(import_express55.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
@@ -80624,8 +80753,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path65.default.join(frontendDist, "index.html");
-      if (import_fs62.default.existsSync(indexPath)) {
+      const indexPath = import_path66.default.join(frontendDist, "index.html");
+      if (import_fs63.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }
@@ -80904,6 +81033,20 @@ var init_server = __esm({
       setTimeout(() => {
         void gracefulShutdown("CLIENT_EXIT");
       }, 100);
+    });
+    app.post("/api/system/apply-update", async (req, res) => {
+      console.log("[System] Received apply-update request. Installing update and restarting...");
+      try {
+        const { autoUpdateService: autoUpdateService2 } = await Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports));
+        const result = await autoUpdateService2.applyUpdate();
+        res.json(result);
+        setTimeout(() => {
+          void gracefulShutdown("APPLY_UPDATE");
+        }, 600);
+      } catch (err) {
+        console.error("[System] Failed to apply update:", err.message);
+        res.status(400).json({ success: false, error: err.message });
+      }
     });
     isShuttingDown = false;
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));

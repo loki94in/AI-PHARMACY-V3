@@ -122,6 +122,11 @@
 
           <!-- Actions -->
           <div class="flex items-center gap-2 shrink-0">
+            <a href="https://github.com/loki94in/AI-PHARMACY-V3/releases/latest" target="_blank" class="px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all" title="Download stub setup installer for client PC">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              <span class="hidden sm:inline">Download Stub (.exe)</span>
+              <span class="sm:hidden">Stub (.exe)</span>
+            </a>
             <button onclick="openCreateModal()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all">
               <i data-lucide="plus" class="w-3.5 h-3.5"></i>
               <span class="hidden sm:inline">Issue License</span>
@@ -448,16 +453,26 @@
       <div id="createdLicenseResult" class="hidden p-4 bg-emerald-950/40 border border-emerald-500/30 rounded-xl space-y-2.5">
         <div class="text-xs font-bold text-emerald-400 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <span>🎉 License Created Successfully!</span>
-          <button onclick="copyLicenseInfo()" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-500 flex items-center justify-center gap-1.5 shadow-sm">
-            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copy for WhatsApp
-          </button>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="deleteMistakenLicense()" class="px-2.5 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 border border-rose-500/30 transition-all cursor-pointer" title="Delete this license immediately if created mistakenly">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete (Mistake)
+            </button>
+            <button type="button" onclick="copyLicenseInfo()" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-500 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copy for WhatsApp
+            </button>
+          </div>
         </div>
         <div class="text-xs space-y-1.5 font-mono text-gray-300 bg-gray-950/60 p-3 rounded-lg border border-gray-800">
           <div><span class="text-gray-500 font-sans">License ID:</span> <span id="resLicenseId" class="text-white font-bold"></span></div>
           <div class="break-all"><span class="text-gray-500 font-sans">License Key:</span> <span id="resLicenseKey" class="text-emerald-400 font-bold"></span></div>
           <div><span class="text-gray-500 font-sans">Expires:</span> <span id="resExpiresAt" class="text-gray-400"></span></div>
         </div>
-        <p class="text-[10px] text-gray-400 italic">⚠️ Save the License Key now. It is shown once and hashed on the server.</p>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1 text-[11px]">
+          <a href="https://github.com/loki94in/AI-PHARMACY-V3/releases/latest" target="_blank" class="text-emerald-400 hover:text-emerald-300 underline flex items-center gap-1 font-semibold">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> Download Stub Setup (.exe)
+          </a>
+          <span class="text-gray-400 italic">⚠️ Save the key now. Shown once.</span>
+        </div>
       </div>
     </div>
   </div>
@@ -521,11 +536,15 @@
           <p class="text-[10px] text-gray-500">Only fill this if you need to manually replace the secret activation key.</p>
         </div>
 
-        <div class="flex items-center gap-2 pt-2">
-          <button type="button" onclick="closeEditModal()" class="w-1/3 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-semibold transition-colors">
+        <div class="flex items-center gap-2 pt-2 border-t border-gray-800">
+          <button type="button" onclick="deleteFromEditModal()" class="py-2.5 px-3.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-semibold border border-rose-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer" title="Delete this license permanently">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>Delete</span>
+          </button>
+          <button type="button" onclick="closeEditModal()" class="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-semibold transition-colors cursor-pointer">
             Cancel
           </button>
-          <button type="submit" class="w-2/3 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-md">
+          <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer">
             Save Changes
           </button>
         </div>
@@ -882,6 +901,24 @@
       }
     }
 
+    async function deleteMistakenLicense() {
+      if (!lastCreatedData || !lastCreatedData.licenseId) return;
+      if (!confirm(`⚠️ Mistakenly created? Delete license "${lastCreatedData.licenseId}" immediately?`)) return;
+      const lid = lastCreatedData.licenseId;
+      const pname = lastCreatedData.pharmacyName || '';
+      await deleteLicense(lid, pname);
+      document.getElementById('createdLicenseResult').classList.add('hidden');
+      closeCreateModal();
+    }
+
+    async function deleteFromEditModal() {
+      const lid = document.getElementById('editLicenseId')?.value;
+      const pname = document.getElementById('editPharmacyName')?.value || '';
+      if (!lid) return;
+      closeEditModal();
+      await deleteLicense(lid, pname);
+    }
+
     // Modal Controls & Custom Key Fields
     function toggleCustomKeyFields() {
       const container = document.getElementById('customKeyFields');
@@ -1013,8 +1050,9 @@
         `• *Pharmacy:* ${lastCreatedData.pharmacyName}\n` +
         `• *License ID:* ${lastCreatedData.licenseId}\n` +
         `• *License Key:* ${lastCreatedData.licenseKey}\n` +
-        `• *Valid Until:* ${lastCreatedData.expiresAt ? lastCreatedData.expiresAt.split('T')[0] : '1 Year'}\n\n` +
-        `Please open the setup installer on your PC, paste your License ID & Key, and click Activate!`;
+        `• *Valid Until:* ${lastCreatedData.expiresAt ? lastCreatedData.expiresAt.split('T')[0] : '1 Year'}\n` +
+        `• *Download Installer:* https://github.com/loki94in/AI-PHARMACY-V3/releases/latest\n\n` +
+        `Please download the installer, enter your License ID & Key, and click Activate!`;
       copyText(text, 'Activation text');
     }
 
