@@ -124,5 +124,22 @@ export default async function handler(req, res) {
     });
   }
 
+  // 3. LATEST RELEASE (Stub installer — new customer download, no rollout filter)
+  if (action === 'latest') {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+    let release = null;
+    if (isKvConfigured) {
+      try { release = await kv.get('update_release'); } catch (_) {}
+    }
+
+    const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
+    const downloadUrl   = release?.downloadUrl   || DEFAULT_DOWNLOAD_URL;
+    const changelog     = release?.changelog     || DEFAULT_CHANGELOG;
+
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
+    return res.status(200).json({ latestVersion, downloadUrl, changelog });
+  }
+
   return res.status(404).json({ error: `Unknown action: ${action}` });
 }
