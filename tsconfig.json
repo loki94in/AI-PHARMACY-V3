@@ -13,6 +13,6 @@
     "isolatedModules": true,
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["tests/whatsappQueue.test.ts"]
+  "include": ["src/**/*"],
+  "exclude": ["tests/**/*", "frontend/**/*", "website/**/*", "node_modules"]
 }

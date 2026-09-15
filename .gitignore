@@ -110,7 +110,7 @@ medicines.csv
 
 # ─── Distributor Catalogs (binary PDFs — bloat repo history) ─────────────────
 # Store in shared drive / release assets instead.
-CATALOG/
+/CATALOG/
 
 # ─── Puppeteer & Chrome Browser Session Profiles ─────────────────────────────
 # Chrome browser session data — thousands of files, never commit
