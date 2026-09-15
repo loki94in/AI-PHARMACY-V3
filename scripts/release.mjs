@@ -14,14 +14,28 @@ import { execSync } from 'child_process';
 import axios from 'axios';
 
 const rootDir = process.cwd();
-const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+const pkgPath = path.join(rootDir, 'package.json');
+const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
 // Parse CLI flags
 const args = process.argv.slice(2);
-const isPilot = args.includes('--pilot') || args.includes('-p');
+const isPilot   = args.includes('--pilot')  || args.includes('-p');
 const skipBuild = args.includes('--skip-build');
+const bumpMajor = args.includes('--major');
+const bumpMinor = args.includes('--minor');
 
-const version = pkg.version || '0.1.0';
+// --- Auto-bump version (patch by default) ---
+const [major, minor, patch] = (pkg.version || '0.1.0').split('.').map(Number);
+let newVersion;
+if (bumpMajor)      newVersion = `${major + 1}.0.0`;
+else if (bumpMinor) newVersion = `${major}.${minor + 1}.0`;
+else                newVersion = `${major}.${minor}.${patch + 1}`; // patch (default)
+
+pkg.version = newVersion;
+fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+console.log(`\n📝 Version bumped: ${major}.${minor}.${patch} → ${newVersion}`);
+
+const version = newVersion;
 const tagName = `v${version}`;
 
 console.log('\n=============================================================');

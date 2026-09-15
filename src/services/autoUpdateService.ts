@@ -199,23 +199,47 @@ class AutoUpdateService {
     if (!this.lastResult?.latestVersion) {
       throw new Error('No pending update found.');
     }
-    const updateDir = path.join(os.tmpdir(), 'AIPharmacyUpdate');
+    const updateDir    = path.join(os.tmpdir(), 'AIPharmacyUpdate');
     const updateExePath = path.join(updateDir, `setup_${this.lastResult.latestVersion}.exe`);
     if (!fs.existsSync(updateExePath)) {
       throw new Error('Update file has not finished downloading yet.');
     }
 
-    const scriptPath = path.join(updateDir, 'install_and_restart.bat');
-    const appDir = path.dirname(process.execPath);
+    const scriptPath  = path.join(updateDir, 'install_and_restart.bat');
+    const appDir      = path.dirname(process.execPath);
+    const currentExe  = process.execPath;          // e.g. C:\...\PharmacyOS.exe
+    const backupExe   = currentExe + '.bak';       // PharmacyOS.exe.bak
+    const failFlagPath = path.join(updateDir, 'update_failed.json');
+    const version      = this.lastResult.latestVersion;
+
+    // Bat: backup current exe → run installer → on failure restore backup + write fail flag
     const scriptContent = `@echo off
 timeout /t 2 /nobreak >nul
 taskkill /F /IM PharmacyOS.exe >nul 2>&1
+
+rem --- Backup current executable before overwriting ---
+if exist "${currentExe}" copy /Y "${currentExe}" "${backupExe}" >nul
+
+rem --- Run new installer ---
 "%~1" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+set INSTALL_ERR=%ERRORLEVEL%
+
+if %INSTALL_ERR% NEQ 0 (
+  rem --- Install failed: write failure flag and restore backup ---
+  echo {"version":"${version}","error":"Installer exited with code %INSTALL_ERR%","ts":"%DATE% %TIME%"} > "${failFlagPath.replace(/\/g, '\\')}"
+  if exist "${backupExe.replace(/\/g, '\\')}" (
+    copy /Y "${backupExe.replace(/\/g, '\\')}" "${currentExe.replace(/\/g, '\\')}" >nul
+  )
+  start "" "${currentExe.replace(/\/g, '\\')}"
+  exit /b 1
+)
+
+rem --- Install succeeded: launch new version ---
 timeout /t 3 /nobreak >nul
-if exist "%~2\\RUN-PharmacyOS-Silent.vbs" (
-  wscript.exe "%~2\\RUN-PharmacyOS-Silent.vbs"
-) else if exist "%~2\\PharmacyOS.exe" (
-  start "" "%~2\\PharmacyOS.exe"
+if exist "${appDir.replace(/\/g, '\\')}\\RUN-PharmacyOS-Silent.vbs" (
+  wscript.exe "${appDir.replace(/\/g, '\\')}\\RUN-PharmacyOS-Silent.vbs"
+) else if exist "${appDir.replace(/\/g, '\\')}\\PharmacyOS.exe" (
+  start "" "${appDir.replace(/\/g, '\\')}\\PharmacyOS.exe"
 ) else (
   start "" "%LOCALAPPDATA%\\AI Pharmacy OS\\PharmacyOS.exe"
 )
@@ -223,7 +247,7 @@ exit
 `;
     fs.writeFileSync(scriptPath, scriptContent, 'utf8');
 
-    console.log('[AutoUpdate] Spawning detached installer helper script...');
+    console.log('[AutoUpdate] Spawning detached installer helper script (with rollback)...');
     const child = spawn('cmd.exe', ['/c', scriptPath, updateExePath, appDir], {
       detached: true,
       stdio: 'ignore'
@@ -234,6 +258,32 @@ exit
   }
 
   getLastResult() { return this.lastResult; }
+
+  /**
+   * Call once on boot. Detects if previous update install failed,
+   * sends telemetry to Vercel, and returns a message to show the user.
+   */
+  async checkFailedUpdate(): Promise<string | null> {
+    const failFlagPath = path.join(os.tmpdir(), 'AIPharmacyUpdate', 'update_failed.json');
+    if (!fs.existsSync(failFlagPath)) return null;
+    try {
+      const raw  = fs.readFileSync(failFlagPath, 'utf8');
+      const info = JSON.parse(raw) as { version?: string; error?: string };
+      fs.unlinkSync(failFlagPath); // consume flag
+
+      // Send telemetry so developer sees it
+      const { reportCrashTelemetry } = await import('./licenseService.js');
+      await reportCrashTelemetry({
+        errorType: 'UPDATE_INSTALL_FAILED',
+        message:   `Update to v${info.version || '?'} failed: ${info.error || 'unknown'}`,
+      }).catch(() => {});
+
+      console.warn(`[AutoUpdate] Previous update v${info.version} failed — rolled back to previous version.`);
+      return `⚠️ Update to v${info.version} failed. Rolled back to previous version. Our team has been notified.`;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export const autoUpdateService = AutoUpdateService.getInstance();

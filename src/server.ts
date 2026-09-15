@@ -567,7 +567,15 @@ server.on('error', (err: any) => {
 
       // Auto-update scheduler: checks every 15 days (DB-gated, won't hammer on every boot)
       import('./services/autoUpdateService.js')
-        .then(m => m.autoUpdateService.start())
+        .then(async m => {
+          m.autoUpdateService.start();
+          // Detect if last update install failed (rollback already happened via bat script)
+          const failMsg = await m.autoUpdateService.checkFailedUpdate();
+          if (failMsg) {
+            const { eventService } = await import('./services/eventService.js');
+            eventService.broadcast('toast', { message: failMsg, type: 'warning' });
+          }
+        })
         .catch(err => console.warn('[Boot:Phase2] Auto-update scheduler start failed:', err));
 
       // Record unclean boot flag (flipped to 'true' on clean gracefulShutdown)

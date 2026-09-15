@@ -73,8 +73,23 @@ async function activate() {
   setStep(2);
   showScreen('screen-download');
 
-  // Direct high-speed CDN download URL from GitHub release
-  const downloadUrl = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.0/AI-Pharmacy-OS-Portable-Setup-v0.1.0.exe';
+  // Fetch latest download URL from Vercel — works for all future releases automatically
+  let downloadUrl;
+  try {
+    const resp = await fetch('https://ai-pharmacy-license.vercel.app/api/updates/latest');
+    const json = await resp.json();
+    downloadUrl = json.downloadUrl;
+  } catch (_) {
+    // Fallback: redirect to GitHub releases page so user can download manually
+    downloadUrl = null;
+  }
+
+  if (!downloadUrl) {
+    showScreen('screen-license');
+    setStep(1);
+    showError('Could not fetch latest version. Please check your internet connection and try again.');
+    return;
+  }
 
   const installResult = await window.installer.downloadAndInstall(
     downloadUrl,
