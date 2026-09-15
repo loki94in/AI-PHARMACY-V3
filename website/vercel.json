@@ -1,7 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "api/**/*.js": {
+    "api/*.js": {
       "maxDuration": 10
     }
   },
@@ -18,6 +18,12 @@
   "rewrites": [
     { "source": "/api/catalog/(.*)", "destination": "/api/catalog.js?action=$1" },
     { "source": "/api/catalog", "destination": "/api/catalog.js" },
+    { "source": "/api/license/(.*)", "destination": "/api/license.js?action=$1" },
+    { "source": "/api/license", "destination": "/api/license.js" },
+    { "source": "/api/telemetry/(.*)", "destination": "/api/telemetry.js?action=$1" },
+    { "source": "/api/telemetry", "destination": "/api/telemetry.js" },
+    { "source": "/api/updates/(.*)", "destination": "/api/updates.js?action=$1" },
+    { "source": "/api/updates", "destination": "/api/updates.js" },
     { "source": "/shop", "destination": "/catalog.html" },
     { "source": "/catalog", "destination": "/catalog.html" },
     { "source": "/license", "destination": "/index.html" },
