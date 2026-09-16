@@ -194,29 +194,31 @@ class AutoUpdateService {
 
         if (alreadyDownloaded) {
           eventService.broadcast('update_available', {
-            latestVersion:  result.latestVersion,
-            downloadUrl:    result.downloadUrl,
-            changelog:      result.changelog,
-            readyToInstall: true,
+            latestVersion:    result.latestVersion,
+            downloadUrl:      result.downloadUrl,
+            updatePackageUrl: result.updatePackageUrl,
+            changelog:        result.changelog,
+            readyToInstall:   true,
             reason,
           });
-        } else if (result.downloadUrl && !this.isDownloading) {
+        } else if (result.updatePackageUrl && !this.isDownloading) {
           eventService.broadcast('update_available', {
-            latestVersion:  result.latestVersion,
-            downloadUrl:    result.downloadUrl,
-            changelog:      result.changelog,
-            downloading:    true,
-            readyToInstall: false,
+            latestVersion:    result.latestVersion,
+            downloadUrl:      result.downloadUrl,
+            updatePackageUrl: result.updatePackageUrl,
+            changelog:        result.changelog,
+            downloading:      true,
+            readyToInstall:   false,
             reason,
           });
 
           // Silently download the update ZIP in background (§29)
           this.isDownloading = true;
           this.downloadUpdateSilently({
-            url:       result.downloadUrl,
+            url:       result.updatePackageUrl,
             dest:      zipPath!,
             version:   result.latestVersion!,
-            sha256:    (result as any).sha256,
+            sha256:    result.sha256,
             changelog: result.changelog,
             reason,
           });

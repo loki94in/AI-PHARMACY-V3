@@ -31,7 +31,12 @@ const bumpMinor  = args.includes('--minor');
 
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
 const vercelServer = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
-const adminSecret  = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
+const adminSecret  = process.env.ADMIN_SECRET;
+if (!adminSecret) {
+  console.error('\n❌ STOP RELEASE: Missing required ADMIN_SECRET environment variable.');
+  console.error('   Please set ADMIN_SECRET in your environment before running release.');
+  process.exit(1);
+}
 const ghRepo       = 'loki94in/AI-PHARMACY-V3';
 
 // ══════════════════════════════════════════════════════════════════════════════

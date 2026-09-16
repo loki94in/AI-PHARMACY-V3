@@ -41,6 +41,8 @@ export default async function handler(req, res) {
 
     const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
     const downloadUrl = release?.downloadUrl || DEFAULT_DOWNLOAD_URL;
+    const updatePackageUrl = release?.updatePackageUrl || null;
+    const sha256 = release?.sha256 || null;
     const changelog = release?.changelog || DEFAULT_CHANGELOG;
     const rolloutMode = release?.rolloutMode || 'ALL';
 
@@ -70,6 +72,8 @@ export default async function handler(req, res) {
       rolloutMode,
       isPilot: isTargetEligible && rolloutMode === 'PILOT',
       downloadUrl: hasUpdate ? downloadUrl : null,
+      updatePackageUrl: hasUpdate ? updatePackageUrl : null,
+      sha256: hasUpdate ? sha256 : null,
       changelog: hasUpdate ? changelog : null,
       checkedAt: new Date().toISOString(),
     });
@@ -92,6 +96,8 @@ export default async function handler(req, res) {
       return res.status(200).json(release || {
         latestVersion: '1.0.0',
         downloadUrl: process.env.DOWNLOAD_URL || '',
+        updatePackageUrl: '',
+        sha256: '',
         changelog: 'Initial Release',
         rolloutMode: 'ALL',
         publishedAt: null,
@@ -100,7 +106,7 @@ export default async function handler(req, res) {
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const { latestVersion, downloadUrl, changelog, rolloutMode = 'ALL' } = req.body || {};
+    const { latestVersion, downloadUrl, updatePackageUrl, sha256, changelog, rolloutMode = 'ALL' } = req.body || {};
     if (!latestVersion?.trim()) {
       return res.status(400).json({ error: 'latestVersion is required' });
     }
@@ -108,6 +114,8 @@ export default async function handler(req, res) {
     const release = {
       latestVersion: latestVersion.trim(),
       downloadUrl: (downloadUrl || '').trim(),
+      updatePackageUrl: (updatePackageUrl || '').trim(),
+      sha256: (sha256 || '').trim(),
       changelog: (changelog || '').trim(),
       rolloutMode: rolloutMode === 'PILOT' ? 'PILOT' : 'ALL',
       publishedAt: new Date().toISOString(),
@@ -135,10 +143,12 @@ export default async function handler(req, res) {
 
     const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
     const downloadUrl   = release?.downloadUrl   || DEFAULT_DOWNLOAD_URL;
+    const updatePackageUrl = release?.updatePackageUrl || null;
+    const sha256        = release?.sha256        || null;
     const changelog     = release?.changelog     || DEFAULT_CHANGELOG;
 
     res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
-    return res.status(200).json({ latestVersion, downloadUrl, changelog });
+    return res.status(200).json({ latestVersion, downloadUrl, updatePackageUrl, sha256, changelog });
   }
 
   return res.status(404).json({ error: `Unknown action: ${action}` });

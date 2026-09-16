@@ -126,8 +126,8 @@ if exist "%INSTALL_DIR%\Updater.bat"    copy /Y "%INSTALL_DIR%\Updater.bat"    "
 
 :: Verify backup has PharmacyOS.exe
 if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
-    call :LOG "ERROR: Database backup of PharmacyOS.exe failed."
-    call :WRITE_FAILURE "DATABASE_BACKUP_FAILED"
+    call :LOG "ERROR: Backup of PharmacyOS.exe failed."
+    call :WRITE_FAILURE "EXECUTABLE_BACKUP_FAILED"
     call :CLEANUP_LOCK
     start "" "%INSTALL_DIR%\PharmacyOS.exe"
     exit /b 1

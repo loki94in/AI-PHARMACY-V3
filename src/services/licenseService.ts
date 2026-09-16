@@ -290,6 +290,8 @@ export async function checkForUpdate(): Promise<{
   hasUpdate: boolean;
   latestVersion?: string;
   downloadUrl?: string;
+  updatePackageUrl?: string;
+  sha256?: string;
   changelog?: string;
 } | null> {
   try {
@@ -319,6 +321,8 @@ export async function checkForUpdate(): Promise<{
       hasUpdate: resp.data.hasUpdate,
       latestVersion: resp.data.latestVersion,
       downloadUrl: resp.data.downloadUrl,
+      updatePackageUrl: resp.data.updatePackageUrl,
+      sha256: resp.data.sha256,
       changelog: resp.data.changelog,
     };
   } catch {
