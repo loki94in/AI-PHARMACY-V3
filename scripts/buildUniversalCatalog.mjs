@@ -534,6 +534,18 @@ async function main() {
   // PHASE 5: ENSURE WEBSITE & PORTAL VISIBILITY
   // ----------------------------------------------------
   console.log(`\n[Phase 5] Initializing public product channel visibility defaults...`);
+  db.prepare(`
+    INSERT OR IGNORE INTO product_channel_visibility (medicine_id, is_pos_visible, is_website_visible, is_portal_visible, featured_rank, updated_at)
+    SELECT mci.medicine_id, 1, 1, 1, 10, CURRENT_TIMESTAMP
+    FROM medicine_clinical_info mci
+  `).run();
+
+  db.prepare(`
+    UPDATE product_channel_visibility
+    SET is_website_visible = 1, is_portal_visible = 1, featured_rank = MAX(featured_rank, 10)
+    WHERE medicine_id IN (SELECT medicine_id FROM medicine_clinical_info)
+  `).run();
+
   const missingVisibility = db.prepare(`
     INSERT INTO product_channel_visibility (medicine_id, is_pos_visible, is_website_visible, is_portal_visible, updated_at)
     SELECT m.id, 1, 1, 1, CURRENT_TIMESTAMP
@@ -542,7 +554,7 @@ async function main() {
     WHERE pcv.medicine_id IS NULL AND m.status = 'ACTIVE'
     LIMIT 25000
   `).run();
-  console.log(`[Phase 5] Added default channel visibility for ${missingVisibility.changes.toLocaleString()} medicines.`);
+  console.log(`[Phase 5] Guaranteed online visibility for all clinical medicines + added default visibility for ${missingVisibility.changes.toLocaleString()} medicines.`);
 
   // ----------------------------------------------------
   // FINAL AUDIT & SUMMARY
