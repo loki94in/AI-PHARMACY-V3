@@ -21,6 +21,8 @@ export interface CatalogProduct {
   isInStock: boolean;
   imagePath?: string | null;
   thumbnailPath?: string | null;
+  description?: string | null;
+  sideEffects?: string | null;
   visibility: {
     website: boolean;
     whatsapp: boolean;
@@ -99,13 +101,15 @@ class CatalogService {
           m.id,
           m.name,
           m.manufacturer,
-          m.category,
+          COALESCE(mci.sub_category, m.category) as category,
           m.packaging,
           m.strength,
           m.schedule_type,
           m.mrp,
           m.sell_price as legacy_sell_price,
-          m.therapeutic as generic_name,
+          COALESCE(mci.salt_composition, m.generic_name, m.therapeutic) as generic_name,
+          mci.medicine_desc as description,
+          mci.side_effects,
           COALESCE(SUM(inv.quantity), 0) as total_quantity,
           COALESCE(SUM(inv.loose_quantity), 0) as total_loose,
           ci.image_path,
@@ -117,6 +121,7 @@ class CatalogService {
         FROM medicines m
         LEFT JOIN inventory_master inv ON inv.medicine_id = m.id AND (inv.store_id = ? OR inv.store_id IS NULL)
         LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+        LEFT JOIN medicine_clinical_info mci ON mci.medicine_id = m.id
         LEFT JOIN catalog_images ci ON ci.medicine_id = m.id AND ci.is_active = 1
         WHERE ${whereSql}
         GROUP BY m.id
@@ -163,6 +168,8 @@ class CatalogService {
             isInStock: totalStock > 0,
             imagePath: r.image_path || null,
             thumbnailPath: r.thumbnail_path || null,
+            description: r.description || null,
+            sideEffects: r.side_effects || null,
             visibility: {
               website: r.is_website_visible === null || r.is_website_visible === 1,
               whatsapp: r.is_whatsapp_visible === null || r.is_whatsapp_visible === 1,

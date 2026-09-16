@@ -115,16 +115,31 @@ router.post('/batch', async (req, res) => {
         // It starts as 0 so marking the order Ready will trigger the arrival WhatsApp.
         const initialNotified = 0;
         const initialStatus = item.status || status || 'Pending';
+
+        // Universal Catalog Linkage: resolve canonical medicine_id if not explicitly provided
+        let resolvedMedicineId = item.medicine_id ? Number(item.medicine_id) : null;
+        if (!resolvedMedicineId && medName) {
+          const medRow = await db.get(
+            `SELECT id FROM medicines WHERE name = ? COLLATE NOCASE OR canonical_name = ? COLLATE NOCASE LIMIT 1`,
+            [medName, medName]
+          );
+          if (medRow) {
+            resolvedMedicineId = medRow.id;
+          }
+        }
+
         const result = await db.run(
           `INSERT INTO special_orders (
-            store_id, product, requester, phone, qty, priority, status, date, notified,
+            store_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
             scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
             cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
             schedule_calculated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             targetStoreId,
+            resolvedMedicineId,
+            medName,
             medName,
             cleanReqName,
             cleanPhone,

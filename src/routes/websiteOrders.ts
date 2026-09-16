@@ -251,17 +251,19 @@ router.post('/orders', async (req, res) => {
 
         const result = await db.run(
           `INSERT INTO special_orders (
-            store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+            store_id, customer_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
             advance_payment, notes, customer_order_source, prescription_url, product_image_url,
             delivery_status, return_status, payment_status, pharmacy_verification_status,
             payment_qr_id, order_type, total_amount,
             scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
             cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version, schedule_calculated_at,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, 'website', ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           [
             targetStoreId,
             customerId,
+            medicineId || null,
+            prodName,
             prodName,
             cleanName,
             cleanPhone,
@@ -1144,14 +1146,27 @@ router.post('/prescription-request', async (req, res) => {
       structuredMeta.length > 0 ? `[${structuredMeta.join(' • ')}]` : ''
     ].filter(Boolean).join(' | ') || 'Requested via Website Prescription / Photo Upload';
 
+    // Universal Catalog linkage: resolve canonical medicine_id if medicine_name is provided
+    let resolvedMedicineId: number | null = null;
+    if (medRequested && medRequested !== 'Prescription / Medicine Inquiry') {
+      const medRow = await db.get(
+        `SELECT id FROM medicines WHERE name = ? COLLATE NOCASE OR canonical_name = ? COLLATE NOCASE LIMIT 1`,
+        [medRequested, medRequested]
+      );
+      if (medRow) {
+        resolvedMedicineId = medRow.id;
+      }
+    }
+
     // Insert order record into special_orders
     const result = await db.run(
       `INSERT INTO special_orders (
-        store_id, requester, phone, medicine_name, product, qty, notes,
+        store_id, medicine_id, requester, phone, medicine_name, product, qty, notes,
         status, customer_order_source, source, prescription_url, total_amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         targetStoreId,
+        resolvedMedicineId,
         cleanName,
         cleanPhone,
         medRequested,
@@ -1470,14 +1485,19 @@ router.post('/orders/:orderId/refill', async (req, res) => {
     // Build order note including refill reference
     const orderNote = `Refill of Order #${originalOrderId}${notes ? ' — ' + notes : ''}`;
 
+    const primaryMedId = validItems.length === 1 ? validItems[0].medicine_id : (validItems[0]?.medicine_id || null);
+    const combinedMedNames = validItems.map((i: any) => i.medicine_name).join(', ');
+
     // Create new order in special_orders (same table as regular website orders)
     const orderResult = await db.run(
       `INSERT INTO special_orders
-         (product, requester, phone, qty, priority, status, source, order_type,
+         (product, medicine_name, medicine_id, requester, phone, qty, priority, status, source, order_type,
           payment_method, delivery_mode, store_id, customer_id, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
-        validItems.map((i: any) => i.medicine_name).join(', '),
+        combinedMedNames,
+        combinedMedNames,
+        primaryMedId,
         resolvedName,
         formattedPhone,
         validItems.reduce((acc: number, i: any) => acc + i.requested_qty, 0),

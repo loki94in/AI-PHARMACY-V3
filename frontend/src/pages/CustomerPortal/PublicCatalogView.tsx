@@ -22,6 +22,8 @@ interface CatalogMedicine {
   image_url: string | null;
   images: Record<string, any>;
   gallery?: Array<{ url: string; type: string; label: string; is_primary?: boolean }>;
+  description?: string;
+  side_effects?: string;
 }
 
 interface PublicCatalogViewProps {
@@ -792,6 +794,37 @@ export const PublicCatalogView: React.FC<PublicCatalogViewProps> = ({
                     <p className="text-xs text-text font-mono font-medium leading-relaxed">
                       {quickViewMed.composition}
                     </p>
+                  </div>
+                )}
+
+                {/* Clinical Overview / Uses */}
+                {quickViewMed.description && (
+                  <div className="p-3 rounded-xl bg-bg border border-border space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-muted tracking-wider block">
+                      Clinical Uses & Guide
+                    </span>
+                    <p className="text-xs text-text leading-relaxed line-clamp-4">
+                      {quickViewMed.description}
+                    </p>
+                  </div>
+                )}
+
+                {/* Side Effects */}
+                {quickViewMed.side_effects && (
+                  <div className="p-3 rounded-xl bg-bg border border-border space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase text-muted tracking-wider block">
+                      Known Side Effects
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {quickViewMed.side_effects.split(',').slice(0, 6).map((se, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-bg3 text-text border border-border"
+                        >
+                          {se.trim()}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
 

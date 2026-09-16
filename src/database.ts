@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 64;
+const CURRENT_SCHEMA_VERSION = 65;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -646,6 +646,7 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
           CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines(name, manufacturer);
           CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
+          CREATE INDEX IF NOT EXISTS idx_special_orders_medicine_id ON special_orders(medicine_id);
           CREATE INDEX IF NOT EXISTS idx_inventory_master_stock ON inventory_master(quantity, loose_quantity);
           CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_auto_notif_created ON automation_notifications(created_at DESC);
@@ -710,6 +711,14 @@ export async function ensureSchema(dbPath: string) {
             if (!retItemNames.has('loose')) await db.run('ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0');
             if (!retItemNames.has('ded_per')) await db.run('ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0');
             if (!retItemNames.has('cd_value')) await db.run('ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0');
+          }
+        } catch (_) { }
+
+        try {
+          const spCols = await db.all('PRAGMA table_info(special_orders)');
+          const spNames = new Set(spCols.map((c: any) => c.name));
+          if (spCols.length > 0 && !spNames.has('medicine_id')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
           }
         } catch (_) { }
 
@@ -1157,6 +1166,16 @@ export async function ensureSchema(dbPath: string) {
         await db.run('CREATE INDEX IF NOT EXISTS idx_clinical_salt ON medicine_clinical_info(salt_composition)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category)');
 
+        // Schema v65: Universal Catalog linkage - special_orders.medicine_id
+        try {
+          const spCols = await db.all('PRAGMA table_info(special_orders)');
+          const spNames = new Set(spCols.map((c: any) => c.name));
+          if (spCols.length > 0 && !spNames.has('medicine_id')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)');
+          }
+        } catch (_) { }
+        await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_medicine_id ON special_orders(medicine_id)');
+
         await ensureOrderTimingSchema(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
@@ -1223,6 +1242,7 @@ export async function ensureSchema(dbPath: string) {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           store_id INTEGER DEFAULT 1,
           customer_id INTEGER DEFAULT NULL,
+          medicine_id INTEGER DEFAULT NULL,
           product TEXT,
           requester TEXT,
           phone TEXT,
@@ -1786,6 +1806,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE TABLE IF NOT EXISTS special_orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       store_id INTEGER DEFAULT 1,
+      medicine_id INTEGER DEFAULT NULL,
       requester TEXT,
       phone TEXT,
       notes TEXT,
@@ -2335,6 +2356,7 @@ export async function ensureSchema(dbPath: string) {
       ['special_orders', 'pharmacy_verification_status', "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
       ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
       ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
+      ['special_orders', 'medicine_id', 'ALTER TABLE special_orders ADD COLUMN medicine_id INTEGER DEFAULT NULL REFERENCES medicines(id)'],
       ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
       // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
       ['catalog_images', 'previous_image_url', 'ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT'],

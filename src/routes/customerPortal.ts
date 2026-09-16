@@ -1378,9 +1378,11 @@ router.get('/public-catalog', async (req, res) => {
       `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
               m.packaging, m.strength, m.pack_size,
               COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id AND (? IS NULL OR im.store_id = ?)), 0) as stock_qty,
-              COALESCE(pcv.featured_rank, 0) as featured_rank
+              COALESCE(pcv.featured_rank, 0) as featured_rank,
+              mci.salt_composition, mci.sub_category, mci.medicine_desc, mci.side_effects
        FROM medicines m
        JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       LEFT JOIN medicine_clinical_info mci ON mci.medicine_id = m.id
        WHERE ${where}
        ORDER BY pcv.featured_rank DESC, m.name ASC
        LIMIT ? OFFSET ?`,
@@ -1415,10 +1417,12 @@ router.get('/public-catalog', async (req, res) => {
       enriched.push({
         id: med.id,
         name: med.name,
-        category: med.category || 'General',
+        category: med.sub_category || med.category || 'General',
         pack: med.packaging || med.pack_size || '',
-        composition: med.generic_name || '',
+        composition: med.salt_composition || med.generic_name || '',
         manufacturer: med.manufacturer || '',
+        description: med.medicine_desc || '',
+        side_effects: med.side_effects || '',
         mrp: Number(med.mrp || 0),
         sell_price: Number(med.sell_price || med.mrp || 0),
         stock_qty: Number(med.stock_qty || 0),
