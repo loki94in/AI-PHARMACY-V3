@@ -535,7 +535,8 @@ router.get('/distributor-mappings', async (_req, res) => {
         COALESCE(m.distributor_id, d.id) as distributor_id, 
         COALESCE(d.phone, d.contact, m.phone) as phone, 
         COALESCE(d.name, m.store_name) as distributor_name, 
-        COALESCE(d.phone, d.contact, m.phone) as distributor_phone
+        COALESCE(d.phone, d.contact, m.phone) as distributor_phone,
+        COALESCE(m.delivery_boy_id, d.delivery_boy_id) as delivery_boy_id
       FROM pharmarack_distributor_mappings m
       LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
       UNION
@@ -544,7 +545,8 @@ router.get('/distributor-mappings', async (_req, res) => {
         d.id as distributor_id, 
         COALESCE(d.phone, d.contact) as phone, 
         d.name as distributor_name, 
-        COALESCE(d.phone, d.contact) as distributor_phone
+        COALESCE(d.phone, d.contact) as distributor_phone,
+        d.delivery_boy_id as delivery_boy_id
       FROM distributors d
       WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
         AND LOWER(TRIM(d.name)) NOT IN (
@@ -560,7 +562,7 @@ router.get('/distributor-mappings', async (_req, res) => {
 
 // Save or update a Pharmarack store-to-distributor mapping
 router.post('/distributor-mappings', async (req, res) => {
-  const { store_name, distributor_id, phone } = req.body;
+  const { store_name, distributor_id, phone, delivery_boy_id } = req.body;
   if (!store_name) {
     return res.status(400).json({ error: 'store_name is required' });
   }
@@ -569,7 +571,8 @@ router.post('/distributor-mappings', async (req, res) => {
     await syncDistributorPhoneAcrossTables(db, {
       id: distributor_id ? Number(distributor_id) : undefined,
       store_name,
-      phone
+      phone,
+      delivery_boy_id: delivery_boy_id !== undefined ? (delivery_boy_id ? Number(delivery_boy_id) : null) : undefined
     });
 
     res.json({ success: true, message: 'Store mapping saved successfully' });
@@ -632,7 +635,6 @@ router.post('/login-window', async (req, res) => {
         `--user-data-dir=${mainProfilePath}`,
         '--start-maximized',
         '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--disable-dev-shm-usage',
@@ -2027,7 +2029,18 @@ router.get('/live-cart-summary', async (req, res) => {
     let missingDistributorsCount = 0;
     for (const dist of cartDistributors) {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
-      const mappedPhone = phoneMap.get(sLower) || '';
+      let mappedPhone = phoneMap.get(sLower) || '';
+
+      if (!mappedPhone && dist.storeName) {
+        try {
+          const resolved = await resolveDistributorContact(db, dist.storeName);
+          if (resolved && resolved.distributor_phone) {
+            mappedPhone = resolved.distributor_phone;
+            phoneMap.set(sLower, mappedPhone);
+          }
+        } catch (_) {}
+      }
+
       dist.phone = mappedPhone;
       const cleanP = mappedPhone.replace(/\D/g, '').slice(-10);
       if (!cleanP || cleanP.length !== 10) {

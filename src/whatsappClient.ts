@@ -732,6 +732,28 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       }
     });
 
+    client.on('authenticated', async () => {
+      console.log('[WhatsApp] QR scanned & authenticated! Persisting credential status immediately...');
+      currentQr = null;
+      if (qrTimeout) clearTimeout(qrTimeout);
+      if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
+      setLifecycleProgress('connecting', 80, 'Authenticated! Finalizing session...');
+      try {
+        const db = await dbManager.getConnection();
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+        await db.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [new Date().toISOString()]
+        );
+      } catch (err) {
+        console.warn('[WhatsApp] Failed to write authenticated status on authenticated event:', err);
+      }
+    });
+
     client.on('ready', async () => {
       console.log('WhatsApp Client is ready!');
       lastInitFailureAt = 0;

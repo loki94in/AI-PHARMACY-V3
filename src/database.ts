@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 60;
+const CURRENT_SCHEMA_VERSION = 62;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -340,7 +340,7 @@ async function ensureOrderTimingSchema(db: any) {
     if (phCols.length > 0 && !phNames.has('custom_window_end')) {
       await db.run('ALTER TABLE pharmacy_holidays ADD COLUMN custom_window_end TEXT DEFAULT NULL');
     }
-  } catch (_) {}
+  } catch (_) { }
 
   try {
     const spCols = await db.all('PRAGMA table_info(special_orders)');
@@ -387,7 +387,7 @@ async function ensureOrderTimingSchema(db: any) {
     if (spCols.length > 0 && !spNames.has('screenshot_amount')) {
       await db.run('ALTER TABLE special_orders ADD COLUMN screenshot_amount REAL DEFAULT NULL');
     }
-  } catch (_) {}
+  } catch (_) { }
 
   try {
     const refCols = await db.all('PRAGMA table_info(patient_refills)');
@@ -413,7 +413,7 @@ async function ensureOrderTimingSchema(db: any) {
     if (refCols.length > 0 && !refNames.has('confirmed_at')) {
       await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
     }
-  } catch (_) {}
+  } catch (_) { }
 
   const defaultTimingSettings: [string, string][] = [
     ['pharmacy_cutoff_time', '23:00'],
@@ -668,41 +668,41 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot);
         `);
 
-      // Ensure multi-device & velocity metrics tables exist on fast-boot
-      try {
-        const pushCols = await db.all('PRAGMA table_info(push_tokens)');
-        const pushNames = new Set(pushCols.map((c: any) => c.name));
-        if (pushCols.length > 0 && !pushNames.has('device_uuid')) {
-          await db.run('ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT');
-        }
-        if (pushCols.length > 0 && !pushNames.has('is_blocked')) {
-          await db.run('ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0');
-        }
-      } catch (_) {}
+        // Ensure multi-device & velocity metrics tables exist on fast-boot
+        try {
+          const pushCols = await db.all('PRAGMA table_info(push_tokens)');
+          const pushNames = new Set(pushCols.map((c: any) => c.name));
+          if (pushCols.length > 0 && !pushNames.has('device_uuid')) {
+            await db.run('ALTER TABLE push_tokens ADD COLUMN device_uuid TEXT');
+          }
+          if (pushCols.length > 0 && !pushNames.has('is_blocked')) {
+            await db.run('ALTER TABLE push_tokens ADD COLUMN is_blocked INTEGER DEFAULT 0');
+          }
+        } catch (_) { }
 
-      try {
-        const stagedCols = await db.all('PRAGMA table_info(staged_sales)');
-        const stagedNames = new Set(stagedCols.map((c: any) => c.name));
-        if (stagedCols.length > 0 && !stagedNames.has('device_uuid')) {
-          await db.run('ALTER TABLE staged_sales ADD COLUMN device_uuid TEXT');
-        }
-        if (stagedCols.length > 0 && !stagedNames.has('sold_from_device')) {
-          await db.run('ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT');
-        }
-      } catch (_) {}
+        try {
+          const stagedCols = await db.all('PRAGMA table_info(staged_sales)');
+          const stagedNames = new Set(stagedCols.map((c: any) => c.name));
+          if (stagedCols.length > 0 && !stagedNames.has('device_uuid')) {
+            await db.run('ALTER TABLE staged_sales ADD COLUMN device_uuid TEXT');
+          }
+          if (stagedCols.length > 0 && !stagedNames.has('sold_from_device')) {
+            await db.run('ALTER TABLE staged_sales ADD COLUMN sold_from_device TEXT');
+          }
+        } catch (_) { }
 
-      try {
-        const retItemCols = await db.all('PRAGMA table_info(return_items)');
-        const retItemNames = new Set(retItemCols.map((c: any) => c.name));
-        if (retItemCols.length > 0) {
-          if (!retItemNames.has('invoice_no')) await db.run('ALTER TABLE return_items ADD COLUMN invoice_no TEXT');
-          if (!retItemNames.has('loose')) await db.run('ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0');
-          if (!retItemNames.has('ded_per')) await db.run('ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0');
-          if (!retItemNames.has('cd_value')) await db.run('ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0');
-        }
-      } catch (_) {}
+        try {
+          const retItemCols = await db.all('PRAGMA table_info(return_items)');
+          const retItemNames = new Set(retItemCols.map((c: any) => c.name));
+          if (retItemCols.length > 0) {
+            if (!retItemNames.has('invoice_no')) await db.run('ALTER TABLE return_items ADD COLUMN invoice_no TEXT');
+            if (!retItemNames.has('loose')) await db.run('ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0');
+            if (!retItemNames.has('ded_per')) await db.run('ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0');
+            if (!retItemNames.has('cd_value')) await db.run('ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0');
+          }
+        } catch (_) { }
 
-      await db.run(`
+        await db.run(`
         CREATE TABLE IF NOT EXISTS medicine_sales_metrics (
           medicine_id INTEGER PRIMARY KEY,
           sales_2d_qty REAL DEFAULT 0,
@@ -716,17 +716,17 @@ export async function ensureSchema(dbPath: string) {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      try {
-        const msmCols = await db.all('PRAGMA table_info(medicine_sales_metrics)');
-        const msmNames = new Set(msmCols.map((c: any) => c.name));
-        if (msmCols.length > 0 && !msmNames.has('last_purchase_date')) {
-          await db.run('ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT');
-        }
-      } catch (_) {}
-      await db.run('CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)');
+        try {
+          const msmCols = await db.all('PRAGMA table_info(medicine_sales_metrics)');
+          const msmNames = new Set(msmCols.map((c: any) => c.name));
+          if (msmCols.length > 0 && !msmNames.has('last_purchase_date')) {
+            await db.run('ALTER TABLE medicine_sales_metrics ADD COLUMN last_purchase_date TEXT');
+          }
+        } catch (_) { }
+        await db.run('CREATE INDEX IF NOT EXISTS idx_msm_velocity ON medicine_sales_metrics(sales_window_qty, purchases_window_qty, sales_2d_qty)');
 
-      // Ensure catalog_images and catalog_image_rejections tables exist on fast-boot
-      await db.run(`
+        // Ensure catalog_images and catalog_image_rejections tables exist on fast-boot
+        await db.run(`
         CREATE TABLE IF NOT EXISTS catalog_images (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           medicine_id INTEGER NOT NULL,
@@ -764,25 +764,25 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
-      try {
-        const ciCols = await db.all('PRAGMA table_info(catalog_images)');
-        const hasCol = (name: string) => ciCols.some((c: any) => c.name.toLowerCase() === name.toLowerCase());
-        if (!hasCol('previous_image_url')) await db.run('ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT');
-        if (!hasCol('next_review_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME');
-        if (!hasCol('skip_reason')) await db.run('ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT');
-        if (!hasCol('locked_by')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_by TEXT');
-        if (!hasCol('locked_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME');
-        if (!hasCol('verification_version')) await db.run('ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1');
-        if (!hasCol('image_type')) await db.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
-        if (!hasCol('is_primary')) await db.run('ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0');
-        if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
-        if (!hasCol('match_source')) await db.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
-        if (!hasCol('match_confidence')) await db.run('ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0');
-        if (!hasCol('phash')) await db.run('ALTER TABLE catalog_images ADD COLUMN phash TEXT');
-        if (!hasCol('visual_embedding')) await db.run('ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT');
-      } catch (_e) {}
+        try {
+          const ciCols = await db.all('PRAGMA table_info(catalog_images)');
+          const hasCol = (name: string) => ciCols.some((c: any) => c.name.toLowerCase() === name.toLowerCase());
+          if (!hasCol('previous_image_url')) await db.run('ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT');
+          if (!hasCol('next_review_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME');
+          if (!hasCol('skip_reason')) await db.run('ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT');
+          if (!hasCol('locked_by')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_by TEXT');
+          if (!hasCol('locked_at')) await db.run('ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME');
+          if (!hasCol('verification_version')) await db.run('ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1');
+          if (!hasCol('image_type')) await db.run("ALTER TABLE catalog_images ADD COLUMN image_type TEXT DEFAULT 'combined'");
+          if (!hasCol('is_primary')) await db.run('ALTER TABLE catalog_images ADD COLUMN is_primary INTEGER DEFAULT 0');
+          if (!hasCol('slot_number')) await db.run('ALTER TABLE catalog_images ADD COLUMN slot_number INTEGER DEFAULT 1');
+          if (!hasCol('match_source')) await db.run("ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'");
+          if (!hasCol('match_confidence')) await db.run('ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0');
+          if (!hasCol('phash')) await db.run('ALTER TABLE catalog_images ADD COLUMN phash TEXT');
+          if (!hasCol('visual_embedding')) await db.run('ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT');
+        } catch (_e) { }
 
-      await db.run(`
+        await db.run(`
         CREATE TABLE IF NOT EXISTS catalog_image_rejections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           medicine_id INTEGER NOT NULL,
@@ -794,7 +794,7 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
-      await db.run(`
+        await db.run(`
         CREATE TABLE IF NOT EXISTS image_review_history (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           product_image_id INTEGER NOT NULL,
@@ -811,21 +811,21 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
 
-      // Ensure customer portal tables exist on fast-boot
-      await db.run(`
+        // Ensure customer portal tables exist on fast-boot
+        await db.run(`
         CREATE TABLE IF NOT EXISTS customer_portal_accounts (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           customer_id INTEGER NOT NULL UNIQUE,
@@ -840,8 +840,8 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(customer_id) REFERENCES customers(id)
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id)');
-      await db.run(`
+        await db.run('CREATE INDEX IF NOT EXISTS idx_portal_login ON customer_portal_accounts(login_id)');
+        await db.run(`
         CREATE TABLE IF NOT EXISTS customer_portal_otps (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           login_id TEXT NOT NULL,
@@ -851,10 +851,10 @@ export async function ensureSchema(dbPath: string) {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_portal_otps_login ON customer_portal_otps(login_id)');
 
-      // Online order items and stock reservation tables (Schema v49)
-      await db.run(`
+        // Online order items and stock reservation tables (Schema v49)
+        await db.run(`
         CREATE TABLE IF NOT EXISTS online_order_items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           order_id INTEGER NOT NULL,
@@ -880,10 +880,10 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(actual_batch_id) REFERENCES inventory_master(id)
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_order_id ON online_order_items(order_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_medicine_id ON online_order_items(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_status ON online_order_items(item_status)');
-      await db.run(`
+        await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_order_id ON online_order_items(order_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_medicine_id ON online_order_items(medicine_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_ooi_status ON online_order_items(item_status)');
+        await db.run(`
         CREATE TABLE IF NOT EXISTS inventory_reservations (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           inventory_id INTEGER NOT NULL,
@@ -898,14 +898,14 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(order_item_id) REFERENCES online_order_items(id)
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_inventory ON inventory_reservations(inventory_id, status)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_order ON inventory_reservations(order_id)');
-      // Payment and live-cart indexes
-      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_payment ON special_orders(payment_status, pharmacy_verification_status)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_online_order ON sales_invoices(online_order_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_inventory ON inventory_reservations(inventory_id, status)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_inv_res_order ON inventory_reservations(order_id)');
+        // Payment and live-cart indexes
+        await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_payment ON special_orders(payment_status, pharmacy_verification_status)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_sales_invoices_online_order ON sales_invoices(online_order_id)');
 
-      // Catalog correction audit log (Schema v50)
-      await db.run(`
+        // Catalog correction audit log (Schema v50)
+        await db.run(`
         CREATE TABLE IF NOT EXISTS catalog_correction_log (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           order_id INTEGER,
@@ -920,11 +920,11 @@ export async function ensureSchema(dbPath: string) {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
 
-      // Pricing rules & multi-channel visibility (Schema v51)
-      await db.run(`
+        // Pricing rules & multi-channel visibility (Schema v51)
+        await db.run(`
         CREATE TABLE IF NOT EXISTS pricing_rules (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
@@ -939,9 +939,9 @@ export async function ensureSchema(dbPath: string) {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
 
-      await db.run(`
+        await db.run(`
         CREATE TABLE IF NOT EXISTS product_channel_visibility (
           medicine_id INTEGER PRIMARY KEY,
           is_pos_visible INTEGER DEFAULT 1,
@@ -953,9 +953,9 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
         )
       `);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
 
-      await db.run(`
+        await db.run(`
         CREATE TABLE IF NOT EXISTS customer_sessions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           customer_id INTEGER NOT NULL,
@@ -974,139 +974,170 @@ export async function ensureSchema(dbPath: string) {
           FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
       `);
-      try {
-        const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
-        const sessNames = new Set(sessCols.map((c: any) => c.name));
-        if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
-          await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
-        }
-        if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
-          await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
-        }
-        if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
-          await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
-        }
-        if (sessCols.length > 0 && !sessNames.has('is_active')) {
-          await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
-        }
-      } catch (_) {}
-      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
+        try {
+          const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
+          const sessNames = new Set(sessCols.map((c: any) => c.name));
+          if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
+            await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+          }
+          if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
+            await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+          }
+          if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
+            await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+          }
+          if (sessCols.length > 0 && !sessNames.has('is_active')) {
+            await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
+          }
+        } catch (_) { }
+        await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
 
-      try {
-        const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
-        const accNames = new Set(accCols.map((c: any) => c.name));
-        if (accCols.length > 0 && !accNames.has('total_login_count')) {
-          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
-        }
-        if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
-          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
-        }
-        if (accCols.length > 0 && !accNames.has('last_logout_at')) {
-          await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
-        }
-      } catch (_) {}
+        try {
+          const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
+          const accNames = new Set(accCols.map((c: any) => c.name));
+          if (accCols.length > 0 && !accNames.has('total_login_count')) {
+            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+          }
+          if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
+            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+          }
+          if (accCols.length > 0 && !accNames.has('last_logout_at')) {
+            await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+          }
+        } catch (_) { }
 
-      // Centralized Catalog & Booking/Pickup Schema (v52)
-      try {
-        const medCols = await db.all('PRAGMA table_info(medicines)');
-        const medNames = new Set(medCols.map((c: any) => c.name));
-        if (medCols.length > 0 && !medNames.has('canonical_name')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN canonical_name TEXT');
-        }
-        if (medCols.length > 0 && !medNames.has('normalized_name')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN normalized_name TEXT');
-        }
-        if (medCols.length > 0 && !medNames.has('product_code')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN product_code TEXT');
-        }
-        if (medCols.length > 0 && !medNames.has('status')) {
-          await db.run("ALTER TABLE medicines ADD COLUMN status TEXT DEFAULT 'ACTIVE'");
-        }
-        if (medCols.length > 0 && !medNames.has('dosage_form')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN dosage_form TEXT');
-        }
-        if (medCols.length > 0 && !medNames.has('pack_size')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN pack_size TEXT');
-        }
-        if (medCols.length > 0 && !medNames.has('barcode')) {
-          await db.run('ALTER TABLE medicines ADD COLUMN barcode TEXT');
-        }
+        // Centralized Catalog & Booking/Pickup Schema (v52)
+        try {
+          const medCols = await db.all('PRAGMA table_info(medicines)');
+          const medNames = new Set(medCols.map((c: any) => c.name));
+          if (medCols.length > 0 && !medNames.has('canonical_name')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN canonical_name TEXT');
+          }
+          if (medCols.length > 0 && !medNames.has('normalized_name')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN normalized_name TEXT');
+          }
+          if (medCols.length > 0 && !medNames.has('product_code')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN product_code TEXT');
+          }
+          if (medCols.length > 0 && !medNames.has('status')) {
+            await db.run("ALTER TABLE medicines ADD COLUMN status TEXT DEFAULT 'ACTIVE'");
+          }
+          if (medCols.length > 0 && !medNames.has('dosage_form')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN dosage_form TEXT');
+          }
+          if (medCols.length > 0 && !medNames.has('pack_size')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN pack_size TEXT');
+          }
+          if (medCols.length > 0 && !medNames.has('barcode')) {
+            await db.run('ALTER TABLE medicines ADD COLUMN barcode TEXT');
+          }
 
-        // Backfill product_code, canonical_name, normalized_name ONLY if any are missing
-        const needsMedBackfill = await db.get("SELECT 1 FROM medicines WHERE product_code IS NULL OR canonical_name IS NULL OR normalized_name IS NULL LIMIT 1");
-        if (needsMedBackfill) {
-          await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
-          await db.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
-          await db.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
-        }
-      } catch (_) {}
+          // Backfill product_code, canonical_name, normalized_name ONLY if any are missing
+          const needsMedBackfill = await db.get("SELECT 1 FROM medicines WHERE product_code IS NULL OR canonical_name IS NULL OR normalized_name IS NULL LIMIT 1");
+          if (needsMedBackfill) {
+            await db.run("UPDATE medicines SET product_code = 'MED-' || printf('%08d', id) WHERE product_code IS NULL OR product_code = ''");
+            await db.run("UPDATE medicines SET canonical_name = name WHERE canonical_name IS NULL OR canonical_name = ''");
+            await db.run("UPDATE medicines SET normalized_name = LOWER(TRIM(name)) WHERE normalized_name IS NULL OR normalized_name = ''");
+          }
+        } catch (_) { }
 
-      try {
-        const orderCols = await db.all('PRAGMA table_info(special_orders)');
-        const orderNames = new Set(orderCols.map((c: any) => c.name));
-        if (orderCols.length > 0 && !orderNames.has('payment_qr_id')) {
-          await db.run('ALTER TABLE special_orders ADD COLUMN payment_qr_id TEXT');
-        }
-        if (orderCols.length > 0 && !orderNames.has('order_type')) {
-          await db.run("ALTER TABLE special_orders ADD COLUMN order_type TEXT DEFAULT 'PICKUP'");
-        }
-        if (orderCols.length > 0 && !orderNames.has('total_amount')) {
-          await db.run('ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0');
-        }
-      } catch (_) {}
+        try {
+          const orderCols = await db.all('PRAGMA table_info(special_orders)');
+          const orderNames = new Set(orderCols.map((c: any) => c.name));
+          if (orderCols.length > 0 && !orderNames.has('payment_qr_id')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN payment_qr_id TEXT');
+          }
+          if (orderCols.length > 0 && !orderNames.has('order_type')) {
+            await db.run("ALTER TABLE special_orders ADD COLUMN order_type TEXT DEFAULT 'PICKUP'");
+          }
+          if (orderCols.length > 0 && !orderNames.has('total_amount')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0');
+          }
+        } catch (_) { }
 
-      try {
-        const ooiCols = await db.all('PRAGMA table_info(online_order_items)');
-        const ooiNames = new Set(ooiCols.map((c: any) => c.name));
-        if (ooiCols.length > 0 && !ooiNames.has('product_name_snapshot')) {
-          await db.run('ALTER TABLE online_order_items ADD COLUMN product_name_snapshot TEXT');
-          await db.run('UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL');
-        }
-        if (ooiCols.length > 0 && !ooiNames.has('price_snapshot')) {
-          await db.run('ALTER TABLE online_order_items ADD COLUMN price_snapshot REAL');
-          await db.run('UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL');
-        }
-        if (ooiCols.length > 0 && !ooiNames.has('subtotal')) {
-          await db.run('ALTER TABLE online_order_items ADD COLUMN subtotal REAL DEFAULT 0');
-          await db.run('UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL');
-        }
-      } catch (_) {}
+        try {
+          const ooiCols = await db.all('PRAGMA table_info(online_order_items)');
+          const ooiNames = new Set(ooiCols.map((c: any) => c.name));
+          if (ooiCols.length > 0 && !ooiNames.has('product_name_snapshot')) {
+            await db.run('ALTER TABLE online_order_items ADD COLUMN product_name_snapshot TEXT');
+            await db.run('UPDATE online_order_items SET product_name_snapshot = product_name WHERE product_name_snapshot IS NULL');
+          }
+          if (ooiCols.length > 0 && !ooiNames.has('price_snapshot')) {
+            await db.run('ALTER TABLE online_order_items ADD COLUMN price_snapshot REAL');
+            await db.run('UPDATE online_order_items SET price_snapshot = mrp WHERE price_snapshot IS NULL');
+          }
+          if (ooiCols.length > 0 && !ooiNames.has('subtotal')) {
+            await db.run('ALTER TABLE online_order_items ADD COLUMN subtotal REAL DEFAULT 0');
+            await db.run('UPDATE online_order_items SET subtotal = requested_qty * COALESCE(final_price, sell_price, mrp, 0) WHERE subtotal = 0 OR subtotal IS NULL');
+          }
+        } catch (_) { }
 
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_normalized_name ON medicines(normalized_name)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_product_code ON medicines(product_code)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)');
+        // Distributor and pharmarack mappings delivery_boy_id safety check (v61 fast-boot)
+        try {
+          const distCols = await db.all('PRAGMA table_info(distributors)');
+          const distNames = new Set(distCols.map((c: any) => c.name));
+          if (distCols.length > 0 && !distNames.has('delivery_boy_id')) {
+            await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+          }
+        } catch (_) { }
 
-      await ensureOrderTimingSchema(db);
-      await ensureMedicinesFts(db);
-      await ensureMedicineSearchSummaryTriggers(db);
-      return;
+        try {
+          await db.run(`
+          CREATE TABLE IF NOT EXISTS pharmarack_distributor_mappings (
+            store_name TEXT PRIMARY KEY,
+            distributor_id INTEGER,
+            phone TEXT,
+            delivery_boy_id INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+          const mapCols = await db.all('PRAGMA table_info(pharmarack_distributor_mappings)');
+          const mapNames = new Set(mapCols.map((c: any) => c.name));
+          if (mapCols.length > 0) {
+            if (!mapNames.has('delivery_boy_id')) {
+              await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+            }
+            if (!mapNames.has('store_id')) {
+              await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
+            }
+          }
+        } catch (_) { }
+
+        await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_normalized_name ON medicines(normalized_name)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_product_code ON medicines(product_code)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)');
+
+        await ensureOrderTimingSchema(db);
+        await ensureMedicinesFts(db);
+        await ensureMedicineSearchSummaryTriggers(db);
+        return;
+      }
+    } catch (_) {
+      // Should not happen now that app_settings is explicitly created above
     }
-  } catch (_) {
-    // Should not happen now that app_settings is explicitly created above
-  }
 
-  console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
+    console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
 
-  // We have removed the strict CHECK constraint on catalog_jobs and distributor_dispatch_reminders tables.
-  // We'll rely on TypeScript for enum enforcement to prevent future SQLite crashes when new statuses are introduced.
-  try {
-    const tableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='catalog_jobs'");
-    if (tableSql && /CHECK\s*\(\s*status\s+IN/i.test(tableSql.sql)) {
-      console.log('Removing strict CHECK constraint from catalog_jobs...');
-      await db.run("DROP TABLE IF EXISTS catalog_jobs");
+    // We have removed the strict CHECK constraint on catalog_jobs and distributor_dispatch_reminders tables.
+    // We'll rely on TypeScript for enum enforcement to prevent future SQLite crashes when new statuses are introduced.
+    try {
+      const tableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='catalog_jobs'");
+      if (tableSql && /CHECK\s*\(\s*status\s+IN/i.test(tableSql.sql)) {
+        console.log('Removing strict CHECK constraint from catalog_jobs...');
+        await db.run("DROP TABLE IF EXISTS catalog_jobs");
+      }
+    } catch (err) {
+      console.warn('Failed removing CHECK constraint:', err);
     }
-  } catch (err) {
-    console.warn('Failed removing CHECK constraint:', err);
-  }
 
-  try {
-    const remTableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='distributor_dispatch_reminders'");
-    if (remTableSql && /CHECK\s*\(\s*status\s+IN/i.test(remTableSql.sql)) {
-      console.log('Removing strict CHECK constraint from distributor_dispatch_reminders...');
-      await db.exec(`
+    try {
+      const remTableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='distributor_dispatch_reminders'");
+      if (remTableSql && /CHECK\s*\(\s*status\s+IN/i.test(remTableSql.sql)) {
+        console.log('Removing strict CHECK constraint from distributor_dispatch_reminders...');
+        await db.exec(`
         CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           distributor_id INTEGER,
@@ -1129,17 +1160,17 @@ export async function ensureSchema(dbPath: string) {
         CREATE INDEX IF NOT EXISTS idx_distributor_dispatch_reminders_date ON distributor_dispatch_reminders (date);
         CREATE INDEX IF NOT EXISTS idx_distributor_dispatch_reminders_distributor ON distributor_dispatch_reminders (distributor_id);
       `);
+      }
+    } catch (err) {
+      console.warn('Failed removing CHECK constraint from distributor_dispatch_reminders:', err);
     }
-  } catch (err) {
-    console.warn('Failed removing CHECK constraint from distributor_dispatch_reminders:', err);
-  }
-  try {
-    const spTableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='special_orders'");
-    if (spTableSql && /CHECK\s*\(\s*status\s+IN/i.test(spTableSql.sql)) {
-      console.log('Removing strict CHECK constraint from special_orders...');
-      const cols: Array<{ name: string }> = await db.all("PRAGMA table_info(special_orders)");
-      const colNames = cols.map(c => c.name).join(', ');
-      await db.exec(`
+    try {
+      const spTableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='special_orders'");
+      if (spTableSql && /CHECK\s*\(\s*status\s+IN/i.test(spTableSql.sql)) {
+        console.log('Removing strict CHECK constraint from special_orders...');
+        const cols: Array<{ name: string }> = await db.all("PRAGMA table_info(special_orders)");
+        const colNames = cols.map(c => c.name).join(', ');
+        await db.exec(`
         DROP TABLE IF EXISTS special_orders_new;
         CREATE TABLE special_orders_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1186,21 +1217,21 @@ export async function ensureSchema(dbPath: string) {
           last_synced_at DATETIME DEFAULT NULL
         );
       `);
-      if (colNames) {
-        await db.exec(`
+        if (colNames) {
+          await db.exec(`
           INSERT INTO special_orders_new (${colNames}) SELECT ${colNames} FROM special_orders;
         `);
-      }
-      await db.exec(`
+        }
+        await db.exec(`
         DROP TABLE special_orders;
         ALTER TABLE special_orders_new RENAME TO special_orders;
       `);
+      }
+    } catch (err) {
+      console.warn('Failed removing CHECK constraint from special_orders:', err);
     }
-  } catch (err) {
-    console.warn('Failed removing CHECK constraint from special_orders:', err);
-  }
 
-  await db.exec(`
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS stores (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -1290,7 +1321,8 @@ export async function ensureSchema(dbPath: string) {
     CREATE TABLE IF NOT EXISTS distributors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
-      contact TEXT
+      contact TEXT,
+      delivery_boy_id INTEGER
     );
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1760,31 +1792,31 @@ export async function ensureSchema(dbPath: string) {
     const profileCols = await db.all("PRAGMA table_info(distributor_learning_profiles)").catch(() => []);
     const existingProfileCols = new Set(profileCols.map((c: any) => c.name));
     if (!existingProfileCols.has('layout_type')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_type TEXT").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_type TEXT").catch(() => { });
     }
     if (!existingProfileCols.has('layout_patterns')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_patterns TEXT").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN layout_patterns TEXT").catch(() => { });
     }
     if (!existingProfileCols.has('field_positions')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN field_positions TEXT").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN field_positions TEXT").catch(() => { });
     }
     if (!existingProfileCols.has('missing_field_rules')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN missing_field_rules TEXT").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN missing_field_rules TEXT").catch(() => { });
     }
     if (!existingProfileCols.has('success_count')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN success_count INTEGER DEFAULT 0").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN success_count INTEGER DEFAULT 0").catch(() => { });
     }
     if (!existingProfileCols.has('last_success_at')) {
-      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN last_success_at DATETIME").catch(() => {});
+      await db.run("ALTER TABLE distributor_learning_profiles ADD COLUMN last_success_at DATETIME").catch(() => { });
     }
 
     const medCols = await db.all("PRAGMA table_info(medicines)").catch(() => []);
     const existingMedCols = new Set(medCols.map((c: any) => c.name));
     if (!existingMedCols.has('sell_price')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL").catch(() => {});
+      await db.run("ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL").catch(() => { });
     }
     if (!existingMedCols.has('allow_loose_sale')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN allow_loose_sale INTEGER DEFAULT 1").catch(() => {});
+      await db.run("ALTER TABLE medicines ADD COLUMN allow_loose_sale INTEGER DEFAULT 1").catch(() => { });
     }
     // Universal Loose Sale: Unlock all medicines to sell loose by default, locking only bottles, syrups, suspensions, liquids, drops, injections, ointments/gels/creams/sprays
     await db.run(`
@@ -1818,7 +1850,7 @@ export async function ensureSchema(dbPath: string) {
              OR LOWER(COALESCE(name, '')) LIKE '%inj%'
            )
          )
-    `).catch(() => {});
+    `).catch(() => { });
 
     await db.run(`
       UPDATE medicines 
@@ -1849,9 +1881,9 @@ export async function ensureSchema(dbPath: string) {
           OR LOWER(COALESCE(name, '')) LIKE '%ointment%'
           OR LOWER(COALESCE(name, '')) LIKE '%inj%'
         )
-    `).catch(() => {});
+    `).catch(() => { });
 
-  await db.exec(`
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS distributor_historical_files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       distributor_id INTEGER,
@@ -2004,279 +2036,281 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_order_tracking_events_order ON order_tracking_events(order_id);
   `);
 
-  // Safely add new columns to existing tables (SQLite throws if column exists — we catch and ignore)
-  // Safely add new columns to existing tables after pre-checking PRAGMA table_info
-  const alterStatements: Array<[string, string, string]> = [
-    ['action_logs', 'metadata', 'ALTER TABLE action_logs ADD COLUMN metadata TEXT'],
-    ['action_logs', 'store_id', 'ALTER TABLE action_logs ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['action_logs', 'user_id', 'ALTER TABLE action_logs ADD COLUMN user_id INTEGER DEFAULT NULL'],
-    ['action_logs', 'entity', 'ALTER TABLE action_logs ADD COLUMN entity TEXT DEFAULT NULL'],
-    ['action_logs', 'entity_id', 'ALTER TABLE action_logs ADD COLUMN entity_id TEXT DEFAULT NULL'],
-    ['inventory_master', 'unit_price', 'ALTER TABLE inventory_master ADD COLUMN unit_price REAL DEFAULT 0'],
-    ['inventory_master', 'cost_price', 'ALTER TABLE inventory_master ADD COLUMN cost_price REAL DEFAULT 0'],
-    ['inventory_master', 'reorder_level', 'ALTER TABLE inventory_master ADD COLUMN reorder_level INTEGER DEFAULT 10'],
-    ['inventory_master', 'max_stock_level', 'ALTER TABLE inventory_master ADD COLUMN max_stock_level INTEGER DEFAULT NULL'],
-    ['inventory_master', 'mrp', 'ALTER TABLE inventory_master ADD COLUMN mrp REAL DEFAULT 0'],
-    ['inventory_master', 'legacy_batch_id', 'ALTER TABLE inventory_master ADD COLUMN legacy_batch_id TEXT'],
-    ['inventory_master', 'loose_quantity', 'ALTER TABLE inventory_master ADD COLUMN loose_quantity INTEGER DEFAULT 0'],
-    ['inventory_master', 'is_active', 'ALTER TABLE inventory_master ADD COLUMN is_active INTEGER DEFAULT 1'],
-    ['inventory_master', 'created_at', 'ALTER TABLE inventory_master ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ['inventory_master', 'expiry_month', 'ALTER TABLE inventory_master ADD COLUMN expiry_month TEXT'],
-    ['medicines', 'max_stock_level', 'ALTER TABLE medicines ADD COLUMN max_stock_level INTEGER DEFAULT NULL'],
-    ['medicines', 'mrp', 'ALTER TABLE medicines ADD COLUMN mrp REAL DEFAULT 0'],
-    ['medicines', 'hsn_code', 'ALTER TABLE medicines ADD COLUMN hsn_code TEXT'],
-    ['medicines', 'schedule_type', 'ALTER TABLE medicines ADD COLUMN schedule_type TEXT DEFAULT \'None\''],
-    ['medicines', 'manufacturer', 'ALTER TABLE medicines ADD COLUMN manufacturer TEXT'],
-    ['medicines', 'category', 'ALTER TABLE medicines ADD COLUMN category TEXT'],
-    ['medicines', 'marketed_by', 'ALTER TABLE medicines ADD COLUMN marketed_by TEXT'],
-    ['medicines', 'legacy_id', 'ALTER TABLE medicines ADD COLUMN legacy_id TEXT'],
-    ['medicines', 'packaging', 'ALTER TABLE medicines ADD COLUMN packaging TEXT'],
-    ['medicines', 'item_type', 'ALTER TABLE medicines ADD COLUMN item_type TEXT'],
-    ['medicines', 'rack', 'ALTER TABLE medicines ADD COLUMN rack TEXT'],
-    ['medicines', 'generic_name', 'ALTER TABLE medicines ADD COLUMN generic_name TEXT'],
-    ['medicines', 'strength', 'ALTER TABLE medicines ADD COLUMN strength TEXT'],
-    ['medicines', 'rate', 'ALTER TABLE medicines ADD COLUMN rate REAL DEFAULT 0'],
-    ['medicines', 'pack_unit', 'ALTER TABLE medicines ADD COLUMN pack_unit TEXT'],
-    ['medicines', 'cgst_per', 'ALTER TABLE medicines ADD COLUMN cgst_per REAL DEFAULT 0'],
-    ['medicines', 'sgst_per', 'ALTER TABLE medicines ADD COLUMN sgst_per REAL DEFAULT 0'],
-    ['medicines', 'igst_per', 'ALTER TABLE medicines ADD COLUMN igst_per REAL DEFAULT 0'],
-    ['medicines', 'item_code', 'ALTER TABLE medicines ADD COLUMN item_code TEXT'],
-    ['medicines', 'metadata', 'ALTER TABLE medicines ADD COLUMN metadata TEXT'],
-    ['medicines', 'sell_price', 'ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL'],
-    ['purchases', 'cgst_value', 'ALTER TABLE purchases ADD COLUMN cgst_value REAL DEFAULT 0'],
-    ['purchases', 'sgst_value', 'ALTER TABLE purchases ADD COLUMN sgst_value REAL DEFAULT 0'],
-    ['purchases', 'igst_value', 'ALTER TABLE purchases ADD COLUMN igst_value REAL DEFAULT 0'],
-    ['purchases', 'roff', 'ALTER TABLE purchases ADD COLUMN roff REAL DEFAULT 0'],
-    ['purchases', 'status', 'ALTER TABLE purchases ADD COLUMN status TEXT DEFAULT \'PUBLISHED\''],
-    ['purchases', 'legacy_id', 'ALTER TABLE purchases ADD COLUMN legacy_id TEXT'],
-    ['purchases', 'business_date', 'ALTER TABLE purchases ADD COLUMN business_date DATETIME'],
-    ['purchases', 'app_invoice_no', 'ALTER TABLE purchases ADD COLUMN app_invoice_no TEXT'],
-    ['purchases', 'cn_amount', 'ALTER TABLE purchases ADD COLUMN cn_amount REAL DEFAULT 0'],
-    ['purchases', 'cn_number', 'ALTER TABLE purchases ADD COLUMN cn_number TEXT DEFAULT NULL'],
-    ['purchases', 'original_amount', 'ALTER TABLE purchases ADD COLUMN original_amount REAL DEFAULT NULL'],
-    ['special_orders', 'lifecycle_status', 'ALTER TABLE special_orders ADD COLUMN lifecycle_status TEXT DEFAULT \'CREATED\''],
-    ['special_orders', 'last_checked_at', 'ALTER TABLE special_orders ADD COLUMN last_checked_at DATETIME'],
-    ['sales_invoices', 'doctor_id', 'ALTER TABLE sales_invoices ADD COLUMN doctor_id INTEGER'],
-    ['sales_invoices', 'payment_medium', 'ALTER TABLE sales_invoices ADD COLUMN payment_medium TEXT'],
-    ['sales_invoices', 'roff', 'ALTER TABLE sales_invoices ADD COLUMN roff REAL DEFAULT 0'],
-    ['sales_invoices', 'cgst_value', 'ALTER TABLE sales_invoices ADD COLUMN cgst_value REAL DEFAULT 0'],
-    ['sales_invoices', 'sgst_value', 'ALTER TABLE sales_invoices ADD COLUMN sgst_value REAL DEFAULT 0'],
-    ['sales_invoices', 'igst_value', 'ALTER TABLE sales_invoices ADD COLUMN igst_value REAL DEFAULT 0'],
-    ['sales_invoices', 'legacy_id', 'ALTER TABLE sales_invoices ADD COLUMN legacy_id TEXT'],
-    ['sales_invoices', 'business_date', 'ALTER TABLE sales_invoices ADD COLUMN business_date DATETIME'],
-    ['sales_invoices', 'discount', 'ALTER TABLE sales_invoices ADD COLUMN discount REAL DEFAULT 0'],
-    ['sales_invoices', 'subtotal', 'ALTER TABLE sales_invoices ADD COLUMN subtotal REAL DEFAULT 0'],
-    ['sales_invoices', 'payment_status', 'ALTER TABLE sales_invoices ADD COLUMN payment_status TEXT DEFAULT \'PAID\''],
-    ['sales_invoices', 'net_profit', 'ALTER TABLE sales_invoices ADD COLUMN net_profit REAL DEFAULT 0'],
-    ['sales_invoices', 'updated_at', 'ALTER TABLE sales_invoices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ['sale_items', 'mrp', 'ALTER TABLE sale_items ADD COLUMN mrp REAL'],
-    ['sale_items', 'batch_no', 'ALTER TABLE sale_items ADD COLUMN batch_no TEXT'],
-    ['sale_items', 'cgst_value', 'ALTER TABLE sale_items ADD COLUMN cgst_value REAL DEFAULT 0'],
-    ['sale_items', 'sgst_value', 'ALTER TABLE sale_items ADD COLUMN sgst_value REAL DEFAULT 0'],
-    ['sale_items', 'discount_per', 'ALTER TABLE sale_items ADD COLUMN discount_per REAL DEFAULT 0'],
-    ['sale_items', 'legacy_id', 'ALTER TABLE sale_items ADD COLUMN legacy_id TEXT'],
-    ['sale_items', 'loose_qty', 'ALTER TABLE sale_items ADD COLUMN loose_qty INTEGER DEFAULT 0'],
-    ['returns', 'cgst_value', 'ALTER TABLE returns ADD COLUMN cgst_value REAL DEFAULT 0'],
-    ['returns', 'sgst_value', 'ALTER TABLE returns ADD COLUMN sgst_value REAL DEFAULT 0'],
-    ['returns', 'igst_value', 'ALTER TABLE returns ADD COLUMN igst_value REAL DEFAULT 0'],
-    ['returns', 'distributor_id', 'ALTER TABLE returns ADD COLUMN distributor_id INTEGER'],
-    ['returns', 'legacy_id', 'ALTER TABLE returns ADD COLUMN legacy_id TEXT'],
-    ['returns', 'reason', 'ALTER TABLE returns ADD COLUMN reason TEXT'],
-    ['returns', 'return_invoice_id', 'ALTER TABLE returns ADD COLUMN return_invoice_id TEXT DEFAULT NULL'],
-    ['returns', 'return_sub_type', 'ALTER TABLE returns ADD COLUMN return_sub_type TEXT CHECK(return_sub_type IN (\'expiry\', \'good\')) DEFAULT \'good\''],
-    ['returns', 'return_date_time', 'ALTER TABLE returns ADD COLUMN return_date_time DATETIME DEFAULT NULL'],
-    ['returns', 'raw_return_type', 'ALTER TABLE returns ADD COLUMN raw_return_type TEXT'],
-    ['distributors', 'legacy_id', 'ALTER TABLE distributors ADD COLUMN legacy_id TEXT'],
-    ['distributors', 'gstin', 'ALTER TABLE distributors ADD COLUMN gstin TEXT'],
-    ['distributors', 'address', 'ALTER TABLE distributors ADD COLUMN address TEXT'],
-    ['distributors', 'city', 'ALTER TABLE distributors ADD COLUMN city TEXT'],
-    ['distributors', 'email', 'ALTER TABLE distributors ADD COLUMN email TEXT'],
-    ['distributors', 'dl_no', 'ALTER TABLE distributors ADD COLUMN dl_no TEXT'],
-    ['distributors', 'phone', 'ALTER TABLE distributors ADD COLUMN phone TEXT'],
-    ['distributors', 'state_code', 'ALTER TABLE distributors ADD COLUMN state_code TEXT'],
-    ['distributors', 'preferred_file_format', 'ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL'],
-    ['distributors', 'mapping_config', 'ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL'],
-    ['distributor_dispatch_reminders', 'scheduled_send_time', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL'],
-    ['doctors', 'send_daily_summary', 'ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0'],
-    ['customers', 'legacy_id', 'ALTER TABLE customers ADD COLUMN legacy_id TEXT'],
-    ['customers', 'age', 'ALTER TABLE customers ADD COLUMN age TEXT'],
-    ['customers', 'gender', 'ALTER TABLE customers ADD COLUMN gender TEXT'],
-    ['customers', 'credit_enabled', 'ALTER TABLE customers ADD COLUMN credit_enabled INTEGER DEFAULT 0'],
-    ['customers', 'credit_balance', 'ALTER TABLE customers ADD COLUMN credit_balance REAL DEFAULT 0'],
-    ['customers', 'created_at', 'ALTER TABLE customers ADD COLUMN created_at DATETIME'],
-    ['customers', 'credit_due_date', 'ALTER TABLE customers ADD COLUMN credit_due_date TEXT'],
-    ['customers', 'language', "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
-    ['patient_refills', 'hold_for_stock', 'ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0'],
-    ['patient_refills', 'is_active', 'ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1'],
-    ['patient_refills', 'is_ready', 'ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0'],
-    ['patient_refills', 'acknowledged', 'ALTER TABLE patient_refills ADD COLUMN acknowledged INTEGER DEFAULT 0'],
-    ['patient_refills', 'ordering_triggered', 'ALTER TABLE patient_refills ADD COLUMN ordering_triggered INTEGER DEFAULT 0'],
-    ['patient_refills', 'quick_bill_id', 'ALTER TABLE patient_refills ADD COLUMN quick_bill_id INTEGER DEFAULT NULL'],
-    ['patient_refills', 'stock_verified_override', 'ALTER TABLE patient_refills ADD COLUMN stock_verified_override INTEGER DEFAULT 0'],
-    ['patient_refills', 'customer_id', 'ALTER TABLE patient_refills ADD COLUMN customer_id INTEGER DEFAULT NULL'],
-    ['patient_refills', 'quantity_needed', 'ALTER TABLE patient_refills ADD COLUMN quantity_needed INTEGER DEFAULT 3'],
-    ['patient_refills', 'language', "ALTER TABLE patient_refills ADD COLUMN language TEXT DEFAULT 'en'"],
-    ['patient_refills', 'reminder_status', "ALTER TABLE patient_refills ADD COLUMN reminder_status TEXT DEFAULT 'NOT_SENT'"],
-    ['patient_refills', 'reminder_sent_at', 'ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL'],
-    ['patient_refills', 'reminder_job_id', 'ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL'],
-    ['patient_refills', 'reminder_occurrence_date', 'ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL'],
-    ['patient_refills', 'patient_confirmed', 'ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0'],
-    ['patient_refills', 'confirmed_at', 'ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL'],
-    ['special_orders', 'customer_id', 'ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL'],
-    ['special_orders', 'date', 'ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ['special_orders', 'product', 'ALTER TABLE special_orders ADD COLUMN product TEXT'],
-    ['special_orders', 'medicine_name', 'ALTER TABLE special_orders ADD COLUMN medicine_name TEXT'],
-    ['special_orders', 'qty', 'ALTER TABLE special_orders ADD COLUMN qty INTEGER DEFAULT 1'],
-    ['special_orders', 'priority', 'ALTER TABLE special_orders ADD COLUMN priority TEXT DEFAULT \'Normal\''],
-    ['special_orders', 'notified', 'ALTER TABLE special_orders ADD COLUMN notified INTEGER DEFAULT 0'],
-    ['special_orders', 'pharmarack_mapped', 'ALTER TABLE special_orders ADD COLUMN pharmarack_mapped INTEGER DEFAULT 0'],
-    ['special_orders', 'pharmarack_distributor', 'ALTER TABLE special_orders ADD COLUMN pharmarack_distributor TEXT'],
-    ['special_orders', 'pharmarack_rate', 'ALTER TABLE special_orders ADD COLUMN pharmarack_rate REAL'],
-    ['special_orders', 'pharmarack_mrp', 'ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL'],
-    ['special_orders', 'pharmarack_scheme', 'ALTER TABLE special_orders ADD COLUMN pharmarack_scheme TEXT'],
-    ['special_orders', 'advance_payment', 'ALTER TABLE special_orders ADD COLUMN advance_payment REAL DEFAULT 0.0'],
-    ['special_orders', 'converted_to_refill_id', 'ALTER TABLE special_orders ADD COLUMN converted_to_refill_id INTEGER DEFAULT NULL'],
-    ['special_orders', 'source_refill_id', 'ALTER TABLE special_orders ADD COLUMN source_refill_id INTEGER DEFAULT NULL'],
-    ['special_orders', 'source', 'ALTER TABLE special_orders ADD COLUMN source TEXT'],
-    ['special_orders', 'cart_add_error', 'ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL'],
-    ['special_orders', 'notification_count', 'ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0'],
-    ['held_bills', 'invoice_no', 'ALTER TABLE held_bills ADD COLUMN invoice_no TEXT'],
-    ['held_bills', 'temp_label', 'ALTER TABLE held_bills ADD COLUMN temp_label TEXT'],
-    ['held_bills', 'patient_name', 'ALTER TABLE held_bills ADD COLUMN patient_name TEXT'],
-    ['held_bills', 'patient_phone', 'ALTER TABLE held_bills ADD COLUMN patient_phone TEXT'],
-    ['held_bills', 'doctor_name', 'ALTER TABLE held_bills ADD COLUMN doctor_name TEXT'],
-    ['held_bills', 'discount', 'ALTER TABLE held_bills ADD COLUMN discount REAL DEFAULT 0'],
-    ['held_bills', 'remarks', 'ALTER TABLE held_bills ADD COLUMN remarks TEXT'],
-    ['held_bills', 'cart_data', 'ALTER TABLE held_bills ADD COLUMN cart_data TEXT'],
-    ['held_bills', 'created_at', 'ALTER TABLE held_bills ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ['held_bills', 'date', 'ALTER TABLE held_bills ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ['held_bills', 'customer_id', 'ALTER TABLE held_bills ADD COLUMN customer_id INTEGER DEFAULT NULL'],
-    ['medicines', 'enrichment_status', 'ALTER TABLE medicines ADD COLUMN enrichment_status TEXT DEFAULT NULL'],
-    ['medicines', 'enrichment_confidence', 'ALTER TABLE medicines ADD COLUMN enrichment_confidence REAL DEFAULT NULL'],
-    ['medicines', 'pack_size', 'ALTER TABLE medicines ADD COLUMN pack_size INTEGER'],
-    ['medicines', 'source', 'ALTER TABLE medicines ADD COLUMN source TEXT DEFAULT \'manual\''],
-    ['medicines', 'possible_duplicate_of', 'ALTER TABLE medicines ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL'],
-    ['medicines', 'therapeutic', 'ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL'],
-    ['medicines', 'sub_therapeutic', 'ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL'],
-    ['medicines', 'short_code', 'ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL'],
-    ['medicines', 'ucode', 'ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL'],
-    ['medicines', 'disable_auto_barcode', 'ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0'],
-    ['medicines', 'tb_medicine', 'ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0'],
-    // stock_ledger's full definition (line ~1280) never applies on top of the earlier
-    // CREATE TABLE IF NOT EXISTS (line ~329) — these three columns were silently missing
-    // on every install, making every recordStockLedger() call throw (swallowed by its own catch).
-    ['stock_ledger', 'loose_quantity', 'ALTER TABLE stock_ledger ADD COLUMN loose_quantity INTEGER DEFAULT 0'],
-    ['stock_ledger', 'transaction_id', 'ALTER TABLE stock_ledger ADD COLUMN transaction_id TEXT'],
-    ['stock_ledger', 'business_date', 'ALTER TABLE stock_ledger ADD COLUMN business_date DATETIME'],
-    ['distributor_dispatch_reminders', 'order_source', "ALTER TABLE distributor_dispatch_reminders ADD COLUMN order_source TEXT DEFAULT 'pharmarack'"],
-    ['distributor_dispatch_reminders', 'email_received_at', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN email_received_at DATETIME'],
-    // ponytail: source_type records where a staged purchase originated (e.g. 'email', 'telegram')
-    // without mixing that into the distributor identity field
-    ['staged_purchases', 'source_type', "ALTER TABLE staged_purchases ADD COLUMN source_type TEXT DEFAULT NULL"],
-    ['refill_fulfillments', 'cycle_due_date', 'ALTER TABLE refill_fulfillments ADD COLUMN cycle_due_date TEXT'],
-    ['refill_fulfillments', 'next_due_date', 'ALTER TABLE refill_fulfillments ADD COLUMN next_due_date TEXT'],
-    ['refill_fulfillments', 'fulfilled_via', 'ALTER TABLE refill_fulfillments ADD COLUMN fulfilled_via TEXT'],
-    ['refill_fulfillments', 'notes', 'ALTER TABLE refill_fulfillments ADD COLUMN notes TEXT'],
-    // catalog_jobs: the base CREATE (id/file_path/status/created_at) predates the whole
-    // OCR pipeline — worker + routes read/write these 11 columns on EVERY upload/review,
-    // so fresh installs AND long-lived DBs crashed with "no such column" (bug found via
-    // catalogPipeline/duplicateCatalog suites, 2026-08-25). Mirrors the stock_ledger case.
-    ['catalog_jobs', 'original_filename', 'ALTER TABLE catalog_jobs ADD COLUMN original_filename TEXT'],
-    ['catalog_jobs', 'extracted_data', 'ALTER TABLE catalog_jobs ADD COLUMN extracted_data TEXT'],
-    ['catalog_jobs', 'mapping_config', 'ALTER TABLE catalog_jobs ADD COLUMN mapping_config TEXT'],
-    ['catalog_jobs', 'data_filters', 'ALTER TABLE catalog_jobs ADD COLUMN data_filters TEXT'],
-    ['catalog_jobs', 'error_log', 'ALTER TABLE catalog_jobs ADD COLUMN error_log TEXT'],
-    ['catalog_jobs', 'progress', 'ALTER TABLE catalog_jobs ADD COLUMN progress INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'total_count', 'ALTER TABLE catalog_jobs ADD COLUMN total_count INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'processed_count', 'ALTER TABLE catalog_jobs ADD COLUMN processed_count INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'new_count', 'ALTER TABLE catalog_jobs ADD COLUMN new_count INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'existing_count', 'ALTER TABLE catalog_jobs ADD COLUMN existing_count INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'duplicate_count', 'ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0'],
-    ['catalog_jobs', 'matched_previous_job_id', 'ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL'],
-    ['catalog_jobs', 'newly_detected_columns', 'ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT'],
-    // Multi-Store & Website Order Foundation (Schema v47)
-    ['special_orders', 'store_id', 'ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['special_orders', 'customer_order_source', "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
-    ['special_orders', 'prescription_url', 'ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL'],
-    ['special_orders', 'product_image_url', 'ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL'],
-    ['special_orders', 'delivery_status', "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
-    ['special_orders', 'delivered_at', 'ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL'],
-    ['special_orders', 'return_window_until', 'ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL'],
-    ['special_orders', 'return_status', "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
-    ['special_orders', 'return_override_reason', 'ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL'],
-    ['special_orders', 'return_override_by', 'ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL'],
-    ['special_orders', 'return_override_at', 'ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL'],
-    ['special_orders', 'sync_id', 'ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL'],
-    ['special_orders', 'sync_status', "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
-    ['special_orders', 'last_synced_at', 'ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL'],
-    ['inventory_master', 'store_id', 'ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['purchases', 'store_id', 'ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['sales_invoices', 'store_id', 'ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['returns', 'store_id', 'ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['patient_refills', 'store_id', 'ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['dispatch_orders', 'store_id', 'ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['held_bills', 'store_id', 'ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['staged_sales', 'store_id', 'ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['staged_purchases', 'store_id', 'ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['whatsapp_send_queue', 'store_id', 'ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['distributor_dispatch_reminders', 'store_id', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['pharmarack_distributor_mappings', 'store_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1'],
-    ['delivery_boys', 'store_id', 'ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1'],
-    // Online Order Payment Lifecycle (Schema v49)
-    ['special_orders', 'payment_status', "ALTER TABLE special_orders ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'"],
-    ['special_orders', 'payment_reference', 'ALTER TABLE special_orders ADD COLUMN payment_reference TEXT'],
-    ['special_orders', 'payment_confirmed_at', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_at DATETIME'],
-    ['special_orders', 'payment_confirmed_by', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_by TEXT'],
-    ['special_orders', 'pharmacy_verification_status', "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
-    ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
-    ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
-    ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
-    // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
-    ['catalog_images', 'previous_image_url', 'ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT'],
-    ['catalog_images', 'next_review_at', 'ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME'],
-    ['catalog_images', 'skip_reason', 'ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT'],
-    ['catalog_images', 'locked_by', 'ALTER TABLE catalog_images ADD COLUMN locked_by TEXT'],
-    ['catalog_images', 'locked_at', 'ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME'],
-    ['catalog_images', 'verification_version', 'ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1'],
-    // Filename auto-match columns
-    ['catalog_images', 'match_source', "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
-    ['catalog_images', 'match_confidence', 'ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0'],
-    ['catalog_images', 'phash', 'ALTER TABLE catalog_images ADD COLUMN phash TEXT'],
-    ['catalog_images', 'visual_embedding', 'ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT'],
-    ['return_items', 'invoice_no', 'ALTER TABLE return_items ADD COLUMN invoice_no TEXT'],
-    ['return_items', 'loose', 'ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0'],
-    ['return_items', 'ded_per', 'ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0'],
-    ['return_items', 'cd_value', 'ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0'],
-  ];
+    // Safely add new columns to existing tables (SQLite throws if column exists — we catch and ignore)
+    // Safely add new columns to existing tables after pre-checking PRAGMA table_info
+    const alterStatements: Array<[string, string, string]> = [
+      ['action_logs', 'metadata', 'ALTER TABLE action_logs ADD COLUMN metadata TEXT'],
+      ['action_logs', 'store_id', 'ALTER TABLE action_logs ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['action_logs', 'user_id', 'ALTER TABLE action_logs ADD COLUMN user_id INTEGER DEFAULT NULL'],
+      ['action_logs', 'entity', 'ALTER TABLE action_logs ADD COLUMN entity TEXT DEFAULT NULL'],
+      ['action_logs', 'entity_id', 'ALTER TABLE action_logs ADD COLUMN entity_id TEXT DEFAULT NULL'],
+      ['inventory_master', 'unit_price', 'ALTER TABLE inventory_master ADD COLUMN unit_price REAL DEFAULT 0'],
+      ['inventory_master', 'cost_price', 'ALTER TABLE inventory_master ADD COLUMN cost_price REAL DEFAULT 0'],
+      ['inventory_master', 'reorder_level', 'ALTER TABLE inventory_master ADD COLUMN reorder_level INTEGER DEFAULT 10'],
+      ['inventory_master', 'max_stock_level', 'ALTER TABLE inventory_master ADD COLUMN max_stock_level INTEGER DEFAULT NULL'],
+      ['inventory_master', 'mrp', 'ALTER TABLE inventory_master ADD COLUMN mrp REAL DEFAULT 0'],
+      ['inventory_master', 'legacy_batch_id', 'ALTER TABLE inventory_master ADD COLUMN legacy_batch_id TEXT'],
+      ['inventory_master', 'loose_quantity', 'ALTER TABLE inventory_master ADD COLUMN loose_quantity INTEGER DEFAULT 0'],
+      ['inventory_master', 'is_active', 'ALTER TABLE inventory_master ADD COLUMN is_active INTEGER DEFAULT 1'],
+      ['inventory_master', 'created_at', 'ALTER TABLE inventory_master ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['inventory_master', 'expiry_month', 'ALTER TABLE inventory_master ADD COLUMN expiry_month TEXT'],
+      ['medicines', 'max_stock_level', 'ALTER TABLE medicines ADD COLUMN max_stock_level INTEGER DEFAULT NULL'],
+      ['medicines', 'mrp', 'ALTER TABLE medicines ADD COLUMN mrp REAL DEFAULT 0'],
+      ['medicines', 'hsn_code', 'ALTER TABLE medicines ADD COLUMN hsn_code TEXT'],
+      ['medicines', 'schedule_type', 'ALTER TABLE medicines ADD COLUMN schedule_type TEXT DEFAULT \'None\''],
+      ['medicines', 'manufacturer', 'ALTER TABLE medicines ADD COLUMN manufacturer TEXT'],
+      ['medicines', 'category', 'ALTER TABLE medicines ADD COLUMN category TEXT'],
+      ['medicines', 'marketed_by', 'ALTER TABLE medicines ADD COLUMN marketed_by TEXT'],
+      ['medicines', 'legacy_id', 'ALTER TABLE medicines ADD COLUMN legacy_id TEXT'],
+      ['medicines', 'packaging', 'ALTER TABLE medicines ADD COLUMN packaging TEXT'],
+      ['medicines', 'item_type', 'ALTER TABLE medicines ADD COLUMN item_type TEXT'],
+      ['medicines', 'rack', 'ALTER TABLE medicines ADD COLUMN rack TEXT'],
+      ['medicines', 'generic_name', 'ALTER TABLE medicines ADD COLUMN generic_name TEXT'],
+      ['medicines', 'strength', 'ALTER TABLE medicines ADD COLUMN strength TEXT'],
+      ['medicines', 'rate', 'ALTER TABLE medicines ADD COLUMN rate REAL DEFAULT 0'],
+      ['medicines', 'pack_unit', 'ALTER TABLE medicines ADD COLUMN pack_unit TEXT'],
+      ['medicines', 'cgst_per', 'ALTER TABLE medicines ADD COLUMN cgst_per REAL DEFAULT 0'],
+      ['medicines', 'sgst_per', 'ALTER TABLE medicines ADD COLUMN sgst_per REAL DEFAULT 0'],
+      ['medicines', 'igst_per', 'ALTER TABLE medicines ADD COLUMN igst_per REAL DEFAULT 0'],
+      ['medicines', 'item_code', 'ALTER TABLE medicines ADD COLUMN item_code TEXT'],
+      ['medicines', 'metadata', 'ALTER TABLE medicines ADD COLUMN metadata TEXT'],
+      ['medicines', 'sell_price', 'ALTER TABLE medicines ADD COLUMN sell_price REAL DEFAULT NULL'],
+      ['purchases', 'cgst_value', 'ALTER TABLE purchases ADD COLUMN cgst_value REAL DEFAULT 0'],
+      ['purchases', 'sgst_value', 'ALTER TABLE purchases ADD COLUMN sgst_value REAL DEFAULT 0'],
+      ['purchases', 'igst_value', 'ALTER TABLE purchases ADD COLUMN igst_value REAL DEFAULT 0'],
+      ['purchases', 'roff', 'ALTER TABLE purchases ADD COLUMN roff REAL DEFAULT 0'],
+      ['purchases', 'status', 'ALTER TABLE purchases ADD COLUMN status TEXT DEFAULT \'PUBLISHED\''],
+      ['purchases', 'legacy_id', 'ALTER TABLE purchases ADD COLUMN legacy_id TEXT'],
+      ['purchases', 'business_date', 'ALTER TABLE purchases ADD COLUMN business_date DATETIME'],
+      ['purchases', 'app_invoice_no', 'ALTER TABLE purchases ADD COLUMN app_invoice_no TEXT'],
+      ['purchases', 'cn_amount', 'ALTER TABLE purchases ADD COLUMN cn_amount REAL DEFAULT 0'],
+      ['purchases', 'cn_number', 'ALTER TABLE purchases ADD COLUMN cn_number TEXT DEFAULT NULL'],
+      ['purchases', 'original_amount', 'ALTER TABLE purchases ADD COLUMN original_amount REAL DEFAULT NULL'],
+      ['special_orders', 'lifecycle_status', 'ALTER TABLE special_orders ADD COLUMN lifecycle_status TEXT DEFAULT \'CREATED\''],
+      ['special_orders', 'last_checked_at', 'ALTER TABLE special_orders ADD COLUMN last_checked_at DATETIME'],
+      ['sales_invoices', 'doctor_id', 'ALTER TABLE sales_invoices ADD COLUMN doctor_id INTEGER'],
+      ['sales_invoices', 'payment_medium', 'ALTER TABLE sales_invoices ADD COLUMN payment_medium TEXT'],
+      ['sales_invoices', 'roff', 'ALTER TABLE sales_invoices ADD COLUMN roff REAL DEFAULT 0'],
+      ['sales_invoices', 'cgst_value', 'ALTER TABLE sales_invoices ADD COLUMN cgst_value REAL DEFAULT 0'],
+      ['sales_invoices', 'sgst_value', 'ALTER TABLE sales_invoices ADD COLUMN sgst_value REAL DEFAULT 0'],
+      ['sales_invoices', 'igst_value', 'ALTER TABLE sales_invoices ADD COLUMN igst_value REAL DEFAULT 0'],
+      ['sales_invoices', 'legacy_id', 'ALTER TABLE sales_invoices ADD COLUMN legacy_id TEXT'],
+      ['sales_invoices', 'business_date', 'ALTER TABLE sales_invoices ADD COLUMN business_date DATETIME'],
+      ['sales_invoices', 'discount', 'ALTER TABLE sales_invoices ADD COLUMN discount REAL DEFAULT 0'],
+      ['sales_invoices', 'subtotal', 'ALTER TABLE sales_invoices ADD COLUMN subtotal REAL DEFAULT 0'],
+      ['sales_invoices', 'payment_status', 'ALTER TABLE sales_invoices ADD COLUMN payment_status TEXT DEFAULT \'PAID\''],
+      ['sales_invoices', 'net_profit', 'ALTER TABLE sales_invoices ADD COLUMN net_profit REAL DEFAULT 0'],
+      ['sales_invoices', 'updated_at', 'ALTER TABLE sales_invoices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['sale_items', 'mrp', 'ALTER TABLE sale_items ADD COLUMN mrp REAL'],
+      ['sale_items', 'batch_no', 'ALTER TABLE sale_items ADD COLUMN batch_no TEXT'],
+      ['sale_items', 'cgst_value', 'ALTER TABLE sale_items ADD COLUMN cgst_value REAL DEFAULT 0'],
+      ['sale_items', 'sgst_value', 'ALTER TABLE sale_items ADD COLUMN sgst_value REAL DEFAULT 0'],
+      ['sale_items', 'discount_per', 'ALTER TABLE sale_items ADD COLUMN discount_per REAL DEFAULT 0'],
+      ['sale_items', 'legacy_id', 'ALTER TABLE sale_items ADD COLUMN legacy_id TEXT'],
+      ['sale_items', 'loose_qty', 'ALTER TABLE sale_items ADD COLUMN loose_qty INTEGER DEFAULT 0'],
+      ['returns', 'cgst_value', 'ALTER TABLE returns ADD COLUMN cgst_value REAL DEFAULT 0'],
+      ['returns', 'sgst_value', 'ALTER TABLE returns ADD COLUMN sgst_value REAL DEFAULT 0'],
+      ['returns', 'igst_value', 'ALTER TABLE returns ADD COLUMN igst_value REAL DEFAULT 0'],
+      ['returns', 'distributor_id', 'ALTER TABLE returns ADD COLUMN distributor_id INTEGER'],
+      ['returns', 'legacy_id', 'ALTER TABLE returns ADD COLUMN legacy_id TEXT'],
+      ['returns', 'reason', 'ALTER TABLE returns ADD COLUMN reason TEXT'],
+      ['returns', 'return_invoice_id', 'ALTER TABLE returns ADD COLUMN return_invoice_id TEXT DEFAULT NULL'],
+      ['returns', 'return_sub_type', 'ALTER TABLE returns ADD COLUMN return_sub_type TEXT CHECK(return_sub_type IN (\'expiry\', \'good\')) DEFAULT \'good\''],
+      ['returns', 'return_date_time', 'ALTER TABLE returns ADD COLUMN return_date_time DATETIME DEFAULT NULL'],
+      ['returns', 'raw_return_type', 'ALTER TABLE returns ADD COLUMN raw_return_type TEXT'],
+      ['distributors', 'legacy_id', 'ALTER TABLE distributors ADD COLUMN legacy_id TEXT'],
+      ['distributors', 'gstin', 'ALTER TABLE distributors ADD COLUMN gstin TEXT'],
+      ['distributors', 'address', 'ALTER TABLE distributors ADD COLUMN address TEXT'],
+      ['distributors', 'city', 'ALTER TABLE distributors ADD COLUMN city TEXT'],
+      ['distributors', 'email', 'ALTER TABLE distributors ADD COLUMN email TEXT'],
+      ['distributors', 'dl_no', 'ALTER TABLE distributors ADD COLUMN dl_no TEXT'],
+      ['distributors', 'phone', 'ALTER TABLE distributors ADD COLUMN phone TEXT'],
+      ['distributors', 'state_code', 'ALTER TABLE distributors ADD COLUMN state_code TEXT'],
+      ['distributors', 'preferred_file_format', 'ALTER TABLE distributors ADD COLUMN preferred_file_format TEXT DEFAULT NULL'],
+      ['distributors', 'mapping_config', 'ALTER TABLE distributors ADD COLUMN mapping_config TEXT DEFAULT NULL'],
+      ['distributors', 'delivery_boy_id', 'ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL'],
+      ['pharmarack_distributor_mappings', 'delivery_boy_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL'],
+      ['distributor_dispatch_reminders', 'scheduled_send_time', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN scheduled_send_time TEXT DEFAULT NULL'],
+      ['doctors', 'send_daily_summary', 'ALTER TABLE doctors ADD COLUMN send_daily_summary INTEGER DEFAULT 0'],
+      ['customers', 'legacy_id', 'ALTER TABLE customers ADD COLUMN legacy_id TEXT'],
+      ['customers', 'age', 'ALTER TABLE customers ADD COLUMN age TEXT'],
+      ['customers', 'gender', 'ALTER TABLE customers ADD COLUMN gender TEXT'],
+      ['customers', 'credit_enabled', 'ALTER TABLE customers ADD COLUMN credit_enabled INTEGER DEFAULT 0'],
+      ['customers', 'credit_balance', 'ALTER TABLE customers ADD COLUMN credit_balance REAL DEFAULT 0'],
+      ['customers', 'created_at', 'ALTER TABLE customers ADD COLUMN created_at DATETIME'],
+      ['customers', 'credit_due_date', 'ALTER TABLE customers ADD COLUMN credit_due_date TEXT'],
+      ['customers', 'language', "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
+      ['patient_refills', 'hold_for_stock', 'ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0'],
+      ['patient_refills', 'is_active', 'ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1'],
+      ['patient_refills', 'is_ready', 'ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0'],
+      ['patient_refills', 'acknowledged', 'ALTER TABLE patient_refills ADD COLUMN acknowledged INTEGER DEFAULT 0'],
+      ['patient_refills', 'ordering_triggered', 'ALTER TABLE patient_refills ADD COLUMN ordering_triggered INTEGER DEFAULT 0'],
+      ['patient_refills', 'quick_bill_id', 'ALTER TABLE patient_refills ADD COLUMN quick_bill_id INTEGER DEFAULT NULL'],
+      ['patient_refills', 'stock_verified_override', 'ALTER TABLE patient_refills ADD COLUMN stock_verified_override INTEGER DEFAULT 0'],
+      ['patient_refills', 'customer_id', 'ALTER TABLE patient_refills ADD COLUMN customer_id INTEGER DEFAULT NULL'],
+      ['patient_refills', 'quantity_needed', 'ALTER TABLE patient_refills ADD COLUMN quantity_needed INTEGER DEFAULT 3'],
+      ['patient_refills', 'language', "ALTER TABLE patient_refills ADD COLUMN language TEXT DEFAULT 'en'"],
+      ['patient_refills', 'reminder_status', "ALTER TABLE patient_refills ADD COLUMN reminder_status TEXT DEFAULT 'NOT_SENT'"],
+      ['patient_refills', 'reminder_sent_at', 'ALTER TABLE patient_refills ADD COLUMN reminder_sent_at DATETIME DEFAULT NULL'],
+      ['patient_refills', 'reminder_job_id', 'ALTER TABLE patient_refills ADD COLUMN reminder_job_id INTEGER DEFAULT NULL'],
+      ['patient_refills', 'reminder_occurrence_date', 'ALTER TABLE patient_refills ADD COLUMN reminder_occurrence_date DATETIME DEFAULT NULL'],
+      ['patient_refills', 'patient_confirmed', 'ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0'],
+      ['patient_refills', 'confirmed_at', 'ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL'],
+      ['special_orders', 'customer_id', 'ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL'],
+      ['special_orders', 'date', 'ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['special_orders', 'product', 'ALTER TABLE special_orders ADD COLUMN product TEXT'],
+      ['special_orders', 'medicine_name', 'ALTER TABLE special_orders ADD COLUMN medicine_name TEXT'],
+      ['special_orders', 'qty', 'ALTER TABLE special_orders ADD COLUMN qty INTEGER DEFAULT 1'],
+      ['special_orders', 'priority', 'ALTER TABLE special_orders ADD COLUMN priority TEXT DEFAULT \'Normal\''],
+      ['special_orders', 'notified', 'ALTER TABLE special_orders ADD COLUMN notified INTEGER DEFAULT 0'],
+      ['special_orders', 'pharmarack_mapped', 'ALTER TABLE special_orders ADD COLUMN pharmarack_mapped INTEGER DEFAULT 0'],
+      ['special_orders', 'pharmarack_distributor', 'ALTER TABLE special_orders ADD COLUMN pharmarack_distributor TEXT'],
+      ['special_orders', 'pharmarack_rate', 'ALTER TABLE special_orders ADD COLUMN pharmarack_rate REAL'],
+      ['special_orders', 'pharmarack_mrp', 'ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL'],
+      ['special_orders', 'pharmarack_scheme', 'ALTER TABLE special_orders ADD COLUMN pharmarack_scheme TEXT'],
+      ['special_orders', 'advance_payment', 'ALTER TABLE special_orders ADD COLUMN advance_payment REAL DEFAULT 0.0'],
+      ['special_orders', 'converted_to_refill_id', 'ALTER TABLE special_orders ADD COLUMN converted_to_refill_id INTEGER DEFAULT NULL'],
+      ['special_orders', 'source_refill_id', 'ALTER TABLE special_orders ADD COLUMN source_refill_id INTEGER DEFAULT NULL'],
+      ['special_orders', 'source', 'ALTER TABLE special_orders ADD COLUMN source TEXT'],
+      ['special_orders', 'cart_add_error', 'ALTER TABLE special_orders ADD COLUMN cart_add_error TEXT DEFAULT NULL'],
+      ['special_orders', 'notification_count', 'ALTER TABLE special_orders ADD COLUMN notification_count INTEGER DEFAULT 0'],
+      ['held_bills', 'invoice_no', 'ALTER TABLE held_bills ADD COLUMN invoice_no TEXT'],
+      ['held_bills', 'temp_label', 'ALTER TABLE held_bills ADD COLUMN temp_label TEXT'],
+      ['held_bills', 'patient_name', 'ALTER TABLE held_bills ADD COLUMN patient_name TEXT'],
+      ['held_bills', 'patient_phone', 'ALTER TABLE held_bills ADD COLUMN patient_phone TEXT'],
+      ['held_bills', 'doctor_name', 'ALTER TABLE held_bills ADD COLUMN doctor_name TEXT'],
+      ['held_bills', 'discount', 'ALTER TABLE held_bills ADD COLUMN discount REAL DEFAULT 0'],
+      ['held_bills', 'remarks', 'ALTER TABLE held_bills ADD COLUMN remarks TEXT'],
+      ['held_bills', 'cart_data', 'ALTER TABLE held_bills ADD COLUMN cart_data TEXT'],
+      ['held_bills', 'created_at', 'ALTER TABLE held_bills ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['held_bills', 'date', 'ALTER TABLE held_bills ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
+      ['held_bills', 'customer_id', 'ALTER TABLE held_bills ADD COLUMN customer_id INTEGER DEFAULT NULL'],
+      ['medicines', 'enrichment_status', 'ALTER TABLE medicines ADD COLUMN enrichment_status TEXT DEFAULT NULL'],
+      ['medicines', 'enrichment_confidence', 'ALTER TABLE medicines ADD COLUMN enrichment_confidence REAL DEFAULT NULL'],
+      ['medicines', 'pack_size', 'ALTER TABLE medicines ADD COLUMN pack_size INTEGER'],
+      ['medicines', 'source', 'ALTER TABLE medicines ADD COLUMN source TEXT DEFAULT \'manual\''],
+      ['medicines', 'possible_duplicate_of', 'ALTER TABLE medicines ADD COLUMN possible_duplicate_of INTEGER DEFAULT NULL'],
+      ['medicines', 'therapeutic', 'ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL'],
+      ['medicines', 'sub_therapeutic', 'ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL'],
+      ['medicines', 'short_code', 'ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL'],
+      ['medicines', 'ucode', 'ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL'],
+      ['medicines', 'disable_auto_barcode', 'ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0'],
+      ['medicines', 'tb_medicine', 'ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0'],
+      // stock_ledger's full definition (line ~1280) never applies on top of the earlier
+      // CREATE TABLE IF NOT EXISTS (line ~329) — these three columns were silently missing
+      // on every install, making every recordStockLedger() call throw (swallowed by its own catch).
+      ['stock_ledger', 'loose_quantity', 'ALTER TABLE stock_ledger ADD COLUMN loose_quantity INTEGER DEFAULT 0'],
+      ['stock_ledger', 'transaction_id', 'ALTER TABLE stock_ledger ADD COLUMN transaction_id TEXT'],
+      ['stock_ledger', 'business_date', 'ALTER TABLE stock_ledger ADD COLUMN business_date DATETIME'],
+      ['distributor_dispatch_reminders', 'order_source', "ALTER TABLE distributor_dispatch_reminders ADD COLUMN order_source TEXT DEFAULT 'pharmarack'"],
+      ['distributor_dispatch_reminders', 'email_received_at', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN email_received_at DATETIME'],
+      // ponytail: source_type records where a staged purchase originated (e.g. 'email', 'telegram')
+      // without mixing that into the distributor identity field
+      ['staged_purchases', 'source_type', "ALTER TABLE staged_purchases ADD COLUMN source_type TEXT DEFAULT NULL"],
+      ['refill_fulfillments', 'cycle_due_date', 'ALTER TABLE refill_fulfillments ADD COLUMN cycle_due_date TEXT'],
+      ['refill_fulfillments', 'next_due_date', 'ALTER TABLE refill_fulfillments ADD COLUMN next_due_date TEXT'],
+      ['refill_fulfillments', 'fulfilled_via', 'ALTER TABLE refill_fulfillments ADD COLUMN fulfilled_via TEXT'],
+      ['refill_fulfillments', 'notes', 'ALTER TABLE refill_fulfillments ADD COLUMN notes TEXT'],
+      // catalog_jobs: the base CREATE (id/file_path/status/created_at) predates the whole
+      // OCR pipeline — worker + routes read/write these 11 columns on EVERY upload/review,
+      // so fresh installs AND long-lived DBs crashed with "no such column" (bug found via
+      // catalogPipeline/duplicateCatalog suites, 2026-08-25). Mirrors the stock_ledger case.
+      ['catalog_jobs', 'original_filename', 'ALTER TABLE catalog_jobs ADD COLUMN original_filename TEXT'],
+      ['catalog_jobs', 'extracted_data', 'ALTER TABLE catalog_jobs ADD COLUMN extracted_data TEXT'],
+      ['catalog_jobs', 'mapping_config', 'ALTER TABLE catalog_jobs ADD COLUMN mapping_config TEXT'],
+      ['catalog_jobs', 'data_filters', 'ALTER TABLE catalog_jobs ADD COLUMN data_filters TEXT'],
+      ['catalog_jobs', 'error_log', 'ALTER TABLE catalog_jobs ADD COLUMN error_log TEXT'],
+      ['catalog_jobs', 'progress', 'ALTER TABLE catalog_jobs ADD COLUMN progress INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'total_count', 'ALTER TABLE catalog_jobs ADD COLUMN total_count INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'processed_count', 'ALTER TABLE catalog_jobs ADD COLUMN processed_count INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'new_count', 'ALTER TABLE catalog_jobs ADD COLUMN new_count INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'existing_count', 'ALTER TABLE catalog_jobs ADD COLUMN existing_count INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'duplicate_count', 'ALTER TABLE catalog_jobs ADD COLUMN duplicate_count INTEGER DEFAULT 0'],
+      ['catalog_jobs', 'matched_previous_job_id', 'ALTER TABLE catalog_jobs ADD COLUMN matched_previous_job_id INTEGER DEFAULT NULL'],
+      ['catalog_jobs', 'newly_detected_columns', 'ALTER TABLE catalog_jobs ADD COLUMN newly_detected_columns TEXT'],
+      // Multi-Store & Website Order Foundation (Schema v47)
+      ['special_orders', 'store_id', 'ALTER TABLE special_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['special_orders', 'customer_order_source', "ALTER TABLE special_orders ADD COLUMN customer_order_source TEXT DEFAULT 'in_store'"],
+      ['special_orders', 'prescription_url', 'ALTER TABLE special_orders ADD COLUMN prescription_url TEXT DEFAULT NULL'],
+      ['special_orders', 'product_image_url', 'ALTER TABLE special_orders ADD COLUMN product_image_url TEXT DEFAULT NULL'],
+      ['special_orders', 'delivery_status', "ALTER TABLE special_orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'"],
+      ['special_orders', 'delivered_at', 'ALTER TABLE special_orders ADD COLUMN delivered_at DATETIME DEFAULT NULL'],
+      ['special_orders', 'return_window_until', 'ALTER TABLE special_orders ADD COLUMN return_window_until DATETIME DEFAULT NULL'],
+      ['special_orders', 'return_status', "ALTER TABLE special_orders ADD COLUMN return_status TEXT DEFAULT 'none'"],
+      ['special_orders', 'return_override_reason', 'ALTER TABLE special_orders ADD COLUMN return_override_reason TEXT DEFAULT NULL'],
+      ['special_orders', 'return_override_by', 'ALTER TABLE special_orders ADD COLUMN return_override_by TEXT DEFAULT NULL'],
+      ['special_orders', 'return_override_at', 'ALTER TABLE special_orders ADD COLUMN return_override_at DATETIME DEFAULT NULL'],
+      ['special_orders', 'sync_id', 'ALTER TABLE special_orders ADD COLUMN sync_id TEXT DEFAULT NULL'],
+      ['special_orders', 'sync_status', "ALTER TABLE special_orders ADD COLUMN sync_status TEXT DEFAULT 'synced'"],
+      ['special_orders', 'last_synced_at', 'ALTER TABLE special_orders ADD COLUMN last_synced_at DATETIME DEFAULT NULL'],
+      ['inventory_master', 'store_id', 'ALTER TABLE inventory_master ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['purchases', 'store_id', 'ALTER TABLE purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['sales_invoices', 'store_id', 'ALTER TABLE sales_invoices ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['returns', 'store_id', 'ALTER TABLE returns ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['patient_refills', 'store_id', 'ALTER TABLE patient_refills ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['dispatch_orders', 'store_id', 'ALTER TABLE dispatch_orders ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['held_bills', 'store_id', 'ALTER TABLE held_bills ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['staged_sales', 'store_id', 'ALTER TABLE staged_sales ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['staged_purchases', 'store_id', 'ALTER TABLE staged_purchases ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['whatsapp_send_queue', 'store_id', 'ALTER TABLE whatsapp_send_queue ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['distributor_dispatch_reminders', 'store_id', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['pharmarack_distributor_mappings', 'store_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['delivery_boys', 'store_id', 'ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1'],
+      // Online Order Payment Lifecycle (Schema v49)
+      ['special_orders', 'payment_status', "ALTER TABLE special_orders ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'"],
+      ['special_orders', 'payment_reference', 'ALTER TABLE special_orders ADD COLUMN payment_reference TEXT'],
+      ['special_orders', 'payment_confirmed_at', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_at DATETIME'],
+      ['special_orders', 'payment_confirmed_by', 'ALTER TABLE special_orders ADD COLUMN payment_confirmed_by TEXT'],
+      ['special_orders', 'pharmacy_verification_status', "ALTER TABLE special_orders ADD COLUMN pharmacy_verification_status TEXT DEFAULT 'PENDING'"],
+      ['special_orders', 'pharmacy_verified_by', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_by TEXT'],
+      ['special_orders', 'pharmacy_verified_at', 'ALTER TABLE special_orders ADD COLUMN pharmacy_verified_at DATETIME'],
+      ['sales_invoices', 'online_order_id', 'ALTER TABLE sales_invoices ADD COLUMN online_order_id INTEGER'],
+      // Product Image Correction Lifecycle (DEDICATED PRODUCT IMAGE CORRECTION & VERIFICATION SYSTEM)
+      ['catalog_images', 'previous_image_url', 'ALTER TABLE catalog_images ADD COLUMN previous_image_url TEXT'],
+      ['catalog_images', 'next_review_at', 'ALTER TABLE catalog_images ADD COLUMN next_review_at DATETIME'],
+      ['catalog_images', 'skip_reason', 'ALTER TABLE catalog_images ADD COLUMN skip_reason TEXT'],
+      ['catalog_images', 'locked_by', 'ALTER TABLE catalog_images ADD COLUMN locked_by TEXT'],
+      ['catalog_images', 'locked_at', 'ALTER TABLE catalog_images ADD COLUMN locked_at DATETIME'],
+      ['catalog_images', 'verification_version', 'ALTER TABLE catalog_images ADD COLUMN verification_version INTEGER DEFAULT 1'],
+      // Filename auto-match columns
+      ['catalog_images', 'match_source', "ALTER TABLE catalog_images ADD COLUMN match_source TEXT DEFAULT 'manual'"],
+      ['catalog_images', 'match_confidence', 'ALTER TABLE catalog_images ADD COLUMN match_confidence INTEGER DEFAULT 0'],
+      ['catalog_images', 'phash', 'ALTER TABLE catalog_images ADD COLUMN phash TEXT'],
+      ['catalog_images', 'visual_embedding', 'ALTER TABLE catalog_images ADD COLUMN visual_embedding TEXT'],
+      ['return_items', 'invoice_no', 'ALTER TABLE return_items ADD COLUMN invoice_no TEXT'],
+      ['return_items', 'loose', 'ALTER TABLE return_items ADD COLUMN loose INTEGER DEFAULT 0'],
+      ['return_items', 'ded_per', 'ALTER TABLE return_items ADD COLUMN ded_per REAL DEFAULT 0'],
+      ['return_items', 'cd_value', 'ALTER TABLE return_items ADD COLUMN cd_value REAL DEFAULT 0'],
+    ];
 
-  // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
-  for (const [table, col, stmt] of alterStatements) {
+    // Pre-check PRAGMA table_info before ALTER TABLE ADD COLUMN to prevent SQLite error outputs
+    for (const [table, col, stmt] of alterStatements) {
+      try {
+        const columns = await db.all(`PRAGMA table_info(${table})`);
+        const exists = columns.some((c: any) => c.name.toLowerCase() === col.toLowerCase());
+        if (columns.length > 0 && !exists) {
+          await db.run(stmt);
+        }
+      } catch (_e) { }
+    }
+
+    // expiry_month: indexed YYYY-MM shadow of the mixed-format expiry_date column.
+    // Maintained by triggers below so EVERY write path (purchases, migration, OCR,
+    // manual edit) stays in sync with zero route-level code. Normalization mirrors
+    // routes/compliance.ts: 'MM/YY' -> '20YY-MM', 'MM/YYYY' -> 'YYYY-MM',
+    // 'YYYY-MM-DD' -> 'YYYY-MM'; unparseable formats stay NULL and fall back to
+    // JS-side isExpired() checks in consumers.
     try {
-      const columns = await db.all(`PRAGMA table_info(${table})`);
-      const exists = columns.some((c: any) => c.name.toLowerCase() === col.toLowerCase());
-      if (columns.length > 0 && !exists) {
-        await db.run(stmt);
-      }
-    } catch (_e) {}
-  }
-
-  // expiry_month: indexed YYYY-MM shadow of the mixed-format expiry_date column.
-  // Maintained by triggers below so EVERY write path (purchases, migration, OCR,
-  // manual edit) stays in sync with zero route-level code. Normalization mirrors
-  // routes/compliance.ts: 'MM/YY' -> '20YY-MM', 'MM/YYYY' -> 'YYYY-MM',
-  // 'YYYY-MM-DD' -> 'YYYY-MM'; unparseable formats stay NULL and fall back to
-  // JS-side isExpired() checks in consumers.
-  try {
-    const invColsForExpiryMonth = await db.all('PRAGMA table_info(inventory_master)');
-    if (invColsForExpiryMonth.some((c: { name: string }) => c.name === 'expiry_month')) {
-      const monthExpr = (ref: string) => `CASE
+      const invColsForExpiryMonth = await db.all('PRAGMA table_info(inventory_master)');
+      if (invColsForExpiryMonth.some((c: { name: string }) => c.name === 'expiry_month')) {
+        const monthExpr = (ref: string) => `CASE
         WHEN ${ref} IS NULL OR TRIM(${ref}) = '' THEN NULL
         WHEN length(${ref}) = 5 THEN '20' || substr(${ref}, 4, 2) || '-' || substr(${ref}, 1, 2)
         WHEN length(${ref}) = 7 AND ${ref} LIKE '%/%' THEN substr(${ref}, 4, 4) || '-' || substr(${ref}, 1, 2)
         WHEN ${ref} LIKE '____-__%' THEN substr(${ref}, 1, 7)
         ELSE NULL
       END`;
-      await db.exec(`
+        await db.exec(`
         CREATE TRIGGER IF NOT EXISTS trg_inventory_expiry_month_ins
         AFTER INSERT ON inventory_master
         WHEN NEW.expiry_date IS NOT NULL
@@ -2294,104 +2328,104 @@ export async function ensureSchema(dbPath: string) {
           WHERE id = NEW.id;
         END;
       `);
-      await db.run(`UPDATE inventory_master SET expiry_month = ${monthExpr('expiry_date')} WHERE expiry_month IS NULL OR expiry_month = ''`);
-      await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_expiry_month ON inventory_master (expiry_month)');
+        await db.run(`UPDATE inventory_master SET expiry_month = ${monthExpr('expiry_date')} WHERE expiry_month IS NULL OR expiry_month = ''`);
+        await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_expiry_month ON inventory_master (expiry_month)');
+      }
+    } catch (err) {
+      console.warn('[Database] expiry_month trigger/backfill warning:', err);
     }
-  } catch (err) {
-    console.warn('[Database] expiry_month trigger/backfill warning:', err);
-  }
 
-  try {
-    const { backfillInventoryActiveFlags, deactivateExpiredInventory } = await import('./utils/inventoryActive.js');
-    const invCols = await db.all('PRAGMA table_info(inventory_master)');
-    if (invCols.some((c: { name: string }) => c.name === 'is_active')) {
-      await backfillInventoryActiveFlags(db);
-      await deactivateExpiredInventory(db);
-    }
-  } catch (err) {
-    console.warn('[Database] inventory is_active backfill warning:', err);
-  }
-
-  // Pre-check PRAGMA table_info before ALTER TABLE DROP COLUMN to prevent SQLite error outputs
-  const dropStatements: Array<[string, string, string]> = [
-    ['medicines', 'manufactured_by', 'ALTER TABLE medicines DROP COLUMN manufactured_by'],
-    ['medicines', 'cgst', 'ALTER TABLE medicines DROP COLUMN cgst'],
-    ['medicines', 'sgst', 'ALTER TABLE medicines DROP COLUMN sgst'],
-    ['medicines', 'igst', 'ALTER TABLE medicines DROP COLUMN igst'],
-    ['inventory_master', 'storage_location_id', 'ALTER TABLE inventory_master DROP COLUMN storage_location_id'],
-    ['held_bills', 'data', 'ALTER TABLE held_bills DROP COLUMN data']
-  ];
-
-  for (const [table, col, stmt] of dropStatements) {
     try {
-      const columns = await db.all(`PRAGMA table_info(${table})`);
-      const exists = columns.some((c: any) => c.name.toLowerCase() === col.toLowerCase());
-      if (exists) {
-        await db.run(stmt);
+      const { backfillInventoryActiveFlags, deactivateExpiredInventory } = await import('./utils/inventoryActive.js');
+      const invCols = await db.all('PRAGMA table_info(inventory_master)');
+      if (invCols.some((c: { name: string }) => c.name === 'is_active')) {
+        await backfillInventoryActiveFlags(db);
+        await deactivateExpiredInventory(db);
       }
-    } catch (_e) {}
-  }
-
-  try {
-    await db.run("DELETE FROM app_settings WHERE key IN ('delivery_boy_whatsapp', 'dinesh_whatsapp_number')");
-  } catch (_e) {}
-
-  // Unify patient contact storage — Backfill customer_id across patient_refills, special_orders, held_bills
-  try {
-    const { isValidCustomerName } = await import('./utils/nameNormalizer.js');
-    const unlinkedRefills = await db.all('SELECT id, patient_name, patient_phone FROM patient_refills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
-    for (const refill of unlinkedRefills) {
-      const phoneClean = refill.patient_phone.trim();
-      let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
-      if (!cust && refill.patient_name && isValidCustomerName(refill.patient_name)) {
-        cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [refill.patient_name]);
-      }
-      if (!cust && phoneClean && refill.patient_name && isValidCustomerName(refill.patient_name)) {
-        const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [refill.patient_name.trim(), phoneClean]);
-        cust = { id: res.lastID };
-      }
-      if (cust) {
-        await db.run('UPDATE patient_refills SET customer_id = ? WHERE id = ?', [cust.id, refill.id]);
-      }
+    } catch (err) {
+      console.warn('[Database] inventory is_active backfill warning:', err);
     }
 
-    const specialOrdersTableExists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='special_orders'");
-    if (specialOrdersTableExists) {
-      const unlinkedOrders = await db.all('SELECT id, requester, phone FROM special_orders WHERE customer_id IS NULL AND phone IS NOT NULL AND phone != ""');
-      for (const order of unlinkedOrders) {
-        const phoneClean = (order.phone || '').trim();
-        let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
-        if (!cust && order.requester && isValidCustomerName(order.requester)) {
-          cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [order.requester]);
+    // Pre-check PRAGMA table_info before ALTER TABLE DROP COLUMN to prevent SQLite error outputs
+    const dropStatements: Array<[string, string, string]> = [
+      ['medicines', 'manufactured_by', 'ALTER TABLE medicines DROP COLUMN manufactured_by'],
+      ['medicines', 'cgst', 'ALTER TABLE medicines DROP COLUMN cgst'],
+      ['medicines', 'sgst', 'ALTER TABLE medicines DROP COLUMN sgst'],
+      ['medicines', 'igst', 'ALTER TABLE medicines DROP COLUMN igst'],
+      ['inventory_master', 'storage_location_id', 'ALTER TABLE inventory_master DROP COLUMN storage_location_id'],
+      ['held_bills', 'data', 'ALTER TABLE held_bills DROP COLUMN data']
+    ];
+
+    for (const [table, col, stmt] of dropStatements) {
+      try {
+        const columns = await db.all(`PRAGMA table_info(${table})`);
+        const exists = columns.some((c: any) => c.name.toLowerCase() === col.toLowerCase());
+        if (exists) {
+          await db.run(stmt);
         }
-        if (!cust && phoneClean && order.requester && isValidCustomerName(order.requester)) {
-          const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [order.requester.trim(), phoneClean]);
+      } catch (_e) { }
+    }
+
+    try {
+      await db.run("DELETE FROM app_settings WHERE key IN ('delivery_boy_whatsapp', 'dinesh_whatsapp_number')");
+    } catch (_e) { }
+
+    // Unify patient contact storage — Backfill customer_id across patient_refills, special_orders, held_bills
+    try {
+      const { isValidCustomerName } = await import('./utils/nameNormalizer.js');
+      const unlinkedRefills = await db.all('SELECT id, patient_name, patient_phone FROM patient_refills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
+      for (const refill of unlinkedRefills) {
+        const phoneClean = refill.patient_phone.trim();
+        let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
+        if (!cust && refill.patient_name && isValidCustomerName(refill.patient_name)) {
+          cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [refill.patient_name]);
+        }
+        if (!cust && phoneClean && refill.patient_name && isValidCustomerName(refill.patient_name)) {
+          const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [refill.patient_name.trim(), phoneClean]);
           cust = { id: res.lastID };
         }
         if (cust) {
-          await db.run('UPDATE special_orders SET customer_id = ? WHERE id = ?', [cust.id, order.id]);
+          await db.run('UPDATE patient_refills SET customer_id = ? WHERE id = ?', [cust.id, refill.id]);
         }
       }
-    }
 
-    const unlinkedBills = await db.all('SELECT id, patient_name, patient_phone FROM held_bills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
-    for (const bill of unlinkedBills) {
-      const phoneClean = (bill.patient_phone || '').trim();
-      let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
-      if (!cust && bill.patient_name && isValidCustomerName(bill.patient_name)) {
-        cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [bill.patient_name]);
+      const specialOrdersTableExists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='special_orders'");
+      if (specialOrdersTableExists) {
+        const unlinkedOrders = await db.all('SELECT id, requester, phone FROM special_orders WHERE customer_id IS NULL AND phone IS NOT NULL AND phone != ""');
+        for (const order of unlinkedOrders) {
+          const phoneClean = (order.phone || '').trim();
+          let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
+          if (!cust && order.requester && isValidCustomerName(order.requester)) {
+            cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [order.requester]);
+          }
+          if (!cust && phoneClean && order.requester && isValidCustomerName(order.requester)) {
+            const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [order.requester.trim(), phoneClean]);
+            cust = { id: res.lastID };
+          }
+          if (cust) {
+            await db.run('UPDATE special_orders SET customer_id = ? WHERE id = ?', [cust.id, order.id]);
+          }
+        }
       }
-      if (!cust && phoneClean && bill.patient_name && isValidCustomerName(bill.patient_name)) {
-        const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [bill.patient_name.trim(), phoneClean]);
-        cust = { id: res.lastID };
-      }
-      if (cust) {
-        await db.run('UPDATE held_bills SET customer_id = ? WHERE id = ?', [cust.id, bill.id]);
-      }
-    }
 
-    // Purge email strings incorrectly written into phone/contact columns
-    await db.run(`
+      const unlinkedBills = await db.all('SELECT id, patient_name, patient_phone FROM held_bills WHERE customer_id IS NULL AND patient_phone IS NOT NULL AND patient_phone != ""');
+      for (const bill of unlinkedBills) {
+        const phoneClean = (bill.patient_phone || '').trim();
+        let cust = await db.get('SELECT id FROM customers WHERE phone = ? LIMIT 1', [phoneClean]);
+        if (!cust && bill.patient_name && isValidCustomerName(bill.patient_name)) {
+          cust = await db.get('SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [bill.patient_name]);
+        }
+        if (!cust && phoneClean && bill.patient_name && isValidCustomerName(bill.patient_name)) {
+          const res = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [bill.patient_name.trim(), phoneClean]);
+          cust = { id: res.lastID };
+        }
+        if (cust) {
+          await db.run('UPDATE held_bills SET customer_id = ? WHERE id = ?', [cust.id, bill.id]);
+        }
+      }
+
+      // Purge email strings incorrectly written into phone/contact columns
+      await db.run(`
       UPDATE distributors SET
         phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
         contact = CASE WHEN contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%' THEN '' ELSE contact END
@@ -2399,48 +2433,48 @@ export async function ensureSchema(dbPath: string) {
          OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
     `);
 
-    // Synchronize distributors contact and phone columns
-    await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
-    await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
+      // Synchronize distributors contact and phone columns
+      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
+      await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
 
-    // Synchronize special_orders product and medicine_name columns to eliminate column name confusion
-    await db.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
-    await db.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
+      // Synchronize special_orders product and medicine_name columns to eliminate column name confusion
+      await db.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
+      await db.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
 
-    // Sanitize distributors contact table: overwrite legacy contact column with phone so old numbers are purged
-    await db.run(`
+      // Sanitize distributors contact table: overwrite legacy contact column with phone so old numbers are purged
+      await db.run(`
       UPDATE distributors 
       SET contact = phone 
       WHERE phone IS NOT NULL AND phone != '' AND (contact IS NULL OR contact != phone)
     `);
-  } catch (err) {
-    console.warn('Customer contact backfill warning:', err);
-  }
-
-  // Create index on medicines (item_code) after columns are added
-  try {
-    await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_item_code ON medicines (item_code);');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_quantity ON inventory_master (quantity);');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_manufacturer ON medicines (manufacturer);');
-
-    // Seed default storage locations if table is empty
-    const locCount = await db.get("SELECT COUNT(*) as c FROM storage_locations");
-    if (!locCount || locCount.c === 0) {
-      await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Main Store', 'MAIN', 'main_store', 'Primary Pharmacy Counter & Shelves', 1, 1)");
-      await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Godown 1', 'GDN1', 'godown', 'Main Storage Godown', 0, 1)");
-      await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack A1', 'RA1', 'rack', 'Front Counter Rack A1', 0, 1)");
-      await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack B1', 'RB1', 'rack', 'Medicine Rack B1', 0, 1)");
-      await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Cold Storage', 'COLD', 'cold_storage', 'Refrigerated Items', 0, 1)");
+    } catch (err) {
+      console.warn('Customer contact backfill warning:', err);
     }
-  } catch (err) {
-    console.warn('Failed to create index idx_medicines_item_code or custom optimization indexes:', err);
-  }
 
-  // New tables needed by various routes
-  await db.exec(`
+    // Create index on medicines (item_code) after columns are added
+    try {
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_item_code ON medicines (item_code);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_quantity ON inventory_master (quantity);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_manufacturer ON medicines (manufacturer);');
+
+      // Seed default storage locations if table is empty
+      const locCount = await db.get("SELECT COUNT(*) as c FROM storage_locations");
+      if (!locCount || locCount.c === 0) {
+        await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Main Store', 'MAIN', 'main_store', 'Primary Pharmacy Counter & Shelves', 1, 1)");
+        await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Godown 1', 'GDN1', 'godown', 'Main Storage Godown', 0, 1)");
+        await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack A1', 'RA1', 'rack', 'Front Counter Rack A1', 0, 1)");
+        await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Rack B1', 'RB1', 'rack', 'Medicine Rack B1', 0, 1)");
+        await db.run("INSERT OR IGNORE INTO storage_locations (name, code, type, description, is_default, is_active) VALUES ('Cold Storage', 'COLD', 'cold_storage', 'Refrigerated Items', 0, 1)");
+      }
+    } catch (err) {
+      console.warn('Failed to create index idx_medicines_item_code or custom optimization indexes:', err);
+    }
+
+    // New tables needed by various routes
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS staged_medicine_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_id INTEGER,
@@ -2617,6 +2651,7 @@ export async function ensureSchema(dbPath: string) {
       store_name TEXT PRIMARY KEY,
       distributor_id INTEGER,
       phone TEXT,
+      delivery_boy_id INTEGER,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -2851,15 +2886,15 @@ export async function ensureSchema(dbPath: string) {
     );
   `);
 
-  try {
-    const pCols = await db.all("PRAGMA table_info(pending_whatsapp_jobs)");
-    const pNames = pCols.map((c: any) => c.name);
-    if (!pNames.includes('scheduled_at')) {
-      await db.run("ALTER TABLE pending_whatsapp_jobs ADD COLUMN scheduled_at INTEGER");
-    }
-  } catch (err) {}
+    try {
+      const pCols = await db.all("PRAGMA table_info(pending_whatsapp_jobs)");
+      const pNames = pCols.map((c: any) => c.name);
+      if (!pNames.includes('scheduled_at')) {
+        await db.run("ALTER TABLE pending_whatsapp_jobs ADD COLUMN scheduled_at INTEGER");
+      }
+    } catch (err) { }
 
-  await db.exec(`
+    await db.exec(`
     -- Expiry returns tracking and credit notes reconciliation
     CREATE TABLE IF NOT EXISTS expiry_returns_tracking (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3293,21 +3328,21 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
   `);
 
-  // FTS5 trigram index for fast fuzzy medicine name search, rebuilt if unusable
-  await ensureMedicinesFts(db);
+    // FTS5 trigram index for fast fuzzy medicine name search, rebuilt if unusable
+    await ensureMedicinesFts(db);
 
-  // Seed default store if no stores exist
-  try {
-    const storeCount = await db.get("SELECT COUNT(*) as count FROM stores");
-    if (!storeCount || storeCount.count === 0) {
-      await db.run(
-        "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
-      );
-    }
+    // Seed default store if no stores exist
+    try {
+      const storeCount = await db.get("SELECT COUNT(*) as count FROM stores");
+      if (!storeCount || storeCount.count === 0) {
+        await db.run(
+          "INSERT OR IGNORE INTO stores (id, name, code, address, phone, is_central, is_active) VALUES (1, 'Main Store', 'STORE-A', 'Main Pharmacy Counter', '', 1, 1)"
+        );
+      }
 
-    // If store 1 has placeholder name 'Main Store', sync with configured pharmacy name from app_settings
-    const customNameRow = await db.get(
-      `SELECT value FROM app_settings 
+      // If store 1 has placeholder name 'Main Store', sync with configured pharmacy name from app_settings
+      const customNameRow = await db.get(
+        `SELECT value FROM app_settings 
        WHERE key IN ('shop_name', 'store_name', 'pharmacy_name', 'medical_name') 
          AND value IS NOT NULL 
          AND TRIM(value) != '' 
@@ -3320,161 +3355,161 @@ export async function ensureSchema(dbPath: string) {
          WHEN 'medical_name' THEN 4 
          ELSE 5 END 
        LIMIT 1`
-    ).catch(() => null);
-    if (customNameRow && customNameRow.value && customNameRow.value.trim()) {
-      await db.run(
-        "UPDATE stores SET name = ? WHERE id = 1 AND (name = 'Main Store' OR name IS NULL OR name = '')",
-        [customNameRow.value.trim()]
-      ).catch(() => {});
+      ).catch(() => null);
+      if (customNameRow && customNameRow.value && customNameRow.value.trim()) {
+        await db.run(
+          "UPDATE stores SET name = ? WHERE id = 1 AND (name = 'Main Store' OR name IS NULL OR name = '')",
+          [customNameRow.value.trim()]
+        ).catch(() => { });
+      }
+    } catch (err) {
+      console.warn('[Database Schema] Default store seed warning:', err);
     }
-  } catch (err) {
-    console.warn('[Database Schema] Default store seed warning:', err);
-  }
 
-  // Insert default settings if they don't exist
-  await db.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_host', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_port', '993')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_tls', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('login_password', 'admin123')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('master_password', 'master999')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('connection_mode', 'hybrid')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('bluetooth_com_port', 'COM1')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_enabled', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_limit', '10')");
-  
-  // Telegram Bot settings defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_enabled', 'false')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_token', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_chat_id', '')");
-  
-  // Remote Admin Operations Defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_remote_mode', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_username', 'admin')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_password', 'admin123')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_unique_key', 'KEY-ADM-837261')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', '')");
+    // Insert default settings if they don't exist
+    await db.run("DELETE FROM app_settings WHERE key = 'medical_name' AND (value = 'XYZ MEDICAL' OR value = 'XYZ Pharmacy')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_user', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('gmail_pass', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_host', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_port', '993')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('imap_tls', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('login_password', 'admin123')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('master_password', 'master999')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('connection_mode', 'hybrid')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('bluetooth_com_port', 'COM1')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('email_autodelete_limit', '10')");
 
-  // Backup System Default Settings
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_notifications_enabled', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_delete_old_archives', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_manual_access', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_is_paused', 'false')");
+    // Telegram Bot settings defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_token', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('telegram_chat_id', '')");
 
-  // Self-healing boot tracking
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_version', 'unknown')");
+    // Remote Admin Operations Defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_remote_mode', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_username', 'admin')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_password', 'admin123')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_unique_key', 'KEY-ADM-837261')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_id', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_authorized_device_name', '')");
 
-  // WhatsApp Business API defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_enabled', 'false')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_phone_number_id', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
+    // Backup System Default Settings
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_local_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_gdrive_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_telegram_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_startup_restore_check', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_daily_compression', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_notifications_enabled', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_auto_delete_old_archives', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_manual_access', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('backup_is_paused', 'false')");
 
-  // WhatsApp Admin Auto-Escalation defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
+    // Self-healing boot tracking
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('last_clean_shutdown', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_version', 'unknown')");
 
-  // Pharmarack daily batch dispatch defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_window_offset', '0')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
+    // WhatsApp Business API defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_enabled', 'false')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_phone_number_id', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
 
-  // Google Maps store location link default
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
+    // WhatsApp Admin Auto-Escalation defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
 
-  // Pharmacy Timetable & Schedule Defaults
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_open_time', '09:00')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_close_time', '22:00')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_weekly_off', 'Monday')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_closed_dates', '[]')");
+    // Pharmarack daily batch dispatch defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_window_offset', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_last_sent_date', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_next_offset', '')");
 
-  // Safely add legacy_id/speciality to doctors if the table already existed without them
-  const doctorAlters = [
-    `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
-    `ALTER TABLE doctors ADD COLUMN speciality TEXT`,
-  ];
-  for (const stmt of doctorAlters) {
-    try { await db.run(stmt); } catch (_e) { /* already exists */ }
-  }
+    // Google Maps store location link default
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('google_maps_url', 'https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8')");
 
-  // Run background migration to populate medicine_names for existing emails
-  if (process.env.NODE_ENV !== 'test' && !process.env.JEST_WORKER_ID) {
-    try {
-      (async () => {
-        const dbPathLocal = dbPath;
-        // Wait a bit to let the main boot complete
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        const { open } = await import('sqlite');
-        const { default: sqlite3 } = await import('sqlite3');
-        const backgroundDb = await open({ filename: dbPathLocal, driver: sqlite3.Database });
-        try {
-          const unpopulated = await backgroundDb.all('SELECT uid, subject, body, from_addr FROM emails WHERE is_order = 1 AND medicine_names IS NULL');
-          if (unpopulated.length > 0) {
-            console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
-            const { emailService, isNonMedicineNoise, cleanMedicineName } = await import('./services/emailService.js');
-            const fs = await import('fs');
-            for (const email of unpopulated) {
-              try {
-                const attachments = await backgroundDb.all('SELECT local_path, filename FROM email_attachments WHERE uid = ?', [email.uid]);
-                const parsedItems = [];
-                for (const att of attachments) {
-                  if (att.local_path && fs.existsSync(att.local_path)) {
-                    try {
-                      const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
-                      if (resParse && resParse.success && resParse.items) {
-                        parsedItems.push(...resParse.items);
+    // Pharmacy Timetable & Schedule Defaults
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_open_time', '09:00')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_close_time', '22:00')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_weekly_off', 'Monday')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmacy_closed_dates', '[]')");
+
+    // Safely add legacy_id/speciality to doctors if the table already existed without them
+    const doctorAlters = [
+      `ALTER TABLE doctors ADD COLUMN legacy_id TEXT`,
+      `ALTER TABLE doctors ADD COLUMN speciality TEXT`,
+    ];
+    for (const stmt of doctorAlters) {
+      try { await db.run(stmt); } catch (_e) { /* already exists */ }
+    }
+
+    // Run background migration to populate medicine_names for existing emails
+    if (process.env.NODE_ENV !== 'test' && !process.env.JEST_WORKER_ID) {
+      try {
+        (async () => {
+          const dbPathLocal = dbPath;
+          // Wait a bit to let the main boot complete
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          const { open } = await import('sqlite');
+          const { default: sqlite3 } = await import('sqlite3');
+          const backgroundDb = await open({ filename: dbPathLocal, driver: sqlite3.Database });
+          try {
+            const unpopulated = await backgroundDb.all('SELECT uid, subject, body, from_addr FROM emails WHERE is_order = 1 AND medicine_names IS NULL');
+            if (unpopulated.length > 0) {
+              console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
+              const { emailService, isNonMedicineNoise, cleanMedicineName } = await import('./services/emailService.js');
+              const fs = await import('fs');
+              for (const email of unpopulated) {
+                try {
+                  const attachments = await backgroundDb.all('SELECT local_path, filename FROM email_attachments WHERE uid = ?', [email.uid]);
+                  const parsedItems = [];
+                  for (const att of attachments) {
+                    if (att.local_path && fs.existsSync(att.local_path)) {
+                      try {
+                        const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
+                        if (resParse && resParse.success && resParse.items) {
+                          parsedItems.push(...resParse.items);
+                        }
+                      } catch (pe) {
+                        // Ignore parsing error for this attachment
                       }
-                    } catch (pe) {
-                      // Ignore parsing error for this attachment
                     }
                   }
-                }
-                if (parsedItems.length === 0) {
-                  const orderInfo = await emailService.extractOrderInfo({
-                    subject: email.subject || '',
-                    body: email.body || '',
-                    from: email.from_addr || '',
-                    attachments: []
-                  });
-                  for (const med of orderInfo.medicines) {
-                    parsedItems.push({ name: med.name });
+                  if (parsedItems.length === 0) {
+                    const orderInfo = await emailService.extractOrderInfo({
+                      subject: email.subject || '',
+                      body: email.body || '',
+                      from: email.from_addr || '',
+                      attachments: []
+                    });
+                    for (const med of orderInfo.medicines) {
+                      parsedItems.push({ name: med.name });
+                    }
                   }
+                  const medNames = Array.from(new Set(parsedItems.map(i => cleanMedicineName(i.name)).filter(n => Boolean(n) && !isNonMedicineNoise(n))));
+                  await backgroundDb.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]);
+                } catch (err) {
+                  console.error(`[Database Migration] Failed to populate medicine names for email ${email.uid}:`, err);
                 }
-                const medNames = Array.from(new Set(parsedItems.map(i => cleanMedicineName(i.name)).filter(n => Boolean(n) && !isNonMedicineNoise(n))));
-                await backgroundDb.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]);
-              } catch (err) {
-                console.error(`[Database Migration] Failed to populate medicine names for email ${email.uid}:`, err);
               }
+              console.log('[Database Migration] Background medicine name population completed.');
             }
-            console.log('[Database Migration] Background medicine name population completed.');
+          } catch (err) {
+            console.warn('[Database Migration] Failed in background query:', err);
+          } finally {
+            await backgroundDb.close();
           }
-        } catch (err) {
-          console.warn('[Database Migration] Failed in background query:', err);
-        } finally {
-          await backgroundDb.close();
-        }
-      })();
-    } catch (err) {
-      console.warn('[Database Migration] Failed to initialize background runner:', err);
+        })();
+      } catch (err) {
+        console.warn('[Database Migration] Failed to initialize background runner:', err);
+      }
     }
-  }
 
-  // Healing database for sales_invoices with missing subtotal/discount values (e.g. legacy/imported sales)
-  try {
-    console.log('[Database Healing] Checking sales_invoices subtotals and discounts...');
-    const subtotalResult = await db.run(`
+    // Healing database for sales_invoices with missing subtotal/discount values (e.g. legacy/imported sales)
+    try {
+      console.log('[Database Healing] Checking sales_invoices subtotals and discounts...');
+      const subtotalResult = await db.run(`
       UPDATE sales_invoices
       SET subtotal = COALESCE(NULLIF(
         (
@@ -3489,45 +3524,45 @@ export async function ensureSchema(dbPath: string) {
         ), 0), total_amount)
       WHERE subtotal IS NULL OR subtotal = 0;
     `);
-    if (subtotalResult && subtotalResult.changes !== undefined && subtotalResult.changes > 0) {
-      console.log(`[Database Healing] Backfilled subtotals for ${subtotalResult.changes} invoices.`);
-    }
+      if (subtotalResult && subtotalResult.changes !== undefined && subtotalResult.changes > 0) {
+        console.log(`[Database Healing] Backfilled subtotals for ${subtotalResult.changes} invoices.`);
+      }
 
-    const discountResult = await db.run(`
+      const discountResult = await db.run(`
       UPDATE sales_invoices
       SET discount = ROUND(subtotal - total_amount)
       WHERE subtotal > total_amount AND (discount IS NULL OR discount = 0);
     `);
-    if (discountResult && discountResult.changes !== undefined && discountResult.changes > 0) {
-      console.log(`[Database Healing] Backfilled discounts for ${discountResult.changes} invoices.`);
-    }
+      if (discountResult && discountResult.changes !== undefined && discountResult.changes > 0) {
+        console.log(`[Database Healing] Backfilled discounts for ${discountResult.changes} invoices.`);
+      }
 
-    await db.run(`
+      await db.run(`
       UPDATE sales_invoices
       SET discount = 0
       WHERE discount IS NULL;
     `);
-  } catch (healErr) {
-    console.warn('[Database Healing] Non-critical warning, failed to run database healing checks:', healErr);
-  }
-
-  // Sanitize existing distributor email addresses in DB (e.g. "Name" <email@domain.com> -> email@domain.com)
-  try {
-    const distsWithEmail = await db.all("SELECT id, email FROM distributors WHERE email IS NOT NULL AND email != ''");
-    const { extractCleanEmail } = await import('./utils/emailSanitizer.js');
-    for (const dist of distsWithEmail) {
-      const clean = extractCleanEmail(dist.email);
-      if (clean && clean !== dist.email) {
-        console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean}"`);
-        await db.run("UPDATE distributors SET email = ? WHERE id = ?", [clean, dist.id]);
-      }
+    } catch (healErr) {
+      console.warn('[Database Healing] Non-critical warning, failed to run database healing checks:', healErr);
     }
-  } catch (distEmailErr) {
-    console.warn('[Database Migration] Failed to clean distributor emails in DB:', distEmailErr);
-  }
 
-  // WhatsApp silent-send queue with status, pacing, and retry tracking
-  await db.run(`
+    // Sanitize existing distributor email addresses in DB (e.g. "Name" <email@domain.com> -> email@domain.com)
+    try {
+      const distsWithEmail = await db.all("SELECT id, email FROM distributors WHERE email IS NOT NULL AND email != ''");
+      const { extractCleanEmail } = await import('./utils/emailSanitizer.js');
+      for (const dist of distsWithEmail) {
+        const clean = extractCleanEmail(dist.email);
+        if (clean && clean !== dist.email) {
+          console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean}"`);
+          await db.run("UPDATE distributors SET email = ? WHERE id = ?", [clean, dist.id]);
+        }
+      }
+    } catch (distEmailErr) {
+      console.warn('[Database Migration] Failed to clean distributor emails in DB:', distEmailErr);
+    }
+
+    // WhatsApp silent-send queue with status, pacing, and retry tracking
+    await db.run(`
     CREATE TABLE IF NOT EXISTS whatsapp_send_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       number TEXT NOT NULL,
@@ -3542,75 +3577,75 @@ export async function ensureSchema(dbPath: string) {
     )
   `);
 
-  // Ensure columns exist for upgraded schemas
-  try {
-    const queueCols = await db.all("PRAGMA table_info(whatsapp_send_queue)");
-    const colNames = queueCols.map((c: any) => c.name);
-    if (!colNames.includes('type')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN type TEXT DEFAULT 'distributor_collection'");
+    // Ensure columns exist for upgraded schemas
+    try {
+      const queueCols = await db.all("PRAGMA table_info(whatsapp_send_queue)");
+      const colNames = queueCols.map((c: any) => c.name);
+      if (!colNames.includes('type')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN type TEXT DEFAULT 'distributor_collection'");
+      }
+      if (!colNames.includes('status')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN status TEXT DEFAULT 'pending'");
+      }
+      if (!colNames.includes('retry_count')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN retry_count INTEGER DEFAULT 0");
+      }
+      if (!colNames.includes('error_message')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN error_message TEXT");
+      }
+      if (!colNames.includes('target_name')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN target_name TEXT");
+      }
+      if (!colNames.includes('scheduled_at')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN scheduled_at INTEGER");
+      }
+      if (!colNames.includes('media_url')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN media_url TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes('file_json')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
+      }
+    } catch (colErr) {
+      console.warn('[Database Schema] Column check warning for whatsapp_send_queue:', colErr);
     }
-    if (!colNames.includes('status')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN status TEXT DEFAULT 'pending'");
-    }
-    if (!colNames.includes('retry_count')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN retry_count INTEGER DEFAULT 0");
-    }
-    if (!colNames.includes('error_message')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN error_message TEXT");
-    }
-    if (!colNames.includes('target_name')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN target_name TEXT");
-    }
-    if (!colNames.includes('scheduled_at')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN scheduled_at INTEGER");
-    }
-    if (!colNames.includes('media_url')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN media_url TEXT DEFAULT NULL");
-    }
-    if (!colNames.includes('file_json')) {
-      await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN file_json TEXT DEFAULT NULL");
-    }
-  } catch (colErr) {
-    console.warn('[Database Schema] Column check warning for whatsapp_send_queue:', colErr);
-  }
 
-  // Ensure 6 new columns exist on medicines table for upgraded 26-field editor
-  try {
-    const medCols = await db.all("PRAGMA table_info(medicines)");
-    const medColNames = new Set(medCols.map((c: any) => c.name));
-    if (!medColNames.has('therapeutic')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL").catch(() => {});
+    // Ensure 6 new columns exist on medicines table for upgraded 26-field editor
+    try {
+      const medCols = await db.all("PRAGMA table_info(medicines)");
+      const medColNames = new Set(medCols.map((c: any) => c.name));
+      if (!medColNames.has('therapeutic')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN therapeutic TEXT DEFAULT NULL").catch(() => { });
+      }
+      if (!medColNames.has('sub_therapeutic')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL").catch(() => { });
+      }
+      if (!medColNames.has('short_code')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL").catch(() => { });
+      }
+      if (!medColNames.has('ucode')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL").catch(() => { });
+      }
+      if (!medColNames.has('disable_auto_barcode')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0").catch(() => { });
+      }
+      if (!medColNames.has('tb_medicine')) {
+        await db.run("ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0").catch(() => { });
+      }
+    } catch (medColErr) {
+      console.warn('[Database Schema] Column check warning for medicines:', medColErr);
     }
-    if (!medColNames.has('sub_therapeutic')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN sub_therapeutic TEXT DEFAULT NULL").catch(() => {});
-    }
-    if (!medColNames.has('short_code')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN short_code TEXT DEFAULT NULL").catch(() => {});
-    }
-    if (!medColNames.has('ucode')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN ucode TEXT DEFAULT NULL").catch(() => {});
-    }
-    if (!medColNames.has('disable_auto_barcode')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN disable_auto_barcode INTEGER DEFAULT 0").catch(() => {});
-    }
-    if (!medColNames.has('tb_medicine')) {
-      await db.run("ALTER TABLE medicines ADD COLUMN tb_medicine INTEGER DEFAULT 0").catch(() => {});
-    }
-  } catch (medColErr) {
-    console.warn('[Database Schema] Column check warning for medicines:', medColErr);
-  }
 
-  // Pacing settings default (min 5s, max 8s)
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_min', '5000')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_max', '8000')");
+    // Pacing settings default (min 5s, max 8s)
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_min', '5000')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_queue_pacing_max', '8000')");
 
-  // WhatsApp Delay Timers defaults (in minutes)
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
-  await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
+    // WhatsApp Delay Timers defaults (in minutes)
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
 
-  // WhatsApp permanent delivery register & audit ledger
-  await db.run(`
+    // WhatsApp permanent delivery register & audit ledger
+    await db.run(`
     CREATE TABLE IF NOT EXISTS whatsapp_sent_register (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       phone TEXT NOT NULL,
@@ -3626,12 +3661,12 @@ export async function ensureSchema(dbPath: string) {
       metadata TEXT
     )
   `);
-  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_lookup ON whatsapp_sent_register (phone_last10, message_hash, sent_at)");
-  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_type ON whatsapp_sent_register (type, sent_at)");
-  await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_sent_at ON whatsapp_sent_register (sent_at)");
+    await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_lookup ON whatsapp_sent_register (phone_last10, message_hash, sent_at)");
+    await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_type ON whatsapp_sent_register (type, sent_at)");
+    await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_sent_at ON whatsapp_sent_register (sent_at)");
 
-  // WhatsApp message templates for quick CRM sending
-  await db.run(`
+    // WhatsApp message templates for quick CRM sending
+    await db.run(`
     CREATE TABLE IF NOT EXISTS whatsapp_message_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -3642,64 +3677,64 @@ export async function ensureSchema(dbPath: string) {
     )
   `);
 
-  // Seed default starter templates if empty
-  const tmplCount = await db.get('SELECT COUNT(*) as count FROM whatsapp_message_templates');
-  if (!tmplCount || tmplCount.count === 0) {
-    const now = Date.now();
-    const seedTemplates = [
-      { name: 'Refill Reminder', category: 'Patients', body: 'Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery.' },
-      { name: 'Payment Dues Reminder', category: 'Patients', body: 'Dear {{name}}, your bill invoice #{{invoice}} of ₹{{amount}} is due. Kindly let us know if you need assistance with payment.' },
-      { name: 'Stock Availability Inquiry', category: 'Distributors', body: 'Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you.' },
-      { name: 'General Reply', category: 'General', body: 'Hello! Thank you for contacting AI Pharmacy. How can we help you today?' },
-      { name: 'Store Location & Directions', category: 'General', body: 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!' }
-    ];
-    for (const t of seedTemplates) {
-      await db.run(
-        'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-        [t.name, t.category, t.body, now, now]
-      );
-    }
-  } else {
-    // Ensure Store Location & Directions template exists even if templates table was already populated
-    const locTmpl = await db.get("SELECT id FROM whatsapp_message_templates WHERE name = 'Store Location & Directions'");
-    if (!locTmpl) {
+    // Seed default starter templates if empty
+    const tmplCount = await db.get('SELECT COUNT(*) as count FROM whatsapp_message_templates');
+    if (!tmplCount || tmplCount.count === 0) {
       const now = Date.now();
-      await db.run(
-        'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-        ['Store Location & Directions', 'General', 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!', now, now]
-      );
+      const seedTemplates = [
+        { name: 'Refill Reminder', category: 'Patients', body: 'Hello {{name}}, this is a friendly reminder from AI Pharmacy that your prescription for {{medicine}} is due for refill. Reply to confirm order delivery.' },
+        { name: 'Payment Dues Reminder', category: 'Patients', body: 'Dear {{name}}, your bill invoice #{{invoice}} of ₹{{amount}} is due. Kindly let us know if you need assistance with payment.' },
+        { name: 'Stock Availability Inquiry', category: 'Distributors', body: 'Dear {{distributor}}, please check stock availability and rate for: {{medicines}}. Thank you.' },
+        { name: 'General Reply', category: 'General', body: 'Hello! Thank you for contacting AI Pharmacy. How can we help you today?' },
+        { name: 'Store Location & Directions', category: 'General', body: 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!' }
+      ];
+      for (const t of seedTemplates) {
+        await db.run(
+          'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+          [t.name, t.category, t.body, now, now]
+        );
+      }
+    } else {
+      // Ensure Store Location & Directions template exists even if templates table was already populated
+      const locTmpl = await db.get("SELECT id FROM whatsapp_message_templates WHERE name = 'Store Location & Directions'");
+      if (!locTmpl) {
+        const now = Date.now();
+        await db.run(
+          'INSERT INTO whatsapp_message_templates (name, category, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+          ['Store Location & Directions', 'General', 'Hello {{name}}, our pharmacy is located at:\n📍 https://maps.app.goo.gl/g9qcbTXcycFqe8Zw8\nWe look forward to serving you!', now, now]
+        );
+      }
     }
-  }
 
 
 
-  // Add missing_license column to compliance_logs (idempotent — SQLite raises an error if the
-  // column already exists; we swallow it so this is safe on every boot).
-  try {
-    await db.run('ALTER TABLE compliance_logs ADD COLUMN missing_license INTEGER DEFAULT 0');
-  } catch {
-    // Column already exists — no action needed
-  }
+    // Add missing_license column to compliance_logs (idempotent — SQLite raises an error if the
+    // column already exists; we swallow it so this is safe on every boot).
+    try {
+      await db.run('ALTER TABLE compliance_logs ADD COLUMN missing_license INTEGER DEFAULT 0');
+    } catch {
+      // Column already exists — no action needed
+    }
 
-  // Add patient_confirmed & confirmed_at to patient_refills (idempotent migration)
-  try {
-    await db.run('ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0');
-  } catch {}
-  try {
-    await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
-  } catch {}
+    // Add patient_confirmed & confirmed_at to patient_refills (idempotent migration)
+    try {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN patient_confirmed INTEGER DEFAULT 0');
+    } catch { }
+    try {
+      await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
+    } catch { }
 
-  // Consolidate legacy 'contact' into 'phone' if 'phone' is empty, then ensure 'phone' is the single source of truth
+    // Consolidate legacy 'contact' into 'phone' if 'phone' is empty, then ensure 'phone' is the single source of truth
 
-  try {
-    await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
-    await db.run("UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''");
-  } catch (syncErr) {
-    console.warn('[Database Schema] Distributor phone sync warning:', syncErr);
-  }
+    try {
+      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
+      await db.run("UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''");
+    } catch (syncErr) {
+      console.warn('[Database Schema] Distributor phone sync warning:', syncErr);
+    }
 
-  // Catalogue Image Connection & Verification Tables
-  await db.run(`
+    // Catalogue Image Connection & Verification Tables
+    await db.run(`
     CREATE TABLE IF NOT EXISTS catalog_images (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       medicine_id INTEGER NOT NULL,
@@ -3737,7 +3772,7 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
     )
   `);
-  await db.run(`
+    await db.run(`
     CREATE TABLE IF NOT EXISTS catalog_image_rejections (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       medicine_id INTEGER NOT NULL,
@@ -3749,7 +3784,7 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
     )
   `);
-  await db.run(`
+    await db.run(`
     CREATE TABLE IF NOT EXISTS image_review_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_image_id INTEGER NOT NULL,
@@ -3766,21 +3801,21 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
     )
   `);
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_med ON catalog_images(medicine_id)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_status ON catalog_images(verification_status, is_active)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_hash ON catalog_images(image_hash)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_score ON catalog_images(confidence_score DESC)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_review_queue ON catalog_images(verification_status, next_review_at)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_type ON catalog_images(medicine_id, image_type, is_active)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_primary ON catalog_images(medicine_id, is_primary)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_catalog_images_phash ON catalog_images(phash)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_med ON catalog_image_rejections(medicine_id)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_image_rejections_url ON catalog_image_rejections(rejected_image_url)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_med ON image_review_history(medicine_id)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_image_review_history_time ON image_review_history(performed_at DESC)');
 
-  // Catalog correction audit log (Schema v50)
-  await db.run(`
+    // Catalog correction audit log (Schema v50)
+    await db.run(`
     CREATE TABLE IF NOT EXISTS catalog_correction_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER,
@@ -3795,11 +3830,11 @@ export async function ensureSchema(dbPath: string) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_order ON catalog_correction_log(order_id)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_cclog_created ON catalog_correction_log(created_at DESC)');
 
-  // Pricing rules & multi-channel visibility (Schema v51)
-  await db.run(`
+    // Pricing rules & multi-channel visibility (Schema v51)
+    await db.run(`
     CREATE TABLE IF NOT EXISTS pricing_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       rule_type TEXT NOT NULL, -- 'DEFAULT', 'CATEGORY', 'PRODUCT', 'STORE'
@@ -3814,9 +3849,9 @@ export async function ensureSchema(dbPath: string) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_pricing_rules_lookup ON pricing_rules(rule_type, target_id, category_name, is_active)');
 
-  await db.run(`
+    await db.run(`
     CREATE TABLE IF NOT EXISTS product_channel_visibility (
       medicine_id INTEGER PRIMARY KEY,
       is_pos_visible INTEGER DEFAULT 1,
@@ -3828,9 +3863,9 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
     )
   `);
-  await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_pcv_channels ON product_channel_visibility(is_website_visible, is_whatsapp_visible, is_portal_visible)');
 
-  await db.run(`
+    await db.run(`
     CREATE TABLE IF NOT EXISTS customer_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER NOT NULL,
@@ -3849,51 +3884,51 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
     )
   `);
-  try {
-    const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
-    const sessNames = new Set(sessCols.map((c: any) => c.name));
-    if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
-      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
-    }
-    if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
-      await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
-    }
-    if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
-      await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
-    }
-    if (sessCols.length > 0 && !sessNames.has('is_active')) {
-      await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
-    }
-  } catch (_) {}
-  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
-  await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
+    try {
+      const sessCols = await db.all('PRAGMA table_info(customer_sessions)');
+      const sessNames = new Set(sessCols.map((c: any) => c.name));
+      if (sessCols.length > 0 && !sessNames.has('logged_in_at')) {
+        await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_in_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+      }
+      if (sessCols.length > 0 && !sessNames.has('logged_out_at')) {
+        await db.run('ALTER TABLE customer_sessions ADD COLUMN logged_out_at DATETIME');
+      }
+      if (sessCols.length > 0 && !sessNames.has('duration_seconds')) {
+        await db.run('ALTER TABLE customer_sessions ADD COLUMN duration_seconds INTEGER DEFAULT 0');
+      }
+      if (sessCols.length > 0 && !sessNames.has('is_active')) {
+        await db.run('ALTER TABLE customer_sessions ADD COLUMN is_active INTEGER DEFAULT 1');
+      }
+    } catch (_) { }
+    await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_token ON customer_sessions(session_token, expires_at)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_cust ON customer_sessions(customer_id)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_cust_sessions_status ON customer_sessions(customer_id, is_active)');
 
-  try {
-    const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
-    const accNames = new Set(accCols.map((c: any) => c.name));
-    if (accCols.length > 0 && !accNames.has('total_login_count')) {
-      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
-    }
-    if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
-      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
-    }
-    if (accCols.length > 0 && !accNames.has('last_logout_at')) {
-      await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
-    }
-  } catch (_) {}
+    try {
+      const accCols = await db.all('PRAGMA table_info(customer_portal_accounts)');
+      const accNames = new Set(accCols.map((c: any) => c.name));
+      if (accCols.length > 0 && !accNames.has('total_login_count')) {
+        await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_login_count INTEGER DEFAULT 0');
+      }
+      if (accCols.length > 0 && !accNames.has('total_time_spent_seconds')) {
+        await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN total_time_spent_seconds INTEGER DEFAULT 0');
+      }
+      if (accCols.length > 0 && !accNames.has('last_logout_at')) {
+        await db.run('ALTER TABLE customer_portal_accounts ADD COLUMN last_logout_at DATETIME');
+      }
+    } catch (_) { }
 
-  // Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
-  await ensureOrderTimingSchema(db);
+    // Schema v54: Orders & Fulfilment Timing, Delivery ETA, Sunday/Holiday Calendar & Refill Recalculation
+    await ensureOrderTimingSchema(db);
 
-  // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
-  await ensureMultiPharmacyAndSnapshotSchema(db);
+    // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
+    await ensureMultiPharmacyAndSnapshotSchema(db);
 
-  // Schema v58: Real-Time Medicine Search Summary & Live Stock / Rate Triggers
-  await ensureMedicineSearchSummaryTriggers(db);
+    // Schema v58: Real-Time Medicine Search Summary & Live Stock / Rate Triggers
+    await ensureMedicineSearchSummaryTriggers(db);
 
-  // Schema v59: License binding + update check tracking
-  await db.exec(`
+    // Schema v59: License binding + update check tracking
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS app_license (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       license_id TEXT,
@@ -3920,18 +3955,40 @@ export async function ensureSchema(dbPath: string) {
     VALUES (1, '1.0.0', 15);
   `);
 
-  // Schema v60: Additive check for expires_at column on pre-existing app_license tables
-  try {
-    await db.exec('ALTER TABLE app_license ADD COLUMN expires_at TEXT;');
-  } catch (_) {
-    // Column already exists
-  }
+    // Schema v60: Additive check for expires_at column on pre-existing app_license tables
+    try {
+      await db.exec('ALTER TABLE app_license ADD COLUMN expires_at TEXT;');
+    } catch (_) {
+      // Column already exists
+    }
 
-  // Stamp schema version so subsequent boots skip all DDL
-  await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
-  await db.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
-  console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
-  // ponytail: don't close — we reuse the dbManager shared connection
+    // Schema v61: Additive check for delivery_boy_id on distributors and pharmarack_distributor_mappings
+    try {
+      const distCols = await db.all('PRAGMA table_info(distributors)');
+      const distNames = new Set(distCols.map((c: any) => c.name));
+      if (distCols.length > 0 && !distNames.has('delivery_boy_id')) {
+        await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+      }
+    } catch (_) { }
+
+    try {
+      const mapCols = await db.all('PRAGMA table_info(pharmarack_distributor_mappings)');
+      const mapNames = new Set(mapCols.map((c: any) => c.name));
+      if (mapCols.length > 0) {
+        if (!mapNames.has('delivery_boy_id')) {
+          await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+        }
+        if (!mapNames.has('store_id')) {
+          await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
+        }
+      }
+    } catch (_) { }
+
+    // Stamp schema version so subsequent boots skip all DDL
+    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
+    await db.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
+    console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
+    // ponytail: don't close — we reuse the dbManager shared connection
   } finally {
     dbManager.isBooting = false;
   }

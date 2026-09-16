@@ -68,6 +68,7 @@ interface LocalDistributorRecord {
   mobile?: string;
   whatsapp?: string;
   contact?: string;
+  delivery_boy_id?: number | null;
 }
 
 interface LocalSentOrderItem {
@@ -956,7 +957,8 @@ export default function PharmarackCart() {
 
   const [deliveryBoysList, setDeliveryBoysList] = useState<{ id?: number; name: string; whatsapp_number: string; is_active?: number }[]>([]);
   const [savedDistributorsList, setSavedDistributorsList] = useState<LocalDistributorRecord[]>([]);
-  const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string }>>({});
+  const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>>({});
+  const [modalDeliveryBoyId, setModalDeliveryBoyId] = useState<number | null>(null);
 
   const fetchSavedDistributors = async () => {
     try {
@@ -973,12 +975,13 @@ export default function PharmarackCart() {
     try {
       const res = await apiClient.get('/pharmarack/distributor-mappings');
       if (res.data && Array.isArray(res.data.mappings)) {
-        const mapObj: Record<string, { distributorId: number | null; phone: string }> = {};
-        res.data.mappings.forEach((m: { store_name?: string; distributor_id?: number | null; distributor_phone?: string; phone?: string }) => {
+        const mapObj: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }> = {};
+        res.data.mappings.forEach((m: { store_name?: string; distributor_id?: number | null; distributor_phone?: string; phone?: string; delivery_boy_id?: number | null }) => {
           if (m.store_name) {
             mapObj[m.store_name.toLowerCase().trim()] = {
               distributorId: m.distributor_id || null,
-              phone: m.distributor_phone || m.phone || ''
+              phone: m.distributor_phone || m.phone || '',
+              deliveryBoyId: m.delivery_boy_id ? Number(m.delivery_boy_id) : null
             };
           }
         });
@@ -1155,6 +1158,8 @@ export default function PharmarackCart() {
   // Batch WhatsApp order confirmation popup state
   const [showConfirmBatchModal, setShowConfirmBatchModal] = useState(false);
   const [isValidatingBeforeSend, setIsValidatingBeforeSend] = useState(false);
+  const [selectedBatchDeliveryBoys, setSelectedBatchDeliveryBoys] = useState<Record<number, number | null>>({});
+  const [bulkApplyDeliveryBoyId, setBulkApplyDeliveryBoyId] = useState<string>('');
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
@@ -1163,8 +1168,18 @@ export default function PharmarackCart() {
       // 1. Force a live round-trip fresh fetch from upstream Pharmarack (?fresh=true)
       await fetchCart(true);
       await fetchLatestSentMap();
+      const freshBoys = await fetchDeliveryBoys();
+      await fetchDistributorMappings();
       // Brief settling pause to ensure state reconciles and paint settles cleanly
       await new Promise(r => setTimeout(r, 250));
+
+      // Pre-fill initial delivery boy assignment per distributor
+      const initialMap: Record<number, number | null> = {};
+      distributors.forEach(d => {
+        initialMap[d.storeId] = resolveInitialDeliveryBoyId(d, undefined, freshBoys);
+      });
+      setSelectedBatchDeliveryBoys(initialMap);
+      setBulkApplyDeliveryBoyId('');
     } catch (err) {
       console.warn('Pre-send live cart sync failed:', err);
     } finally {
@@ -1236,8 +1251,8 @@ export default function PharmarackCart() {
       const normSaved = normalizeDistName(d.name);
       const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       return (
-        (normCart && normSaved && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
-        (rawCartNorm && rawSavedNorm && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
+        (normCart && normSaved && normSaved.length >= 4 && normCart.length >= 4 && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
+        (rawCartNorm && rawSavedNorm && rawSavedNorm.length >= 5 && rawCartNorm.length >= 5 && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
       );
     });
     if (fuzzyWithPhone) return fuzzyWithPhone;
@@ -1248,10 +1263,43 @@ export default function PharmarackCart() {
       const normSaved = normalizeDistName(d.name);
       const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
       return (
-        (normCart && normSaved && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
-        (rawCartNorm && rawSavedNorm && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
+        (normCart && normSaved && normSaved.length >= 4 && normCart.length >= 4 && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
+        (rawCartNorm && rawSavedNorm && rawSavedNorm.length >= 5 && rawCartNorm.length >= 5 && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
       );
     });
+  };
+
+  const resolveInitialDeliveryBoyId = (
+    dist: Distributor,
+    mappings?: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>,
+    boys?: { id?: number; name: string; whatsapp_number: string; is_active?: number }[]
+  ): number | null => {
+    const activeBoys = boys && boys.length > 0 ? boys : deliveryBoysList;
+    const activeMappings = mappings || distributorMappings;
+    const normName = normalizeDistName(dist.storeName);
+    const rawTrim = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
+
+    // 1. Check saved distributor mapping
+    const mapped = (activeMappings && (activeMappings[normName] || activeMappings[rawTrim])) || null;
+    if (mapped?.deliveryBoyId && activeBoys.some(b => b.id === mapped.deliveryBoyId)) {
+      return mapped.deliveryBoyId;
+    }
+
+    // 2. Check saved distributors list
+    const savedMatch = findSavedDistributorMatch(dist.storeName);
+    if (savedMatch?.delivery_boy_id && activeBoys.some(b => b.id === savedMatch.delivery_boy_id)) {
+      return savedMatch.delivery_boy_id;
+    }
+
+    // 3. Check dist.deliveryPersons matched by name
+    if (dist.deliveryPersons && dist.deliveryPersons.length > 0 && dist.deliveryPersons[0].name && dist.deliveryPersons[0].name !== 'Not assigned yet') {
+      const match = activeBoys.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()));
+      if (match?.id) return match.id;
+    }
+
+    // 4. Default to first active delivery boy with a phone
+    const defaultBoy = activeBoys.find(b => b.whatsapp_number && b.whatsapp_number.trim().length > 0) || activeBoys[0];
+    return defaultBoy?.id ?? null;
   };
 
   const getDistributorPhoneNumber = (dist: Distributor): string => {
@@ -1642,6 +1690,20 @@ export default function PharmarackCart() {
       boyPhone = formatPhone(resolvedBoy.whatsapp_number);
     }
 
+    // 0.5. Check persistent distributor mapping or saved distributors list
+    if (boyName === 'Not assigned yet' || boyPhone === 'N/A') {
+      const normName = normalizeDistName(dist.storeName);
+      const rawTrim = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
+      const mappedBoyId = distributorMappings[normName]?.deliveryBoyId || distributorMappings[rawTrim]?.deliveryBoyId;
+      if (mappedBoyId) {
+        const match = deliveryBoysList.find(b => b.id === mappedBoyId);
+        if (match?.name && match?.whatsapp_number) {
+          boyName = match.name;
+          boyPhone = formatPhone(match.whatsapp_number);
+        }
+      }
+    }
+
     // 1. Check dist.deliveryPersons first if it has a matched delivery boy in deliveryBoysList
     if ((boyName === 'Not assigned yet' || boyPhone === 'N/A') && dist.deliveryPersons && dist.deliveryPersons.length > 0 && dist.deliveryPersons[0].name && dist.deliveryPersons[0].name !== 'Not assigned yet') {
       const match = deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()));
@@ -1854,7 +1916,10 @@ export default function PharmarackCart() {
     }
   };
 
-  const handleSendAllWhatsAppOrders = async (bypassMissingBoyCheck = false) => {
+  const handleSendAllWhatsAppOrders = async (
+    bypassMissingBoyCheck = false,
+    customDeliveryBoys?: Record<number, number | null>
+  ) => {
     if (isSendingBatchRef.current) {
       toastEvent.trigger('A WhatsApp batch send is already in progress.', 'info');
       return;
@@ -1905,7 +1970,7 @@ export default function PharmarackCart() {
       const deliveryBoyPhone = primaryBoy?.whatsapp_number || storeInfo.deliveryBoyPhone || storeInfo.adminPhone || '';
       const deliveryBoyName = primaryBoy?.name || 'Delivery Staff';
 
-      const ordersPayload: { storeName: string; storeId: number; phone: string; message: string; lineTotal?: number; items: CartLineItem[] }[] = [];
+      const ordersPayload: { storeName: string; storeId: number; phone: string; message: string; lineTotal?: number; items: CartLineItem[]; deliveryBoyId?: number | null; deliveryBoyName?: string; deliveryBoyPhone?: string }[] = [];
 
       for (const dist of mapped) {
         const itemsForBatch = dist.items.filter(item => isItemIncludedInDispatch(item, dist));
@@ -1922,14 +1987,23 @@ export default function PharmarackCart() {
           continue;
         }
 
-        const msg = buildDistributorOrderMessage(dist, primaryBoy ?? null);
+        const effectiveBoyMap = customDeliveryBoys || selectedBatchDeliveryBoys;
+        const assignedBoyId = effectiveBoyMap[dist.storeId];
+        const assignedBoy = assignedBoyId
+          ? (liveBoys.find(b => b.id === assignedBoyId) ?? null)
+          : (primaryBoy ?? null);
+
+        const msg = buildDistributorOrderMessage(dist, assignedBoy);
         ordersPayload.push({
           storeName: dist.storeName,
           storeId: dist.storeId,
           phone: cleanPhone,
           message: msg,
           lineTotal: itemsForBatch.reduce((sum, item) => sum + (item.ptr > 0 ? item.ptr * item.qty : item.amount), 0),
-          items: itemsForBatch
+          items: itemsForBatch,
+          deliveryBoyId: assignedBoy?.id ?? null,
+          deliveryBoyName: assignedBoy?.name,
+          deliveryBoyPhone: assignedBoy?.whatsapp_number
         });
       }
 
@@ -2036,6 +2110,15 @@ export default function PharmarackCart() {
         setSelectedSavedDistId(null);
       }
     }
+
+    const matchedDist = findSavedDistributorMatch(dist.storeName);
+    const currentBoyId = storedMap?.deliveryBoyId
+      || matchedDist?.delivery_boy_id
+      || (dist.deliveryPersons && dist.deliveryPersons.length > 0
+          ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id
+          : null)
+      || null;
+    setModalDeliveryBoyId(currentBoyId);
   };
 
   const handleSaveDistributorContact = async () => {
@@ -2056,7 +2139,8 @@ export default function PharmarackCart() {
         ...prev,
         [normName]: {
           distributorId: selectedSavedDistId,
-          phone: cleanPhone
+          phone: cleanPhone,
+          deliveryBoyId: modalDeliveryBoyId ?? null
         }
       }));
     }
@@ -2114,7 +2198,8 @@ export default function PharmarackCart() {
         await apiClient.post('/pharmarack/distributor-mappings', {
           store_name: distName,
           distributor_id: targetDistId || null,
-          phone: cleanPhone
+          phone: cleanPhone,
+          delivery_boy_id: modalDeliveryBoyId ?? null
         });
       }
 
@@ -2128,6 +2213,9 @@ export default function PharmarackCart() {
       } catch (_) { }
 
       await broadcastContactDataChanged();
+
+      // Dispatch refresh so topbar countdown & header pill update immediately
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
 
       // 3. Auto-enqueue order WhatsApp directly to this newly added distributor only
       if (cleanPhone && cleanPhone.replace(/\D/g, '').length >= 10 && editingDistributor.items && editingDistributor.items.length > 0) {
@@ -4853,6 +4941,30 @@ export default function PharmarackCart() {
                   10-digit mobile numbers will be formatted with +91 country code automatically.
                 </p>
               </div>
+
+              {/* Default Delivery Person Input */}
+              {deliveryBoysList.length > 0 && (
+                <div>
+                  <label className="block text-xs font-bold text-muted mb-1.5">
+                    Default Delivery Person
+                  </label>
+                  <select
+                    value={modalDeliveryBoyId || ''}
+                    onChange={(e) => setModalDeliveryBoyId(e.target.value ? Number(e.target.value) : null)}
+                    className="w-full bg-bg border border-glass-border rounded-xl px-3 py-2 text-xs text-text focus:outline-none focus:border-emerald-500 font-medium cursor-pointer"
+                  >
+                    <option value="">👤 Unassigned / Admin Fallback</option>
+                    {deliveryBoysList.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-muted mt-1 font-medium">
+                    Pre-selected automatically when dispatching batch orders to this distributor.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Modal Actions */}
@@ -5308,7 +5420,7 @@ export default function PharmarackCart() {
       {/* ── Confirm Batch WhatsApp Dispatch Modal ── */}
       {showConfirmBatchModal && createPortal(
         <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
@@ -5329,7 +5441,51 @@ export default function PharmarackCart() {
               </button>
             </div>
 
-            {/* Modal Body: Distributor Table (Distributor Name, Total Qty, Cart Value) */}
+            {/* Quick Bulk Staff Assignment Header */}
+            {deliveryBoysList.length > 0 && (
+              <div className="bg-bg3/60 px-5 py-2.5 border-b border-glass-border flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-muted flex items-center gap-1">
+                    <Truck size={13} className="text-primary" /> Assign all to:
+                  </span>
+                  <select
+                    value={bulkApplyDeliveryBoyId}
+                    onChange={(e) => setBulkApplyDeliveryBoyId(e.target.value)}
+                    className="text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-primary transition-all cursor-pointer"
+                  >
+                    <option value="">-- Choose Delivery Person --</option>
+                    {deliveryBoysList.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!bulkApplyDeliveryBoyId}
+                    onClick={() => {
+                      const boyId = Number(bulkApplyDeliveryBoyId);
+                      if (!boyId) return;
+                      setSelectedBatchDeliveryBoys((prev) => {
+                        const next = { ...prev };
+                        batchSummaryList.forEach((item) => {
+                          next[item.storeId] = boyId;
+                        });
+                        return next;
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-primary text-white hover:opacity-90 transition-all disabled:opacity-40 active:scale-95 cursor-pointer shadow-sm"
+                  >
+                    Apply to All
+                  </button>
+                </div>
+                <span className="text-[10px] font-mono text-muted bg-bg px-2 py-1 rounded-lg border border-glass-border/40">
+                  {deliveryBoysList.length} staff registered
+                </span>
+              </div>
+            )}
+
+            {/* Modal Body: Distributor Table (Distributor Name, Total Qty, Cart Value, Delivery Person) */}
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 custom-scrollbar space-y-3">
               <div className="border border-glass-border rounded-xl overflow-hidden bg-bg/40">
                 <table className="w-full text-left text-xs">
@@ -5338,12 +5494,13 @@ export default function PharmarackCart() {
                       <th className="py-2.5 px-3.5">Distributor Name</th>
                       <th className="py-2.5 px-3 text-center">Total Qty</th>
                       <th className="py-2.5 px-3.5 text-right">Cart Value</th>
+                      <th className="py-2.5 px-3.5">Delivery Person</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-glass-border/30">
                     {batchSummaryList.length === 0 ? (
                       <tr>
-                        <td colSpan={3} className="py-8 text-center text-muted">
+                        <td colSpan={4} className="py-8 text-center text-muted">
                           No order items currently ready to send.
                         </td>
                       </tr>
@@ -5370,6 +5527,26 @@ export default function PharmarackCart() {
                           <td className="py-3 px-3.5 text-right font-mono font-black text-emerald-400">
                             ₹{item.totalAmount.toFixed(2)}
                           </td>
+                          <td className="py-2 px-3.5 min-w-[190px]">
+                            <select
+                              value={selectedBatchDeliveryBoys[item.storeId] ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value ? Number(e.target.value) : null;
+                                setSelectedBatchDeliveryBoys((prev) => ({
+                                  ...prev,
+                                  [item.storeId]: val,
+                                }));
+                              }}
+                              className="w-full text-xs px-2.5 py-1.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
+                            >
+                              <option value="">👤 Unassigned / Admin Fallback</option>
+                              {deliveryBoysList.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  👤 {b.name} {b.whatsapp_number ? `(${b.whatsapp_number.slice(-4)})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -5385,6 +5562,9 @@ export default function PharmarackCart() {
                         </td>
                         <td className="py-3 px-3.5 text-right font-mono text-sm text-emerald-400">
                           ₹{finalBatchTotalAmount.toFixed(2)}
+                        </td>
+                        <td className="py-3 px-3.5 text-right text-[11px] text-muted font-normal">
+                          {deliveryBoysList.length > 0 ? `${deliveryBoysList.length} staff available` : '—'}
                         </td>
                       </tr>
                     </tfoot>
@@ -5406,7 +5586,7 @@ export default function PharmarackCart() {
                 type="button"
                 onClick={() => {
                   setShowConfirmBatchModal(false);
-                  handleSendAllWhatsAppOrders();
+                  handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys);
                 }}
                 disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0}
                 className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-50 cursor-pointer"

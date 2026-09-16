@@ -4,6 +4,7 @@ import { dbManager } from '../database/connection.js';
 import { normalizeWhatsAppPhone } from '../whatsappClient.js';
 import { eventService } from '../services/eventService.js';
 import { whatsappDeliveryRegister } from '../services/whatsappDeliveryRegister.js';
+import { syncDistributorPhoneAcrossTables } from '../utils/distributorSyncHelper.js';
 
 const router = express.Router();
 
@@ -92,7 +93,7 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
     const enqueuedIds: number[] = [];
     const db = await dbManager.getConnection();
 
-    // 1. Resolve delivery boy contacts if not passed explicitly
+    // 1. Resolve fallback delivery boy contacts if not passed explicitly
     let targetBoyPhone = deliveryBoyPhone;
     let targetBoyName = deliveryBoyName || 'Delivery Staff';
 
@@ -112,32 +113,57 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
       }
     }
 
-    // A. ENQUEUE DELIVERY BOY SUMMARY MESSAGE FIRST (Position #1)
-    let cleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone);
-    if (cleanBoyPhone && cleanBoyPhone.length >= 10) {
-      const dateLabel = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-      const totalItems = orders.reduce((sum: number, o: any) => sum + (o.items?.length || 0), 0);
+    // A. ENQUEUE PER-DELIVERY-BOY SUMMARY MESSAGES FIRST (Position #1)
+    // Group orders by their assigned delivery boy to give each boy their tailored pickup list
+    const boyGroups = new Map<string, { boyName: string; boyPhone: string; orders: any[] }>();
 
-      const shopRow = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
-      const headerShopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || 'AI Pharmacy';
+    for (const o of orders) {
+      const rawBoyPhone = o.deliveryBoyPhone || targetBoyPhone;
+      const bName = o.deliveryBoyName || targetBoyName;
+      const cleanBPhone = normalizeWhatsAppPhone(rawBoyPhone || '');
+      if (cleanBPhone && cleanBPhone.length >= 10) {
+        if (!boyGroups.has(cleanBPhone)) {
+          boyGroups.set(cleanBPhone, { boyName: bName, boyPhone: cleanBPhone, orders: [] });
+        }
+        boyGroups.get(cleanBPhone)!.orders.push(o);
+      }
+    }
 
-      let summaryMsg = `🏥 *${headerShopName}*\n📋 *TODAY DISTRIBUTOR SUMMARY & TOTALS — ${dateLabel}*\n\n`;
-      orders.forEach((o: any, idx: number) => {
+    // If no order had a valid phone, fallback to targetBoyPhone if valid
+    const defaultCleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone || '');
+    if (boyGroups.size === 0 && defaultCleanBoyPhone && defaultCleanBoyPhone.length >= 10) {
+      boyGroups.set(defaultCleanBoyPhone, { boyName: targetBoyName, boyPhone: defaultCleanBoyPhone, orders: [...orders] });
+    }
+
+    const dateLabel = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const shopRow = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
+    const headerShopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || 'AI Pharmacy';
+
+    for (const [cleanBoyPhone, group] of boyGroups.entries()) {
+      const totalItems = group.orders.reduce((sum: number, o: any) => sum + (o.items?.length || 0), 0);
+
+      let summaryMsg = `🏥 *${headerShopName}*\n📋 *TODAY DISTRIBUTOR SUMMARY & TOTALS — ${dateLabel}*\n`;
+      if (group.boyName && group.boyName !== 'Delivery Staff') {
+        summaryMsg += `👤 *Assigned Staff:* ${group.boyName}\n`;
+      }
+      summaryMsg += `\n`;
+
+      group.orders.forEach((o: any, idx: number) => {
         const cleanP = normalizeWhatsAppPhone(o.phone || '');
         const last10 = cleanP.slice(-10);
         const phoneFormatted = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : (o.phone || 'N/A');
         summaryMsg += `${idx + 1}. *${o.storeName}* (${o.items?.length || 0} items)\n    📞 Contact: ${phoneFormatted}\n`;
       });
       summaryMsg += `\n==================================\n`;
-      summaryMsg += `🚚 *Total Today Distributors:* ${orders.length}\n`;
-      summaryMsg += `📦 *Total Today Order Items:* ${totalItems}\n`;
+      summaryMsg += `🚚 *Total Assigned Distributors:* ${group.orders.length}\n`;
+      summaryMsg += `📦 *Total Order Items:* ${totalItems}\n`;
       summaryMsg += `==================================`;
 
       const boyQueueId = await whatsappQueueWorker.enqueue(
         cleanBoyPhone,
         summaryMsg,
         'delivery_boy_summary',
-        `Delivery Boy (${targetBoyName})`
+        `Delivery Boy (${group.boyName})`
       );
       if (boyQueueId) enqueuedIds.push(boyQueueId);
     }
@@ -150,7 +176,7 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
       if (!cleanPhone || cleanPhone.length < 10) continue;
 
       // Skip duplicate send if delivery boy phone is identical to distributor phone
-      if (cleanBoyPhone && cleanBoyPhone === cleanPhone && orders.length === 1) {
+      if (defaultCleanBoyPhone && defaultCleanBoyPhone === cleanPhone && orders.length === 1) {
         console.log(`[Queue Safeguard] Delivery boy phone matches distributor phone for ${order.storeName}. Skipping duplicate summary send.`);
       }
 
@@ -203,6 +229,27 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
             placedAt
           ]
         );
+
+        // Update or assign delivery boy in distributor_dispatch_reminders for today
+        if (order.deliveryBoyId) {
+          try {
+            await db.run(
+              `UPDATE distributor_dispatch_reminders
+               SET delivery_boy_id = ?
+               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR distributor_id = ?)`,
+              [order.deliveryBoyId, today, order.storeName, order.storeId || null]
+            );
+
+            // Also persist mapping preference for this distributor
+            await syncDistributorPhoneAcrossTables(db, {
+              id: order.storeId || undefined,
+              store_name: order.storeName,
+              delivery_boy_id: order.deliveryBoyId
+            });
+          } catch (dErr) {
+            console.warn('Could not update delivery boy in dispatch reminders:', dErr);
+          }
+        }
 
         // Auto-update matching pending special requests to status = 'Ordered'
         if (Array.isArray(order.items) && order.items.length > 0) {

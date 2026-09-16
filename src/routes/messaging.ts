@@ -182,7 +182,6 @@ router.post('/login-window', async (req, res) => {
         `--user-data-dir=${authPath}`,
         '--start-maximized',
         '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--disable-dev-shm-usage',
@@ -201,12 +200,36 @@ router.post('/login-window', async (req, res) => {
         setLoginWindowActive(false);
       });
 
-      chromeProc.on('exit', () => {
-        console.log('[WhatsApp] Chrome login window closed. Re-initializing background client...');
+      chromeProc.on('exit', async () => {
+        console.log('[WhatsApp] Chrome login window closed. Checking for saved session...');
         setLoginWindowActive(false);
-        isWhatsAppAutoConnectAllowed().then(allowed => {
-          if (allowed) initClient({ manual: true }).catch(() => {});
-        }).catch(() => {});
+
+        // Give Chrome a moment to flush session files to disk and release file handles
+        await new Promise(r => setTimeout(r, 1200));
+        cleanProfileLockFiles(authPath);
+
+        if (hasSavedSession()) {
+          console.log('[WhatsApp] Valid session files detected on disk after Chrome exit. Persisting authentication status...');
+          try {
+            const db = await dbManager.getConnection();
+            await db.run(
+              `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+               ON CONFLICT(key) DO UPDATE SET value = 'true'`
+            );
+            await db.run(
+              `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+              [new Date().toISOString()]
+            );
+          } catch (e: any) {
+            console.warn('[WhatsApp] Failed to mark session authenticated in settings:', e.message);
+          }
+          initClient({ manual: true }).catch(() => {});
+        } else {
+          isWhatsAppAutoConnectAllowed().then(allowed => {
+            if (allowed) initClient({ manual: true }).catch(() => {});
+          }).catch(() => {});
+        }
       });
 
     } catch (err: any) {

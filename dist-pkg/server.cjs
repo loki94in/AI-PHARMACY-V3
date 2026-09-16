@@ -26219,7 +26219,6 @@ var init_pharmarack = __esm({
             `--user-data-dir=${mainProfilePath}`,
             "--start-maximized",
             "--no-sandbox",
-            "--disable-setuid-sandbox",
             "--disable-gpu",
             "--disable-software-rasterizer",
             "--disable-dev-shm-usage",
@@ -29436,6 +29435,27 @@ function launchClientInstance(forceQr) {
         });
         setLifecycleProgress("failed", 0, "Max QR refresh attempts reached", "MAX_QR_EXCEEDED");
         reject(new Error("WhatsApp QR expired 5 times without being scanned. Reconnect from Settings to try again."));
+      }
+    });
+    client.on("authenticated", async () => {
+      console.log("[WhatsApp] QR scanned & authenticated! Persisting credential status immediately...");
+      currentQr = null;
+      if (qrTimeout) clearTimeout(qrTimeout);
+      if (qrAutoStopTimer) clearTimeout(qrAutoStopTimer);
+      setLifecycleProgress("connecting", 80, "Authenticated! Finalizing session...");
+      try {
+        const db2 = await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+           ON CONFLICT(key) DO UPDATE SET value = 'true'`
+        );
+        await db2.run(
+          `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [(/* @__PURE__ */ new Date()).toISOString()]
+        );
+      } catch (err) {
+        console.warn("[WhatsApp] Failed to write authenticated status on authenticated event:", err);
       }
     });
     client.on("ready", async () => {
@@ -54486,7 +54506,6 @@ var init_messaging = __esm({
             `--user-data-dir=${authPath}`,
             "--start-maximized",
             "--no-sandbox",
-            "--disable-setuid-sandbox",
             "--disable-gpu",
             "--disable-software-rasterizer",
             "--disable-dev-shm-usage",
@@ -54503,14 +54522,36 @@ var init_messaging = __esm({
             console.warn("[WhatsApp] Chrome spawn error:", e.message);
             setLoginWindowActive(false);
           });
-          chromeProc.on("exit", () => {
-            console.log("[WhatsApp] Chrome login window closed. Re-initializing background client...");
+          chromeProc.on("exit", async () => {
+            console.log("[WhatsApp] Chrome login window closed. Checking for saved session...");
             setLoginWindowActive(false);
-            isWhatsAppAutoConnectAllowed().then((allowed) => {
-              if (allowed) initClient({ manual: true }).catch(() => {
+            await new Promise((r) => setTimeout(r, 1200));
+            cleanProfileLockFiles(authPath);
+            if (hasSavedSession()) {
+              console.log("[WhatsApp] Valid session files detected on disk after Chrome exit. Persisting authentication status...");
+              try {
+                const db2 = await dbManager.getConnection();
+                await db2.run(
+                  `INSERT INTO app_settings (key, value) VALUES ('whatsapp_session_authenticated', 'true')
+               ON CONFLICT(key) DO UPDATE SET value = 'true'`
+                );
+                await db2.run(
+                  `INSERT INTO app_settings (key, value) VALUES ('whatsapp_last_connected_at', ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+                  [(/* @__PURE__ */ new Date()).toISOString()]
+                );
+              } catch (e) {
+                console.warn("[WhatsApp] Failed to mark session authenticated in settings:", e.message);
+              }
+              initClient({ manual: true }).catch(() => {
               });
-            }).catch(() => {
-            });
+            } else {
+              isWhatsAppAutoConnectAllowed().then((allowed) => {
+                if (allowed) initClient({ manual: true }).catch(() => {
+                });
+              }).catch(() => {
+              });
+            }
           });
         } catch (err) {
           console.error("[WhatsApp] Error launching Chrome login window:", err.message);

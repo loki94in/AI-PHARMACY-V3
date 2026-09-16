@@ -14,6 +14,7 @@ export interface SyncDistributorParams {
   state_code?: string;
   preferred_file_format?: string;
   notes?: string;
+  delivery_boy_id?: number | null;
 }
 
 export function normalizeDistributorName(rawName: string): string {
@@ -31,6 +32,7 @@ export interface ResolvedDistributorContact {
   distributor_name: string;
   distributor_phone: string;
   preferred_file_format?: string;
+  delivery_boy_id?: number | null;
   source: 'mapping' | 'exact_master' | 'fuzzy_master' | 'contact' | 'none';
 }
 
@@ -181,8 +183,8 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
           const hasPhone = Boolean(cleanPhoneStr(d.phone || d.contact));
           if (!hasPhone) return false;
           return (
-            (normStore && normSaved && (normStore.includes(normSaved) || normSaved.includes(normStore))) ||
-            (cleanStoreNorm && rawSavedNorm && (cleanStoreNorm.includes(rawSavedNorm) || rawSavedNorm.includes(cleanStoreNorm)))
+            (normStore && normSaved && normSaved.length >= 4 && normStore.length >= 4 && (normStore.includes(normSaved) || normSaved.includes(normStore))) ||
+            (cleanStoreNorm && rawSavedNorm && rawSavedNorm.length >= 5 && cleanStoreNorm.length >= 5 && (cleanStoreNorm.includes(rawSavedNorm) || rawSavedNorm.includes(cleanStoreNorm)))
           );
         });
       }
@@ -402,19 +404,37 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         store_name TEXT PRIMARY KEY,
         distributor_id INTEGER,
         phone TEXT,
+        delivery_boy_id INTEGER,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
+    const mapCols = await db.all('PRAGMA table_info(pharmarack_distributor_mappings)');
+    const mapNames = new Set(mapCols.map((c: any) => c.name));
+    if (!mapNames.has('delivery_boy_id')) {
+      await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+    }
+    if (!mapNames.has('store_id')) {
+      await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
+    }
+
+    const distCols = await db.all('PRAGMA table_info(distributors)');
+    const distNames = new Set(distCols.map((c: any) => c.name));
+    if (!distNames.has('delivery_boy_id')) {
+      await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
+    }
+
     if (effectiveName) {
+      const boyId = params.delivery_boy_id !== undefined ? params.delivery_boy_id : null;
       await db.run(
-        `INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, phone, updated_at)
-         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, phone, delivery_boy_id, updated_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(store_name) DO UPDATE SET
            distributor_id = COALESCE(EXCLUDED.distributor_id, pharmarack_distributor_mappings.distributor_id),
            phone = CASE WHEN EXCLUDED.phone != '' THEN EXCLUDED.phone ELSE pharmarack_distributor_mappings.phone END,
+           delivery_boy_id = CASE WHEN ? IS NOT NULL THEN ? ELSE pharmarack_distributor_mappings.delivery_boy_id END,
            updated_at = CURRENT_TIMESTAMP`,
-        [effectiveName.trim(), targetId, effectivePhone || '']
+        [effectiveName.trim(), targetId, effectivePhone || '', boyId, boyId, boyId]
       );
 
       if (effectivePhone) {
@@ -423,6 +443,19 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
            SET phone = ?, updated_at = CURRENT_TIMESTAMP
            WHERE distributor_id = ? AND (phone IS NULL OR phone = '' OR phone != ?)`,
           [effectivePhone, targetId, effectivePhone]
+        );
+      }
+
+      if (params.delivery_boy_id !== undefined) {
+        await db.run(
+          `UPDATE distributors SET delivery_boy_id = ? WHERE id = ?`,
+          [params.delivery_boy_id, targetId]
+        );
+        await db.run(
+          `UPDATE distributor_dispatch_reminders
+           SET delivery_boy_id = ?
+           WHERE distributor_id = ? OR LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))`,
+          [params.delivery_boy_id, targetId, effectiveName.trim()]
         );
       }
     }
