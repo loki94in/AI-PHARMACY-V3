@@ -1705,6 +1705,20 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     message: rawSettings.gemini_api_key ? 'API Key saved and active in settings' : undefined
   });
 
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'pharmarack' | 'whatsapp' | 'telegram' | 'gmail' | 'gemini' | 'cloudflare' | 'payments'>('all');
+  const [savingSection, setSavingSection] = useState<string | null>(null);
+
+  const integrationSubTabs = [
+    { id: 'all', label: 'All Services', icon: Layers },
+    { id: 'pharmarack', label: 'Pharmarack B2B', icon: Zap },
+    { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
+    { id: 'telegram', label: 'Telegram Bot', icon: Send },
+    { id: 'gmail', label: 'Gmail Scanner', icon: Mail },
+    { id: 'gemini', label: 'Gemini AI Vision', icon: Sparkles },
+    { id: 'cloudflare', label: 'Cloudflare Tunnel', icon: Globe },
+    { id: 'payments', label: 'UPI QR Payments', icon: CreditCard },
+  ];
+
   // 3-UPI QR Code System & Delivery Feature Flag (§13, §15)
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
   const [paymentQrs, setPaymentQrs] = useState<Array<{ id: string; label: string; payee_name: string; upi_id: string; is_active: boolean }>>([
@@ -1854,7 +1868,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setCfAutostart(rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true');
     setCfToken(rawSettings.cloudflare_tunnel_token || '');
     setCfCustomDomain(rawSettings.cloudflare_tunnel_custom_domain || '');
-    toastEvent.trigger('Integration credentials reset to saved parameters', 'info');
+    toastEvent.trigger('All integration credentials reset to saved parameters', 'info');
   };
 
   const handleSaveGeminiKeyOnly = async () => {
@@ -1904,6 +1918,184 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
       setGeminiStatus({ type: 'error', message: msg });
     } finally {
       setTestingGemini(false);
+    }
+  };
+
+  // Dedicated Card-Level Save & Reset Handlers
+  const handleSavePharmarackOnly = async () => {
+    setSavingSection('pharmarack');
+    try {
+      const payload: Record<string, string> = {
+        pharmarack_username: pharmarackUser,
+        pharmarack_password: pharmarackPass,
+        pharmarack_mode: 'Live',
+        pharmarack_reorder_window_months: reorderWindowMonths,
+        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false'
+      };
+      await apiClient.post('/settings/save', payload);
+      toastEvent.trigger('Pharmarack B2B credentials and settings saved!', 'success');
+      updateSettingsCache(queryClient, payload);
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save Pharmarack credentials';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetPharmarackOnly = () => {
+    setPharmarackUser(rawSettings.pharmarack_username || '');
+    setPharmarackPass(rawSettings.pharmarack_password || '');
+    setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
+    setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+    toastEvent.trigger('Pharmarack credentials reset to saved parameters', 'info');
+  };
+
+  const handleSaveGmailOnly = async () => {
+    setSavingSection('gmail');
+    try {
+      const payload: Record<string, string> = {
+        gmail_user: gmailUser,
+        gmail_pass: gmailPass
+      };
+      await apiClient.post('/settings/save', payload);
+      toastEvent.trigger('Gmail scanner credentials saved successfully!', 'success');
+      updateSettingsCache(queryClient, payload);
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save Gmail credentials';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetGmailOnly = () => {
+    setGmailUser(rawSettings.gmail_user || '');
+    setGmailPass(rawSettings.gmail_pass || '');
+    toastEvent.trigger('Gmail credentials reset to saved parameters', 'info');
+  };
+
+  const handleSaveTelegramOnly = async () => {
+    setSavingSection('telegram');
+    try {
+      const payload: Record<string, string> = {
+        telegram_enabled: telegramEnabled ? 'true' : 'false',
+        telegram_token: telegramToken,
+        telegram_chat_id: telegramChatId
+      };
+      await apiClient.post('/settings/save', payload);
+      toastEvent.trigger('Telegram bot configuration saved!', 'success');
+      updateSettingsCache(queryClient, payload);
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save Telegram settings';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetTelegramOnly = () => {
+    setTelegramEnabled(rawSettings.telegram_enabled === 'true');
+    setTelegramToken(rawSettings.telegram_token || '');
+    setTelegramChatId(rawSettings.telegram_chat_id || '');
+    toastEvent.trigger('Telegram settings reset to saved parameters', 'info');
+  };
+
+  const handleSaveWhatsappOnly = async () => {
+    setSavingSection('whatsapp');
+    try {
+      const payload: Record<string, string> = {
+        whatsapp_preferred_system: waPreferredSystem,
+        wa_business_access_token: waBusinessToken,
+        wa_business_phone_number_id: waBusinessPhoneId,
+        whatsapp_idle_sleep_min: waIdleSleepMin,
+        email_invoice_whatsapp_recipient: emailInvoiceRecipient,
+        notify_owner_on_email_whatsapp: emailInvoiceRecipient === 'none' ? '0' : '1'
+      };
+      await apiClient.post('/settings/save', payload);
+      toastEvent.trigger('WhatsApp configuration saved!', 'success');
+      updateSettingsCache(queryClient, payload);
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save WhatsApp settings';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetWhatsappOnly = () => {
+    setWaPreferredSystem(rawSettings.whatsapp_preferred_system || 'web');
+    setWaBusinessToken(rawSettings.wa_business_access_token || '');
+    setWaBusinessPhoneId(rawSettings.wa_business_phone_number_id || '');
+    setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
+    setEmailInvoiceRecipient(rawSettings.notify_owner_on_email_whatsapp === '0' ? 'none' : (rawSettings.email_invoice_whatsapp_recipient || 'both'));
+    toastEvent.trigger('WhatsApp configuration reset to saved parameters', 'info');
+  };
+
+  const handleSaveCloudflareOnly = async () => {
+    setSavingSection('cloudflare');
+    try {
+      const payload: Record<string, string> = {
+        cloudflare_tunnel_autostart: cfAutostart ? '1' : '0',
+        cloudflare_tunnel_token: cfToken.trim(),
+        cloudflare_tunnel_custom_domain: cfCustomDomain.trim()
+      };
+      await apiClient.post('/settings/save', payload);
+      await api.configureTunnel({
+        token: cfToken.trim(),
+        customDomain: cfCustomDomain.trim(),
+        autostart: cfAutostart
+      }).catch(() => {});
+      toastEvent.trigger('Cloudflare Tunnel configuration saved!', 'success');
+      updateSettingsCache(queryClient, payload);
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save Cloudflare settings';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetCloudflareOnly = () => {
+    setCfAutostart(rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true');
+    setCfToken(rawSettings.cloudflare_tunnel_token || '');
+    setCfCustomDomain(rawSettings.cloudflare_tunnel_custom_domain || '');
+    toastEvent.trigger('Cloudflare Tunnel settings reset to saved parameters', 'info');
+  };
+
+  const handleSavePaymentQrsOnly = async () => {
+    setSavingSection('payments');
+    try {
+      await Promise.all([
+        api.savePaymentQrs(paymentQrs),
+        api.saveDeliveryConfig(deliveryEnabled)
+      ]);
+      toastEvent.trigger('Online payments and QR code configuration saved!', 'success');
+      refetchSettings();
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save payment QR settings';
+      toastEvent.trigger(msg, 'error');
+    } finally {
+      setSavingSection(null);
+    }
+  };
+
+  const handleResetPaymentQrsOnly = async () => {
+    try {
+      const res = await api.getPaymentQrs();
+      if (res?.success && Array.isArray(res.configs) && res.configs.length > 0) {
+        setPaymentQrs(res.configs);
+      }
+      const delRes = await api.getDeliveryConfig();
+      if (delRes?.success) setDeliveryEnabled(delRes.delivery_enabled);
+      toastEvent.trigger('Payment QR parameters reset to saved state', 'info');
+    } catch {
+      toastEvent.trigger('Failed to reset payment QR parameters', 'error');
     }
   };
 
@@ -2009,654 +2201,889 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
 
   return (
     <form onSubmit={handleSaveIntegrations} className="space-y-6">
-      {/* WhatsApp Section */}
-      <div className="space-y-4">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
-          <MessageCircle size={16} /> WhatsApp Messaging Infrastructure
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-text uppercase">WhatsApp Automated System</h3>
-            <div>
-              <label className="block text-xs font-semibold text-text mb-1">Preferred Integration System</label>
-              <select
-                value={waPreferredSystem}
-                onChange={(e) => setWaPreferredSystem(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              >
-                <option value="web">Automated WhatsApp Web (Headless Chrome QR)</option>
-                <option value="business">Official WhatsApp Business Cloud API</option>
-              </select>
-            </div>
+      {/* Sub-navigation Filter Bar for Fast Navigation */}
+      <div className="flex items-center gap-1.5 p-1.5 bg-bg3/40 border border-border rounded-xl overflow-x-auto scrollbar-none shadow-xs">
+        {integrationSubTabs.map((sub) => {
+          const Icon = sub.icon;
+          const isActive = activeSubTab === sub.id;
+          return (
+            <button
+              key={sub.id}
+              type="button"
+              onClick={() => setActiveSubTab(sub.id as any)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                isActive
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'text-muted hover:text-text hover:bg-bg3/80'
+              }`}
+            >
+              <Icon size={14} />
+              <span>{sub.label}</span>
+            </button>
+          );
+        })}
+      </div>
 
-            {waPreferredSystem === 'web' && (
-              <div className="p-3 bg-bg rounded-xl border border-border space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-text">Web Status:</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    waStatus.status === 'READY'
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : waStatus.status === 'SLEEPING'
-                        ? 'bg-sky-500/20 text-sky-400'
-                        : 'bg-amber-500/20 text-amber-400'
-                  }`}>
-                    {waStatus.status}
-                  </span>
-                </div>
-                {waStatus.status === 'SLEEPING' && (
-                  <p className="text-[11px] text-muted">
-                    Browser closed to save memory. It wakes automatically when you send a message.
-                  </p>
-                )}
-                <div>
-                  <label className="block text-xs font-semibold text-text mb-1" htmlFor="wa-idle-sleep-min">
-                    Sleep browser after idle (minutes)
-                  </label>
-                  <input
-                    id="wa-idle-sleep-min"
-                    type="number"
-                    min={0}
-                    max={480}
-                    value={waIdleSleepMin}
-                    onChange={(e) => setWaIdleSleepMin(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                    placeholder="0"
-                  />
-                  <p className="text-[10px] text-muted mt-1">
-                    Frees ~250–400 MB RAM while idle. Queued messages wake it automatically. 0 = never sleep.
-                  </p>
-                </div>
-                {waStatus.qr && (
-                  <div className="flex flex-col items-center py-2 bg-white rounded-lg">
-                    <img src={waStatus.qr} alt="WhatsApp Web QR Code" className="w-32 h-32" />
-                    <span className="text-[10px] text-gray-700 font-semibold mt-1">Scan with WhatsApp on phone</span>
-                  </div>
-                )}
-              </div>
-            )}
+      {/* WhatsApp Section */}
+      {(activeSubTab === 'all' || activeSubTab === 'whatsapp') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <MessageCircle size={16} /> WhatsApp Messaging Infrastructure
+            </h2>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              waPreferredSystem === 'web'
+                ? waStatus.status === 'READY'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : waStatus.status === 'SLEEPING'
+                    ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
+                    : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                : waBusinessToken
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-bg border border-border text-muted'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                waPreferredSystem === 'web' && waStatus.status === 'READY' ? 'bg-emerald-400 animate-pulse' : 'bg-muted'
+              }`} />
+              {waPreferredSystem === 'web' ? `Web Status: ${waStatus.status}` : waBusinessToken ? 'Cloud API Configured' : 'Not Configured'}
+            </span>
           </div>
 
-          <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
-            <h3 className="text-xs font-bold text-text uppercase">Meta WhatsApp Business API Keys</h3>
-            <div>
-              <label className="block text-xs font-semibold text-text mb-1">Phone Number ID</label>
-              <input
-                type="text"
-                value={waBusinessPhoneId}
-                onChange={(e) => setWaBusinessPhoneId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                placeholder="Meta Phone Number ID"
-              />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
+              <h3 className="text-xs font-bold text-text uppercase">WhatsApp Automated System</h3>
+              <div>
+                <label className="block text-xs font-semibold text-text mb-1">Preferred Integration System</label>
+                <select
+                  value={waPreferredSystem}
+                  onChange={(e) => setWaPreferredSystem(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                >
+                  <option value="web">Automated WhatsApp Web (Headless Chrome QR)</option>
+                  <option value="business">Official WhatsApp Business Cloud API</option>
+                </select>
+              </div>
+
+              {waPreferredSystem === 'web' && (
+                <div className="p-3 bg-bg rounded-xl border border-border space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-text">Web Status:</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      waStatus.status === 'READY'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : waStatus.status === 'SLEEPING'
+                          ? 'bg-sky-500/20 text-sky-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {waStatus.status}
+                    </span>
+                  </div>
+                  {waStatus.status === 'SLEEPING' && (
+                    <p className="text-[11px] text-muted">
+                      Browser closed to save memory. It wakes automatically when you send a message.
+                    </p>
+                  )}
+                  <div>
+                    <label className="block text-xs font-semibold text-text mb-1" htmlFor="wa-idle-sleep-min">
+                      Sleep browser after idle (minutes)
+                    </label>
+                    <input
+                      id="wa-idle-sleep-min"
+                      type="number"
+                      min={0}
+                      max={480}
+                      value={waIdleSleepMin}
+                      onChange={(e) => setWaIdleSleepMin(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                      placeholder="0"
+                    />
+                    <p className="text-[10px] text-muted mt-1">
+                      Frees ~250–400 MB RAM while idle. Queued messages wake it automatically. 0 = never sleep.
+                    </p>
+                  </div>
+                  {waStatus.qr && (
+                    <div className="flex flex-col items-center py-2 rounded-lg" style={{ backgroundColor: '#ffffff' }}>
+                      <img src={waStatus.qr} alt="WhatsApp Web QR Code" className="w-32 h-32" />
+                      <span className="text-[10px] text-gray-700 font-semibold mt-1">Scan with WhatsApp on phone</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+
+            <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
+              <h3 className="text-xs font-bold text-text uppercase">Meta WhatsApp Business API Keys</h3>
+              <div>
+                <label className="block text-xs font-semibold text-text mb-1">Phone Number ID</label>
+                <input
+                  type="text"
+                  value={waBusinessPhoneId}
+                  onChange={(e) => setWaBusinessPhoneId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                  placeholder="Meta Phone Number ID"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-text mb-1">System User Access Token</label>
+                <input
+                  type="password"
+                  value={waBusinessToken}
+                  onChange={(e) => setWaBusinessToken(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                  placeholder="Permanent Bearer Token"
+                />
+              </div>
+            </div>
+
+            {/* Email Invoice WhatsApp Alert Recipient Management */}
+            <div className="md:col-span-2 bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-text uppercase flex items-center gap-2">
+                    <Mail size={14} className="text-primary" /> Invoice Email WhatsApp Notifications
+                  </h3>
+                  <p className="text-[11px] text-muted mt-0.5">
+                    Choose which phone number(s) receive automatic WhatsApp alerts when distributor invoice emails are received.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-1">
+                {[
+                  {
+                    id: 'both',
+                    label: 'Both Numbers',
+                    desc: 'Store & Owner',
+                    phone: [rawSettings.shop_phone || rawSettings.phone, rawSettings.owner_whatsapp_number].filter(Boolean).join(' + ') || 'Both configured'
+                  },
+                  {
+                    id: 'pharmacy',
+                    label: 'Pharmacy / Counter',
+                    desc: 'Store Phone',
+                    phone: rawSettings.shop_phone || rawSettings.phone || 'Not configured'
+                  },
+                  {
+                    id: 'owner',
+                    label: 'Owner WhatsApp',
+                    desc: 'Owner Mobile',
+                    phone: rawSettings.owner_whatsapp_number || 'Not configured'
+                  },
+                  {
+                    id: 'none',
+                    label: 'Disabled',
+                    desc: 'No Alerts',
+                    phone: 'Turned off'
+                  }
+                ].map((opt) => {
+                  const isSelected = emailInvoiceRecipient === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setEmailInvoiceRecipient(opt.id)}
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-primary/10 border-primary shadow-sm text-text'
+                          : 'bg-bg2/60 border-border text-muted hover:text-text hover:bg-bg2'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold">{opt.label}</span>
+                        <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${isSelected ? 'border-primary bg-primary' : 'border-border'}`}>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-bg"></span>}
+                        </span>
+                      </div>
+                      <div className="mt-2 text-[10px] text-muted truncate">
+                        <span className="font-mono">{opt.phone}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* WhatsApp Card Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3 mt-3">
+            <span className="text-[11px] text-muted">
+              Saves preferred messaging route, Meta Cloud API credentials, idle sleep, and recipient settings
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetWhatsappOnly}
+                disabled={savingSection === 'whatsapp'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveWhatsappOnly}
+                disabled={savingSection === 'whatsapp'}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {savingSection === 'whatsapp' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Save WhatsApp Settings</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Telegram Bot */}
+      {(activeSubTab === 'all' || activeSubTab === 'telegram') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <Send size={16} /> Telegram Alert Bot &amp; Prescription Receiver
+            </h2>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              telegramEnabled && telegramStatus?.isReady
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : telegramToken
+                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
+                  : 'bg-bg border border-border text-muted'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${telegramEnabled && telegramStatus?.isReady ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+              {telegramEnabled && telegramStatus?.isReady ? 'Bot Online & Listening' : telegramToken ? 'Credentials Saved' : 'Not Configured'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex items-center gap-3 md:col-span-3">
+              <input
+                type="checkbox"
+                id="tgEnabled"
+                checked={telegramEnabled}
+                onChange={(e) => setTelegramEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+              />
+              <label htmlFor="tgEnabled" className="text-xs font-bold text-text cursor-pointer">
+                Enable Automated Telegram Bot Notifications &amp; Photo Ingestion
+              </label>
+              {telegramEnabled && (
+                <span className={`ml-auto px-2.5 py-1 rounded text-[10px] font-bold ${
+                  telegramStatus?.isReady ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400'
+                }`}>
+                  {telegramStatus?.isReady ? 'BOT ONLINE & LISTENING' : 'BOT DISCONNECTED'}
+                </span>
+              )}
+            </div>
+
             <div>
-              <label className="block text-xs font-semibold text-text mb-1">System User Access Token</label>
+              <label className="block text-xs font-semibold text-text mb-1">Telegram Bot Token</label>
               <input
                 type="password"
-                value={waBusinessToken}
-                onChange={(e) => setWaBusinessToken(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                placeholder="Permanent Bearer Token"
+                value={telegramToken}
+                onChange={(e) => setTelegramToken(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-text mb-1">Target Chat / Channel ID</label>
+              <input
+                type="text"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                placeholder="-100123456789"
               />
             </div>
           </div>
 
-          {/* Email Invoice WhatsApp Alert Recipient Management */}
-          <div className="md:col-span-2 bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold text-text uppercase flex items-center gap-2">
-                  <Mail size={14} className="text-primary" /> Invoice Email WhatsApp Notifications
-                </h3>
-                <p className="text-[11px] text-muted mt-0.5">
-                  Choose which phone number(s) receive automatic WhatsApp alerts when distributor invoice emails are received.
+          {/* Telegram Card Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3 mt-3">
+            <span className="text-[11px] text-muted">
+              Used to receive photo prescriptions and broadcast urgent low-stock or expiry alerts
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetTelegramOnly}
+                disabled={savingSection === 'telegram'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTelegramOnly}
+                disabled={savingSection === 'telegram'}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {savingSection === 'telegram' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Save Telegram Credentials</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gmail / Email */}
+      {(activeSubTab === 'all' || activeSubTab === 'gmail') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <Mail size={16} /> Gmail / IMAP Mail Order Scanner Credentials
+            </h2>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              gmailUser && gmailPass
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : 'bg-bg border border-border text-muted'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${gmailUser && gmailPass ? 'bg-emerald-400' : 'bg-muted'}`} />
+              {gmailUser && gmailPass ? 'Credentials Configured' : 'Credentials Not Set'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-text mb-1">IMAP Gmail Account Address</label>
+              <input
+                type="email"
+                value={gmailUser}
+                onChange={(e) => setGmailUser(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                placeholder="store.distributor.invoices@gmail.com"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text mb-1">Google App Password (16-character secret)</label>
+              <input
+                type="password"
+                value={gmailPass}
+                onChange={(e) => setGmailPass(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                placeholder="abcd efgh ijkl mnop"
+              />
+            </div>
+          </div>
+
+          {/* Gmail Card Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3 mt-3">
+            <span className="text-[11px] text-muted">
+              Used by automatic background worker to scan distributor invoices &amp; purchase confirmations
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetGmailOnly}
+                disabled={savingSection === 'gmail'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveGmailOnly}
+                disabled={savingSection === 'gmail'}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {savingSection === 'gmail' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Save Gmail Credentials</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pharmarack B2B */}
+      {(activeSubTab === 'all' || activeSubTab === 'pharmarack') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <Zap size={16} /> Pharmarack B2B Live Ordering Credentials
+            </h2>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              pharmarackUser && pharmarackPass
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pharmarackUser && pharmarackPass ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {pharmarackUser && pharmarackPass ? 'Live B2B Configured' : 'Credentials Missing'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="block text-xs font-semibold text-text mb-1">Pharmarack Login Username / Phone</label>
+              <input
+                type="text"
+                value={pharmarackUser}
+                onChange={(e) => setPharmarackUser(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                placeholder="Mobile / Username"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text mb-1">Pharmarack Login Password</label>
+              <input
+                type="password"
+                value={pharmarackPass}
+                onChange={(e) => setPharmarackPass(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+                placeholder="Account Password"
+              />
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={handleTriggerPharmarackRefresh}
+                disabled={pharmarackRefreshing}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer"
+                title="Attempt silent token refresh from saved Chrome session profile"
+              >
+                <RefreshCw size={14} className={pharmarackRefreshing ? 'animate-spin' : ''} />
+                <span>Refresh Session</span>
+              </button>
+            </div>
+            <div>
+              <button
+                type="button"
+                onClick={handleLaunchPharmarackLogin}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/80 transition-all cursor-pointer shadow-sm"
+                title="Open Chrome window with auto-filled credentials to enter OTP"
+              >
+                <Smartphone size={14} />
+                <span>Open Login (OTP)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Dedicated Pharmarack Save & Reset Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                pharmarackUser && pharmarackPass
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${pharmarackUser && pharmarackPass ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                {pharmarackUser && pharmarackPass ? 'Credentials Configured' : 'Credentials Missing'}
+              </span>
+              <span className="text-[11px] text-muted">
+                Auto-fill login will use these credentials when launching Chrome
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetPharmarackOnly}
+                disabled={savingSection === 'pharmarack'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePharmarackOnly}
+                disabled={savingSection === 'pharmarack'}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {savingSection === 'pharmarack' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Save Pharmarack Credentials</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-xs font-semibold text-text mb-1">Reorder Suggestions Lookback Window</label>
+            <select
+              value={reorderWindowMonths}
+              onChange={(e) => handleReorderWindowChange(e.target.value)}
+              className="w-full md:w-1/3 px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
+            >
+              <option value="2">2 months</option>
+              <option value="4">4 months</option>
+              <option value="6">6 months</option>
+              <option value="8">8 months</option>
+            </select>
+            <p className="text-[11px] text-muted mt-1">
+              How far back sales/purchase history is weighed for restock suggestions and the &quot;Ordered Recently&quot; list in the Reorder Hub. Changing this recomputes suggestions in the background.
+            </p>
+          </div>
+
+          {/* Combine Pharmarack & Local Pharmacy Search Toggle */}
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
+            <div className="space-y-0.5">
+              <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                <Layers size={14} className="text-primary" /> Combine Pharmarack &amp; Local Pharmacy Search
+              </span>
+              <p className="text-[11px] text-muted max-w-xl">
+                When Pharmarack is offline, disconnected, or has no results, automatically search your local pharmacy purchase history and inventory. Displays each distributor&apos;s specific PTR, MRP, packaging, and stock in the exact same card dropdown.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="combinePharmarackSearchToggle"
+                checked={combinePharmarackSearch}
+                onChange={(e) => handleToggleCombineSearch(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+              />
+              <label htmlFor="combinePharmarackSearchToggle" className="text-xs font-semibold text-text cursor-pointer">
+                {combinePharmarackSearch ? 'Enabled' : 'Disabled'}
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Google Gemini AI Vision Credentials */}
+      {(activeSubTab === 'all' || activeSubTab === 'gemini') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <Sparkles size={16} /> Google Gemini AI Vision (Prescription &amp; Purchase OCR)
+            </h2>
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-sky hover:underline font-semibold"
+            >
+              <span>Get Free Key (Google AI Studio)</span>
+              <ExternalLink size={12} />
+            </a>
+          </div>
+
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-xl bg-primary/10 text-primary mt-0.5">
+                <Sparkles size={18} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-xs font-bold text-text">Cloud Vision AI Assistant</h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky/10 text-sky border border-sky/20">
+                    1,500 Scans/Day Free
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    No Credit Card Required
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                  Empowers automatic cloud fallback for illegible cursive doctor handwriting and complex purchase invoice line items.
+                  Your app runs the <strong>Local Offline Scanner first</strong> (3.6s, ₹0 cost), and seamlessly calls Gemini whenever an API key is configured.
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-1">
-              {[
-                {
-                  id: 'both',
-                  label: 'Both Numbers',
-                  desc: 'Store & Owner',
-                  phone: [rawSettings.shop_phone || rawSettings.phone, rawSettings.owner_whatsapp_number].filter(Boolean).join(' + ') || 'Both configured'
-                },
-                {
-                  id: 'pharmacy',
-                  label: 'Pharmacy / Counter',
-                  desc: 'Store Phone',
-                  phone: rawSettings.shop_phone || rawSettings.phone || 'Not configured'
-                },
-                {
-                  id: 'owner',
-                  label: 'Owner WhatsApp',
-                  desc: 'Owner Mobile',
-                  phone: rawSettings.owner_whatsapp_number || 'Not configured'
-                },
-                {
-                  id: 'none',
-                  label: 'Disabled',
-                  desc: 'No Alerts',
-                  phone: 'Turned off'
-                }
-              ].map((opt) => {
-                const isSelected = emailInvoiceRecipient === opt.id;
-                return (
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end pt-1">
+              <div className="sm:col-span-8">
+                <label className="block text-xs font-semibold text-text mb-1">
+                  Google Gemini API Key
+                </label>
+                <div className="relative">
+                  <input
+                    type={showGeminiKey ? 'text' : 'password'}
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                    placeholder="AIzaSy..."
+                  />
                   <button
-                    key={opt.id}
                     type="button"
-                    onClick={() => setEmailInvoiceRecipient(opt.id)}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                      isSelected
-                        ? 'bg-primary/10 border-primary shadow-sm text-text'
-                        : 'bg-bg2/60 border-border text-muted hover:text-text hover:bg-bg2'
-                    }`}
+                    onClick={() => setShowGeminiKey(!showGeminiKey)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
+                    title={showGeminiKey ? 'Hide key' : 'Show key'}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold">{opt.label}</span>
-                      <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${isSelected ? 'border-primary bg-primary' : 'border-border'}`}>
-                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white"></span>}
-                      </span>
-                    </div>
-                    <div className="mt-2 text-[10px] text-muted truncate">
-                      <span className="font-mono">{opt.phone}</span>
-                    </div>
+                    <Eye size={14} />
                   </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
+                </div>
+              </div>
 
-      {/* Telegram Bot */}
-      <div className="space-y-4 pt-2">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
-          <Send size={16} /> Telegram Alert Bot & Prescription Receiver
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="flex items-center gap-3 md:col-span-3">
-            <input
-              type="checkbox"
-              id="tgEnabled"
-              checked={telegramEnabled}
-              onChange={(e) => setTelegramEnabled(e.target.checked)}
-              className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
-            />
-            <label htmlFor="tgEnabled" className="text-xs font-bold text-text cursor-pointer">
-              Enable Automated Telegram Bot Notifications & Photo Ingestion
-            </label>
-            {telegramEnabled && (
-              <span className={`ml-auto px-2.5 py-1 rounded text-[10px] font-bold ${
-                telegramStatus?.isReady ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400'
+              <div className="sm:col-span-2">
+                <button
+                  type="button"
+                  onClick={handleSaveGeminiKeyOnly}
+                  disabled={savingGemini || !geminiApiKey}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Save API key directly to database"
+                >
+                  {savingGemini ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                  <span>{savingGemini ? 'Saving...' : 'Save Key'}</span>
+                </button>
+              </div>
+
+              <div className="sm:col-span-2">
+                <button
+                  type="button"
+                  onClick={handleTestGeminiKey}
+                  disabled={testingGemini || !geminiApiKey}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Verify API key with Google AI Studio and auto-save"
+                >
+                  <RefreshCw size={14} className={testingGemini ? 'animate-spin' : ''} />
+                  <span>{testingGemini ? 'Testing...' : 'Test & Verify'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Status Feedback Banner */}
+            {geminiStatus.type !== 'idle' && (
+              <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 transition-all ${
+                geminiStatus.type === 'success'
+                  ? 'bg-primary/10 border-primary/20 text-primary'
+                  : 'bg-bg3 border-border text-text'
               }`}>
-                {telegramStatus?.isReady ? 'BOT ONLINE & LISTENING' : 'BOT DISCONNECTED'}
-              </span>
+                {geminiStatus.type === 'success' ? (
+                  <CheckCircle2 size={16} className="text-primary shrink-0" />
+                ) : (
+                  <AlertTriangle size={16} className="text-muted shrink-0" />
+                )}
+                <span className="font-semibold">{geminiStatus.message}</span>
+              </div>
             )}
           </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">Telegram Bot Token</label>
-            <input
-              type="password"
-              value={telegramToken}
-              onChange={(e) => setTelegramToken(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">Target Chat / Channel ID</label>
-            <input
-              type="text"
-              value={telegramChatId}
-              onChange={(e) => setTelegramChatId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="-100123456789"
-            />
-          </div>
         </div>
-      </div>
-
-      {/* Gmail / Email */}
-      <div className="space-y-4 pt-2">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
-          <Mail size={16} /> Gmail / IMAP Mail Order Scanner Credentials
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">IMAP Gmail Account Address</label>
-            <input
-              type="email"
-              value={gmailUser}
-              onChange={(e) => setGmailUser(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="store.distributor.invoices@gmail.com"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">Google App Password (16-character secret)</label>
-            <input
-              type="password"
-              value={gmailPass}
-              onChange={(e) => setGmailPass(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="abcd efgh ijkl mnop"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Pharmarack B2B */}
-      <div className="space-y-4 pt-2">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2 border-b border-border pb-2">
-          <Zap size={16} /> Pharmarack B2B Live Ordering Credentials
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">Pharmarack Login Username / Phone</label>
-            <input
-              type="text"
-              value={pharmarackUser}
-              onChange={(e) => setPharmarackUser(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="Mobile / Username"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-text mb-1">Pharmarack Login Password</label>
-            <input
-              type="password"
-              value={pharmarackPass}
-              onChange={(e) => setPharmarackPass(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-              placeholder="Account Password"
-            />
-          </div>
-          <div>
-            <button
-              type="button"
-              onClick={handleTriggerPharmarackRefresh}
-              disabled={pharmarackRefreshing}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer"
-              title="Attempt silent token refresh from saved Chrome session profile"
-            >
-              <RefreshCw size={14} className={pharmarackRefreshing ? 'animate-spin' : ''} />
-              <span>Refresh Session</span>
-            </button>
-          </div>
-          <div>
-            <button
-              type="button"
-              onClick={handleLaunchPharmarackLogin}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/80 transition-all cursor-pointer shadow-sm"
-              title="Open Chrome window with auto-filled credentials to enter OTP"
-            >
-              <Smartphone size={14} />
-              <span>Open Login (OTP)</span>
-            </button>
-          </div>
-        </div>
-        <div className="mt-4">
-          <label className="block text-xs font-semibold text-text mb-1">Reorder Suggestions Lookback Window</label>
-          <select
-            value={reorderWindowMonths}
-            onChange={(e) => handleReorderWindowChange(e.target.value)}
-            className="w-full md:w-1/3 px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-          >
-            <option value="2">2 months</option>
-            <option value="4">4 months</option>
-            <option value="6">6 months</option>
-            <option value="8">8 months</option>
-          </select>
-          <p className="text-[11px] text-muted mt-1">
-            How far back sales/purchase history is weighed for restock suggestions and the &quot;Ordered Recently&quot; list in the Reorder Hub. Changing this recomputes suggestions in the background.
-          </p>
-        </div>
-
-        {/* Combine Pharmarack & Local Pharmacy Search Toggle */}
-        <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
-          <div className="space-y-0.5">
-            <span className="text-xs font-bold text-text flex items-center gap-1.5">
-              <Layers size={14} className="text-primary" /> Combine Pharmarack &amp; Local Pharmacy Search
-            </span>
-            <p className="text-[11px] text-muted max-w-xl">
-              When Pharmarack is offline, disconnected, or has no results, automatically search your local pharmacy purchase history and inventory. Displays each distributor&apos;s specific PTR, MRP, packaging, and stock in the exact same card dropdown.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="combinePharmarackSearchToggle"
-              checked={combinePharmarackSearch}
-              onChange={(e) => handleToggleCombineSearch(e.target.checked)}
-              className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-            />
-            <label htmlFor="combinePharmarackSearchToggle" className="text-xs font-semibold text-text cursor-pointer">
-              {combinePharmarackSearch ? 'Enabled' : 'Disabled'}
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Google Gemini AI Vision Credentials */}
-      <div className="space-y-4 pt-4 border-t border-border">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-            <Sparkles size={16} /> Google Gemini AI Vision (Prescription &amp; Purchase OCR)
-          </h2>
-          <a
-            href="https://aistudio.google.com/apikey"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-sky hover:underline font-semibold"
-          >
-            <span>Get Free Key (Google AI Studio)</span>
-            <ExternalLink size={12} />
-          </a>
-        </div>
-
-        <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-3">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-primary/10 text-primary mt-0.5">
-              <Sparkles size={18} />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-xs font-bold text-text">Cloud Vision AI Assistant</h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky/10 text-sky border border-sky/20">
-                  1,500 Scans/Day Free
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  No Credit Card Required
-                </span>
-              </div>
-              <p className="text-[11px] text-muted mt-1 leading-relaxed">
-                Empowers automatic cloud fallback for illegible cursive doctor handwriting and complex purchase invoice line items.
-                Your app runs the <strong>Local Offline Scanner first</strong> (3.6s, ₹0 cost), and seamlessly calls Gemini whenever an API key is configured.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end pt-1">
-            <div className="sm:col-span-8">
-              <label className="block text-xs font-semibold text-text mb-1">
-                Google Gemini API Key
-              </label>
-              <div className="relative">
-                <input
-                  type={showGeminiKey ? 'text' : 'password'}
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
-                  placeholder="AIzaSy..."
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowGeminiKey(!showGeminiKey)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
-                  title={showGeminiKey ? 'Hide key' : 'Show key'}
-                >
-                  <Eye size={14} />
-                </button>
-              </div>
-            </div>
-
-            <div className="sm:col-span-2">
-              <button
-                type="button"
-                onClick={handleSaveGeminiKeyOnly}
-                disabled={savingGemini || !geminiApiKey}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Save API key directly to database"
-              >
-                {savingGemini ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                <span>{savingGemini ? 'Saving...' : 'Save Key'}</span>
-              </button>
-            </div>
-
-            <div className="sm:col-span-2">
-              <button
-                type="button"
-                onClick={handleTestGeminiKey}
-                disabled={testingGemini || !geminiApiKey}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Verify API key with Google AI Studio and auto-save"
-              >
-                <RefreshCw size={14} className={testingGemini ? 'animate-spin' : ''} />
-                <span>{testingGemini ? 'Testing...' : 'Test & Verify'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Live Status Feedback Banner */}
-          {geminiStatus.type !== 'idle' && (
-            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 transition-all ${
-              geminiStatus.type === 'success'
-                ? 'bg-primary/10 border-primary/20 text-primary'
-                : 'bg-bg3 border-border text-text'
-            }`}>
-              {geminiStatus.type === 'success' ? (
-                <CheckCircle2 size={16} className="text-primary shrink-0" />
-              ) : (
-                <AlertTriangle size={16} className="text-muted shrink-0" />
-              )}
-              <span className="font-semibold">{geminiStatus.message}</span>
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Cloudflare Tunnel & Live Online Store Section */}
-      <div className="space-y-4 pt-4 border-t border-border">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-            <Globe size={16} /> Cloudflare Tunnel — Zero-Cost Online Store
-          </h2>
-          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
-            $0 Cloud Bills • Unlimited Local Storage • Auto HTTPS
-          </span>
-        </div>
-
-        <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-text">Tunnel Service Status:</span>
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                  cfTunnelStatus?.isRunning
-                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-bg border border-border text-muted'
-                }`}>
-                  <span className={`w-2 h-2 rounded-full ${cfTunnelStatus?.isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
-                  {cfTunnelStatus?.isRunning ? 'LIVE & ACCESSIBLE' : 'OFFLINE'}
-                </span>
-              </div>
-              <p className="text-[11px] text-muted">
-                Securely tunnels patient store traffic and product images from this computer to the public internet via Cloudflare edge network.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={handleToggleTunnel}
-                disabled={cfLoading}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm ${
-                  cfTunnelStatus?.isRunning
-                    ? 'bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25'
-                    : 'bg-primary text-white hover:bg-primary/90'
-                }`}
-              >
-                {cfLoading ? <RefreshCw size={13} className="animate-spin" /> : <Globe size={13} />}
-                <span>{cfLoading ? 'Processing...' : cfTunnelStatus?.isRunning ? 'Stop Tunnel' : 'Start Tunnel'}</span>
-              </button>
-
-              {cfTunnelStatus?.url && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all cursor-pointer"
-                    title="Copy patient store link"
-                  >
-                    {copiedLink ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                    <span>{copiedLink ? 'Copied' : 'Copy Store Link'}</span>
-                  </button>
-                  <a
-                    href={`${cfTunnelStatus.url}/portal`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all"
-                  >
-                    <ExternalLink size={13} />
-                    <span>Open Store</span>
-                  </a>
-                </>
-              )}
-            </div>
+      {(activeSubTab === 'all' || activeSubTab === 'cloudflare') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <Globe size={16} /> Cloudflare Tunnel — Zero-Cost Online Store
+            </h2>
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
+              $0 Cloud Bills • Unlimited Local Storage • Auto HTTPS
+            </span>
           </div>
 
-          {cfTunnelStatus?.url && (
-            <div className="p-3 bg-bg border border-emerald-500/20 rounded-xl flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 overflow-hidden">
-                <span className="font-semibold text-text shrink-0">Live URL:</span>
-                <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/portal</span>
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-text">Tunnel Service Status:</span>
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                    cfTunnelStatus?.isRunning
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-bg border border-border text-muted'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${cfTunnelStatus?.isRunning ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+                    {cfTunnelStatus?.isRunning ? 'LIVE & ACCESSIBLE' : 'OFFLINE'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted">
+                  Securely tunnels patient store traffic and product images from this computer to the public internet via Cloudflare edge network.
+                </p>
               </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                Encrypted HTTPS
-              </span>
-            </div>
-          )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="cfAutostartToggle"
-                  checked={cfAutostart}
-                  onChange={(e) => setCfAutostart(e.target.checked)}
-                  className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                />
-                <label htmlFor="cfAutostartToggle" className="text-xs font-bold text-text cursor-pointer">
-                  Auto-start Tunnel on Server Boot
-                </label>
-              </div>
-              <p className="text-[11px] text-muted pl-6">
-                When enabled, Cloudflare Tunnel starts automatically whenever you run the pharmacy application.
-              </p>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-xs font-bold text-text">
-                Custom Domain (Optional)
-              </label>
-              <input
-                type="text"
-                value={cfCustomDomain}
-                onChange={(e) => setCfCustomDomain(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
-                placeholder="e.g. store.mypharmacy.com"
-              />
-              <p className="text-[10px] text-muted">
-                Leave empty for automatic free <code className="text-primary">trycloudflare.com</code> address.
-              </p>
-            </div>
-
-            <div className="md:col-span-2 space-y-1">
-              <label className="block text-xs font-bold text-text">
-                Cloudflare Tunnel Token (Optional - Required for Custom Permanent Domains)
-              </label>
-              <div className="relative">
-                <input
-                  type={showCfToken ? 'text' : 'password'}
-                  value={cfToken}
-                  onChange={(e) => setCfToken(e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
-                  placeholder="eyJhIjoi... (from Cloudflare Zero Trust Dashboard)"
-                />
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setShowCfToken(!showCfToken)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
-                  title={showCfToken ? 'Hide token' : 'Show token'}
+                  onClick={handleToggleTunnel}
+                  disabled={cfLoading}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm ${
+                    cfTunnelStatus?.isRunning
+                      ? 'bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25'
+                      : 'bg-primary text-white hover:bg-primary/90'
+                  }`}
                 >
-                  <Eye size={14} />
+                  {cfLoading ? <RefreshCw size={13} className="animate-spin" /> : <Globe size={13} />}
+                  <span>{cfLoading ? 'Processing...' : cfTunnelStatus?.isRunning ? 'Stop Tunnel' : 'Start Tunnel'}</span>
+                </button>
+
+                {cfTunnelStatus?.url && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all cursor-pointer"
+                      title="Copy patient store link"
+                    >
+                      {copiedLink ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                      <span>{copiedLink ? 'Copied' : 'Copy Store Link'}</span>
+                    </button>
+                    <a
+                      href={`${cfTunnelStatus.url}/portal`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-bg border border-border text-text hover:text-primary rounded-xl text-xs font-medium transition-all"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Open Store</span>
+                    </a>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {cfTunnelStatus?.url && (
+              <div className="p-3 bg-bg border border-emerald-500/20 rounded-xl flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span className="font-semibold text-text shrink-0">Live URL:</span>
+                  <span className="font-mono text-primary truncate select-all">{cfTunnelStatus.url}/portal</span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                  Encrypted HTTPS
+                </span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="cfAutostartToggle"
+                    checked={cfAutostart}
+                    onChange={(e) => setCfAutostart(e.target.checked)}
+                    className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                  />
+                  <label htmlFor="cfAutostartToggle" className="text-xs font-bold text-text cursor-pointer">
+                    Auto-start Tunnel on Server Boot
+                  </label>
+                </div>
+                <p className="text-[11px] text-muted pl-6">
+                  When enabled, Cloudflare Tunnel starts automatically whenever you run the pharmacy application.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-text">
+                  Custom Domain (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={cfCustomDomain}
+                  onChange={(e) => setCfCustomDomain(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                  placeholder="e.g. store.mypharmacy.com"
+                />
+                <p className="text-[10px] text-muted">
+                  Leave empty for automatic free <code className="text-primary">trycloudflare.com</code> address.
+                </p>
+              </div>
+
+              <div className="md:col-span-2 space-y-1">
+                <label className="block text-xs font-bold text-text">
+                  Cloudflare Tunnel Token (Optional - Required for Custom Permanent Domains)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCfToken ? 'text' : 'password'}
+                    value={cfToken}
+                    onChange={(e) => setCfToken(e.target.value)}
+                    className="w-full pl-3 pr-10 py-2 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
+                    placeholder="eyJhIjoi... (from Cloudflare Zero Trust Dashboard)"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCfToken(!showCfToken)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-1"
+                    title={showCfToken ? 'Hide token' : 'Show token'}
+                  >
+                    <Eye size={14} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted">
+                  If you have your own domain on Cloudflare Zero Trust, paste your tunnel run token here. If empty, the app runs in Quick Tunnel mode with zero configuration needed.
+                </p>
+              </div>
+            </div>
+
+            {/* Cloudflare Card Action Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg border border-border rounded-xl p-3 mt-2">
+              <span className="text-[11px] text-muted">
+                Saves autostart preference, custom domain, and Cloudflare token
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetCloudflareOnly}
+                  disabled={savingSection === 'cloudflare'}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <RotateCcw size={13} />
+                  <span>Reset</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCloudflareOnly}
+                  disabled={savingSection === 'cloudflare'}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  {savingSection === 'cloudflare' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                  <span>Save Tunnel Settings</span>
                 </button>
               </div>
-              <p className="text-[10px] text-muted">
-                If you have your own domain on Cloudflare Zero Trust, paste your tunnel run token here. If empty, the app runs in Quick Tunnel mode with zero configuration needed.
-              </p>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 3-UPI QR Rotation Pool & Fulfillment (§13, §15) */}
-      <div className="space-y-4 pt-4 border-t border-border">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
-            <CreditCard size={16} /> Online Customer Payments & Fulfillment (3-QR Pool)
-          </h2>
-          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
-            Strict Alternating Rotation (QR N ≠ Previous QR)
-          </span>
-        </div>
-
-        {/* Feature Flag: Home Delivery vs In-Store Pickup */}
-        <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="space-y-0.5">
-            <span className="text-xs font-bold text-text block">Enable Home Delivery Checkout</span>
-            <p className="text-[11px] text-muted max-w-xl">
-              When disabled, customer online checkout operates strictly in <strong>In-Store Pickup Only</strong> mode.
-              The customer address schema and database records remain fully preserved for future re-activation.
-            </p>
+      {(activeSubTab === 'all' || activeSubTab === 'payments') && (
+        <div className="bg-bg2 border border-border rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-primary flex items-center gap-2">
+              <CreditCard size={16} /> Online Customer Payments &amp; Fulfillment (3-QR Pool)
+            </h2>
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 self-start sm:self-auto">
+              Strict Alternating Rotation (QR N ≠ Previous QR)
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="enableDeliveryToggle"
-              checked={deliveryEnabled}
-              onChange={(e) => setDeliveryEnabled(e.target.checked)}
-              className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-            />
-            <label htmlFor="enableDeliveryToggle" className="text-xs font-semibold text-text cursor-pointer">
-              {deliveryEnabled ? 'Enabled' : 'Disabled'}
-            </label>
-          </div>
-        </div>
 
-        {/* 3 QR Code Configuration Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-          {paymentQrs.map((qr, idx) => (
-            <div key={qr.id} className="bg-bg3/25 border border-border rounded-xl p-4 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between border-b border-border/60 pb-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-md bg-primary/10 text-primary text-[10px] font-black flex items-center justify-center border border-primary/20">
-                    {idx + 1}
-                  </span>
-                  <span className="text-xs font-bold text-text">{qr.id} Slot</span>
+          {/* Feature Flag: Home Delivery vs In-Store Pickup */}
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <span className="text-xs font-bold text-text block">Enable Home Delivery Checkout</span>
+              <p className="text-[11px] text-muted max-w-xl">
+                When disabled, customer online checkout operates strictly in <strong>In-Store Pickup Only</strong> mode.
+                The customer address schema and database records remain fully preserved for future re-activation.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="enableDeliveryToggle"
+                checked={deliveryEnabled}
+                onChange={(e) => setDeliveryEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+              />
+              <label htmlFor="enableDeliveryToggle" className="text-xs font-semibold text-text cursor-pointer">
+                {deliveryEnabled ? 'Enabled' : 'Disabled'}
+              </label>
+            </div>
+          </div>
+
+          {/* 3 QR Code Configuration Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {paymentQrs.map((qr, idx) => (
+              <div key={qr.id} className="bg-bg3/25 border border-border rounded-xl p-4 space-y-3 shadow-sm">
+                <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-md bg-primary/10 text-primary text-[10px] font-black flex items-center justify-center border border-primary/20">
+                      {idx + 1}
+                    </span>
+                    <span className="text-xs font-bold text-text">{qr.id} Slot</span>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={qr.is_active}
+                      onChange={(e) => {
+                        const updated = [...paymentQrs];
+                        updated[idx] = { ...updated[idx], is_active: e.target.checked };
+                        setPaymentQrs(updated);
+                      }}
+                      className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>Active</span>
+                  </label>
                 </div>
-                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={qr.is_active}
-                    onChange={(e) => {
-                      const updated = [...paymentQrs];
-                      updated[idx] = { ...updated[idx], is_active: e.target.checked };
-                      setPaymentQrs(updated);
-                    }}
-                    className="rounded border-border text-primary focus:ring-0"
-                  />
-                  <span>Active</span>
-                </label>
-              </div>
 
-              <div className="space-y-2 text-xs">
                 <div>
-                  <label className="block text-[11px] font-semibold text-text mb-1">Display Label</label>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">Display Label</label>
                   <input
                     type="text"
                     value={qr.label}
@@ -2665,13 +3092,12 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
                       updated[idx] = { ...updated[idx], label: e.target.value };
                       setPaymentQrs(updated);
                     }}
-                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                    placeholder="e.g. Counter UPI 1"
+                    className="w-full px-3 py-1.5 rounded-lg bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-text mb-1">Payee Name</label>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">Payee Name (as in bank)</label>
                   <input
                     type="text"
                     value={qr.payee_name}
@@ -2680,13 +3106,12 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
                       updated[idx] = { ...updated[idx], payee_name: e.target.value };
                       setPaymentQrs(updated);
                     }}
-                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
-                    placeholder="e.g. AI Pharmacy Main"
+                    className="w-full px-3 py-1.5 rounded-lg bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-text mb-1">UPI ID / VPA</label>
+                  <label className="block text-[11px] font-semibold text-muted mb-1">UPI ID / VPA</label>
                   <input
                     type="text"
                     value={qr.upi_id}
@@ -2695,34 +3120,72 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
                       updated[idx] = { ...updated[idx], upi_id: e.target.value };
                       setPaymentQrs(updated);
                     }}
-                    className="w-full px-3 py-1.5 rounded-xl bg-bg border border-border text-text font-mono text-xs focus:border-primary focus:outline-none"
-                    placeholder="e.g. storename@upi"
+                    placeholder="name@upi"
+                    className="w-full px-3 py-1.5 rounded-lg bg-bg border border-border text-text text-xs focus:border-primary focus:outline-none font-mono"
                   />
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
+            ))}
+          </div>
 
-      <div className="flex justify-end gap-3 pt-4">
-        <button
-          type="button"
-          onClick={handleResetIntegrations}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2.5 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer"
-        >
-          <RotateCcw size={14} />
-          <span>Reset Form</span>
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm"
-        >
-          {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-          <span>Save Integrations & Credentials</span>
-        </button>
+          {/* Payment QR Card Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-bg3/40 border border-border rounded-xl p-3 mt-3">
+            <span className="text-[11px] text-muted">
+              Saves delivery checkout mode and active 3-QR rotation pool configurations
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetPaymentQrsOnly}
+                disabled={savingSection === 'payments'}
+                className="flex items-center gap-1.5 px-3 py-2 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={13} />
+                <span>Reset</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePaymentQrsOnly}
+                disabled={savingSection === 'payments'}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {savingSection === 'payments' ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Save Payment &amp; QR Settings</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sticky Bottom Master Save & Reset Bar */}
+      <div className="sticky bottom-0 bg-bg/95 backdrop-blur-md border border-border p-3.5 rounded-2xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 z-20">
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <CheckCircle2 size={16} className="text-primary shrink-0" />
+          <span>
+            {activeSubTab === 'all'
+              ? 'Bulk Action: Save or reset all 7 service credentials simultaneously'
+              : `Bulk Action: Save or reset all credentials across all integrations`}
+          </span>
+        </div>
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <button
+            type="button"
+            onClick={handleResetIntegrations}
+            disabled={saving}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-bg3 border border-border text-muted hover:text-text font-bold text-xs rounded-xl hover:bg-bg3/80 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RotateCcw size={14} />
+            <span>Reset All Changes</span>
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center justify-center gap-2 px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+          >
+            {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+            <span>Save All Integrations &amp; Credentials</span>
+          </button>
+        </div>
       </div>
     </form>
   );
