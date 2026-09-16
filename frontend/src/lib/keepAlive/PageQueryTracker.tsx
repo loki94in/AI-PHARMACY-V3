@@ -44,6 +44,14 @@ export function PageQueryTracker({ pagePath, active }: Props) {
   useEffect(() => {
     const cache = queryClient.getQueryCache();
 
+    if (active) {
+      cache.getAll().forEach(query => {
+        if (query.getObserversCount() > 0 && query.state.status === 'success') {
+          recordPageQuery(pagePath, query.queryHash);
+        }
+      });
+    }
+
     const unsubscribe = cache.subscribe((rawEvent) => {
       const event = rawEvent as CacheNotifyEventLike;
       const query = event.query;

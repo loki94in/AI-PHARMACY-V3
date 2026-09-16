@@ -1,26 +1,34 @@
 ; ============================================================
 ;  AI Pharmacy OS — Portable Inno Setup Installer
-;  Version : 0.1.0
 ;  Compiler: Inno Setup 6.x  (https://jrsoftware.org/isinfo.php)
+;
+;  VERSION IS INJECTED AUTOMATICALLY — do not hand-edit MyAppVersion here.
+;  The build script (scripts/buildSea.cjs) passes:
+;    /DMyAppVersion=X.Y.Z
+;  which overrides the fallback below. package.json is the single version source.
 ;
 ;  Portable install: no admin rights, installs to a writable folder
 ;  (default %LOCALAPPDATA%\AI Pharmacy OS). Data, uploads, and the
 ;  database live beside PharmacyOS.exe — not under Program Files.
 ;
 ;  BUILD STEPS (run from project root):
-;    1.  npm run build:exe
-;        (frontend + backend + dist-pkg bundle + dist\PharmacyOS.exe via Node SEA)
-;    2.  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+;    npm run build:exe
+;    (frontend + backend + dist-pkg bundle + dist\PharmacyOS.exe via Node SEA
+;     + Inno Setup installer compiled with injected version)
 ;
 ;  PharmacyOS.exe is a Node SEA build — it embeds only app code, not
 ;  node_modules. The full node_modules tree must ship beside the exe.
 ;  sea-entry.cjs is required for external require() resolution.
 ;
-;  OUTPUT: dist\installer\AI-Pharmacy-OS-Portable-Setup-v0.1.0.exe
+;  OUTPUT: dist\installer\AI-Pharmacy-OS-Portable-Setup-v{MyAppVersion}.exe
 ; ============================================================
 
 #define MyAppName      "AI Pharmacy OS"
-#define MyAppVersion   "0.1.0"
+; MyAppVersion is injected via /DMyAppVersion=X.Y.Z from scripts/buildSea.cjs
+; Fallback guard — allows ISCC to be run standalone without crashing.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0"
+#endif
 #define MyAppPublisher "AI Pharmacy Team"
 #define MyAppURL       ""
 #define MyAppExeName   "PharmacyOS.exe"
@@ -100,6 +108,7 @@ Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedo
 Source: "packaging\RUN-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\RUN-PharmacyOS-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\STOP-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "packaging\Updater.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
@@ -154,6 +163,8 @@ Name: "{app}\data"; Permissions: users-full
 Name: "{app}\uploads"; Permissions: users-full
 Name: "{app}\uploads\temp"; Permissions: users-full
 Name: "{app}\backup"; Permissions: users-full
+Name: "{app}\updates"; Permissions: users-full
+Name: "{app}\updates\staging"; Permissions: users-full
 
 [Code]
 

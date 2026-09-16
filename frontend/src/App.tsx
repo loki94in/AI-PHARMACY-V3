@@ -13,7 +13,7 @@ import UpdateBanner from './components/UpdateBanner';
 
 // Minimal page-switch loading fallback — renders instantly, no layout shift
 const PageLoader = () => (
-  <div className="flex-1 flex items-center justify-center h-full">
+  <div className="flex-1 w-full h-full min-h-[40vh] flex items-center justify-center bg-bg text-text">
     <div className="flex flex-col items-center gap-3">
       <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
       <span className="text-xs text-muted font-semibold uppercase tracking-widest">Loading...</span>

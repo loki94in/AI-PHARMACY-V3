@@ -1,7 +1,9 @@
 /**
- * AutoUpdateService — checks for new app versions daily.
- * Runs silently on boot. Auto-downloads new update installer in the background.
- * Fires SSE event when an update is downloaded and ready to install.
+ * AutoUpdateService — checks for new app versions on every boot.
+ * Runs silently after application is available. Downloads update in background.
+ * Fires SSE event when an update is detected or downloaded and ready.
+ *
+ * PRODUCTION.md §13, §21, §22, §28, §29, §31, §33, §34, §35
  */
 
 import fs from 'fs';
@@ -9,16 +11,54 @@ import path from 'path';
 import os from 'os';
 import https from 'https';
 import http from 'http';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { dbManager } from '../database/connection.js';
 import { checkForUpdate } from './licenseService.js';
 import { eventService } from './eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 
-const BOOT_DELAY_MS    = 60_000;
-// Check every 2 hours if 24 hours have elapsed since the last daily check
-const POLL_INTERVAL_MS = 2 * 60 * 60 * 1000;
+// ── Timing constants ─────────────────────────────────────────────────────────
+// PRODUCTION.md §33: update check runs in background after startup
+const BOOT_DELAY_MS    = 60_000;  // wait 60s after boot before first check
+const POLL_INTERVAL_MS = 2 * 60 * 60 * 1000; // poll every 2h (daily gate in runCheck)
 
+// ── Update staging directory ─────────────────────────────────────────────────
+// PRODUCTION.md §21: download to {app}\updates\staging, NOT os.tmpdir()
+function getStagingDir(): string {
+  // In production: app exe is in %LOCALAPPDATA%\AI Pharmacy OS\
+  // In dev: falls back to a sibling of process.cwd()
+  const appDir = path.dirname(process.execPath);
+  const isSeaBinary = !process.execPath.endsWith('node.exe') &&
+                      !process.execPath.endsWith('node') &&
+                      !process.execPath.includes('tsx');
+  const baseDir = isSeaBinary
+    ? appDir
+    : path.join(os.homedir(), 'AppData', 'Local', 'AI Pharmacy OS');
+  return path.join(baseDir, 'updates', 'staging');
+}
+
+function getUpdaterPath(): string {
+  // Updater.bat lives next to PharmacyOS.exe in the install dir
+  const appDir = path.dirname(process.execPath);
+  const isSeaBinary = !process.execPath.endsWith('node.exe') &&
+                      !process.execPath.endsWith('node') &&
+                      !process.execPath.includes('tsx');
+  if (isSeaBinary) return path.join(appDir, 'Updater.bat');
+  // Dev fallback (Updater.bat not built yet in dev) — return the packaging source
+  return path.join(process.cwd(), 'packaging', 'Updater.bat');
+}
+
+function getLogPath(): string {
+  const appDir = path.dirname(process.execPath);
+  const isSeaBinary = !process.execPath.endsWith('node.exe') &&
+                      !process.execPath.endsWith('node') &&
+                      !process.execPath.includes('tsx');
+  const baseDir = isSeaBinary ? appDir : path.join(os.homedir(), 'AppData', 'Local', 'AI Pharmacy OS');
+  return path.join(baseDir, 'logs', 'updater.log');
+}
+
+// ── Download helper ──────────────────────────────────────────────────────────
 function downloadFile(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tempDest = dest + '.tmp';
@@ -26,14 +66,14 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
     function makeRequest(currentUrl: string, redirectCount = 0) {
       if (redirectCount > 5) {
-        return reject(new Error('Too many redirects while downloading update'));
+        return reject(new Error('DOWNLOAD_FAILED: Too many redirects while downloading update'));
       }
       client.get(currentUrl, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return makeRequest(res.headers.location, redirectCount + 1);
         }
         if (res.statusCode !== 200) {
-          return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+          return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
         }
         const fileStream = fs.createWriteStream(tempDest);
         res.pipe(fileStream);
@@ -50,7 +90,7 @@ function downloadFile(url: string, dest: string): Promise<void> {
         });
       }).on('error', (err) => {
         try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
-        reject(err);
+        reject(new Error(`DOWNLOAD_FAILED: ${err.message}`));
       });
     }
 
@@ -58,6 +98,19 @@ function downloadFile(url: string, dest: string): Promise<void> {
   });
 }
 
+// ── SHA-256 verification ──────────────────────────────────────────────────────
+// PRODUCTION.md §31
+function computeSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk as Buffer));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+// ── Service ──────────────────────────────────────────────────────────────────
 class AutoUpdateService {
   private static instance: AutoUpdateService;
   private intervalHandle: NodeJS.Timeout | null = null;
@@ -65,6 +118,8 @@ class AutoUpdateService {
     hasUpdate: boolean;
     latestVersion?: string;
     downloadUrl?: string;
+    updatePackageUrl?: string;
+    sha256?: string;
     changelog?: string;
     downloading?: boolean;
     readyToInstall?: boolean;
@@ -76,13 +131,16 @@ class AutoUpdateService {
     return AutoUpdateService.instance;
   }
 
-  /** Start the scheduler. Called once from server.ts after schema is ready. */
+  /**
+   * Start the update scheduler. Called once from server.ts after schema is ready.
+   * PRODUCTION.md §13: every boot checks for an update in background.
+   */
   start(): void {
-    // Delay first check so it doesn't compete with boot DB/schema work
+    // Delay first check so it doesn't compete with boot DB/schema work (§28)
     setTimeout(() => this.runCheck('auto'), BOOT_DELAY_MS);
 
     // Poll every 2h but only run the actual network check if 1 day has elapsed
-    // AND the PC is idle (gated on activityTracker — no check during active billing)
+    // AND the PC is idle (no check during active billing)
     this.intervalHandle = setInterval(async () => {
       if (!activityTracker.isIdle(30 * 60 * 1000)) return; // skip if active in last 30 min
       await this.runCheck('auto');
@@ -106,24 +164,29 @@ class AutoUpdateService {
 
       // Auto checks: skip if within the configured daily interval (default 1 day)
       if (reason === 'auto' && row?.last_checked_at) {
-        const lastMs = new Date(row.last_checked_at).getTime();
-        const intervalDays = row.check_interval_days ?? 1; // Daily check
-        const intervalMs   = intervalDays * 24 * 60 * 60 * 1000;
-        if (Date.now() - lastMs < intervalMs) return; // not yet due
+        const lastMs      = new Date(row.last_checked_at).getTime();
+        const intervalDays = row.check_interval_days ?? 1;
+        const intervalMs  = intervalDays * 24 * 60 * 60 * 1000;
+        if (Date.now() - lastMs < intervalMs) return;
       }
 
-      const result = await checkForUpdate();
-      if (!result) return; // offline
+      // PRODUCTION.md §14: update check is separate from license check
+      const result = await checkForUpdate(); // returns null when offline — never throws
+      if (!result) {
+        // UPDATE_SERVER_UNAVAILABLE — do not freeze, do not mark license invalid
+        console.log('[AutoUpdate] UPDATE_SERVER_UNAVAILABLE — offline or server unreachable. Continuing normally.');
+        return;
+      }
 
-      const updateDir = path.join(os.tmpdir(), 'AIPharmacyUpdate');
-      if (!fs.existsSync(updateDir)) fs.mkdirSync(updateDir, { recursive: true });
-      const updateExePath = result.latestVersion ? path.join(updateDir, `setup_${result.latestVersion}.exe`) : null;
-      const alreadyDownloaded = updateExePath ? fs.existsSync(updateExePath) : false;
+      const stagingDir   = getStagingDir();
+      const zipFileName  = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
+      const zipPath      = zipFileName ? path.join(stagingDir, zipFileName) : null;
+      const alreadyDownloaded = zipPath ? fs.existsSync(zipPath) : false;
 
       this.lastResult = {
         ...result,
         downloading: false,
-        readyToInstall: alreadyDownloaded
+        readyToInstall: alreadyDownloaded,
       };
 
       if (result.hasUpdate) {
@@ -131,31 +194,37 @@ class AutoUpdateService {
 
         if (alreadyDownloaded) {
           eventService.broadcast('update_available', {
-            latestVersion: result.latestVersion,
-            downloadUrl:   result.downloadUrl,
-            changelog:     result.changelog,
+            latestVersion:  result.latestVersion,
+            downloadUrl:    result.downloadUrl,
+            changelog:      result.changelog,
             readyToInstall: true,
             reason,
           });
         } else if (result.downloadUrl && !this.isDownloading) {
-          // Notify that update is detected and downloading in background
           eventService.broadcast('update_available', {
-            latestVersion: result.latestVersion,
-            downloadUrl:   result.downloadUrl,
-            changelog:     result.changelog,
-            downloading:   true,
+            latestVersion:  result.latestVersion,
+            downloadUrl:    result.downloadUrl,
+            changelog:      result.changelog,
+            downloading:    true,
             readyToInstall: false,
             reason,
           });
 
-          // Silently download the installer in background
+          // Silently download the update ZIP in background (§29)
           this.isDownloading = true;
-          this.downloadUpdateSilently(result.downloadUrl, updateExePath!, result.latestVersion!, result.changelog, reason);
+          this.downloadUpdateSilently({
+            url:       result.downloadUrl,
+            dest:      zipPath!,
+            version:   result.latestVersion!,
+            sha256:    (result as any).sha256,
+            changelog: result.changelog,
+            reason,
+          });
         }
       } else {
         if (reason === 'manual') {
           eventService.broadcast('update_check_complete', {
-            hasUpdate: false,
+            hasUpdate:     false,
             latestVersion: result.latestVersion,
             reason,
           });
@@ -163,99 +232,113 @@ class AutoUpdateService {
         console.log(`[AutoUpdate] App is up to date (${result.latestVersion}).`);
       }
     } catch (err) {
+      // PRODUCTION.md §13: never freeze on update check failure
       console.warn('[AutoUpdate] Check failed (offline?):', (err as Error).message);
     }
   }
 
-  private async downloadUpdateSilently(url: string, dest: string, version: string, changelog?: string, reason = 'auto'): Promise<void> {
+  private async downloadUpdateSilently(opts: {
+    url: string;
+    dest: string;
+    version: string;
+    sha256?: string;
+    changelog?: string;
+    reason?: string;
+  }): Promise<void> {
+    const { url, dest, version, sha256: expectedSha256, changelog, reason = 'auto' } = opts;
     try {
-      console.log(`[AutoUpdate] Silently downloading update v${version} in background...`);
+      const stagingDir = getStagingDir();
+      fs.mkdirSync(stagingDir, { recursive: true });
+
+      console.log(`[AutoUpdate] Silently downloading update v${version} to staging...`);
       await downloadFile(url, dest);
+
+      // SHA-256 verification (PRODUCTION.md §31)
+      if (expectedSha256) {
+        console.log('[AutoUpdate] Verifying SHA-256...');
+        const actualSha256 = await computeSha256(dest);
+        if (actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+          console.error(`[AutoUpdate] CHECKSUM_MISMATCH — aborting. Expected: ${expectedSha256}, got: ${actualSha256}`);
+          // Delete corrupted package — keep current version
+          try { fs.unlinkSync(dest); } catch (_) {}
+          this.isDownloading = false;
+          return;
+        }
+        console.log('[AutoUpdate] SHA-256 verified OK.');
+      }
+
       this.isDownloading = false;
       if (this.lastResult) {
-        this.lastResult.downloading = false;
+        this.lastResult.downloading    = false;
         this.lastResult.readyToInstall = true;
       }
       console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
       eventService.broadcast('update_available', {
-        latestVersion: version,
-        changelog: changelog || '',
+        latestVersion:  version,
+        changelog:      changelog || '',
         readyToInstall: true,
-        downloading: false,
+        downloading:    false,
         reason,
       });
     } catch (err: any) {
       this.isDownloading = false;
-      console.warn('[AutoUpdate] Silent background download failed:', err.message);
+      // Delete incomplete temp file if it exists
+      try { if (fs.existsSync(dest + '.tmp')) fs.unlinkSync(dest + '.tmp'); } catch (_) {}
+      console.warn('[AutoUpdate] DOWNLOAD_FAILED:', err.message);
     }
   }
 
   /**
-   * 1-Click silent install & auto-restart.
-   * Spawns a detached Windows helper script that waits for current process to exit,
-   * runs the downloaded installer silently, and relaunches the app.
+   * Apply the downloaded update.
+   * Spawns the dedicated Updater.bat which:
+   *   - waits for app to exit
+   *   - verifies SHA-256
+   *   - backs up install dir
+   *   - extracts update ZIP
+   *   - rolls back on failure
+   *   - starts new (or old) PharmacyOS.exe
+   *
+   * PRODUCTION.md §22, §23
    */
   async applyUpdate(): Promise<{ success: boolean; message: string }> {
     if (!this.lastResult?.latestVersion) {
       throw new Error('No pending update found.');
     }
-    const updateDir    = path.join(os.tmpdir(), 'AIPharmacyUpdate');
-    const updateExePath = path.join(updateDir, `setup_${this.lastResult.latestVersion}.exe`);
-    if (!fs.existsSync(updateExePath)) {
+
+    const stagingDir = getStagingDir();
+    const zipFileName = `AI-Pharmacy-OS-Update-v${this.lastResult.latestVersion}.zip`;
+    const zipPath     = path.join(stagingDir, zipFileName);
+
+    if (!fs.existsSync(zipPath)) {
       throw new Error('Update file has not finished downloading yet.');
     }
 
-    const scriptPath  = path.join(updateDir, 'install_and_restart.bat');
-    const appDir      = path.dirname(process.execPath);
-    const currentExe  = process.execPath;          // e.g. C:\...\PharmacyOS.exe
-    const backupExe   = currentExe + '.bak';       // PharmacyOS.exe.bak
-    const failFlagPath = path.join(updateDir, 'update_failed.json');
-    const version      = this.lastResult.latestVersion;
-    const toWin        = (p: string) => p.replace(/\//g, '\\');
-    const winCurrentExe   = toWin(currentExe);
-    const winBackupExe    = toWin(backupExe);
-    const winFailFlagPath = toWin(failFlagPath);
-    const winAppDir       = toWin(appDir);
+    const updaterPath = getUpdaterPath();
+    if (!fs.existsSync(updaterPath)) {
+      throw new Error(`Updater.bat not found at: ${updaterPath}`);
+    }
 
-    // Bat: backup current exe → run installer → on failure restore backup + write fail flag
-    const scriptContent = `@echo off
-timeout /t 2 /nobreak >nul
-taskkill /F /IM PharmacyOS.exe >nul 2>&1
+    const installDir = path.dirname(process.execPath);
+    const logPath    = getLogPath();
+    const sha256     = this.lastResult.sha256 || '';
 
-rem --- Backup current executable before overwriting ---
-if exist "${winCurrentExe}" copy /Y "${winCurrentExe}" "${winBackupExe}" >nul
+    console.log('[AutoUpdate] Spawning dedicated Updater.bat...');
+    console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
+    console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
+    console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+    console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
 
-rem --- Run new installer ---
-"%~1" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-set INSTALL_ERR=%ERRORLEVEL%
-
-if %INSTALL_ERR% NEQ 0 (
-  rem --- Install failed: write failure flag and restore backup ---
-  echo {"version":"${version}","error":"Installer exited with code %INSTALL_ERR%","ts":"%DATE% %TIME%"} > "${winFailFlagPath}"
-  if exist "${winBackupExe}" (
-    copy /Y "${winBackupExe}" "${winCurrentExe}" >nul
-  )
-  start "" "${winCurrentExe}"
-  exit /b 1
-)
-
-rem --- Install succeeded: launch new version ---
-timeout /t 3 /nobreak >nul
-if exist "${winAppDir}\\RUN-PharmacyOS-Silent.vbs" (
-  wscript.exe "${winAppDir}\\RUN-PharmacyOS-Silent.vbs"
-) else if exist "${winAppDir}\\PharmacyOS.exe" (
-  start "" "${winAppDir}\\PharmacyOS.exe"
-) else (
-  start "" "%LOCALAPPDATA%\\AI Pharmacy OS\\PharmacyOS.exe"
-)
-exit
-`;
-    fs.writeFileSync(scriptPath, scriptContent, 'utf8');
-
-    console.log('[AutoUpdate] Spawning detached installer helper script (with rollback)...');
-    const child = spawn('cmd.exe', ['/c', scriptPath, updateExePath, appDir], {
+    // Spawn Updater.bat detached — it will wait for this process to exit
+    const child = spawn('cmd.exe', [
+      '/c', updaterPath,
+      zipPath,
+      installDir,
+      this.lastResult.latestVersion,
+      sha256,
+      logPath,
+    ], {
       detached: true,
-      stdio: 'ignore'
+      stdio:    'ignore',
     });
     child.unref();
 
@@ -265,18 +348,18 @@ exit
   getLastResult() { return this.lastResult; }
 
   /**
-   * Call once on boot. Detects if previous update install failed,
-   * sends telemetry to Vercel, and returns a message to show the user.
+   * Call once on boot. Detects if previous update install failed (rollback already happened).
+   * PRODUCTION.md §26, §35
    */
   async checkFailedUpdate(): Promise<string | null> {
-    const failFlagPath = path.join(os.tmpdir(), 'AIPharmacyUpdate', 'update_failed.json');
-    if (!fs.existsSync(failFlagPath)) return null;
+    const stagingDir   = getStagingDir();
+    const failurePath  = path.join(stagingDir, 'failure.json');
+    if (!fs.existsSync(failurePath)) return null;
     try {
-      const raw  = fs.readFileSync(failFlagPath, 'utf8');
+      const raw  = fs.readFileSync(failurePath, 'utf8');
       const info = JSON.parse(raw) as { version?: string; error?: string };
-      fs.unlinkSync(failFlagPath); // consume flag
+      fs.unlinkSync(failurePath); // consume flag
 
-      // Send telemetry so developer sees it
       const { reportCrashTelemetry } = await import('./licenseService.js');
       await reportCrashTelemetry({
         errorType: 'UPDATE_INSTALL_FAILED',
@@ -284,7 +367,7 @@ exit
       }).catch(() => {});
 
       console.warn(`[AutoUpdate] Previous update v${info.version} failed — rolled back to previous version.`);
-      return `⚠️ Update to v${info.version} failed. Rolled back to previous version. Our team has been notified.`;
+      return `⚠️ Update to v${info.version} failed (${info.error || 'unknown error'}). Rolled back to previous version.`;
     } catch {
       return null;
     }
@@ -292,4 +375,3 @@ exit
 }
 
 export const autoUpdateService = AutoUpdateService.getInstance();
-

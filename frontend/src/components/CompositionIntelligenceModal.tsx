@@ -16,6 +16,9 @@ import {
   ImageIcon,
   Maximize2,
   ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  BookOpen,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -82,6 +85,18 @@ export interface CompositionIntelligenceData {
     manufacturer?: string;
     mrp?: number;
   }>;
+  clinical_info?: {
+    salt_composition?: string;
+    sub_category?: string;
+    medicine_desc?: string;
+    side_effects?: string;
+    drug_interactions?: {
+      drug?: string[];
+      brand?: string[];
+      effect?: string[];
+    };
+    match_confidence?: number;
+  } | null;
 }
 
 interface CompositionIntelligenceModalProps {
@@ -97,7 +112,7 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
   onClose,
   onSelectAlternative
 }) => {
-  const [activeTab, setActiveTab] = useState<'instock' | 'packaging' | 'history' | 'master'>('instock');
+  const [activeTab, setActiveTab] = useState<'instock' | 'packaging' | 'history' | 'master' | 'clinical'>('instock');
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<CompositionIntelligenceData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -319,6 +334,24 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
             {data && (
               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary border border-primary/20">
                 {data.master_brands_count}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('clinical')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'clinical'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted hover:text-text'
+            }`}
+          >
+            <ShieldAlert size={15} />
+            <span>Clinical & Safety</span>
+            {data?.clinical_info && (
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                AI Monograph
               </span>
             )}
           </button>
@@ -654,6 +687,117 @@ export const CompositionIntelligenceModal: React.FC<CompositionIntelligenceModal
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* TAB 5: CLINICAL & SAFETY KNOWLEDGE */}
+              {activeTab === 'clinical' && (
+                <div className="space-y-4">
+                  {data.clinical_info ? (
+                    <>
+                      {/* Top Salt & Class Header */}
+                      <div className="p-4 rounded-xl border border-glass-border bg-bg3/40 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Active Chemical Formulation / Salt</span>
+                            <h4 className="text-sm font-bold text-text">{data.clinical_info.salt_composition || data.api_reference || 'Formula on file'}</h4>
+                          </div>
+                          {data.clinical_info.sub_category && (
+                            <span className="px-3 py-1 rounded-lg text-xs font-semibold bg-primary/10 border border-primary/20 text-primary">
+                              {data.clinical_info.sub_category}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Description & Clinical Guidance */}
+                      {data.clinical_info.medicine_desc && (
+                        <div className="p-4 rounded-xl border border-glass-border bg-bg2 space-y-2">
+                          <h5 className="text-xs font-bold text-text flex items-center gap-1.5">
+                            <BookOpen size={14} className="text-primary" />
+                            Clinical Overview & Indications
+                          </h5>
+                          <p className="text-xs text-muted leading-relaxed whitespace-pre-line">
+                            {data.clinical_info.medicine_desc}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Known Side Effects */}
+                      {data.clinical_info.side_effects && (
+                        <div className="p-4 rounded-xl border border-glass-border bg-bg2 space-y-2">
+                          <h5 className="text-xs font-bold text-text flex items-center gap-1.5">
+                            <AlertTriangle size={14} className="text-amber-400" />
+                            Common Side Effects
+                          </h5>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {data.clinical_info.side_effects.split(',').map((se, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                              >
+                                {se.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Drug Interactions Matrix */}
+                      {data.clinical_info.drug_interactions && Array.isArray(data.clinical_info.drug_interactions.drug) && data.clinical_info.drug_interactions.drug.length > 0 && (
+                        <div className="p-4 rounded-xl border border-glass-border bg-bg2 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-xs font-bold text-text flex items-center gap-1.5">
+                              <ShieldAlert size={14} className="text-rose-400" />
+                              Known Drug-Drug Interactions
+                            </h5>
+                            <span className="text-[11px] font-mono text-muted">
+                              {data.clinical_info.drug_interactions.drug.length} monitored substances
+                            </span>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                            {data.clinical_info.drug_interactions.drug.map((drugName: string, idx: number) => {
+                              const effect = data.clinical_info?.drug_interactions?.effect?.[idx] || 'MODERATE';
+                              const brand = data.clinical_info?.drug_interactions?.brand?.[idx] || '';
+                              const isMajor = effect.toUpperCase() === 'MAJOR' || effect.toUpperCase() === 'LIFE-THREATENING';
+                              return (
+                                <div
+                                  key={idx}
+                                  className="flex items-start justify-between p-2.5 rounded-lg bg-bg border border-border/40 text-xs"
+                                >
+                                  <div>
+                                    <span className="font-semibold text-text">{drugName}</span>
+                                    {brand && (
+                                      <span className="text-[11px] text-muted block mt-0.5">
+                                        Common brands: {brand.trim()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase whitespace-nowrap ${
+                                      isMajor
+                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    }`}
+                                  >
+                                    {effect}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-12 p-6 rounded-xl border border-glass-border bg-bg3/30 space-y-2">
+                      <ShieldAlert size={32} className="mx-auto text-muted" />
+                      <h4 className="text-sm font-bold text-text">No Clinical Profile Linked</h4>
+                      <p className="text-xs text-muted max-w-md mx-auto">
+                        This item does not yet have an enriched clinical monograph in the database.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </>

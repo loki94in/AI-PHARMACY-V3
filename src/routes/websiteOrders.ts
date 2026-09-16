@@ -1274,4 +1274,294 @@ router.post('/prescription-request', async (req, res) => {
   }
 });
 
+// ─── Refill Preview (spec §4, §5 WEBSITE ORDER + REFILL doc) ─────────────────
+// GET /api/website/orders/:orderId/refill-preview
+// Re-checks current stock/pricing for medicines in a previous order.
+// Returns a preview — does NOT create anything. Customer confirms before paying.
+router.get('/orders/:orderId/refill-preview', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.orderId as string, 10);
+    if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+
+    // Verify the original order exists and belongs to the requesting customer (by phone)
+    const phone = ((req.query.phone as string) || '').replace(/\D/g, '').trim();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    if (!order) return res.status(404).json({ error: 'Original order not found' });
+
+    // Light identity check: phone must match (10 or 12 digits) if provided
+    if (phone) {
+      const orderPhone = (order.phone || '').replace(/\D/g, '');
+      const orderPhoneTrimmed = orderPhone.length === 12 ? orderPhone.slice(2) : orderPhone;
+      const reqPhoneTrimmed = phone.length === 12 ? phone.slice(2) : phone;
+      if (orderPhoneTrimmed !== reqPhoneTrimmed) {
+        return res.status(403).json({ error: 'Phone number does not match the original order' });
+      }
+    }
+
+    // Get original order items
+    const items = await db.all(
+      `SELECT oi.medicine_id, oi.requested_qty,
+              COALESCE(am.name, m.name) as medicine_name,
+              m.id as orig_medicine_id, m.generic_name, m.strength, m.packaging, m.manufacturer,
+              ci.image_path as image_url
+       FROM online_order_items oi
+       LEFT JOIN medicines m ON m.id = oi.medicine_id
+       LEFT JOIN medicines am ON am.id = oi.actual_medicine_id
+       LEFT JOIN catalog_images ci ON ci.medicine_id = COALESCE(oi.actual_medicine_id, oi.medicine_id) AND ci.is_active = 1 AND ci.is_primary = 1
+       WHERE oi.order_id = ? AND oi.item_status != 'UNAVAILABLE'`,
+      [orderId]
+    );
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'No available items in the original order for refill' });
+    }
+
+    const storeId = order.store_id || 1;
+    const previewItems = [];
+
+    for (const item of items) {
+      if (!item.medicine_id) continue;
+
+      // Re-check CURRENT stock/pricing (never copies old price/batch)
+      const batchRow = await db.get(
+        `SELECT MAX(mrp) as max_mrp, MAX(sell_price) as max_sell_price,
+                SUM(quantity) as total_qty, MAX(expiry_date) as latest_expiry
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+        [item.medicine_id, storeId]
+      ).catch(() => null);
+
+      const currentMrp = batchRow?.max_mrp || 0;
+      const currentSellPrice = batchRow?.max_sell_price || currentMrp;
+      const currentStock = batchRow?.total_qty || 0;
+
+      previewItems.push({
+        medicine_id: item.medicine_id,
+        medicine_name: item.medicine_name,
+        generic_name: item.generic_name || '',
+        strength: item.strength || '',
+        packaging: item.packaging || '',
+        manufacturer: item.manufacturer || '',
+        image_url: item.image_url || null,
+        requested_qty: item.requested_qty || 1,
+        current_mrp: currentMrp,
+        current_sell_price: currentSellPrice,
+        current_stock: currentStock,
+        is_available: currentStock > 0,
+        availability_status: currentStock > 0 ? 'Available' : 'Out of Stock'
+      });
+    }
+
+    res.json({
+      original_order_id: orderId,
+      store_id: storeId,
+      customer_name: order.requester,
+      customer_phone: order.phone,
+      preview_items: previewItems,
+      available_count: previewItems.filter((i: any) => i.is_available).length,
+      total_count: previewItems.length,
+      note: 'Prices and availability are current. A new order will be created upon confirmation — the original order remains unchanged.'
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Refill preview error:', err);
+    res.status(500).json({ error: 'Failed to generate refill preview' });
+  }
+});
+
+// ─── Create Refill Order (spec §4, §5 WEBSITE ORDER + REFILL doc) ────────────
+// POST /api/website/orders/:orderId/refill
+// Creates a brand-new order from the previous order's medicine_ids.
+// Uses CURRENT inventory/pricing — never copies old price, batch, or stock.
+// The original order remains completely unchanged.
+router.post('/orders/:orderId/refill', async (req, res) => {
+  try {
+    const originalOrderId = parseInt(req.params.orderId as string, 10);
+    if (isNaN(originalOrderId)) return res.status(400).json({ error: 'Invalid original order ID' });
+
+    const {
+      customer_name,
+      customer_phone,
+      customer_address,
+      notes,
+      payment_method = 'COUNTER_PICKUP',
+      delivery_mode = 'pickup'
+    } = req.body;
+
+    const db = await dbManager.getConnection();
+
+    // Verify original order
+    const originalOrder = await db.get('SELECT * FROM special_orders WHERE id = ?', [originalOrderId]);
+    if (!originalOrder) return res.status(404).json({ error: 'Original order not found' });
+
+    const storeId = originalOrder.store_id || 1;
+    const resolvedName = (customer_name || originalOrder.requester || '').trim();
+    const resolvedPhone = ((customer_phone || originalOrder.phone || '').replace(/\D/g, '')).trim();
+
+    if (!resolvedName) return res.status(400).json({ error: 'Customer name is required' });
+    if (!resolvedPhone || resolvedPhone.length < 10) {
+      return res.status(400).json({ error: 'Valid customer phone is required' });
+    }
+
+    // Get refillable items from original order (skip UNAVAILABLE)
+    const originalItems = await db.all(
+      `SELECT oi.medicine_id, oi.requested_qty
+       FROM online_order_items oi
+       WHERE oi.order_id = ? AND oi.item_status != 'UNAVAILABLE' AND oi.medicine_id IS NOT NULL`,
+      [originalOrderId]
+    );
+
+    if (!originalItems || originalItems.length === 0) {
+      return res.status(400).json({ error: 'No refillable items in the original order' });
+    }
+
+    // Re-validate current stock/pricing for each medicine (spec §5: MUST re-check)
+    const validItems: any[] = [];
+    for (const item of originalItems) {
+      const batchRow = await db.get(
+        `SELECT im.id as inventory_id, im.mrp, im.sell_price, im.batch_no, SUM(im.quantity) as total_qty
+         FROM inventory_master im
+         WHERE im.medicine_id = ? AND im.store_id = ? AND im.is_active = 1
+           AND im.quantity > 0
+           AND (im.expiry_date IS NULL OR date(im.expiry_date) > date('now'))
+         GROUP BY im.medicine_id
+         ORDER BY im.expiry_date ASC LIMIT 1`,
+        [item.medicine_id, storeId]
+      ).catch(() => null);
+
+      const med = await db.get('SELECT name FROM medicines WHERE id = ?', [item.medicine_id]).catch(() => null);
+      const medName = med?.name || `Medicine #${item.medicine_id}`;
+
+      validItems.push({
+        medicine_id: item.medicine_id,
+        medicine_name: medName,
+        requested_qty: item.requested_qty || 1,
+        inventory_id: batchRow?.inventory_id || null,
+        mrp: batchRow?.mrp || 0,
+        sell_price: batchRow?.sell_price || batchRow?.mrp || 0,
+        batch_no: batchRow?.batch_no || null,
+        available_qty: batchRow?.total_qty || 0,
+        is_available: (batchRow?.total_qty || 0) > 0
+      });
+    }
+
+    // Resolve or create customer
+    const formattedPhone = resolvedPhone.length === 10 ? `91${resolvedPhone}` : resolvedPhone;
+    let customerId: number | null = null;
+    try {
+      const existingCustomer = await db.get(
+        "SELECT id FROM customers WHERE REPLACE(REPLACE(phone, ' ', ''), '-', '') LIKE ?",
+        [`%${resolvedPhone.slice(-10)}`]
+      );
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+      } else {
+        const custResult = await db.run(
+          'INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+          [resolvedName, formattedPhone, customer_address || '']
+        );
+        customerId = custResult.lastID || null;
+      }
+    } catch (_) {}
+
+    // Build order note including refill reference
+    const orderNote = `Refill of Order #${originalOrderId}${notes ? ' — ' + notes : ''}`;
+
+    // Create new order in special_orders (same table as regular website orders)
+    const orderResult = await db.run(
+      `INSERT INTO special_orders
+         (product, requester, phone, qty, priority, status, source, order_type,
+          payment_method, delivery_mode, store_id, customer_id, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        validItems.map((i: any) => i.medicine_name).join(', '),
+        resolvedName,
+        formattedPhone,
+        validItems.reduce((acc: number, i: any) => acc + i.requested_qty, 0),
+        'Normal',
+        'Pending',
+        'website_refill',
+        'website_refill',
+        payment_method,
+        delivery_mode,
+        storeId,
+        customerId,
+        orderNote
+      ]
+    );
+
+    const newOrderId = orderResult.lastID;
+    if (!newOrderId) throw new Error('Failed to create refill order');
+
+    // Insert order items with CURRENT pricing (spec §5: never copy old price)
+    for (const item of validItems) {
+      await db.run(
+        `INSERT INTO online_order_items
+           (order_id, medicine_id, requested_qty, item_status, mrp, sell_price, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          newOrderId,
+          item.medicine_id,
+          item.requested_qty,
+          item.is_available ? 'PENDING' : 'UNAVAILABLE',
+          item.mrp,
+          item.sell_price
+        ]
+      );
+
+      // Reserve available stock (spec §12: use existing reservation mechanism)
+      if (item.inventory_id && item.is_available) {
+        const reserveQty = Math.min(item.requested_qty, item.available_qty);
+        if (reserveQty > 0) {
+          const itemRow = await db.get(
+            'SELECT id FROM online_order_items WHERE order_id = ? AND medicine_id = ? ORDER BY id DESC LIMIT 1',
+            [newOrderId, item.medicine_id]
+          );
+          if (itemRow) {
+            await db.run(
+              `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+               VALUES (?, ?, ?, ?, 'ACTIVE')`,
+              [item.inventory_id, newOrderId, itemRow.id, reserveQty]
+            ).catch(() => {}); // non-fatal
+          }
+        }
+      }
+    }
+
+    // Tracking event
+    await db.run(
+      `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'order_created', ?, 'customer_refill', CURRENT_TIMESTAMP)`,
+      [newOrderId, `Refill order created from original Order #${originalOrderId}. ${validItems.length} item(s).`]
+    );
+
+    broadcastOrdersChanged();
+
+    res.status(201).json({
+      success: true,
+      message: 'Refill order created. Original order remains unchanged.',
+      new_order_id: newOrderId,
+      original_order_id: originalOrderId,
+      store_id: storeId,
+      items_count: validItems.length,
+      available_items: validItems.filter((i: any) => i.is_available).length,
+      unavailable_items: validItems.filter((i: any) => !i.is_available).length,
+      items: validItems.map((i: any) => ({
+        medicine_id: i.medicine_id,
+        medicine_name: i.medicine_name,
+        requested_qty: i.requested_qty,
+        current_mrp: i.mrp,
+        current_sell_price: i.sell_price,
+        is_available: i.is_available
+      }))
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Refill order creation error:', err);
+    res.status(500).json({ error: 'Failed to create refill order: ' + (err.message || 'Unknown error') });
+  }
+});
+
 export default router;

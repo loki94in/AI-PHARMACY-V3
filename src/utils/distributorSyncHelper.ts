@@ -239,11 +239,45 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   return { distributor_id: null, distributor_name: rawName, distributor_phone: '', source: 'none' };
 }
 
+let syncTablesEnsured = false;
+async function ensureSyncTablesOnce(db: any) {
+  if (syncTablesEnsured) return;
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS pharmarack_distributor_mappings (
+        store_name TEXT PRIMARY KEY,
+        distributor_id INTEGER,
+        phone TEXT,
+        delivery_boy_id INTEGER,
+        store_id INTEGER DEFAULT 1,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        type TEXT DEFAULT 'general',
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        gstin TEXT,
+        notes TEXT,
+        alias_names TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    syncTablesEnsured = true;
+  } catch (_) {}
+}
+
 /**
  * Ensures distributor phone/contact changes are permanently saved and synchronized 
- * across distributors, pharmarack_distributor_mappings, and contacts tables in SQLite.
+ * atomically across distributors, pharmarack_distributor_mappings, and contacts tables in SQLite.
  */
 export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDistributorParams) {
+  await ensureSyncTablesOnce(db);
+
   const rawDistName = (params.name || params.store_name || '').trim();
   const distName = isValidDistributorName(rawDistName) ? rawDistName : '';
   const phoneInput = params.phone !== undefined && params.phone !== null && String(params.phone).trim() !== ''
@@ -262,63 +296,50 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
 
   const cleanEmail = extractCleanEmail(params.email);
 
-  let targetId: number | null = params.id && !isNaN(Number(params.id)) ? Number(params.id) : null;
-  let existingDist: any = null;
-
-  if (targetId) {
-    existingDist = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
-  }
-
-  if (!existingDist && distName) {
-    existingDist = await db.get('SELECT * FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [distName]);
-    if (existingDist) {
-      targetId = existingDist.id;
+  let isTxOwner = false;
+  try {
+    await db.run('BEGIN IMMEDIATE TRANSACTION');
+    isTxOwner = true;
+  } catch (txErr: any) {
+    if (!txErr?.message?.includes('cannot start a transaction within a transaction')) {
+      throw txErr;
     }
   }
 
-  // 1. Update or Insert into 'distributors' table
-  if (existingDist) {
-    let nameToUpdate = distName;
-    if (distName && distName.toLowerCase().trim() !== (existingDist.name || '').toLowerCase().trim()) {
-      const duplicate = await db.get(
-        'SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?',
-        [distName, existingDist.id]
-      );
-      if (duplicate) {
-        // Name collides with another distributor record — preserve target distributor's name to prevent UNIQUE constraint failure
-        nameToUpdate = existingDist.name;
+  try {
+    let targetId: number | null = params.id && !isNaN(Number(params.id)) ? Number(params.id) : null;
+    let existingDist: any = null;
+
+    if (targetId) {
+      existingDist = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
+    }
+
+    if (!existingDist && distName) {
+      existingDist = await db.get('SELECT * FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [distName]);
+      if (existingDist) {
+        targetId = existingDist.id;
       }
     }
 
-    try {
-      await db.run(
-        `UPDATE distributors 
-         SET name = CASE WHEN ? != '' THEN ? ELSE name END,
-             phone = CASE WHEN ? != '' THEN ? ELSE phone END,
-             contact = CASE WHEN ? != '' THEN ? ELSE contact END,
-             email = CASE WHEN ? != '' THEN ? ELSE email END,
-             address = CASE WHEN ? != '' THEN ? ELSE address END,
-             gstin = CASE WHEN ? != '' THEN ? ELSE gstin END,
-             state_code = CASE WHEN ? != '' THEN ? ELSE state_code END,
-             preferred_file_format = CASE WHEN ? != '' THEN ? ELSE preferred_file_format END
-         WHERE id = ?`,
-        [
-          nameToUpdate, nameToUpdate,
-          cleanPhone, cleanPhone,
-          cleanPhone, cleanPhone,
-          cleanEmail, cleanEmail,
-          params.address || '', params.address || '',
-          params.gstin || '', params.gstin || '',
-          params.state_code || '', params.state_code || '',
-          params.preferred_file_format || '', params.preferred_file_format || '',
-          existingDist.id
-        ]
-      );
-    } catch (updateErr: any) {
-      if (updateErr?.message?.includes('UNIQUE') || updateErr?.code === 'SQLITE_CONSTRAINT') {
+    // 1. Update or Insert into 'distributors' table
+    if (existingDist) {
+      let nameToUpdate = distName;
+      if (distName && distName.toLowerCase().trim() !== (existingDist.name || '').toLowerCase().trim()) {
+        const duplicate = await db.get(
+          'SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?',
+          [distName, existingDist.id]
+        );
+        if (duplicate) {
+          // Name collides with another distributor record — preserve target distributor's name to prevent UNIQUE constraint failure
+          nameToUpdate = existingDist.name;
+        }
+      }
+
+      try {
         await db.run(
           `UPDATE distributors 
-           SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
+           SET name = CASE WHEN ? != '' THEN ? ELSE name END,
+               phone = CASE WHEN ? != '' THEN ? ELSE phone END,
                contact = CASE WHEN ? != '' THEN ? ELSE contact END,
                email = CASE WHEN ? != '' THEN ? ELSE email END,
                address = CASE WHEN ? != '' THEN ? ELSE address END,
@@ -327,6 +348,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
                preferred_file_format = CASE WHEN ? != '' THEN ? ELSE preferred_file_format END
            WHERE id = ?`,
           [
+            nameToUpdate, nameToUpdate,
             cleanPhone, cleanPhone,
             cleanPhone, cleanPhone,
             cleanEmail, cleanEmail,
@@ -337,93 +359,90 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
             existingDist.id
           ]
         );
-      } else {
-        throw updateErr;
-      }
-    }
-    targetId = existingDist.id;
-  } else if (distName) {
-    try {
-      const result = await db.run(
-        `INSERT INTO distributors (name, phone, contact, email, address, gstin, state_code, preferred_file_format)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          distName,
-          cleanPhone,
-          cleanPhone,
-          cleanEmail,
-          params.address || '',
-          params.gstin || '',
-          params.state_code || '',
-          params.preferred_file_format || ''
-        ]
-      );
-      targetId = result.lastID || 0;
-    } catch (insertErr: any) {
-      if (insertErr?.message?.includes('UNIQUE') || insertErr?.code === 'SQLITE_CONSTRAINT') {
-        const matched = await db.get('SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [distName]);
-        if (matched) {
-          targetId = matched.id;
+      } catch (updateErr: any) {
+        if (updateErr?.message?.includes('UNIQUE') || updateErr?.code === 'SQLITE_CONSTRAINT') {
           await db.run(
             `UPDATE distributors 
              SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
                  contact = CASE WHEN ? != '' THEN ? ELSE contact END,
-                 email = CASE WHEN ? != '' THEN ? ELSE email END
+                 email = CASE WHEN ? != '' THEN ? ELSE email END,
+                 address = CASE WHEN ? != '' THEN ? ELSE address END,
+                 gstin = CASE WHEN ? != '' THEN ? ELSE gstin END,
+                 state_code = CASE WHEN ? != '' THEN ? ELSE state_code END,
+                 preferred_file_format = CASE WHEN ? != '' THEN ? ELSE preferred_file_format END
              WHERE id = ?`,
-            [cleanPhone, cleanPhone, cleanPhone, cleanPhone, cleanEmail, cleanEmail, matched.id]
+            [
+              cleanPhone, cleanPhone,
+              cleanPhone, cleanPhone,
+              cleanEmail, cleanEmail,
+              params.address || '', params.address || '',
+              params.gstin || '', params.gstin || '',
+              params.state_code || '', params.state_code || '',
+              params.preferred_file_format || '', params.preferred_file_format || '',
+              existingDist.id
+            ]
           );
+        } else {
+          throw updateErr;
+        }
+      }
+      targetId = existingDist.id;
+    } else if (distName) {
+      try {
+        const result = await db.run(
+          `INSERT INTO distributors (name, phone, contact, email, address, gstin, state_code, preferred_file_format)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            distName,
+            cleanPhone,
+            cleanPhone,
+            cleanEmail,
+            params.address || '',
+            params.gstin || '',
+            params.state_code || '',
+            params.preferred_file_format || ''
+          ]
+        );
+        targetId = result.lastID || 0;
+      } catch (insertErr: any) {
+        if (insertErr?.message?.includes('UNIQUE') || insertErr?.code === 'SQLITE_CONSTRAINT') {
+          const matched = await db.get('SELECT id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [distName]);
+          if (matched) {
+            targetId = matched.id;
+            await db.run(
+              `UPDATE distributors 
+               SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
+                   contact = CASE WHEN ? != '' THEN ? ELSE contact END,
+                   email = CASE WHEN ? != '' THEN ? ELSE email END
+               WHERE id = ?`,
+              [cleanPhone, cleanPhone, cleanPhone, cleanPhone, cleanEmail, cleanEmail, matched.id]
+            );
+          } else {
+            throw insertErr;
+          }
         } else {
           throw insertErr;
         }
-      } else {
-        throw insertErr;
       }
     }
-  }
 
-  if (!targetId) {
-    throw new Error('Unable to create or locate distributor record.');
-  }
-
-  // Auto register AI Learning profile
-  try {
-    await db.run(
-      'INSERT OR IGNORE INTO distributor_learning_profiles (distributor_id) VALUES (?)',
-      [targetId]
-    );
-  } catch (_) {}
-
-  const finalDistributor = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
-  const effectiveName = finalDistributor?.name || distName;
-  const effectivePhone = finalDistributor?.phone || finalDistributor?.contact || cleanPhone;
-
-  // 2. Update/Insert 'pharmarack_distributor_mappings'
-  try {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS pharmarack_distributor_mappings (
-        store_name TEXT PRIMARY KEY,
-        distributor_id INTEGER,
-        phone TEXT,
-        delivery_boy_id INTEGER,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    const mapCols = await db.all('PRAGMA table_info(pharmarack_distributor_mappings)');
-    const mapNames = new Set(mapCols.map((c: any) => c.name));
-    if (!mapNames.has('delivery_boy_id')) {
-      await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
-    }
-    if (!mapNames.has('store_id')) {
-      await db.run('ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1');
+    if (!targetId) {
+      throw new Error('Unable to create or locate distributor record.');
     }
 
-    const distCols = await db.all('PRAGMA table_info(distributors)');
-    const distNames = new Set(distCols.map((c: any) => c.name));
-    if (!distNames.has('delivery_boy_id')) {
-      await db.run('ALTER TABLE distributors ADD COLUMN delivery_boy_id INTEGER DEFAULT NULL');
-    }
+    // Auto register AI Learning profile
+    try {
+      await db.run(
+        'INSERT OR IGNORE INTO distributor_learning_profiles (distributor_id) VALUES (?)',
+        [targetId]
+      );
+    } catch (_) {}
 
+    const finalDistributor = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
+    const effectiveName = finalDistributor?.name || distName;
+    const effectivePhone = finalDistributor?.phone || finalDistributor?.contact || cleanPhone;
+
+    // 2. Update/Insert 'pharmarack_distributor_mappings' atomically
     if (effectiveName) {
       const boyId = params.delivery_boy_id !== undefined ? params.delivery_boy_id : null;
       await db.run(
@@ -459,29 +478,8 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         );
       }
     }
-  } catch (err) {
-    console.warn('[distributorSync] Failed to sync pharmarack_distributor_mappings:', err);
-  }
 
-  // 3. Update/Insert 'contacts' master table
-  try {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS contacts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        type TEXT DEFAULT 'general',
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        gstin TEXT,
-        notes TEXT,
-        alias_names TEXT,
-        is_active INTEGER DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
+    // 3. Update/Insert 'contacts' master table atomically
     let existingContact;
     if (effectivePhone) {
       existingContact = await db.get('SELECT id FROM contacts WHERE phone = ? AND type = ?', [effectivePhone, 'distributor']);
@@ -517,12 +515,8 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         [effectiveName.trim(), 'distributor', effectivePhone, cleanEmail, params.address || '', params.gstin || '', params.notes || '']
       );
     }
-  } catch (err) {
-    console.warn('[distributorSync] Failed to sync contacts:', err);
-  }
 
-  // 4. Update 'distributor_dispatch_reminders' active records to keep numbers in sync with AI Learning & settings
-  try {
+    // 4. Update 'distributor_dispatch_reminders' active records to keep numbers in sync
     if (effectivePhone || effectiveName) {
       await db.run(
         `UPDATE distributor_dispatch_reminders
@@ -536,9 +530,20 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         ]
       );
     }
-  } catch (err) {
-    console.warn('[distributorSync] Failed to sync distributor_dispatch_reminders:', err);
-  }
 
-  return finalDistributor;
+    if (isTxOwner) {
+      await db.run('COMMIT');
+    }
+
+    return finalDistributor;
+  } catch (err) {
+    if (isTxOwner) {
+      try {
+        await db.run('ROLLBACK');
+      } catch (rbErr) {
+        console.error('[distributorSync] Rollback failed:', rbErr);
+      }
+    }
+    throw err;
+  }
 }

@@ -483,12 +483,7 @@ const Dispatch = () => {
     setIsSavingDistPhone(true);
     try {
       const finalPhone = cleanPhone.length === 12 && cleanPhone.startsWith('91') ? cleanPhone.slice(2) : cleanPhone;
-      // Persist across tables
-      await apiClient.post('/pharmarack/distributor-mappings', {
-        store_name: item.distributor_name,
-        distributor_id: item.distributor_id || null,
-        phone: finalPhone
-      });
+      // Persist atomically across tables
       await apiClient.post('/distributors', {
         name: item.distributor_name,
         phone: finalPhone
@@ -507,8 +502,6 @@ const Dispatch = () => {
       } else {
         showNotif(`Phone number saved for ${item.distributor_name}`);
       }
-
-      await fetchDistributorReminders(true);
     } catch (err) {
       const e = err as LocalApiError;
       showNotif(e?.message || 'Failed to save distributor phone', 'error');

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback } fro
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -1597,6 +1597,38 @@ const POS = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- length-only trigger avoids focus loops
   }, [cart.length]);
+
+  // Clinical drug interaction real-time check
+  const [drugInteractions, setDrugInteractions] = useState<any[]>([]);
+  const [showInteractionsModal, setShowInteractionsModal] = useState(false);
+
+  useEffect(() => {
+    const medIds = cart
+      .filter(item => !item.isEmptyRow && item.medicine_id)
+      .map(item => Number(item.medicine_id))
+      .filter(id => !isNaN(id) && id > 0);
+
+    if (medIds.length < 2) {
+      setDrugInteractions([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      api.checkInteractions(medIds)
+        .then((res: any) => {
+          if (res && Array.isArray(res.interactions)) {
+            setDrugInteractions(res.interactions);
+          } else {
+            setDrugInteractions([]);
+          }
+        })
+        .catch((err: any) => {
+          console.warn('[POS] Failed checking clinical drug interactions:', err);
+        });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [cart]);
 
   // Clean up any potential legacy conflicting local storage keys to ensure robust cache
   useEffect(() => {
@@ -3297,6 +3329,8 @@ const POS = () => {
   const [showPhonePromptModal, setShowPhonePromptModal] = useState(false);
   const [promptPhoneValue, setPromptPhoneValue] = useState('');
   const [shakePromptPhone, setShakePromptPhone] = useState(false);
+  const [isSavingBill, setIsSavingBill] = useState(false);
+  const isSavingBillRef = useRef(false);
 
   // Universal Escape key dismissal for POS modals
   useModalEscape(showPatientModal, () => setShowPatientModal(false));
@@ -3307,6 +3341,7 @@ const POS = () => {
   useModalEscape(!!editMedicineId, () => setEditMedicineId(null));
 
   const handleCompleteSale = async (overridePhone?: string, isDirectSave: boolean = false) => {
+    if (isSavingBillRef.current) return;
     if (!hasValidItems) {
       alert('⚠️ CANNOT SAVE BILL:\n\nPlease add at least one valid medicine to the cart before saving the bill.');
       return;
@@ -3410,6 +3445,8 @@ const POS = () => {
       }
     }
     
+    writeRef(isSavingBillRef, true);
+    setIsSavingBill(true);
     try {
       const salesItems = cart.filter(item => {
         if (item.isEmptyRow) return false;
@@ -3510,9 +3547,6 @@ const POS = () => {
       
       // Centralized cache invalidation for frontend lists and local infinite scroll caches
       invalidateAfterStockWrite(queryClient);
-
-      // Refresh the local inventory cache so POS search shows the reduced stock immediately
-      api.getCompactInventory().catch(() => {});
 
       if (finalizingStagedSale) {
         const consumedDraft = finalizingStagedSale;
@@ -3622,6 +3656,9 @@ const POS = () => {
       // Show actual server error message to help diagnose the issue
       const serverMsg = (error as LocalApiError)?.response?.data?.error || (error as LocalApiError)?.message || 'Unknown error';
       alert(`Failed to save sale:\n\n${serverMsg}\n\nIf this persists, check that the backend server is running.`);
+    } finally {
+      writeRef(isSavingBillRef, false);
+      setIsSavingBill(false);
     }
   };
 
@@ -5695,6 +5732,25 @@ const POS = () => {
           
         </div>
 
+        {/* ── DRUG INTERACTIONS SAFETY ALERT BANNER ── */}
+        {drugInteractions.length > 0 && (
+          <div className="shrink-0 mx-3 mb-1 px-3.5 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-bold text-rose-400">
+              <ShieldAlert size={16} className="shrink-0 animate-pulse text-rose-400" />
+              <span>
+                ⚠️ Clinical Safety Alert: {drugInteractions.length} potential drug interaction{drugInteractions.length > 1 ? 's' : ''} detected in cart!
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowInteractionsModal(true)}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-all cursor-pointer"
+            >
+              Review Clashes
+            </button>
+          </div>
+        )}
+
         {/* ── BOTTOM CHECKOUT BAR (full width horizontal strip) ── */}
         <div className="shrink-0 w-full flex flex-row items-center gap-2 px-3 py-1.5 bg-bg2/95 border-t border-glass-border/50 shadow-[0_-4px_16px_rgba(0,0,0,0.14)] overflow-x-auto">
 
@@ -5764,26 +5820,26 @@ const POS = () => {
           <div className="flex items-center gap-1.5 shrink-0 ml-auto">
             <button
               onClick={() => handleCompleteSale(undefined, true)}
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || isSavingBill}
               className={`py-1.5 px-3.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer border ${
-                cart.length === 0
+                cart.length === 0 || isSavingBill
                   ? 'bg-bg3 border-glass-border text-muted cursor-not-allowed'
                   : 'bg-sky/15 border-sky/30 text-sky hover:bg-sky/25'
               }`}
             >
-              <Zap size={13} /> Direct Save
+              <Zap size={13} /> {isSavingBill ? 'Saving...' : 'Direct Save'}
             </button>
             <button
               onClick={() => handleCompleteSale(undefined, false)}
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || isSavingBill}
               className={`py-2 px-4.5 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-md ${
-                cart.length === 0
+                cart.length === 0 || isSavingBill
                   ? 'bg-bg3 border border-glass-border text-muted cursor-not-allowed'
                   : 'bg-green text-white hover:bg-emerald-600 shadow-[0_0_14px_rgba(16,185,129,0.3)] hover:-translate-y-px'
               }`}
             >
               <CheckCircle size={15} />
-              Save & Print (Ctrl+S)
+              {isSavingBill ? 'Saving...' : 'Save & Print (Ctrl+S)'}
             </button>
           </div>
         </div>
@@ -6414,6 +6470,60 @@ const POS = () => {
 
       {/* Floating Staged Order Queue Widget */}
       <StagedQueueFloatingWidget onLoadIntoPOS={handleLoadStagedItemIntoPOS} />
+
+      {/* Clinical Interactions Review Modal */}
+      {showInteractionsModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          onClick={() => setShowInteractionsModal(false)}
+        >
+          <div 
+            className="w-full max-w-lg bg-bg2 border border-glass-border rounded-2xl p-5 shadow-2xl space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-glass-border">
+              <div className="flex items-center gap-2 text-rose-400">
+                <ShieldAlert size={20} />
+                <h3 className="text-sm font-bold text-text">Clinical Drug Interaction Analysis</h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowInteractionsModal(false)}
+                className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg3"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto space-y-3">
+              {drugInteractions.map((item, idx) => (
+                <div key={idx} className="p-3.5 rounded-xl bg-bg border border-border/40 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-text">{item.drugAName} ⚡ {item.drugBName}</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      {item.severity}
+                    </span>
+                  </div>
+                  <p className="text-muted leading-relaxed">
+                    Triggered by active substance: <strong className="text-text">{item.interactingEntity}</strong>.
+                    Dispensing these medications concurrently may cause adverse reactions. Please verify clinical intent with the prescribing physician.
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowInteractionsModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-bg border border-glass-border text-text font-semibold text-xs hover:bg-bg3"
+              >
+                Acknowledge & Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

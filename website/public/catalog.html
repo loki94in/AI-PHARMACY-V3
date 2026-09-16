@@ -1023,12 +1023,88 @@
             <span>Bill: ₹${Number(o.totalAmount || 0).toFixed(2)}</span>
             <span class="text-slate-500 font-normal">${o.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}</span>
           </div>
+          <div class="pt-2">
+            <button onclick="initiateRefill(${o.orderId}, '${(o.customerPhone||'').replace(/'/g,'')}')" id="refill-btn-${o.orderId}"
+              class="w-full py-2 px-4 bg-brand-50 hover:bg-brand-100 active:scale-[0.98] text-brand-700 border border-brand-200 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-2">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+              Reorder Same Medicines
+            </button>
+          </div>
         </div>
       `).join('');
       lucide.createIcons();
     }
 
-    // ─── CART & CHECKOUT ────────────────────────────────────────────────────────
+    // ─── REFILL FLOW ─────────────────────────────────────────────────────────────
+    async function initiateRefill(orderId, phone) {
+      const btn = document.getElementById(`refill-btn-${orderId}`);
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="animate-spin inline-block w-3.5 h-3.5 border-2 border-brand-600 border-t-transparent rounded-full"></span>&nbsp; Checking availability...'; }
+
+      try {
+        const apiBase = window._pharmacyApiBase || '';
+        const previewRes = await fetch(`${apiBase}/api/website/orders/${orderId}/refill-preview?phone=${phone}`);
+        const preview = await previewRes.json();
+
+        if (!previewRes.ok) {
+          alert(preview.error || 'Could not load refill preview.');
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reorder Same Medicines'; lucide.createIcons(); }
+          return;
+        }
+
+        const available = preview.preview_items.filter(i => i.is_available);
+        const unavailable = preview.preview_items.filter(i => !i.is_available);
+
+        let msg = `Refill Preview for Order #${orderId}\n\n`;
+        msg += `✅ Available (${available.length}):\n`;
+        available.forEach(i => { msg += `  • ${i.medicine_name} (x${i.requested_qty}) — ₹${i.current_sell_price || i.current_mrp}\n`; });
+        if (unavailable.length) {
+          msg += `\n❌ Currently Out of Stock (${unavailable.length}):\n`;
+          unavailable.forEach(i => { msg += `  • ${i.medicine_name}\n`; });
+        }
+        msg += `\nNote: ${preview.note}`;
+        msg += `\n\nProceed to create a new refill order with the ${available.length} available medicine(s)?`;
+
+        if (!available.length) {
+          alert('All medicines from this order are currently out of stock.');
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reorder Same Medicines'; lucide.createIcons(); }
+          return;
+        }
+
+        if (!confirm(msg)) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reorder Same Medicines'; lucide.createIcons(); }
+          return;
+        }
+
+        // Create the refill order
+        const session = JSON.parse(sessionStorage.getItem('patientSession') || '{}');
+        const refillRes = await fetch(`${apiBase}/api/website/orders/${orderId}/refill`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customer_name: session.name || '',
+            customer_phone: session.phone || phone,
+            payment_method: 'COUNTER_PICKUP',
+            delivery_mode: 'pickup'
+          })
+        });
+        const refillData = await refillRes.json();
+
+        if (refillRes.ok && refillData.success) {
+          alert(`✅ Refill Order #${refillData.new_order_id} created successfully!\n${refillData.available_items} of ${refillData.items_count} medicines available.\nVisit the pharmacy counter to complete payment.`);
+          // Reload the orders list to show the new refill order
+          if (typeof loadPatientOrders === 'function') loadPatientOrders();
+        } else {
+          alert('Refill order failed: ' + (refillData.error || 'Unknown error'));
+        }
+      } catch (err) {
+        console.error('[Refill]', err);
+        alert('Failed to process refill. Please try again or visit the pharmacy counter.');
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Reorder Same Medicines'; lucide.createIcons(); }
+      }
+    }
+
+
     function addToCart(medId) {
       const item = catalog.find(m => m.id === medId);
       if (!item) return;

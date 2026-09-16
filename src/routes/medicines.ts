@@ -665,7 +665,23 @@ router.get('/medicines/:id/composition-intelligence', async (req, res) => {
       return res.status(404).json({ error: 'Medicine not found' });
     }
 
-    const apiRef = medicine.api_reference || medicine.generic_name || '';
+    const clinicalInfo = await db.get(
+      `SELECT salt_composition, sub_category, medicine_desc, side_effects, drug_interactions, match_confidence
+       FROM medicine_clinical_info
+       WHERE medicine_id = ?`,
+      [id]
+    );
+
+    let parsedDrugInteractions: any = null;
+    if (clinicalInfo?.drug_interactions) {
+      try {
+        parsedDrugInteractions = JSON.parse(clinicalInfo.drug_interactions);
+      } catch (_) {
+        parsedDrugInteractions = clinicalInfo.drug_interactions;
+      }
+    }
+
+    const apiRef = medicine.api_reference || medicine.generic_name || clinicalInfo?.salt_composition || '';
 
     let inStockAlts: any[] = [];
     let purchaseHistory: any[] = [];
@@ -779,7 +795,15 @@ router.get('/medicines/:id/composition-intelligence', async (req, res) => {
       purchase_history: purchaseHistory,
       sales_history: salesSummary,
       master_brands_count: masterBrandsCount,
-      master_brands_sample: masterBrandsSample
+      master_brands_sample: masterBrandsSample,
+      clinical_info: clinicalInfo ? {
+        salt_composition: clinicalInfo.salt_composition,
+        sub_category: clinicalInfo.sub_category,
+        medicine_desc: clinicalInfo.medicine_desc,
+        side_effects: clinicalInfo.side_effects,
+        drug_interactions: parsedDrugInteractions,
+        match_confidence: clinicalInfo.match_confidence
+      } : null
     });
   } catch (error) {
     await dbManager.close();

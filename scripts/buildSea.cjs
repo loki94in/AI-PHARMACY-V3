@@ -13,6 +13,10 @@ const path = require('path');
 const { execFileSync, execSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
+
+// Read version from package.json — single source of truth (PRODUCTION.md §6)
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const APP_VERSION = pkg.version;
 const distDir = path.join(root, 'dist');
 const outExe = path.join(distDir, 'PharmacyOS.exe');
 const blobPath = path.join(root, 'dist-pkg', 'sea-prep.blob');
@@ -74,9 +78,12 @@ if (isccExe && fs.existsSync(issPath)) {
   }
 
   console.log('[build-sea] Found Inno Setup compiler! Building standalone installer setup package...');
+  console.log(`[build-sea] Injecting version: ${APP_VERSION} (from package.json)`);
   try {
-    execSync(`"${isccExe}" "${issPath}"`, { cwd: root, stdio: 'inherit' });
-    console.log('[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v0.1.0.exe');
+    // Pass version via /DMyAppVersion= so installer.iss never needs manual edits (PRODUCTION.md §6)
+    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} "${issPath}"`, { cwd: root, stdio: 'inherit' });
+    console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
+
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);
   }

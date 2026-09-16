@@ -20,6 +20,7 @@ import { getEmailRetentionLimit, getEmailRetentionDays, getStorePhone, getInvoic
 import { config, getAppDataDir } from '../config/index.js';
 import { medicineService } from './medicineService.js';
 import { isValidDistributorName } from '../utils/nameNormalizer.js';
+import { classifyEmailMessage } from './messageClassifier.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1900,6 +1901,13 @@ export class EmailService {
 
   public async processEmail(email: ProcessedEmail): Promise<void> {
     try {
+      // Guard: skip promotional emails — they are already classified at ingestion time
+      // and must not enter the pharmacy business workflow
+      if ((email as any).classification === 'PROMOTIONAL') {
+        console.log(`[Mail] processEmail: skipping PROMOTIONAL email from "${email.from}": "${email.subject}"`);
+        return;
+      }
+
       const isOrderRelated = this.isOrderRelatedEmail(email);
       const orderInfo = await this.extractOrderInfo(email);
 
@@ -3625,11 +3633,29 @@ export class EmailService {
           const isOrder = this.isOrderRelatedEmail(processedEmail) ? 1 : 0;
           const hasAttachments = processedEmail.attachments.length > 0 ? 1 : 0;
 
-          // Upsert email record into local DB
+          // ── Promotional Message Filter ───────────────────────────────────────
+          // Classify BEFORE storing in the business workflow.
+          // PROMOTIONAL → stored in DB (for UI visibility) but NOT forwarded to
+          // notifyMailArrival / pharmacy processing.
+          const isKnownDist = !!(orderInfo.distributorName);
+          const classification = classifyEmailMessage(
+            processedEmail.from,
+            processedEmail.subject,
+            processedEmail.body,
+            isKnownDist
+          );
+          const isPromotional = classification.classification === 'PROMOTIONAL';
+
+          if (isPromotional) {
+            console.log(
+              `[Sync] MESSAGE_FILTERED uid=${uid} classification=PROMOTIONAL reason="${classification.reason}" from="${processedEmail.from.slice(0, 60)}"`
+            );
+          }
+
           const insertResult = await db.run(
             `INSERT OR IGNORE INTO emails
-             (uid, from_addr, subject, body, date, is_seen, is_order, is_saved, distributor_name, has_attachments, extracted_invoice_no, extracted_distributor)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+             (uid, from_addr, subject, body, date, is_seen, is_order, is_saved, distributor_name, has_attachments, extracted_invoice_no, extracted_distributor, classification)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
             [
               uid,
               processedEmail.from,
@@ -3641,7 +3667,8 @@ export class EmailService {
               orderInfo.distributorName || null,
               hasAttachments,
               orderInfo.invoiceNumber !== 'N/A' ? orderInfo.invoiceNumber : null,
-              orderInfo.distributorName || null
+              orderInfo.distributorName || null,
+              classification.classification
             ]
           );
 
@@ -3683,8 +3710,8 @@ export class EmailService {
           // Also mark as processed
           await db.run('INSERT OR IGNORE INTO processed_emails (uid) VALUES (?)', [uid]);
 
-          // Notify user (owner) & delivery boys when new email arrives in mailbox
-          if (isNewEmail) {
+          // Notify user (owner) & delivery boys — SKIP for promotional messages
+          if (isNewEmail && !isPromotional) {
             this.notifyMailArrival({
               uid,
               processedEmail,

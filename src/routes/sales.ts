@@ -450,143 +450,151 @@ router.post('/', async (req, res) => {
       return row;
     };
 
-    // Insert line items and update inventory
-    for (const item of items) {
-      let { inventory_id, quantity, unit_price, loose_qty = 0, medicine_name, batch_no, expiry_date, mrp } = item;
+    // Insert line items and update inventory with prepared statements
+    const insertSaleItemStmt = await db.prepare(
+      `INSERT INTO sale_items (
+        invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value,
+        medicine_name_snapshot, batch_no_snapshot, expiry_date_snapshot, mrp_snapshot, tax_percent_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const updateInventoryStmt = await db.prepare(
+      'UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?'
+    );
 
-      if (!inventory_id) {
-        // Strict inventory-only sales: never auto-create medicines or fabricate stock.
-        // Resolve the item to an existing inventory row or reject the whole sale.
-        const cleanName = (medicine_name || 'Custom Medicine').trim();
-        const { normalizeMedicineName } = await import('../utils/nameNormalizer.js');
-        const adjustedName = normalizeMedicineName(cleanName);
-        const dbMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [adjustedName]);
-        if (!dbMed) {
-          throw new Error(`Cannot sell "${cleanName}": this medicine is not in your inventory. Add it via Purchases/Inventory before selling.`);
+    try {
+      for (const item of items) {
+        let { inventory_id, quantity, unit_price, loose_qty = 0, medicine_name, batch_no, expiry_date, mrp } = item;
+
+        if (!inventory_id) {
+          // Strict inventory-only sales: never auto-create medicines or fabricate stock.
+          // Resolve the item to an existing inventory row or reject the whole sale.
+          const cleanName = (medicine_name || 'Custom Medicine').trim();
+          const { normalizeMedicineName } = await import('../utils/nameNormalizer.js');
+          const adjustedName = normalizeMedicineName(cleanName);
+          const dbMed = await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?)', [adjustedName]);
+          if (!dbMed) {
+            throw new Error(`Cannot sell "${cleanName}": this medicine is not in your inventory. Add it via Purchases/Inventory before selling.`);
+          }
+
+          const bNo = (batch_no || '').trim();
+          let invRow = bNo
+            ? await db.get('SELECT id FROM inventory_master WHERE medicine_id = ? AND batch_no = ?', [dbMed.id, bNo])
+            : null;
+          if (!invRow) {
+            // Fall back to the earliest-expiry batch that still has stock
+            invRow = await db.get(
+              `SELECT id FROM inventory_master
+               WHERE medicine_id = ? AND (quantity > 0 OR loose_quantity > 0)
+               ORDER BY expiry_date ASC LIMIT 1`,
+              [dbMed.id]
+            );
+          }
+          if (!invRow) {
+            throw new Error(`Cannot sell "${cleanName}": no stock available in inventory.`);
+          }
+          inventory_id = invRow.id;
         }
 
-        const bNo = (batch_no || '').trim();
-        let invRow = bNo
-          ? await db.get('SELECT id FROM inventory_master WHERE medicine_id = ? AND batch_no = ?', [dbMed.id, bNo])
-          : null;
-        if (!invRow) {
-          // Fall back to the earliest-expiry batch that still has stock
-          invRow = await db.get(
-            `SELECT id FROM inventory_master
-             WHERE medicine_id = ? AND (quantity > 0 OR loose_quantity > 0)
-             ORDER BY expiry_date ASC LIMIT 1`,
-            [dbMed.id]
-          );
+        // Stock Level Verification before processing decrement (strips + loose counted as one pool)
+        const currentStock = await getStock(inventory_id);
+        if (!currentStock) {
+          throw new Error(`Inventory item ID ${inventory_id} does not exist.`);
         }
-        if (!invRow) {
-          throw new Error(`Cannot sell "${cleanName}": no stock available in inventory.`);
+        const { isExpiredForSale, refreshInventoryActiveStatus } = await import('../utils/inventoryActive.js');
+        if (isExpiredForSale(currentStock.expiry_date)) {
+          await refreshInventoryActiveStatus(db, inventory_id);
+          throw new Error(`Cannot sell expired batch for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Remove or return this stock first.`);
         }
-        inventory_id = invRow.id;
-      }
+        const packSize = currentStock.pack_size;
+        const soldQty = Number(quantity);
+        const soldLoose = Number(loose_qty);
+        const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
+        const soldTotalUnits = soldQty * packSize + soldLoose;
+        if (currentTotalUnits < soldTotalUnits) {
+          throw new Error(`Insufficient stock for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Available: ${currentStock.quantity} strips & ${currentStock.loose_quantity} loose. Requested: ${soldQty} strips & ${soldLoose} loose.`);
+        }
 
-      // Stock Level Verification before processing decrement (strips + loose counted as one pool)
-      const currentStock = await getStock(inventory_id);
-      if (!currentStock) {
-        throw new Error(`Inventory item ID ${inventory_id} does not exist.`);
-      }
-      const { isExpiredForSale, refreshInventoryActiveStatus } = await import('../utils/inventoryActive.js');
-      if (isExpiredForSale(currentStock.expiry_date)) {
-        await refreshInventoryActiveStatus(db, inventory_id);
-        throw new Error(`Cannot sell expired batch for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Remove or return this stock first.`);
-      }
-      const packSize = currentStock.pack_size;
-      const soldQty = Number(quantity);
-      const soldLoose = Number(loose_qty);
-      const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
-      const soldTotalUnits = soldQty * packSize + soldLoose;
-      if (currentTotalUnits < soldTotalUnits) {
-        throw new Error(`Insufficient stock for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Available: ${currentStock.quantity} strips & ${currentStock.loose_quantity} loose. Requested: ${soldQty} strips & ${soldLoose} loose.`);
-      }
+        const taxBreakdown = itemTaxBreakdowns.find(tb => tb.item === item);
+        const itemCgst = taxBreakdown ? taxBreakdown.cgst_value : 0;
+        const itemSgst = taxBreakdown ? taxBreakdown.sgst_value : 0;
 
-      const taxBreakdown = itemTaxBreakdowns.find(tb => tb.item === item);
-      const itemCgst = taxBreakdown ? taxBreakdown.cgst_value : 0;
-      const itemSgst = taxBreakdown ? taxBreakdown.sgst_value : 0;
+        const medNameSnap = currentStock.db_medicine_name || medicine_name || 'Medicine';
+        const batchNoSnap = currentStock.batch_no || batch_no || '';
+        const expDateSnap = currentStock.expiry_date || expiry_date || '';
+        const mrpSnap = Number(mrp || item.mrp || currentStock.mrp || 0);
+        const taxPerSnap = Number(item.gst_per || item.tax_percent || (Number(item.cgst_per || 0) + Number(item.sgst_per || 0)) || 0);
 
-      const medNameSnap = currentStock.db_medicine_name || medicine_name || 'Medicine';
-      const batchNoSnap = currentStock.batch_no || batch_no || '';
-      const expDateSnap = currentStock.expiry_date || expiry_date || '';
-      const mrpSnap = Number(mrp || item.mrp || currentStock.mrp || 0);
-      const taxPerSnap = Number(item.gst_per || item.tax_percent || (Number(item.cgst_per || 0) + Number(item.sgst_per || 0)) || 0);
-
-      await db.run(
-        `INSERT INTO sale_items (
-          invoice_id, inventory_id, quantity, unit_price, loose_qty, discount_per, cgst_value, sgst_value,
-          medicine_name_snapshot, batch_no_snapshot, expiry_date_snapshot, mrp_snapshot, tax_percent_snapshot
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+        await insertSaleItemStmt.run([
           invoiceId, inventory_id, Number(quantity), Number(unit_price), Number(loose_qty),
           Number(item.discount_per || item.discountPer || 0), itemCgst, itemSgst,
           medNameSnap, batchNoSnap, expDateSnap, mrpSnap, taxPerSnap
-        ]
-      );
+        ]);
 
-      // Decrement stock in inventory_master, auto-converting a strip to loose if the loose sale exceeds current loose stock.
-      const newStock = applyStockDelta(
-        { quantity: currentStock.quantity, loose_quantity: currentStock.loose_quantity },
-        -soldQty,
-        -soldLoose,
-        packSize
-      );
-      const decrementResult = await db.run(
-        'UPDATE inventory_master SET quantity = ?, loose_quantity = ? WHERE id = ?',
-        [newStock.quantity, newStock.loose_quantity, inventory_id]
-      );
-      if (decrementResult.changes === 0) {
-        throw new Error(`Failed to decrement stock for inventory ID ${inventory_id}`);
-      }
-      // Keep the shared stock map in sync so a later item referencing the same
-      // inventory_id sees this decrement instead of stale pre-batch quantities.
-      stockMap.set(inventory_id, { ...currentStock, quantity: newStock.quantity, loose_quantity: newStock.loose_quantity });
-      await refreshInventoryActiveStatus(db, inventory_id);
-      await recordStockLedger(db, {
-        medicine_id: currentStock.medicine_id, batch_no: currentStock.batch_no,
-        quantity: -soldQty, loose_quantity: -soldLoose,
-        transaction_type: 'sale', transaction_id: invoiceId
-      });
-      await applySaleDelta(db, currentStock.medicine_id, soldQty);
+        // Decrement stock in inventory_master, auto-converting a strip to loose if the loose sale exceeds current loose stock.
+        const newStock = applyStockDelta(
+          { quantity: currentStock.quantity, loose_quantity: currentStock.loose_quantity },
+          -soldQty,
+          -soldLoose,
+          packSize
+        );
+        const decrementResult = await updateInventoryStmt.run([
+          newStock.quantity, newStock.loose_quantity, inventory_id
+        ]);
+        if (decrementResult.changes === 0) {
+          throw new Error(`Failed to decrement stock for inventory ID ${inventory_id}`);
+        }
+        // Keep the shared stock map in sync so a later item referencing the same
+        // inventory_id sees this decrement instead of stale pre-batch quantities.
+        stockMap.set(inventory_id, { ...currentStock, quantity: newStock.quantity, loose_quantity: newStock.loose_quantity });
+        await refreshInventoryActiveStatus(db, inventory_id);
+        await recordStockLedger(db, {
+          medicine_id: currentStock.medicine_id, batch_no: currentStock.batch_no,
+          quantity: -soldQty, loose_quantity: -soldLoose,
+          transaction_type: 'sale', transaction_id: invoiceId
+        });
+        await applySaleDelta(db, currentStock.medicine_id, soldQty);
 
-      // Pre-compute phone queries for customer matching
-      const cleanPhone = (patient_phone || '').replace(/\D/g, '');
-      const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
+        // Pre-compute phone queries for customer matching
+        const cleanPhone = (patient_phone || '').replace(/\D/g, '');
+        const phoneQuery = cleanPhone.length >= 10 ? `%${cleanPhone.slice(-10)}%` : 'NON_EXISTENT';
 
-      // Handle refill logic if enabled (Idempotent: update if existing, insert if new)
-      if (refillEnabled && inventory_id) {
-        const invRecord = currentStock;
-        if (invRecord && invRecord.medicine_id) {
-          const nextDate = new Date();
-          const rDays = Number(refillDays || 30);
-          nextDate.setDate(nextDate.getDate() + rDays);
-          const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
+        // Handle refill logic if enabled (Idempotent: update if existing, insert if new)
+        if (refillEnabled && inventory_id) {
+          const invRecord = currentStock;
+          if (invRecord && invRecord.medicine_id) {
+            const nextDate = new Date();
+            const rDays = Number(refillDays || 30);
+            nextDate.setDate(nextDate.getDate() + rDays);
+            const nextDateStr = nextDate.toISOString().slice(0, 19).replace('T', ' ');
 
-          const existingSchedule = await db.get(
-            `SELECT id FROM patient_refills 
-             WHERE medicine_id = ? AND ((customer_id IS NOT NULL AND customer_id = ?) OR (patient_phone IS NOT NULL AND length(patient_phone) >= 10 AND replace(patient_phone, ' ', '') LIKE ?))
-             LIMIT 1`,
-            [invRecord.medicine_id, customerId || -1, phoneQuery]
-          );
-
-          if (existingSchedule) {
-            await db.run(
-              `UPDATE patient_refills 
-               SET customer_id = COALESCE(?, customer_id), patient_name = COALESCE(?, patient_name), 
-                   patient_phone = COALESCE(?, patient_phone), refill_interval_days = ?, next_refill_date = ?, is_active = 1
-               WHERE id = ?`,
-              [customerId, patient_name, patient_phone, rDays, nextDateStr, existingSchedule.id]
+            const existingSchedule = await db.get(
+              `SELECT id FROM patient_refills 
+               WHERE medicine_id = ? AND ((customer_id IS NOT NULL AND customer_id = ?) OR (patient_phone IS NOT NULL AND length(patient_phone) >= 10 AND replace(patient_phone, ' ', '') LIKE ?))
+               LIMIT 1`,
+              [invRecord.medicine_id, customerId || -1, phoneQuery]
             );
-          } else {
-            await db.run(
-              `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, is_active)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', 1)`,
-              [customerId, patient_name || 'Walk-in Customer', patient_phone || '', invRecord.medicine_id, rDays, nextDateStr]
-            );
+
+            if (existingSchedule) {
+              await db.run(
+                `UPDATE patient_refills 
+                 SET customer_id = COALESCE(?, customer_id), patient_name = COALESCE(?, patient_name), 
+                     patient_phone = COALESCE(?, patient_phone), refill_interval_days = ?, next_refill_date = ?, is_active = 1
+                 WHERE id = ?`,
+                [customerId, patient_name, patient_phone, rDays, nextDateStr, existingSchedule.id]
+              );
+            } else {
+              await db.run(
+                `INSERT INTO patient_refills (customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, next_refill_date, status, is_active)
+                 VALUES (?, ?, ?, ?, ?, ?, 'pending', 1)`,
+                [customerId, patient_name || 'Walk-in Customer', patient_phone || '', invRecord.medicine_id, rDays, nextDateStr]
+              );
+            }
           }
         }
       }
+    } finally {
+      await insertSaleItemStmt.finalize().catch(() => {});
+      await updateInventoryStmt.finalize().catch(() => {});
     }
 
     // Resolve refill cycle if this sale completes a pending refill or matches sold medicines for this customer
@@ -936,7 +944,7 @@ router.post('/', async (req, res) => {
       console.warn('[POS Special Orders] Error processing matched special orders:', soErr);
     }
 
-    res.json({ success: true, invoice_no, total, tax, matched_special_orders: matchedSpecialOrders });
+    res.json({ success: true, invoice_no, invoice_id: invoiceId, id: invoiceId, total, tax, matched_special_orders: matchedSpecialOrders });
   } catch (error) {
     if (db) {
       try {

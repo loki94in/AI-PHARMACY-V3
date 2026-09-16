@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 63;
+const CURRENT_SCHEMA_VERSION = 64;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -412,6 +412,15 @@ async function ensureOrderTimingSchema(db: any) {
     }
     if (refCols.length > 0 && !refNames.has('confirmed_at')) {
       await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
+    }
+  } catch (_) { }
+
+  // emails.classification — promotional message filtering (added for messageClassifier.ts feature)
+  try {
+    const emailCols = await db.all('PRAGMA table_info(emails)');
+    const emailColNames = new Set(emailCols.map((c: any) => c.name));
+    if (emailCols.length > 0 && !emailColNames.has('classification')) {
+      await db.run("ALTER TABLE emails ADD COLUMN classification TEXT DEFAULT 'UNKNOWN'");
     }
   } catch (_) { }
 
@@ -1107,10 +1116,46 @@ export async function ensureSchema(dbPath: string) {
           }
         } catch (_) { }
 
+        await db.exec(`
+          CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT DEFAULT 'general',
+            phone TEXT,
+            email TEXT,
+            address TEXT,
+            gstin TEXT,
+            notes TEXT,
+            alias_names TEXT,
+            is_active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          CREATE INDEX IF NOT EXISTS idx_contacts_phone_type ON contacts(phone, type);
+          CREATE INDEX IF NOT EXISTS idx_contacts_name_type ON contacts(name, type);
+        `);
+
         await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_normalized_name ON medicines(normalized_name)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_product_code ON medicines(product_code)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)');
         await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_qr ON special_orders(payment_qr_id)');
+
+        // Schema v64: Clinical knowledge & enrichment table
+        await db.run(`
+          CREATE TABLE IF NOT EXISTS medicine_clinical_info (
+            medicine_id INTEGER PRIMARY KEY,
+            salt_composition TEXT,
+            sub_category TEXT,
+            medicine_desc TEXT,
+            side_effects TEXT,
+            drug_interactions TEXT,
+            match_confidence REAL DEFAULT 1.0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+          )
+        `);
+        await db.run('CREATE INDEX IF NOT EXISTS idx_clinical_salt ON medicine_clinical_info(salt_composition)');
+        await db.run('CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category)');
 
         await ensureOrderTimingSchema(db);
         await ensureMedicinesFts(db);
@@ -1254,6 +1299,29 @@ export async function ensureSchema(dbPath: string) {
       PRIMARY KEY (store_id, key),
       FOREIGN KEY(store_id) REFERENCES stores(id)
     );
+
+    -- Multi-store owner portal: which staff/owner can access which store
+    CREATE TABLE IF NOT EXISTS owner_store_access (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      store_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'STAFF',
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(email, store_id),
+      FOREIGN KEY(store_id) REFERENCES stores(id)
+    );
+
+    -- Website owner sessions (token-based, short-lived)
+    CREATE TABLE IF NOT EXISTS website_owner_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      store_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_website_owner_sessions_token ON website_owner_sessions(token);
     CREATE TABLE IF NOT EXISTS store_sync_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       store_id INTEGER NOT NULL,
@@ -1988,7 +2056,8 @@ export async function ensureSchema(dbPath: string) {
       synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       medicine_names TEXT,
       extracted_invoice_no TEXT,
-      extracted_distributor TEXT
+      extracted_distributor TEXT,
+      classification TEXT DEFAULT 'UNKNOWN'
     );
 
     CREATE TABLE IF NOT EXISTS medicine_lifecycle (
@@ -2657,6 +2726,24 @@ export async function ensureSchema(dbPath: string) {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT DEFAULT 'general',
+      phone TEXT,
+      email TEXT,
+      address TEXT,
+      gstin TEXT,
+      notes TEXT,
+      alias_names TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_contacts_phone_type ON contacts(phone, type);
+    CREATE INDEX IF NOT EXISTS idx_contacts_name_type ON contacts(name, type);
+
     CREATE TABLE IF NOT EXISTS expiry_return_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       inventory_id INTEGER NOT NULL,
@@ -2862,7 +2949,8 @@ export async function ensureSchema(dbPath: string) {
       synced_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
       medicine_names  TEXT,
       extracted_invoice_no TEXT,
-      extracted_distributor TEXT
+      extracted_distributor TEXT,
+      classification  TEXT DEFAULT 'UNKNOWN'
     );
 
     -- Attachment records per email UID (offline-first)
@@ -4013,6 +4101,23 @@ export async function ensureSchema(dbPath: string) {
       );
       CREATE INDEX IF NOT EXISTS idx_wa_med_req_phone ON wa_medicine_requests(customer_phone);
       CREATE INDEX IF NOT EXISTS idx_wa_med_req_created ON wa_medicine_requests(created_at DESC);
+    `);
+
+    // Schema v64: Medicine Clinical Information & Safety Matrix
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS medicine_clinical_info (
+        medicine_id INTEGER PRIMARY KEY,
+        salt_composition TEXT,
+        sub_category TEXT,
+        medicine_desc TEXT,
+        side_effects TEXT,
+        drug_interactions TEXT,
+        match_confidence REAL DEFAULT 1.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_clinical_salt ON medicine_clinical_info(salt_composition);
+      CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category);
     `);
 
     // Stamp schema version so subsequent boots skip all DDL
