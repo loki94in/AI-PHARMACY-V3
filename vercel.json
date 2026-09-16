@@ -1,13 +1,32 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite",
-  "installCommand": "npm --prefix frontend install",
-  "buildCommand": "npm run build --prefix frontend",
-  "outputDirectory": "frontend/dist",
-  "rewrites": [
+  "version": 2,
+  "outputDirectory": "website/public",
+  "installCommand": "npm --prefix website install",
+  "headers": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,DELETE,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type,x-admin-secret" }
+      ]
     }
+  ],
+  "rewrites": [
+    { "source": "/api/catalog/(.*)", "destination": "/website/api/catalog.js?action=$1" },
+    { "source": "/api/catalog", "destination": "/website/api/catalog.js" },
+    { "source": "/api/license/(.*)", "destination": "/website/api/license.js?action=$1" },
+    { "source": "/api/license", "destination": "/website/api/license.js" },
+    { "source": "/api/telemetry/(.*)", "destination": "/website/api/telemetry.js?action=$1" },
+    { "source": "/api/telemetry", "destination": "/website/api/telemetry.js" },
+    { "source": "/api/updates/(.*)", "destination": "/website/api/updates.js?action=$1" },
+    { "source": "/api/updates", "destination": "/website/api/updates.js" },
+    { "source": "/shop", "destination": "/catalog.html" },
+    { "source": "/catalog", "destination": "/catalog.html" },
+    { "source": "/portal", "destination": "/portal.html" },
+    { "source": "/owner", "destination": "/portal.html" },
+    { "source": "/license", "destination": "/index.html" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/", "destination": "/catalog.html" }
   ]
 }

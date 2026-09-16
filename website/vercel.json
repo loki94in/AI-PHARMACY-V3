@@ -26,6 +26,8 @@
     { "source": "/api/updates", "destination": "/api/updates.js" },
     { "source": "/shop", "destination": "/catalog.html" },
     { "source": "/catalog", "destination": "/catalog.html" },
+    { "source": "/portal", "destination": "/portal.html" },
+    { "source": "/owner", "destination": "/portal.html" },
     { "source": "/license", "destination": "/index.html" },
     { "source": "/admin", "destination": "/index.html" },
     { "source": "/", "destination": "/catalog.html" }

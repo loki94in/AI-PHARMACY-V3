@@ -4,13 +4,35 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
 
 const DEFAULT_STORES = [
   {
-    storeId: 'PHARM-DEFAULT',
-    name: 'Pune City Pharmacy',
-    tagline: 'Genuine Medicines & 24/7 Online Refill Store',
+    storeId: 'PHARM-PUNE-MAIN',
+    name: 'Pune City Pharmacy (Main Branch)',
+    tagline: '24/7 Super-Speciality Dispensary & Refill Hub',
     phone: '+91 98765 43210',
     whatsapp: '919876543210',
     address: 'Shop #4, Near Railway Station, MG Road, Pune, Maharashtra 411001',
-    hours: 'Open 8:00 AM – 11:00 PM (Orders accepted 24/7)',
+    hours: 'Open 24 Hours · All Days',
+    deliveryAvailable: true,
+    minOrderForDelivery: 199,
+  },
+  {
+    storeId: 'PHARM-HOSPITAL-RD',
+    name: 'AI Pharmacy (Hospital Road Branch)',
+    tagline: 'Emergency & Acute Care Medicine Center',
+    phone: '+91 98765 43211',
+    whatsapp: '919876543211',
+    address: 'Plot 12, Opposite Sassoon Hospital, Station Rd, Pune 411001',
+    hours: 'Open 8:00 AM – 11:00 PM',
+    deliveryAvailable: true,
+    minOrderForDelivery: 149,
+  },
+  {
+    storeId: 'PHARM-WESTSIDE',
+    name: 'AI Pharmacy (Westside Clinic Branch)',
+    tagline: 'Chronic & Diabetic Care Specialty Store',
+    phone: '+91 98765 43212',
+    whatsapp: '919876543212',
+    address: 'Shop 101, Paud Road, Near City Pride, Kothrud, Pune 411038',
+    hours: 'Open 8:30 AM – 10:30 PM',
     deliveryAvailable: true,
     minOrderForDelivery: 199,
   }
@@ -761,6 +783,239 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: `Failed to acknowledge orders: ${err.message}` });
       }
     }
+  }
+
+  // ================= 8. MULTI-STORE OWNER AUTHENTICATION =================
+  if (action === 'owner_login') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientSecret = req.headers['x-admin-secret'] || req.body?.adminSecret || req.body?.secret;
+    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    }
+
+    let stores = DEFAULT_STORES;
+    if (isKvConfigured) {
+      try {
+        const storedStores = await kv.get('catalog:stores');
+        if (Array.isArray(storedStores) && storedStores.length > 0) {
+          stores = storedStores;
+        }
+      } catch (err) {
+        console.warn('Owner login stores fetch warning:', err.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Owner authenticated successfully.',
+      owner: {
+        role: 'OWNER',
+        name: 'Pharmacy Group Owner',
+        storesCount: stores.length,
+      },
+      stores,
+      activeStoreId: stores[0]?.storeId || 'PHARM-PUNE-MAIN',
+    });
+  }
+
+  // ================= 9. MULTI-STORE REMOTE ORDERS MANAGEMENT =================
+  if (action === 'owner_orders') {
+    const clientSecret = req.headers['x-admin-secret'] || req.query?.secret;
+    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    }
+
+    const targetStoreId = req.query.storeId || req.query.store || null;
+    const statusFilter = (req.query.status || 'all').toLowerCase();
+
+    let orders = [];
+    if (isKvConfigured) {
+      try {
+        const pendingIds = await kv.lrange('orders:pending', 0, 150) || [];
+        const orderIdSet = new Set(pendingIds);
+
+        for (const id of orderIdSet) {
+          const o = await kv.get(`order:${id}`);
+          if (o) {
+            if (!targetStoreId || o.storeId === targetStoreId || o.storeId === 'PHARM-DEFAULT') {
+              if (statusFilter === 'all' || (o.status || '').toLowerCase().includes(statusFilter)) {
+                orders.push(o);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Owner orders fetch error:', err.message);
+      }
+    }
+
+    orders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    return res.status(200).json({
+      success: true,
+      storeId: targetStoreId,
+      count: orders.length,
+      orders,
+    });
+  }
+
+  // ================= 10. MULTI-STORE ORDER STATUS UPDATE & WHATSAPP DISPATCH =================
+  if (action === 'update_order_status') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    }
+
+    const { orderId, newStatus, storeId, notes } = req.body || {};
+    if (!orderId || !newStatus) {
+      return res.status(400).json({ error: 'orderId and newStatus are required.' });
+    }
+
+    let updatedOrder = null;
+    let storePhone = '919876543210';
+    let storeName = 'Pune City Pharmacy';
+
+    if (isKvConfigured) {
+      try {
+        const existing = await kv.get(`order:${orderId}`);
+        if (!existing) {
+          return res.status(404).json({ error: 'Order not found.' });
+        }
+
+        existing.status = newStatus;
+        existing.statusUpdatedAt = new Date().toISOString();
+        if (notes) existing.ownerNotes = notes;
+
+        await kv.set(`order:${orderId}`, existing);
+        updatedOrder = existing;
+
+        const sId = storeId || existing.storeId;
+        const storeInfo = await kv.get(`store:${sId}:info`) || await kv.get('catalog:store_info');
+        if (storeInfo?.whatsapp) storePhone = String(storeInfo.whatsapp).replace(/\D/g, '');
+        if (storeInfo?.name) storeName = storeInfo.name;
+      } catch (err) {
+        return res.status(500).json({ error: `Failed to update order: ${err.message}` });
+      }
+    }
+
+    let statusEmoji = '📦';
+    if (newStatus === 'Accepted') statusEmoji = '✅';
+    if (newStatus === 'Ready for Pickup') statusEmoji = '🛍️';
+    if (newStatus === 'Dispatched') statusEmoji = '🛵';
+    if (newStatus === 'Completed') statusEmoji = '🎉';
+    if (newStatus === 'Cancelled') statusEmoji = '❌';
+
+    const customerPhone = updatedOrder?.phone ? String(updatedOrder.phone).replace(/\D/g, '') : '';
+    const waText = `${statusEmoji} *Order Update — ${storeName}*\n\n` +
+      `*Order ID:* #${orderId}\n` +
+      `*Status:* ${newStatus}\n` +
+      (notes ? `*Note:* ${notes}\n` : '') +
+      `\nThank you for choosing ${storeName}! If you have questions, please reply to this message.`;
+
+    const customerWhatsappUrl = customerPhone ? `https://wa.me/${customerPhone}?text=${encodeURIComponent(waText)}` : null;
+
+    return res.status(200).json({
+      success: true,
+      message: `Order #${orderId} marked as ${newStatus}!`,
+      order: updatedOrder,
+      customerWhatsappUrl,
+    });
+  }
+
+  // ================= 11. MULTI-STORE MEDICINE AVAILABILITY TOGGLE =================
+  if (action === 'toggle_availability') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const clientSecret = req.headers['x-admin-secret'] || req.body?.adminSecret;
+    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    }
+
+    const { storeId, medicineId, inStock } = req.body || {};
+    if (!storeId || medicineId === undefined) {
+      return res.status(400).json({ error: 'storeId and medicineId are required.' });
+    }
+
+    if (!isKvConfigured) {
+      return res.status(503).json({ error: 'Database not configured.' });
+    }
+
+    try {
+      let meds = await kv.get(`store:${storeId}:medicines`);
+      if (!Array.isArray(meds)) {
+        meds = await kv.get('catalog:medicines') || DEFAULT_MEDICINES;
+      }
+
+      const target = meds.find(m => String(m.id) === String(medicineId) || m.name === medicineId);
+      if (!target) {
+        return res.status(404).json({ error: 'Medicine not found in catalog.' });
+      }
+
+      target.in_stock = Boolean(inStock);
+      target.updated_at = new Date().toISOString();
+
+      await kv.set(`store:${storeId}:medicines`, meds);
+
+      return res.status(200).json({
+        success: true,
+        message: `${target.name} is now ${target.in_stock ? 'IN STOCK' : 'OUT OF STOCK'} for store ${storeId}.`,
+        medicine: target,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to toggle availability: ${err.message}` });
+    }
+  }
+
+  // ================= 12. MULTI-STORE KPI STATS =================
+  if (action === 'store_stats') {
+    const clientSecret = req.headers['x-admin-secret'] || req.query?.secret;
+    if (!clientSecret || clientSecret !== ADMIN_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized. Invalid owner secret key.' });
+    }
+
+    const storeId = req.query.storeId || 'PHARM-PUNE-MAIN';
+    let pendingCount = 0;
+    let readyCount = 0;
+    let totalRevenue = 0;
+    let totalMeds = DEFAULT_MEDICINES.length;
+    let outOfStockCount = 0;
+
+    if (isKvConfigured) {
+      try {
+        const pendingIds = await kv.lrange('orders:pending', 0, 100) || [];
+        for (const id of pendingIds) {
+          const o = await kv.get(`order:${id}`);
+          if (o && (o.storeId === storeId || o.storeId === 'PHARM-DEFAULT')) {
+            if (o.status === 'Pending' || o.status === 'Refill Requested') pendingCount++;
+            if (o.status === 'Ready for Pickup' || o.status === 'Accepted') readyCount++;
+            totalRevenue += Number(o.totalAmount || 0);
+          }
+        }
+
+        const meds = await kv.get(`store:${storeId}:medicines`) || await kv.get('catalog:medicines') || DEFAULT_MEDICINES;
+        if (Array.isArray(meds)) {
+          totalMeds = meds.length;
+          outOfStockCount = meds.filter(m => m.in_stock === false).length;
+        }
+      } catch (err) {
+        console.warn('Store stats compute warning:', err.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      storeId,
+      stats: {
+        pendingOrders: pendingCount,
+        readyOrders: readyCount,
+        estimatedRevenue: totalRevenue,
+        totalMedicines: totalMeds,
+        outOfStockMedicines: outOfStockCount,
+      }
+    });
   }
 
   return res.status(400).json({ error: `Unknown action: ${action}` });
