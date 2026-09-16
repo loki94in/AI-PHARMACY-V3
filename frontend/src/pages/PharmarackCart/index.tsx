@@ -1160,6 +1160,9 @@ export default function PharmarackCart() {
   const [isValidatingBeforeSend, setIsValidatingBeforeSend] = useState(false);
   const [selectedBatchDeliveryBoys, setSelectedBatchDeliveryBoys] = useState<Record<number, number | null>>({});
   const [bulkApplyDeliveryBoyId, setBulkApplyDeliveryBoyId] = useState<string>('');
+  // Single WhatsApp order dispatch modal state
+  const [singleDispatchTarget, setSingleDispatchTarget] = useState<Distributor | null>(null);
+  const [singleDispatchBoyId, setSingleDispatchBoyId] = useState<number | null>(null);
 
   const handleOpenConfirmBatchModal = async () => {
     if (isSendingBatchWhatsApp || isValidatingBeforeSend) return;
@@ -1204,6 +1207,7 @@ export default function PharmarackCart() {
   useModalEscape(!!reorderSameModalTarget, () => setReorderSameModalTarget(null));
   useModalEscape(!!purchaseHistoryModalTarget, () => setPurchaseHistoryModalTarget(null));
   useModalEscape(showConfirmBatchModal, () => setShowConfirmBatchModal(false));
+  useModalEscape(Boolean(singleDispatchTarget), () => setSingleDispatchTarget(null));
 
   const normalizeDistName = (rawName: string): string => {
     if (!rawName) return '';
@@ -1767,11 +1771,45 @@ export default function PharmarackCart() {
     return msg;
   };
 
+  const handleOpenSingleDispatchModal = (dist: Distributor) => {
+    setSingleDispatchTarget(dist);
+    const initialBoyId = resolveInitialDeliveryBoyId(dist, distributorMappings, deliveryBoysList);
+    setSingleDispatchBoyId(initialBoyId);
+  };
+
+  const handleConfirmSingleDispatch = async () => {
+    if (!singleDispatchTarget) return;
+    const dist = singleDispatchTarget;
+    const boyId = singleDispatchBoyId;
+    const resolvedBoy = deliveryBoysList.find(b => b.id === boyId) || null;
+
+    if (dist.storeName && boyId) {
+      const normName = dist.storeName.toLowerCase().trim();
+      setDistributorMappings(prev => ({
+        ...prev,
+        [normName]: {
+          ...(prev[normName] || {}),
+          deliveryBoyId: boyId
+        }
+      }));
+      try {
+        await apiClient.post('/pharmarack/distributor-mappings', {
+          store_name: dist.storeName,
+          delivery_boy_id: boyId
+        });
+      } catch (_) {}
+    }
+
+    setSingleDispatchTarget(null);
+    await handleSendWhatsAppOrder(dist, false, false, 'both', resolvedBoy);
+  };
+
   const handleSendWhatsAppOrder = async (
     dist: Distributor,
     bypassMissingBoyCheck = false,
     forceResend = false,
-    targetMode: 'distributor_only' | 'both' = 'both'
+    targetMode: 'distributor_only' | 'both' = 'both',
+    resolvedBoy?: { name: string; whatsapp_number: string } | null
   ) => {
     if (!hasPharmacySettings()) {
       toastEvent.trigger('Pharmacy Name and Contact Phone are required in Settings before sending orders.', 'error');
@@ -1802,7 +1840,7 @@ export default function PharmarackCart() {
       return;
     }
 
-    const msg = buildDistributorOrderMessage(dist);
+    const msg = buildDistributorOrderMessage(dist, resolvedBoy);
 
     setSendingWaDistributorId(dist.storeId);
     try {
@@ -4478,10 +4516,10 @@ export default function PharmarackCart() {
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => handleSendWhatsAppOrder(dist, false, false, 'both')}
+                                    onClick={() => handleOpenSingleDispatchModal(dist)}
                                     disabled={isSending}
                                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition-all active:scale-95 shadow-sm disabled:opacity-50 ${btnClass}`}
-                                    title="Send formatted order message directly to Distributor via WhatsApp"
+                                    title="Review assigned delivery person and send formatted order message to Distributor via WhatsApp"
                                   >
                                     {isSending ? (
                                       <span className="w-2.5 h-2.5 border border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
@@ -5593,6 +5631,92 @@ export default function PharmarackCart() {
               >
                 <Send size={13} />
                 <span>Confirm & Send</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {/* ── Confirm Single WhatsApp Order Dispatch Modal ── */}
+      {singleDispatchTarget && createPortal(
+        <div className="fixed inset-0 z-modal bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="bg-bg3/80 px-5 py-4 border-b border-glass-border flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <Truck size={16} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-text text-sm">Assign Delivery Person</h3>
+                  <p className="text-[11px] text-muted truncate max-w-[240px]">{singleDispatchTarget.storeName}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSingleDispatchTarget(null)}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4">
+              <div className="bg-bg3/40 border border-glass-border rounded-xl p-3 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Items to Send</span>
+                  <span className="text-sm font-extrabold text-text font-mono">
+                    {singleDispatchTarget.items.filter(i => isItemIncludedInDispatch(i, singleDispatchTarget)).length} items
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-muted font-bold uppercase tracking-wider block">Order Value</span>
+                  <span className="text-sm font-black text-emerald-400 font-mono">
+                    ₹{getDistributorCheckedTotal(singleDispatchTarget).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-text flex items-center gap-1.5">
+                  <Truck size={13} className="text-primary" /> Delivery Boy for this order:
+                </label>
+                <select
+                  value={singleDispatchBoyId ?? ''}
+                  onChange={(e) => setSingleDispatchBoyId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full text-xs px-3 py-2.5 rounded-xl bg-bg border border-glass-border text-text font-medium focus:outline-none focus:border-emerald-500 transition-all cursor-pointer"
+                >
+                  <option value="">👤 Unassigned / Store Admin Fallback</option>
+                  {deliveryBoysList.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      👤 {b.name} {b.whatsapp_number ? `(+91 ${b.whatsapp_number.slice(-10)})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted">
+                  The selected delivery staff will be included in the order message and assigned to pick up this parcel.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-bg3/60 px-5 py-3 border-t border-glass-border flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSingleDispatchTarget(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSingleDispatch}
+                disabled={sendingWaDistributorId === singleDispatchTarget.storeId}
+                className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-md cursor-pointer disabled:opacity-50"
+              >
+                <MessageSquare size={14} />
+                <span>Confirm & Send via WhatsApp</span>
               </button>
             </div>
           </div>

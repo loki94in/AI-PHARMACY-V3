@@ -401,6 +401,58 @@ router.get('/wa-media/:msgId', async (req, res) => {
   }
 });
 
+// GET /messaging/wa-requests — Fetches recent persistent customer medicine inquiries
+router.get('/wa-requests', async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const db = await dbManager.getConnection();
+    const rows = await db.all(
+      `SELECT * FROM wa_medicine_requests ORDER BY id DESC LIMIT ?`,
+      [limit]
+    );
+
+    const formatted = rows.map((r: any) => {
+      let localMatches = [];
+      let inventoryStock = {};
+      let pharmaHits = [];
+      let relatedMedicines = [];
+      try { localMatches = JSON.parse(r.local_matches || '[]'); } catch (_) {}
+      try { inventoryStock = JSON.parse(r.inventory_stock || '{}'); } catch (_) {}
+      try { pharmaHits = JSON.parse(r.pharma_hits || '[]'); } catch (_) {}
+      try { relatedMedicines = JSON.parse(r.related_medicines || '[]'); } catch (_) {}
+
+      return {
+        id: r.id,
+        customerName: r.customer_name || 'Unknown sender',
+        customerPhone: r.customer_phone,
+        isNewCustomer: r.is_new_customer === 1,
+        medicineName: r.medicine_name,
+        quantity: r.quantity || '',
+        dosageForm: r.dosage_form || '',
+        localMatches,
+        inventoryStock,
+        availability: r.availability || 'Unknown',
+        productKind: r.product_kind || '',
+        confidence: r.confidence || 0,
+        source: r.source || 'text',
+        messageBody: r.message_body || '',
+        pharmaHits,
+        mediaId: r.media_id || '',
+        relatedMedicines,
+        replySent: r.reply_sent === 1,
+        staleSkipped: r.stale_skipped === 1,
+        status: r.status || 'pending',
+        ts: new Date(r.created_at).getTime() || Date.now()
+      };
+    });
+
+    res.json({ success: true, data: formatted });
+  } catch (err: any) {
+    console.error('Error fetching WA medicine requests:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch wa requests' });
+  }
+});
+
 // GET list of ignored numbers
 router.get('/ignored-phones', async (req, res) => {
   try {

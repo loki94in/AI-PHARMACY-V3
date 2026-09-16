@@ -310,6 +310,27 @@ const WaRequestsPanel: React.FC = () => {
   const [lastLookupTerm, setLastLookupTerm] = useState('');
 
   useEffect(() => {
+    // 1. Load persistent history from SQLite database on mount
+    fetch('/api/messaging/wa-requests?limit=50')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.success && Array.isArray(data.data)) {
+          const existingKeys = new Set(feedCache.map(r => `${r.customerPhone}-${r.medicineName}-${r.ts}`));
+          const loadedRows: WaMatchRow[] = data.data;
+          loadedRows.forEach(item => {
+            const key = `${item.customerPhone}-${item.medicineName}-${item.ts}`;
+            if (!existingKeys.has(key)) {
+              feedCache.push(item);
+              existingKeys.add(key);
+            }
+          });
+          // Sort newest first
+          feedCache.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+          setRows(feedCache.slice());
+        }
+      })
+      .catch(err => console.warn('Could not load persistent wa-requests:', err));
+
     const onMatch = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       recordIncomingMatch(detail);

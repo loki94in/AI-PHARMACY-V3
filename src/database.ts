@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 62;
+const CURRENT_SCHEMA_VERSION = 63;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -663,6 +663,8 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_dispatch_orders_store ON dispatch_orders(store_id);
           CREATE INDEX IF NOT EXISTS idx_sync_ledger_store_status ON store_sync_ledger(store_id, sync_status);
           CREATE INDEX IF NOT EXISTS idx_pharmacy_users_username ON pharmacy_users(username);
+          CREATE INDEX IF NOT EXISTS idx_wa_med_req_phone ON wa_medicine_requests(customer_phone);
+          CREATE INDEX IF NOT EXISTS idx_wa_med_req_created ON wa_medicine_requests(created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_user_tenants_lookup ON pharmacy_user_tenants(user_id, store_id);
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_snap ON sales_invoices(customer_name_snapshot);
           CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot);
@@ -3983,6 +3985,35 @@ export async function ensureSchema(dbPath: string) {
         }
       }
     } catch (_) { }
+
+    // Schema v63: WhatsApp Medicine Requests permanent audit table
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS wa_medicine_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_phone TEXT NOT NULL,
+        customer_name TEXT,
+        is_new_customer INTEGER DEFAULT 0,
+        medicine_name TEXT NOT NULL,
+        quantity TEXT,
+        dosage_form TEXT,
+        local_matches TEXT,
+        inventory_stock TEXT,
+        availability TEXT,
+        product_kind TEXT,
+        confidence INTEGER DEFAULT 0,
+        source TEXT DEFAULT 'text',
+        message_body TEXT,
+        pharma_hits TEXT,
+        media_id TEXT,
+        related_medicines TEXT,
+        reply_sent INTEGER DEFAULT 0,
+        stale_skipped INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_wa_med_req_phone ON wa_medicine_requests(customer_phone);
+      CREATE INDEX IF NOT EXISTS idx_wa_med_req_created ON wa_medicine_requests(created_at DESC);
+    `);
 
     // Stamp schema version so subsequent boots skip all DDL
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

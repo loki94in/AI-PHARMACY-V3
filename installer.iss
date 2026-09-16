@@ -89,7 +89,8 @@ Source: "packaging\portable.env"; DestDir: "{app}"; DestName: ".env"; Flags: onl
 ; Bundled reference medicine seed JSON
 Source: "data\medicine_reference_seed.json"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
 
-; Optional reference medicine CSV (large — skip compression when present)
+; Master medicine catalog CSV (packaged into {app}\data\reference_medicines.csv)
+Source: "medicines.csv"; DestDir: "{app}\data"; DestName: "reference_medicines.csv"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignoreversion nocompression skipifsourcedoesntexist
 
 ; Optional Tesseract OCR data

@@ -18,8 +18,16 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
       }
     }
 
-    const csvPath = path.join(process.cwd(), 'data', 'reference_medicines.csv');
-    if (!fs.existsSync(csvPath)) {
+    const candidateCsvPaths = [
+      path.join(process.cwd(), 'data', 'reference_medicines.csv'),
+      path.join(process.cwd(), 'medicines.csv'),
+      path.join(process.cwd(), 'data', 'medicines.csv'),
+      path.join(path.dirname(process.execPath), 'data', 'reference_medicines.csv'),
+      path.join(path.dirname(process.execPath), 'medicines.csv')
+    ];
+    const csvPath = candidateCsvPaths.find(p => fs.existsSync(p));
+
+    if (!csvPath) {
       // Fallback: copy master catalog from template app.db if available
       const templateCandidates = [
         path.join(process.cwd(), 'data', 'app.db'),
@@ -43,7 +51,7 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
           }
         }
       }
-      console.warn('[MasterSeed] Reference CSV not found at:', csvPath);
+      console.warn('[MasterSeed] Reference CSV not found in any candidate path:', candidateCsvPaths);
       return { loaded: 0 };
     }
 

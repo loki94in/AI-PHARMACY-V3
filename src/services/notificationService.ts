@@ -921,8 +921,65 @@ export class NotificationService {
     }
   }
 
+  private async _sendSingleBoySummary(
+    db: any,
+    store: any,
+    dateStr: string,
+    boyPhone: string,
+    boyName: string,
+    reminders: any[]
+  ): Promise<{ ok: boolean; queueId?: number }> {
+    let msg = `🏥 *${store.storeName}*\n`;
+    msg += `📍 *Delivery Location:* ${store.address}\n`;
+    msg += `📞 *Pharmacy Contact:* ${store.phone}\n\n`;
+    msg += `🚚 *AFTERNOON DISPATCH & COLLECTION LIST*\n`;
+    if (boyName && boyName !== 'Delivery Staff') {
+      msg += `👤 *Assigned Staff:* ${boyName}\n`;
+    }
+    msg += `📅 *Date:* ${dateStr}\n`;
+    msg += `🏢 *Assigned Distributors:* ${reminders.length}\n\n`;
+    msg += `─────────────────────────\n`;
+
+    reminders.forEach((r, idx) => {
+      const distName = r.distributor_name || 'Distributor';
+      const rawP = (r.distributor_phone || '').replace(/\D/g, '');
+      const phoneFormatted = rawP.length >= 10 ? formatDisplayPhone(rawP) : (r.distributor_phone || 'N/A');
+      const orderCount = Number(r.order_count || 1);
+      const orderCountText = orderCount > 1 ? ` 🔥 *[${orderCount} Orders Placed Today]*` : '';
+      const statusText = r.status === 'Dispatched' ? '✅ Dispatched / Ready' : (r.status === 'Collected' ? '📦 Collected' : '⏳ Pending Collection');
+      const itemsCount = r.total_items_count ? ` (${r.total_items_count} items)` : '';
+
+      msg += `${idx + 1}. *${distName}*${orderCountText}\n`;
+      msg += `   📞 ${phoneFormatted}\n`;
+      msg += `   📊 Status: ${statusText}${itemsCount}\n\n`;
+    });
+
+    msg += `─────────────────────────\n`;
+    msg += `📝 *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
+
+    console.log(`[ConsolidatedDispatch] Enqueuing afternoon dispatch summary for ${boyName} (${boyPhone})`);
+    const queueId = await whatsappQueueWorker.enqueue(
+      boyPhone,
+      msg,
+      'afternoon_delivery_boy_dispatch',
+      boyName
+    );
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const refId = queueId ? `queue_${queueId}` : `afternoon_dispatch_${todayIso}_${Date.now()}`;
+    const notifStatus = queueId ? 'pending' : 'failed';
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ['afternoon_delivery_boy_dispatch', boyName, boyPhone, msg, notifStatus, refId]
+    );
+
+    return { ok: Boolean(queueId), queueId };
+  }
+
   /**
-   * Send comprehensive afternoon consolidated dispatch summary to Delivery Boy
+   * Send WhatsApp notification to Delivery Boy summarizing all orders placed today across all distributors
+   * Supports multi-delivery boy routing: groups reminders by assigned delivery boy and notifies each individually.
    */
   async sendConsolidatedDeliveryBoyDispatch(
     todayReminders: any[],
@@ -932,33 +989,6 @@ export class NotificationService {
     try {
       const db = await dbManager.getConnection();
 
-      // Resolve Delivery Boy
-      let boyPhone = targetBoyPhone || '';
-      let boyName = targetBoyName || '';
-
-      if (!boyPhone) {
-        const activeBoy = await db.get("SELECT name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' LIMIT 1");
-        if (activeBoy?.whatsapp_number) {
-          boyPhone = activeBoy.whatsapp_number;
-          boyName = activeBoy.name || 'Delivery Staff';
-        } else {
-          // Admin fallback
-          const adminSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
-          if (adminSetting?.value) {
-            boyPhone = String(adminSetting.value);
-            boyName = 'Admin / Store Owner';
-          }
-        }
-      }
-
-      if (!boyPhone) {
-        console.warn('[ConsolidatedDispatch] No delivery boy or admin phone available.');
-        return { ok: false, message: 'No delivery boy or store phone configured.' };
-      }
-
-      const store = await this.getStoreSettings(db);
-      const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
       // Filter only reminders that have orders today
       const orderedReminders = todayReminders.filter(r => r.has_order_today || (r.order_count && r.order_count > 0) || (r.status && r.status !== 'No Order Today'));
 
@@ -967,49 +997,78 @@ export class NotificationService {
         return { ok: true, message: 'No orders placed today.' };
       }
 
-      let msg = `🏥 *${store.storeName}*\n`;
-      msg += `📍 *Delivery Location:* ${store.address}\n`;
-      msg += `📞 *Pharmacy Contact:* ${store.phone}\n\n`;
-      msg += `🚚 *AFTERNOON DISPATCH & COLLECTION LIST*\n`;
-      msg += `📅 *Date:* ${dateStr}\n`;
-      msg += `🏢 *Total Distributors:* ${orderedReminders.length}\n\n`;
-      msg += `─────────────────────────\n`;
+      const store = await this.getStoreSettings(db);
+      const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-      orderedReminders.forEach((r, idx) => {
-        const distName = r.distributor_name || 'Distributor';
-        const rawP = (r.distributor_phone || '').replace(/\D/g, '');
-        const phoneFormatted = rawP.length >= 10 ? formatDisplayPhone(rawP) : (r.distributor_phone || 'N/A');
-        const orderCount = Number(r.order_count || 1);
-        const orderCountText = orderCount > 1 ? ` 🔥 *[${orderCount} Orders Placed Today]*` : '';
-        const statusText = r.status === 'Dispatched' ? '✅ Dispatched / Ready' : (r.status === 'Collected' ? '📦 Collected' : '⏳ Pending Collection');
-        const itemsCount = r.total_items_count ? ` (${r.total_items_count} items)` : '';
+      // If explicit target boy was provided, dispatch directly to that boy
+      if (targetBoyPhone) {
+        const cleanTarget = targetBoyPhone.replace(/\D/g, '').slice(-10);
+        const res = await this._sendSingleBoySummary(db, store, dateStr, cleanTarget, targetBoyName || 'Delivery Staff', orderedReminders);
+        return { ok: res.ok, message: res.ok ? 'Dispatch summary enqueued for Delivery Boy!' : 'Failed to enqueue dispatch.' };
+      }
 
-        msg += `${idx + 1}. *${distName}*${orderCountText}\n`;
-        msg += `   📞 ${phoneFormatted}\n`;
-        msg += `   📊 Status: ${statusText}${itemsCount}\n\n`;
-      });
+      // Fetch all active delivery boys
+      const activeBoys = await db.all("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != ''");
+      const boyMap = new Map<number, { id: number; name: string; phone: string }>();
+      for (const b of activeBoys) {
+        const p = String(b.whatsapp_number).replace(/\D/g, '');
+        if (p.length >= 10) {
+          boyMap.set(b.id, { id: b.id, name: b.name || 'Delivery Staff', phone: p.slice(-10) });
+        }
+      }
 
-      msg += `─────────────────────────\n`;
-      msg += `📝 *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
+      // Group reminders by delivery_boy_id
+      const groupedByBoy = new Map<number, any[]>();
+      const unassignedReminders: any[] = [];
 
-      console.log(`[ConsolidatedDispatch] Enqueuing afternoon dispatch summary for ${boyName} (${boyPhone})`);
-      const queueId = await whatsappQueueWorker.enqueue(
-        boyPhone,
-        msg,
-        'afternoon_delivery_boy_dispatch',
-        boyName
-      );
+      for (const r of orderedReminders) {
+        let boyId = r.delivery_boy_id;
+        // Fallback: check distributor table mapping if not directly on reminder
+        if (!boyId && r.distributor_id) {
+          const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [r.distributor_id]);
+          if (distRow?.delivery_boy_id) boyId = distRow.delivery_boy_id;
+        }
 
-      const todayIso = new Date().toISOString().split('T')[0];
-      const refId = queueId ? `queue_${queueId}` : `afternoon_dispatch_${todayIso}_${Date.now()}`;
-      const notifStatus = queueId ? 'pending' : 'failed';
-      await db.run(
-        `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        ['afternoon_delivery_boy_dispatch', boyName, boyPhone, msg, notifStatus, refId]
-      );
+        if (boyId && boyMap.has(boyId)) {
+          if (!groupedByBoy.has(boyId)) groupedByBoy.set(boyId, []);
+          groupedByBoy.get(boyId)!.push(r);
+        } else {
+          unassignedReminders.push(r);
+        }
+      }
 
-      return { ok: Boolean(queueId), message: 'Afternoon dispatch summary enqueued for Delivery Boy!' };
+      // If we only have 1 active delivery boy in total and there are unassigned reminders, assign all to that boy
+      if (boyMap.size === 1 && unassignedReminders.length > 0) {
+        const onlyBoy = Array.from(boyMap.values())[0];
+        if (onlyBoy) {
+          if (!groupedByBoy.has(onlyBoy.id)) groupedByBoy.set(onlyBoy.id, []);
+          groupedByBoy.get(onlyBoy.id)!.push(...unassignedReminders);
+          unassignedReminders.length = 0;
+        }
+      }
+
+      let totalSent = 0;
+      // Send to each assigned delivery boy their distinct orders
+      for (const [boyId, boyReminders] of groupedByBoy.entries()) {
+        const boy = boyMap.get(boyId);
+        if (!boy || boyReminders.length === 0) continue;
+        const res = await this._sendSingleBoySummary(db, store, dateStr, boy.phone, boy.name, boyReminders);
+        if (res.ok) totalSent++;
+      }
+
+      // If there are still unassigned orders, fallback to admin/store owner
+      if (unassignedReminders.length > 0) {
+        const adminSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
+        if (adminSetting?.value) {
+          const adminPhone = String(adminSetting.value).replace(/\D/g, '').slice(-10);
+          if (adminPhone.length === 10) {
+            const res = await this._sendSingleBoySummary(db, store, dateStr, adminPhone, 'Admin / Store Owner', unassignedReminders);
+            if (res.ok) totalSent++;
+          }
+        }
+      }
+
+      return { ok: totalSent > 0, message: `Afternoon dispatch summary sent to ${totalSent} recipient(s)!` };
     } catch (err: any) {
       console.error('[ConsolidatedDispatch] Error enqueuing afternoon dispatch summary:', err);
       return { ok: false, message: err.message || 'Internal error' };

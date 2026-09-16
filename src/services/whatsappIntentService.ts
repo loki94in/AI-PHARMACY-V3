@@ -297,6 +297,8 @@ export async function handleInbound(msg: any): Promise<void> {
     const body = msg.body || '';
     const msgId = msg.id?._serialized || msg.id || '';
     const hasMedia = !!msg.hasMedia;
+    const msgTimestamp = msg.timestamp ? Number(msg.timestamp) : null;
+    const isStale = msgTimestamp ? (Math.floor(Date.now() / 1000) - msgTimestamp > 300) : false;
 
     // Resolve standard phone number if sender is an LID
     if (phone.endsWith('@lid')) {
@@ -590,7 +592,8 @@ export async function handleInbound(msg: any): Promise<void> {
           msgId,
           phone,
           chatId,
-          hasIntentWords: parsed.rawIntentWords.length > 0 || cand.fromScispacy
+          hasIntentWords: parsed.rawIntentWords.length > 0 || cand.fromScispacy,
+          isStale
         });
       }
     }
@@ -671,6 +674,7 @@ async function searchAndBroadcast(opts: {
   // strip / caption, already resolved LOCAL-ONLY by resolveRelatedMedicinesLocal.
   // They ride along on the primary card + owner message — zero extra network.
   relatedMedicines?: Array<{ name: string; registered: boolean; inventoryStock: number }>;
+  isStale?: boolean;
 }): Promise<void> {
   const { medicineName, quantity, unit, customer, isNewCustomer, messageBody, source, dosageForm, mrp, msgId, phone, chatId, imagePath } = opts;
   const hasIntentWords = !!opts.hasIntentWords;
@@ -902,8 +906,45 @@ async function searchAndBroadcast(opts: {
     history,
     livePharmarackResults,
     mediaId: msgId || null,
-    relatedMedicines: opts.relatedMedicines || []
+    relatedMedicines: opts.relatedMedicines || [],
+    isStale: !!opts.isStale
   });
+
+  // Persist permanently to SQLite wa_medicine_requests table
+  try {
+    const db = await dbManager.getConnection();
+    const cleanPhoneDigits = (phone || '').replace(/\D/g, '').slice(-10);
+    await db.run(
+      `INSERT INTO wa_medicine_requests (
+        customer_phone, customer_name, is_new_customer, medicine_name, quantity, dosage_form,
+        local_matches, inventory_stock, availability, product_kind, confidence, source,
+        message_body, pharma_hits, media_id, related_medicines, reply_sent, stale_skipped, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        cleanPhoneDigits || phone || 'unknown',
+        customer?.name || null,
+        isNewCustomer ? 1 : 0,
+        medicineName,
+        quantity ? String(quantity) : null,
+        dosageForm || null,
+        JSON.stringify(filterResult.matches || []),
+        JSON.stringify(inventoryStock || {}),
+        availability || null,
+        (opts as any).productKind || null,
+        confidence || 0,
+        source || 'text',
+        messageBody || null,
+        JSON.stringify(livePharmarackResults || catalogResults?.mapped || []),
+        msgId || null,
+        JSON.stringify(opts.relatedMedicines || []),
+        opts.isStale ? 0 : 1,
+        opts.isStale ? 1 : 0,
+        'pending'
+      ]
+    );
+  } catch (saveErr) {
+    console.warn('[Intent Service] Failed to persist wa_medicine_request:', saveErr);
+  }
 
   // Fire-and-forget escalation logic
   waAdminEscalationService.maybeEscalate({
@@ -931,8 +972,8 @@ async function searchAndBroadcast(opts: {
   }).catch(err => console.error('[Intent Service] Admin escalation failed:', err));
 
   // Customer clarification prompt (Option A):
-  // When medicine inquiry comes from text and we matched a product, ask customer to confirm
-  if (source === 'text' && phone) {
+  // When medicine inquiry comes from text and we matched a product, ask customer to confirm (skip if stale offline message)
+  if (source === 'text' && phone && !opts.isStale) {
     try {
       const db = await dbManager.getConnection();
       const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
