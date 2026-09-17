@@ -1138,11 +1138,11 @@ var init_whatsappBusinessService = __esm({
        * Sanitize a phone number to international format (digits only, with country code).
        */
       sanitizePhone(phone) {
-        let clean = String(phone).replace(/\D/g, "");
-        if (clean.length === 10) {
-          clean = `91${clean}`;
+        let clean2 = String(phone).replace(/\D/g, "");
+        if (clean2.length === 10) {
+          clean2 = `91${clean2}`;
         }
-        return clean;
+        return clean2;
       }
       /**
        * Download a media file (e.g. image, PDF) from Meta's servers using its Media ID.
@@ -1540,8 +1540,8 @@ function stringSimilarity(a, b) {
 }
 function extractUmbrellaFormulation(name) {
   if (!name) return { brand: null, formulation: null };
-  const clean = name.toUpperCase().replace(/[-_.,/()\[\]]/g, " ");
-  const words = clean.split(/\s+/).filter((w) => w.length >= 2);
+  const clean2 = name.toUpperCase().replace(/[-_.,/()\[\]]/g, " ");
+  const words = clean2.split(/\s+/).filter((w) => w.length >= 2);
   if (words.length === 0) return { brand: null, formulation: null };
   const brandIdx = words.findIndex((w) => UMBRELLA_PHARMA_BRANDS.has(w));
   if (brandIdx === -1) return { brand: null, formulation: null };
@@ -1673,8 +1673,8 @@ function areFormulationModifiersEquivalent(mod1, mod2) {
 }
 function extractFormulationModifiers(name) {
   if (!name) return /* @__PURE__ */ new Set();
-  const clean = name.replace(/['’]s\b/gi, " ").replace(/\b\d+\s*x\s*\d+\b/gi, " ").toUpperCase().replace(/[-_.,/()\[\]+|'"]/g, " ");
-  const words = clean.split(/\s+/).filter(Boolean);
+  const clean2 = name.replace(/['’]s\b/gi, " ").replace(/\b\d+\s*x\s*\d+\b/gi, " ").toUpperCase().replace(/[-_.,/()\[\]+|'"]/g, " ");
+  const words = clean2.split(/\s+/).filter(Boolean);
   const found = /* @__PURE__ */ new Set();
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
@@ -3690,14 +3690,14 @@ function findScheduleMatches(tokens) {
   return { matches: hasExact ? matches.filter((m) => m.exact) : matches, hasExact };
 }
 function buildSearchQuery(input) {
-  const clean = (s) => {
+  const clean2 = (s) => {
     const v = String(s || "").trim();
     return !v || v.toLowerCase() === "null" ? "" : v;
   };
   const parts = [
-    clean(input.name),
-    clean(input.packaging),
-    clean(input.manufacturer),
+    clean2(input.name),
+    clean2(input.packaging),
+    clean2(input.manufacturer),
     "medicine composition salt"
   ];
   return parts.filter(Boolean).join(" ").replace(/\s+/g, " ");
@@ -7490,8 +7490,8 @@ var init_catalogImageService = __esm({
             }
             let matchedMed = medMap.get(rawName.trim().toLowerCase());
             if (!matchedMed) {
-              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
-              matchedMed = medMap.get(clean);
+              const clean2 = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              matchedMed = medMap.get(clean2);
             }
             if (!matchedMed) {
               skipped++;
@@ -7806,8 +7806,8 @@ var init_catalogImageService = __esm({
             if (item.status !== "success" || !item.images) continue;
             let med = medMap.get(rawName.trim().toLowerCase());
             if (!med) {
-              const clean = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
-              med = medMap.get(clean);
+              const clean2 = rawName.replace(/\[.*?\]/g, "").trim().toLowerCase();
+              med = medMap.get(clean2);
             }
             if (!med) continue;
             const currentTypes = existingTypes.get(med.id) || /* @__PURE__ */ new Set();
@@ -7854,7 +7854,7 @@ var init_catalogImageService = __esm({
        */
       generateAccurateQueries(rawName, mfg) {
         const queries = [];
-        const clean = rawName.replace(/\[.*?\]/g, " ").replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ").replace(/\s+/g, " ").trim();
+        const clean2 = rawName.replace(/\[.*?\]/g, " ").replace(/\b(STRIP OF \d+ (TABLETS?|CAPSULES?)|BOTTLE OF \d+ (TABLETS?|ML)|NO'S|\d+\s*NO'S)\b/gi, " ").replace(/\s+/g, " ").trim();
         if (/^BUDETROL\b/i.test(rawName)) {
           const str = rawName.match(/\b\d+(?:\.\d+)?\s*(?:MCG|MG)\b/i)?.[0] || "400";
           queries.push(`Budetrol ${str}`, `Budetrol Inhalation`);
@@ -7875,7 +7875,7 @@ var init_catalogImageService = __esm({
         if (brand && strength) {
           queries.push(`${brand} ${strength}`);
         }
-        queries.push(clean);
+        queries.push(clean2);
         if (brand && mfg) {
           const cleanMfg = mfg.replace(/^(M\/s\.|M\/S|M\/R|LTD|LIMITED|PVT|PHARMA|PHARMACEUTICALS)\s*/gi, "").trim().split(/\s+/)[0];
           if (cleanMfg && cleanMfg.length >= 3) {
@@ -9385,10 +9385,10 @@ var init_visualIndexService = __esm({
       }
       async computePhashFromPath(filePath) {
         try {
-          const clean = filePath.replace(/^\/+/, "");
-          const p1 = import_path11.default.resolve(process.cwd(), "frontend/public", clean);
-          const p2 = import_path11.default.resolve(process.cwd(), clean);
-          const p3 = import_path11.default.resolve(process.cwd(), "uploads", clean.replace(/^uploads\//, ""));
+          const clean2 = filePath.replace(/^\/+/, "");
+          const p1 = import_path11.default.resolve(process.cwd(), "frontend/public", clean2);
+          const p2 = import_path11.default.resolve(process.cwd(), clean2);
+          const p3 = import_path11.default.resolve(process.cwd(), "uploads", clean2.replace(/^uploads\//, ""));
           let buf = null;
           if (import_fs10.default.existsSync(p1)) buf = import_fs10.default.readFileSync(p1);
           else if (import_fs10.default.existsSync(p2)) buf = import_fs10.default.readFileSync(p2);
@@ -9699,8 +9699,8 @@ var init_aiCameraService = __esm({
             const userIgnored = await db2.all("SELECT word FROM permanently_ignored_words");
             for (const row of userIgnored) {
               if (row.word) {
-                const clean = row.word.trim().toLowerCase();
-                if (clean) this.STOP_WORDS.add(clean);
+                const clean2 = row.word.trim().toLowerCase();
+                if (clean2) this.STOP_WORDS.add(clean2);
               }
             }
           } catch (piwErr) {
@@ -16743,10 +16743,10 @@ async function ensureSchema(dbPath) {
       const distsWithEmail = await db2.all("SELECT id, email FROM distributors WHERE email IS NOT NULL AND email != ''");
       const { extractCleanEmail: extractCleanEmail2 } = await Promise.resolve().then(() => (init_emailSanitizer(), emailSanitizer_exports));
       for (const dist of distsWithEmail) {
-        const clean = extractCleanEmail2(dist.email);
-        if (clean && clean !== dist.email) {
-          console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean}"`);
-          await db2.run("UPDATE distributors SET email = ? WHERE id = ?", [clean, dist.id]);
+        const clean2 = extractCleanEmail2(dist.email);
+        if (clean2 && clean2 !== dist.email) {
+          console.log(`[Database Migration] Sanitizing distributor #${dist.id} email: "${dist.email}" -> "${clean2}"`);
+          await db2.run("UPDATE distributors SET email = ? WHERE id = ?", [clean2, dist.id]);
         }
       }
     } catch (distEmailErr) {
@@ -17709,11 +17709,11 @@ async function recordApiSubstance(apiReference) {
     const parts = apiReference.split(/[\s,;:|+\-()\[\]{}\/\\]+/);
     const now = (/* @__PURE__ */ new Date()).toISOString();
     for (const part of parts) {
-      const clean = cleanSubstanceName(part);
-      if (clean && clean.length >= 3) {
+      const clean2 = cleanSubstanceName(part);
+      if (clean2 && clean2.length >= 3) {
         await db2.run(
           "INSERT OR IGNORE INTO api_substances (api, created_at) VALUES (?, ?)",
-          clean,
+          clean2,
           now
         );
       }
@@ -18782,11 +18782,11 @@ function formatExpiryDate(expVal) {
       return `${mm}/${yy}`;
     }
   }
-  const clean = String(expVal).trim();
-  if (!clean || clean === "00000000" || clean === "00/00" || clean === "00/0000" || clean === "*" || clean === "***" || clean === "//*" || clean === "-") {
+  const clean2 = String(expVal).trim();
+  if (!clean2 || clean2 === "00000000" || clean2 === "00/00" || clean2 === "00/0000" || clean2 === "*" || clean2 === "***" || clean2 === "//*" || clean2 === "-") {
     return "";
   }
-  const isoMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})(?:[\/\-](\d{1,2}))?/);
+  const isoMatch = clean2.match(/^(\d{4})[\/\-](\d{1,2})(?:[\/\-](\d{1,2}))?/);
   if (isoMatch) {
     const yy = isoMatch[1].slice(-2);
     const m = parseInt(isoMatch[2], 10);
@@ -18808,7 +18808,7 @@ function formatExpiryDate(expVal) {
     nov: "11",
     dec: "12"
   };
-  const monthNameMatch = clean.match(/(?:(\d{1,2})[\/\-\s]+)?([a-z]{3,9})[\/\-\s]+(\d{2,4})/i);
+  const monthNameMatch = clean2.match(/(?:(\d{1,2})[\/\-\s]+)?([a-z]{3,9})[\/\-\s]+(\d{2,4})/i);
   if (monthNameMatch) {
     const monthPrefix = monthNameMatch[2].substring(0, 3).toLowerCase();
     const mm = monthMap[monthPrefix];
@@ -18818,7 +18818,7 @@ function formatExpiryDate(expVal) {
       return `${mm}/${yy}`;
     }
   }
-  const threePartMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  const threePartMatch = clean2.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (threePartMatch) {
     const p1 = parseInt(threePartMatch[1], 10);
     const p2 = parseInt(threePartMatch[2], 10);
@@ -18838,7 +18838,7 @@ function formatExpiryDate(expVal) {
       return `${mm}/${yy}`;
     }
   }
-  const twoPartMatch = clean.match(/^(\d{1,2})[\/\-](\d{2,4})$/);
+  const twoPartMatch = clean2.match(/^(\d{1,2})[\/\-](\d{2,4})$/);
   if (twoPartMatch) {
     const mm = parseInt(twoPartMatch[1], 10);
     let yy = twoPartMatch[2];
@@ -18847,33 +18847,33 @@ function formatExpiryDate(expVal) {
       return `${String(mm).padStart(2, "0")}/${yy}`;
     }
   }
-  if (/^\d{8}$/.test(clean)) {
-    if (clean.startsWith("20")) {
-      const yy2 = clean.substring(2, 4);
-      const mm2 = clean.substring(4, 6);
+  if (/^\d{8}$/.test(clean2)) {
+    if (clean2.startsWith("20")) {
+      const yy2 = clean2.substring(2, 4);
+      const mm2 = clean2.substring(4, 6);
       const m2 = parseInt(mm2, 10);
       if (m2 >= 1 && m2 <= 12) return `${mm2}/${yy2}`;
     }
-    const mm = clean.substring(2, 4);
-    const yy = clean.substring(6, 8);
+    const mm = clean2.substring(2, 4);
+    const yy = clean2.substring(6, 8);
     const m = parseInt(mm, 10);
     if (m >= 1 && m <= 12) return `${mm}/${yy}`;
   }
-  if (/^\d{6}$/.test(clean)) {
-    if (clean.endsWith("2025") || clean.endsWith("2026") || clean.endsWith("2027") || clean.endsWith("2028") || clean.endsWith("2029") || clean.endsWith("2030") || clean.endsWith("2031") || clean.endsWith("2032")) {
-      const mm2 = clean.substring(0, 2);
-      const yy2 = clean.substring(4, 6);
+  if (/^\d{6}$/.test(clean2)) {
+    if (clean2.endsWith("2025") || clean2.endsWith("2026") || clean2.endsWith("2027") || clean2.endsWith("2028") || clean2.endsWith("2029") || clean2.endsWith("2030") || clean2.endsWith("2031") || clean2.endsWith("2032")) {
+      const mm2 = clean2.substring(0, 2);
+      const yy2 = clean2.substring(4, 6);
       const m2 = parseInt(mm2, 10);
       if (m2 >= 1 && m2 <= 12) return `${mm2}/${yy2}`;
     }
-    const mm = clean.substring(0, 2);
-    const yy = clean.substring(4, 6);
+    const mm = clean2.substring(0, 2);
+    const yy = clean2.substring(4, 6);
     const m = parseInt(mm, 10);
     if (m >= 1 && m <= 12) return `${mm}/${yy}`;
   }
-  if (/^\d{4}$/.test(clean)) {
-    const mm = clean.substring(0, 2);
-    const yy = clean.substring(2, 4);
+  if (/^\d{4}$/.test(clean2)) {
+    const mm = clean2.substring(0, 2);
+    const yy = clean2.substring(2, 4);
     const m = parseInt(mm, 10);
     if (m >= 1 && m <= 12) return `${mm}/${yy}`;
   }
@@ -19479,22 +19479,22 @@ function extractTotalsFromText(text) {
 }
 function cleanMedicineName2(rawName) {
   if (!rawName || typeof rawName !== "string") return "";
-  let clean = rawName.trim();
-  clean = clean.replace(/^(?:hsn[:\s]*)?\d{4,8}\s*/i, "");
-  clean = clean.replace(/^(\d{4,8})([a-zA-Z].*)/, "$2");
-  clean = clean.replace(/^[:\-\s,.]+/, "").replace(/[:\-\s,.=]+$/, "").trim();
-  return clean;
+  let clean2 = rawName.trim();
+  clean2 = clean2.replace(/^(?:hsn[:\s]*)?\d{4,8}\s*/i, "");
+  clean2 = clean2.replace(/^(\d{4,8})([a-zA-Z].*)/, "$2");
+  clean2 = clean2.replace(/^[:\-\s,.]+/, "").replace(/[:\-\s,.=]+$/, "").trim();
+  return clean2;
 }
 function isNonMedicineNoise(name) {
   if (!name || typeof name !== "string") return true;
   const cleaned = cleanMedicineName2(name);
   if (cleaned.length < 2) return true;
-  const clean = cleaned.toLowerCase();
-  if (/^[\d\s\-\/\:\.\,\(\)\%\#\$\@\+\=\_]+$/.test(clean)) return true;
-  if (/^dl\s*[\:\.\-\s_]/i.test(clean) || /^dl\s*no/i.test(clean) || /^d\.l\./i.test(clean) || /drug\s*licen[cs]e/i.test(clean) || /^licen[cs]e\s*no/i.test(clean)) {
+  const clean2 = cleaned.toLowerCase();
+  if (/^[\d\s\-\/\:\.\,\(\)\%\#\$\@\+\=\_]+$/.test(clean2)) return true;
+  if (/^dl\s*[\:\.\-\s_]/i.test(clean2) || /^dl\s*no/i.test(clean2) || /^d\.l\./i.test(clean2) || /drug\s*licen[cs]e/i.test(clean2) || /^licen[cs]e\s*no/i.test(clean2)) {
     return true;
   }
-  if (/^(invoice|inv|bill|date|dated|gstin|pan|fssai|tin|cin|state\s*code|lr\s*no|dear\s*sir|greetings|thanks|kindly|computer|auto-generated|subject|re:|fw:|fwd:|signature|signatory|distributor|supplier|vendor|consignee|consignor|declaration|jurisdiction|destination|regards|sincerely|yours\s*faithfully)\b/i.test(clean) || clean.includes("auto-generated")) {
+  if (/^(invoice|inv|bill|date|dated|gstin|pan|fssai|tin|cin|state\s*code|lr\s*no|dear\s*sir|greetings|thanks|kindly|computer|auto-generated|subject|re:|fw:|fwd:|signature|signatory|distributor|supplier|vendor|consignee|consignor|declaration|jurisdiction|destination|regards|sincerely|yours\s*faithfully)\b/i.test(clean2) || clean2.includes("auto-generated")) {
     return true;
   }
   const exactNoise = [
@@ -19599,7 +19599,7 @@ function isNonMedicineNoise(name) {
     "ref no",
     "reference no"
   ];
-  if (exactNoise.includes(clean)) return true;
+  if (exactNoise.includes(clean2)) return true;
   const noisePrefixes = [
     "total ",
     "total:",
@@ -19649,8 +19649,8 @@ function isNonMedicineNoise(name) {
     "buyer order"
   ];
   for (const prefix of noisePrefixes) {
-    if (clean.startsWith(prefix)) {
-      if (!/(tab|cap|syrup|inj|gel|cream|drop|ointment|suspension|powder|infusion|solution|lotion)\b/i.test(clean)) {
+    if (clean2.startsWith(prefix)) {
+      if (!/(tab|cap|syrup|inj|gel|cream|drop|ointment|suspension|powder|infusion|solution|lotion)\b/i.test(clean2)) {
         return true;
       }
     }
@@ -22944,9 +22944,9 @@ async function resolveDeliveryBoyPhones(db2, orders) {
     const boysToMap = activeBoys.map((b) => ({ name: b.name, val: b.whatsapp_number }));
     for (const item of boysToMap) {
       if (!item.val) continue;
-      const clean = String(item.val).replace(/\D/g, "");
-      if (clean.length >= 10) {
-        const formatted = clean.length === 10 ? `91${clean}` : clean;
+      const clean2 = String(item.val).replace(/\D/g, "");
+      if (clean2.length >= 10) {
+        const formatted = clean2.length === 10 ? `91${clean2}` : clean2;
         if (!result.some((b) => b.phone === formatted)) {
           result.push({ name: item.name, phone: formatted });
         }
@@ -22955,9 +22955,9 @@ async function resolveDeliveryBoyPhones(db2, orders) {
     if (result.length === 0) {
       const adminSetting = await db2.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
       if (adminSetting?.value) {
-        const clean = String(adminSetting.value).replace(/\D/g, "");
-        if (clean.length >= 10) {
-          const formatted = clean.length === 10 ? `91${clean}` : clean;
+        const clean2 = String(adminSetting.value).replace(/\D/g, "");
+        if (clean2.length >= 10) {
+          const formatted = clean2.length === 10 ? `91${clean2}` : clean2;
           result.push({ name: "Admin (Delivery Fallback)", phone: formatted });
         }
       }
@@ -22981,15 +22981,54 @@ async function sendBatchToDeliveryBoys(db2, orders, isLate = false) {
     await ensureWhatsAppReady2(3e4);
   } catch (_) {
   }
-  const { summaryMessage } = await buildSeparateDispatchMessages(db2, orders, isLate);
   const boys = await resolveDeliveryBoyPhones(db2, orders);
   if (boys.length === 0) {
     console.warn("[PharmarackBatch] No delivery boy contacts resolved. Skipping send.");
     return;
   }
+  const boyOrderMap = /* @__PURE__ */ new Map();
+  for (const b of boys) {
+    boyOrderMap.set(b.phone, []);
+  }
+  const unassignedOrders = [];
+  for (const order of orders) {
+    let persons = [];
+    try {
+      persons = typeof order.delivery_persons_json === "string" ? JSON.parse(order.delivery_persons_json) : order.delivery_persons_json || [];
+    } catch {
+      persons = [];
+    }
+    let matchedBoy = null;
+    for (const p of persons) {
+      const pName = (p.name || "").trim().toLowerCase();
+      const pPhone = String(p.phone || p.whatsapp || "").replace(/\D/g, "").slice(-10);
+      const matched = boys.find(
+        (b) => pPhone && b.phone.endsWith(pPhone) || pName && b.name.toLowerCase().includes(pName) || pName && pName.includes(b.name.toLowerCase())
+      );
+      if (matched) {
+        matchedBoy = matched;
+        break;
+      }
+    }
+    if (matchedBoy && boyOrderMap.has(matchedBoy.phone)) {
+      boyOrderMap.get(matchedBoy.phone).push(order);
+    } else {
+      unassignedOrders.push(order);
+    }
+  }
+  if (boys.length === 1 && unassignedOrders.length > 0) {
+    boyOrderMap.get(boys[0].phone).push(...unassignedOrders);
+    unassignedOrders.length = 0;
+  }
   const orderIds = orders.map((o) => o.id);
   const now = Date.now();
   for (const boy of boys) {
+    const assignedOrders = boyOrderMap.get(boy.phone) || [];
+    if (assignedOrders.length === 0) {
+      console.log(`[PharmarackBatch] No orders assigned for ${boy.name} (${boy.phone}), skipping summary.`);
+      continue;
+    }
+    const { summaryMessage } = await buildSeparateDispatchMessages(db2, assignedOrders, isLate);
     try {
       const notifType = isLate ? "pharmarack_additional_batch_summary" : "pharmarack_daily_batch_summary";
       const queueId = await whatsappQueueWorker.enqueue(boy.phone, summaryMessage, notifType, boy.name);
@@ -23126,15 +23165,15 @@ __export(notificationService_exports, {
 });
 function formatDisplayPhone(rawPhone) {
   if (!rawPhone) return "N/A";
-  const clean = String(rawPhone).replace(/\D/g, "");
-  if (clean.length === 10) {
-    return `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
+  const clean2 = String(rawPhone).replace(/\D/g, "");
+  if (clean2.length === 10) {
+    return `+91 ${clean2.slice(0, 5)} ${clean2.slice(5)}`;
   }
-  if (clean.startsWith("91") && clean.length === 12) {
-    return `+91 ${clean.slice(2, 7)} ${clean.slice(7)}`;
+  if (clean2.startsWith("91") && clean2.length === 12) {
+    return `+91 ${clean2.slice(2, 7)} ${clean2.slice(7)}`;
   }
-  if (clean.length > 0) {
-    return `+${clean}`;
+  if (clean2.length > 0) {
+    return `+${clean2}`;
   }
   return String(rawPhone).trim() || "N/A";
 }
@@ -23475,10 +23514,13 @@ var init_notificationService = __esm({
             for (const boy of deliveryPersons) {
               if (!boy.name) continue;
               let boyName2 = boy.name;
-              const dbBoy = await db2.get(
-                "SELECT name, whatsapp_number FROM delivery_boys WHERE (name LIKE ? OR name = ?) AND is_active = 1",
-                [`%${boy.name}%`, boy.name]
-              );
+              let dbBoy = boy.id ? await db2.get("SELECT name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [boy.id]) : null;
+              if (!dbBoy) {
+                dbBoy = await db2.get(
+                  "SELECT name, whatsapp_number FROM delivery_boys WHERE (name LIKE ? OR name = ?) AND is_active = 1",
+                  [`%${boy.name}%`, boy.name]
+                );
+              }
               if (dbBoy?.name) {
                 boyName2 = dbBoy.name;
               }
@@ -23509,12 +23551,12 @@ Mobile: ${phonesDisplay}
             const activeBoys = await db2.all("SELECT name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != ''");
             for (const boy of activeBoys) {
               if (!boy.whatsapp_number) continue;
-              const clean = boy.whatsapp_number.replace(/\D/g, "");
-              if (clean.length >= 10) {
-                const formatted = clean.length === 10 ? `91${clean}` : clean;
+              const clean2 = boy.whatsapp_number.replace(/\D/g, "");
+              if (clean2.length >= 10) {
+                const formatted = clean2.length === 10 ? `91${clean2}` : clean2;
                 resolvedDeliveryBoys.push({ name: boy.name || "Delivery Staff", phone: formatted });
                 deliveryBoysText += `${boy.name}
-Mobile: ${formatDisplayPhone(clean)}
+Mobile: ${formatDisplayPhone(clean2)}
 
 `;
               }
@@ -23522,12 +23564,12 @@ Mobile: ${formatDisplayPhone(clean)}
             if (resolvedDeliveryBoys.length === 0) {
               const adminSetting = await db2.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
               if (adminSetting?.value) {
-                const clean = String(adminSetting.value).replace(/\D/g, "");
-                if (clean.length >= 10) {
-                  const formatted = clean.length === 10 ? `91${clean}` : clean;
+                const clean2 = String(adminSetting.value).replace(/\D/g, "");
+                if (clean2.length >= 10) {
+                  const formatted = clean2.length === 10 ? `91${clean2}` : clean2;
                   resolvedDeliveryBoys.push({ name: "Admin / Store Owner", phone: formatted });
                   deliveryBoysText += `Admin (Store Owner)
-Mobile: ${formatDisplayPhone(clean)}
+Mobile: ${formatDisplayPhone(clean2)}
 
 `;
                 }
@@ -23653,9 +23695,9 @@ Mobile: ${formatDisplayPhone(clean)}
                 [`%${name}%`, name]
               );
               const rawPhone = dbBoy?.whatsapp_number || person.phone || "";
-              const clean = rawPhone.replace(/\D/g, "");
-              if (clean.length >= 10) {
-                resolvedDeliveryBoys.push({ name: dbBoy?.name || name, phone: clean.length === 10 ? `91${clean}` : clean });
+              const clean2 = rawPhone.replace(/\D/g, "");
+              if (clean2.length >= 10) {
+                resolvedDeliveryBoys.push({ name: dbBoy?.name || name, phone: clean2.length === 10 ? `91${clean2}` : clean2 });
               }
             }
           }
@@ -23663,18 +23705,18 @@ Mobile: ${formatDisplayPhone(clean)}
             const activeBoys = await db2.all("SELECT name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL");
             for (const boy of activeBoys) {
               if (!boy.whatsapp_number) continue;
-              const clean = boy.whatsapp_number.replace(/\D/g, "");
-              if (clean.length >= 10) {
-                resolvedDeliveryBoys.push({ name: boy.name, phone: clean.length === 10 ? `91${clean}` : clean });
+              const clean2 = boy.whatsapp_number.replace(/\D/g, "");
+              if (clean2.length >= 10) {
+                resolvedDeliveryBoys.push({ name: boy.name, phone: clean2.length === 10 ? `91${clean2}` : clean2 });
               }
             }
           }
           if (resolvedDeliveryBoys.length === 0) {
             const adminSetting = await db2.get("SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' LIMIT 1");
             if (adminSetting?.value) {
-              const clean = String(adminSetting.value).replace(/\D/g, "");
-              if (clean.length >= 10) {
-                resolvedDeliveryBoys.push({ name: "Admin", phone: clean.length === 10 ? `91${clean}` : clean });
+              const clean2 = String(adminSetting.value).replace(/\D/g, "");
+              if (clean2.length >= 10) {
+                resolvedDeliveryBoys.push({ name: "Admin", phone: clean2.length === 10 ? `91${clean2}` : clean2 });
               }
             }
           }
@@ -25359,7 +25401,7 @@ async function recalculateTargetedStockMetrics(affectedMedicineIds) {
           salesMap.set(r.medicine_id, r);
         }
         const nowTime = Date.now();
-        const insertBatch2 = [];
+        const insertBatch = [];
         for (const medId of medicineIdsToUpdate) {
           const pool = poolMap.get(medId);
           const totalUnitsPool = pool?.total_units || 0;
@@ -25391,7 +25433,7 @@ async function recalculateTargetedStockMetrics(affectedMedicineIds) {
             suggested_refill_qty: suggestedRefillQty,
             days_since_first_sale: daysSinceFirstSale
           });
-          insertBatch2.push({
+          insertBatch.push({
             medId,
             totalUnitsPool,
             lowStockFlag,
@@ -25403,8 +25445,8 @@ async function recalculateTargetedStockMetrics(affectedMedicineIds) {
           });
         }
         const chunkSize = 200;
-        for (let i = 0; i < insertBatch2.length; i += chunkSize) {
-          const chunk = insertBatch2.slice(i, i + chunkSize);
+        for (let i = 0; i < insertBatch.length; i += chunkSize) {
+          const chunk = insertBatch.slice(i, i + chunkSize);
           const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
           const flatParams = [];
           for (const item of chunk) {
@@ -26255,7 +26297,7 @@ async function executeSingleItemDelete(item) {
     let resolvedCompany = company || "";
     let resolvedPtr = Number(ptr || 0);
     let resolvedMrp = Number(mrp || 0);
-    if ((!resolvedProductId || !resolvedProductCode) && token) {
+    if (!resolvedProductCode && token) {
       try {
         let cleanKeyword = (productName || "").trim().replace(/\s*\([^)]*\)\s*$/, "").trim();
         if (cleanKeyword) {
@@ -26280,7 +26322,7 @@ async function executeSingleItemDelete(item) {
           if (searchRes.ok) {
             const searchData = await searchRes.json().catch(() => null);
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-              const matched = searchData.data.find((p) => Number(p.StoreId) === Number(storeId)) || searchData.data[0];
+              const matched = searchData.data.find((p) => Number(p.StoreId) === Number(storeId));
               if (matched) {
                 resolvedProductId = Number(matched.PrProductId || matched.ProductId || resolvedProductId);
                 resolvedProductCode = matched.ProductCode || resolvedProductCode;
@@ -26306,9 +26348,30 @@ async function executeSingleItemDelete(item) {
         });
         if (secRes.ok) {
           const secJson = await secRes.json().catch(() => ({}));
-          const isSecOk = secJson && (secJson.StatusCode === 200 || secJson.statusCode === 200 || String(secJson.StatusCode) === "200" || secJson.status === 200 || secJson.status === "success" || secJson.code === 200 || secJson.success === true || secJson.Message && String(secJson.Message).toLowerCase().includes("delete") || secJson.message && String(secJson.message).toLowerCase().includes("delete"));
-          if (isSecOk || secRes.status === 200) {
-            deleteSuccess = true;
+          const rawList = secJson.IList || secJson.data || secJson.Data;
+          if (Array.isArray(rawList)) {
+            const targetStore = rawList.find((s) => Number(s.StoreId || s.storeId) === Number(storeId));
+            if (!targetStore) {
+              deleteSuccess = true;
+            } else {
+              const rawItems = targetStore.lineItems || targetStore.LineItems || targetStore.items || targetStore.Items || targetStore.CartItemList || [];
+              const stillExists = rawItems.some((it) => {
+                const codeMatch = String(it.ProductCode || it.productCode || "") === String(resolvedProductCode);
+                const nameMatch = productName && (it.ProductName || it.productName || "").trim().toLowerCase() === productName.trim().toLowerCase();
+                return codeMatch || nameMatch;
+              });
+              deleteSuccess = !stillExists;
+              if (stillExists) {
+                lastError = `Item still returned in distributor cart by upstream server`;
+              }
+            }
+          } else {
+            const isSecOk = secJson && (secJson.StatusCode === 200 || secJson.statusCode === 200 || secJson.status === "success" || secJson.success === true);
+            if (isSecOk) {
+              deleteSuccess = true;
+            } else {
+              lastError = secJson?.message || secJson?.Message || "Upstream delete failed";
+            }
           }
         } else {
           lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
@@ -26316,6 +26379,8 @@ async function executeSingleItemDelete(item) {
       } catch (err) {
         lastError = err.message;
       }
+    } else {
+      lastError = "Missing ProductCode for cart item deletion";
     }
     if (deleteSuccess) {
       invalidatePharmarackCartCache();
@@ -28314,6 +28379,39 @@ async function isDistributorOrInternal(phone, db2) {
       console.log(`[Intent Service] Skipping customer bot for distributor "${dist.name}" (${cleanDigits}).`);
       return true;
     }
+    try {
+      const pharmaracDist = await db2.get(
+        `SELECT id, name FROM pharmarack_distributors WHERE contact IS NOT NULL AND (contact LIKE ? OR contact LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (pharmaracDist) {
+        console.log(`[Intent Service] Skipping customer bot for Pharmarack distributor "${pharmaracDist.name}" (${cleanDigits}).`);
+        return true;
+      }
+    } catch {
+    }
+    try {
+      const deliveryBoy = await db2.get(
+        `SELECT id, name FROM delivery_boys WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (deliveryBoy) {
+        console.log(`[Intent Service] Skipping customer bot for delivery staff "${deliveryBoy.name}" (${cleanDigits}).`);
+        return true;
+      }
+    } catch {
+    }
+    try {
+      const reminderContact = await db2.get(
+        `SELECT id FROM distributor_dispatch_reminders WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (reminderContact) {
+        console.log(`[Intent Service] Skipping customer bot for dispatch reminder contact (${cleanDigits}).`);
+        return true;
+      }
+    } catch {
+    }
     const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2) || "";
     const cleanAdmin = (adminPhone || "").replace(/\D/g, "").slice(-10);
     if (cleanAdmin && cleanAdmin === cleanDigits) {
@@ -28722,12 +28820,12 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
     const seenCandidateNames = /* @__PURE__ */ new Set();
     const candidates = [];
     const pushCandidate = (name, quantity, unit, fromScispacy = false) => {
-      const clean = (name || "").trim();
-      if (!clean || !isPlausibleMedicineName(clean)) return;
-      const key = clean.toLowerCase().replace(/\s+/g, " ");
+      const clean2 = (name || "").trim();
+      if (!clean2 || !isPlausibleMedicineName(clean2)) return;
+      const key = clean2.toLowerCase().replace(/\s+/g, " ");
       if (seenCandidateNames.has(key)) return;
       seenCandidateNames.add(key);
-      candidates.push({ name: clean, quantity: quantity || 1, unit: unit || "", fromScispacy });
+      candidates.push({ name: clean2, quantity: quantity || 1, unit: unit || "", fromScispacy });
     };
     for (const c of extractMedicineCandidates(body)) {
       pushCandidate(c.medicineName, c.quantity, c.unit);
@@ -30972,19 +31070,29 @@ async function downloadMessageMediaById(serializedId) {
 }
 async function checkPhoneWhatsAppRegistered(cleanDigits10) {
   if (!cleanDigits10 || cleanDigits10.length !== 10) return "NOT_AVAILABLE";
+  const cached = waRegistrationCache.get(cleanDigits10);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.status;
+  }
   if (!isReady || !clientInstance) {
     return "UNABLE_TO_VERIFY";
   }
   try {
     const formatted = cleanDigits10.startsWith("91") ? cleanDigits10 : `91${cleanDigits10}`;
-    const numberDetails = await Promise.race([
+    const TIMEOUT_SENTINEL = /* @__PURE__ */ Symbol("TIMEOUT");
+    const result = await Promise.race([
       clientInstance.getNumberId(formatted),
-      new Promise((resolve) => setTimeout(() => resolve(null), 2500))
+      new Promise((resolve) => setTimeout(() => resolve(TIMEOUT_SENTINEL), 3e3))
     ]);
-    if (numberDetails && numberDetails._serialized) {
+    if (result === TIMEOUT_SENTINEL) {
+      return "UNABLE_TO_VERIFY";
+    }
+    if (result && result._serialized) {
+      waRegistrationCache.set(cleanDigits10, { status: "AVAILABLE", expiresAt: Date.now() + 24 * 60 * 60 * 1e3 });
       return "AVAILABLE";
     }
-    if (numberDetails === null) {
+    if (result === null) {
+      waRegistrationCache.set(cleanDigits10, { status: "NOT_AVAILABLE", expiresAt: Date.now() + 12 * 60 * 60 * 1e3 });
       return "NOT_AVAILABLE";
     }
     return "UNABLE_TO_VERIFY";
@@ -30992,7 +31100,7 @@ async function checkPhoneWhatsAppRegistered(cleanDigits10) {
     return "UNABLE_TO_VERIFY";
   }
 }
-var import_whatsapp_web, import_fs20, import_path22, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache;
+var import_whatsapp_web, import_fs20, import_path22, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -31050,6 +31158,7 @@ var init_whatsappClient = __esm({
     currentQr = null;
     isReady = false;
     recentSendsCache = /* @__PURE__ */ new Map();
+    waRegistrationCache = /* @__PURE__ */ new Map();
   }
 });
 
@@ -31582,6 +31691,67 @@ var init_whatsappQueueWorker = __esm({
               ).catch(() => {
               });
               continue;
+            }
+            const rawItemDigits = (item.number || "").replace(/\D/g, "");
+            const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith("91") ? rawItemDigits.slice(2) : rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits;
+            if (!target10Digits || target10Digits.length !== 10) {
+              console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
+              await db2.run(
+                "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
+                [item.id]
+              );
+              await db2.run(
+                `UPDATE automation_notifications 
+             SET status = 'skipped', error_message = 'Invalid phone number (requires 10 digits)' 
+             WHERE reference_id = ? OR reference_id = ?`,
+                [`queue_${item.id}`, String(item.id)]
+              ).catch(() => {
+              });
+              if (item.type === "refill_reminder") {
+                await db2.run("UPDATE patient_refills SET reminder_status = 'SKIPPED' WHERE reminder_job_id = ?", [item.id]).catch(() => {
+                });
+              }
+              this.broadcastQueueState(true);
+              try {
+                eventService.broadcast("automation_hub_updated", { type: "skipped", id: item.id, reason: "invalid_phone" });
+                eventService.broadcast("toast_alert", {
+                  type: "warning",
+                  message: `\u26A0\uFE0F Skipped WhatsApp to ${item.target_name || item.number}: Phone must be 10 digits`
+                });
+              } catch (_) {
+              }
+              continue;
+            }
+            if (!useBusiness && status.isReady) {
+              const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
+              if (regStatus === "NOT_AVAILABLE") {
+                console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || "unknown"}) is NOT registered on WhatsApp.`);
+                await db2.run(
+                  "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', error_message = 'Number not registered on WhatsApp' WHERE id = ?",
+                  [item.id]
+                );
+                await db2.run(
+                  `UPDATE automation_notifications 
+               SET status = 'skipped', error_message = 'Number not registered on WhatsApp' 
+               WHERE reference_id = ? OR reference_id = ?`,
+                  [`queue_${item.id}`, String(item.id)]
+                ).catch(() => {
+                });
+                if (item.type === "refill_reminder") {
+                  await db2.run("UPDATE patient_refills SET reminder_status = 'SKIPPED' WHERE reminder_job_id = ?", [item.id]).catch(() => {
+                  });
+                }
+                this.broadcastQueueState(true);
+                try {
+                  eventService.broadcast("automation_hub_updated", { type: "skipped", id: item.id, reason: "not_on_whatsapp" });
+                  eventService.broadcast("toast_alert", {
+                    type: "warning",
+                    message: `\u26A0\uFE0F Skipped WhatsApp to ${item.target_name || item.number}: Not registered on WhatsApp`
+                  });
+                } catch (_) {
+                }
+                continue;
+              }
             }
             this.lastWasOffline = false;
             this.currentSendingItemId = item.id;
@@ -39453,7 +39623,7 @@ async function runCatalogImport(jobId) {
     let existingCount = job.existing_count || 0;
     let duplicateCount = job.duplicate_count || 0;
     const addedNames = /* @__PURE__ */ new Set();
-    const insertBatch2 = async (items) => {
+    const insertBatch = async (items) => {
       await activityTracker.waitUntilIdle();
       await db2.run("BEGIN TRANSACTION");
       for (const item of items) {
@@ -39652,7 +39822,7 @@ async function runCatalogImport(jobId) {
         }
         processedCount = currentLine;
         if (batch.length >= batchSize) {
-          await insertBatch2(batch);
+          await insertBatch(batch);
           batch = [];
         }
         const shouldUpdateProgress = processedCount === totalToProcess || processedCount % 1e3 === 0 || Date.now() - lastProgressTime > 3e3;
@@ -39661,7 +39831,7 @@ async function runCatalogImport(jobId) {
           const currentJob = await db2.get("SELECT status FROM catalog_jobs WHERE id = ?", jobId);
           if (currentJob && currentJob.status === "paused") {
             if (batch.length > 0) {
-              await insertBatch2(batch);
+              await insertBatch(batch);
               batch = [];
             }
             const progress2 = Math.min(99, Math.round(processedCount / totalToProcess * 100));
@@ -39689,7 +39859,7 @@ async function runCatalogImport(jobId) {
         }
         processedCount = currentLine;
         if (batch.length >= batchSize) {
-          await insertBatch2(batch);
+          await insertBatch(batch);
           batch = [];
         }
         const shouldUpdateProgress = processedCount === totalToProcess || processedCount % 1e3 === 0 || Date.now() - lastProgressTime > 3e3;
@@ -39698,7 +39868,7 @@ async function runCatalogImport(jobId) {
           const currentJob = await db2.get("SELECT status FROM catalog_jobs WHERE id = ?", jobId);
           if (currentJob && currentJob.status === "paused") {
             if (batch.length > 0) {
-              await insertBatch2(batch);
+              await insertBatch(batch);
               batch = [];
             }
             const progress2 = Math.min(99, Math.round(processedCount / totalToProcess * 100));
@@ -39714,7 +39884,7 @@ async function runCatalogImport(jobId) {
       }
     }
     if (batch.length > 0) {
-      await insertBatch2(batch);
+      await insertBatch(batch);
     }
     await db2.run("UPDATE catalog_jobs SET status = 'done', progress = 100, new_count = ?, existing_count = ?, duplicate_count = ?, processed_count = ? WHERE id = ?", [newCount, existingCount, duplicateCount, processedCount, jobId]);
     eventService.broadcast("catalog_job_update", { id: jobId, status: "done", progress: 100, new_count: newCount, existing_count: existingCount, duplicate_count: duplicateCount, total_count: totalToProcess });
@@ -54162,8 +54332,15 @@ var init_dispatch = __esm({
     router14.post("/delivery-boys", async (req, res) => {
       const { name, whatsapp_number, telegram_chat_id, is_active } = req.body;
       if (!name || !String(name).trim()) return res.status(400).json({ error: "Delivery boy name is required" });
-      const rawDigits = whatsapp_number ? String(whatsapp_number).replace(/\D/g, "") : "";
-      const cleanPhone = rawDigits ? rawDigits : null;
+      let cleanPhone = null;
+      if (whatsapp_number !== void 0 && whatsapp_number !== null && String(whatsapp_number).trim()) {
+        const rawDigits = String(whatsapp_number).replace(/\D/g, "");
+        const normalized = rawDigits.length === 12 && rawDigits.startsWith("91") ? rawDigits.slice(2) : rawDigits;
+        if (normalized.length !== 10) {
+          return res.status(400).json({ error: "Phone number must be exactly 10 digits" });
+        }
+        cleanPhone = normalized;
+      }
       const cleanName = String(name).trim();
       try {
         const db2 = await dbManager.getConnection();
@@ -54210,8 +54387,19 @@ var init_dispatch = __esm({
         if (!existing) {
           return res.status(404).json({ error: "Delivery boy not found" });
         }
-        const rawDigits = whatsapp_number !== void 0 ? whatsapp_number ? String(whatsapp_number).replace(/\D/g, "") : "" : null;
-        const cleanPhone = whatsapp_number !== void 0 ? rawDigits ? rawDigits : null : existing.whatsapp_number;
+        let cleanPhone = existing.whatsapp_number;
+        if (whatsapp_number !== void 0) {
+          if (whatsapp_number === null || !String(whatsapp_number).trim()) {
+            cleanPhone = null;
+          } else {
+            const rawDigits = String(whatsapp_number).replace(/\D/g, "");
+            const normalized = rawDigits.length === 12 && rawDigits.startsWith("91") ? rawDigits.slice(2) : rawDigits;
+            if (normalized.length !== 10) {
+              return res.status(400).json({ error: "Phone number must be exactly 10 digits" });
+            }
+            cleanPhone = normalized;
+          }
+        }
         await db2.run(
           `UPDATE delivery_boys SET name=?, whatsapp_number=?, telegram_chat_id=?, is_active=? WHERE id=?`,
           [
@@ -54495,7 +54683,11 @@ var init_dispatch = __esm({
         const reminder = await db2.get("SELECT * FROM distributor_dispatch_reminders WHERE id = ?", [id]);
         if (!reminder) return res.status(404).json({ error: "Reminder not found" });
         if (updated_phone && String(updated_phone).trim()) {
-          const cleanPhone = String(updated_phone).replace(/[^0-9]/g, "");
+          const rawDigits = String(updated_phone).replace(/[^0-9]/g, "");
+          const cleanPhone = rawDigits.length === 12 && rawDigits.startsWith("91") ? rawDigits.slice(2) : rawDigits;
+          if (cleanPhone.length !== 10) {
+            return res.status(400).json({ error: "Phone number must be exactly 10 digits" });
+          }
           await db2.run("UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?", [cleanPhone, id]);
           if (reminder.distributor_id) {
             await db2.run("UPDATE distributors SET phone = ? WHERE id = ?", [cleanPhone, reminder.distributor_id]);
@@ -60318,15 +60510,15 @@ async function getPharmacyAdminPhone(db2) {
      LIMIT 1`
   );
   if (row?.value) {
-    let clean = row.value.replace(/\D/g, "");
-    if (clean.length === 11 && clean.startsWith("0")) clean = clean.slice(1);
-    return clean.length === 10 ? `91${clean}` : clean;
+    let clean2 = row.value.replace(/\D/g, "");
+    if (clean2.length === 11 && clean2.startsWith("0")) clean2 = clean2.slice(1);
+    return clean2.length === 10 ? `91${clean2}` : clean2;
   }
   return "";
 }
 async function findLocalStock(db2, medName) {
-  const clean = medName.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
-  const tokens = clean.split(/\s+/).filter((t) => t.length >= 3);
+  const clean2 = medName.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
+  const tokens = clean2.split(/\s+/).filter((t) => t.length >= 3);
   if (tokens.length === 0) return null;
   const firstWord = tokens[0];
   const rows = await db2.all(
@@ -65221,13 +65413,13 @@ var init_catalogService = __esm({
           m.id,
           m.name,
           m.manufacturer,
-          COALESCE(mci.sub_category, m.category) as category,
+          m.category,
           m.packaging,
           m.strength,
           m.schedule_type,
           m.mrp,
           m.sell_price as legacy_sell_price,
-          COALESCE(mci.salt_composition, m.generic_name, m.therapeutic) as generic_name,
+          COALESCE(m.generic_name, m.therapeutic) as generic_name,
           mci.medicine_desc as description,
           mci.side_effects,
           COALESCE(SUM(inv.quantity), 0) as total_quantity,
@@ -69578,6 +69770,46 @@ __export(masterMedicinesSeedService_exports, {
   syncInventoryToMaster: () => syncInventoryToMaster,
   upsertMasterMedicine: () => upsertMasterMedicine
 });
+function clean(v) {
+  if (v === void 0 || v === null) return null;
+  const t = String(v).trim();
+  return !t || t.toLowerCase() === "null" ? null : t;
+}
+function cleanNum(v) {
+  const c = clean(v);
+  if (!c) return 0;
+  const n = parseFloat(c);
+  return isNaN(n) ? 0 : n;
+}
+function cleanPrice(v) {
+  const c = clean(v);
+  if (!c) return null;
+  const n = parseFloat(c);
+  return isNaN(n) ? null : n;
+}
+function parseCsvLine2(line) {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(cur);
+      cur = "";
+    } else {
+      cur += char;
+    }
+  }
+  result.push(cur);
+  return result;
+}
 async function seedMasterMedicines(force = false) {
   const db2 = await dbManager.getConnection();
   try {
@@ -69629,34 +69861,106 @@ async function seedMasterMedicines(force = false) {
       input: fileStream,
       crlfDelay: Infinity
     });
+    try {
+      await db2.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id 
+        ON medicines(legacy_id) 
+        WHERE legacy_id IS NOT NULL
+      `);
+    } catch (_) {
+    }
     let loaded = 0;
-    let isHeader = true;
+    let headerParsed = false;
+    let isFullMedicinesCsv = false;
+    const col = {};
     const batchSize = 1e3;
-    let currentBatch = [];
+    let csvBatch = [];
+    let simpleBatch = [];
     for await (const line of rl) {
-      if (isHeader) {
-        isHeader = false;
+      if (!line.trim()) continue;
+      if (!headerParsed) {
+        headerParsed = true;
+        const headerCols = parseCsvLine2(line).map((h) => h.trim().replace(/^"|"$/g, ""));
+        headerCols.forEach((c, idx) => {
+          col[c] = idx;
+        });
+        if (col["medicine_name"] !== void 0) {
+          isFullMedicinesCsv = true;
+        }
         continue;
       }
-      if (!line.trim()) continue;
-      const parts = line.split(",");
-      if (parts.length < 1) continue;
-      const name = parts[0].replace(/^"|"$/g, "").trim();
-      if (!name) continue;
-      const comp1 = parts[1] ? parts[1].replace(/^"|"$/g, "").trim() : null;
-      const comp2 = parts[2] ? parts[2].replace(/^"|"$/g, "").trim() : null;
-      const manufacturer = parts[3] ? parts[3].replace(/^"|"$/g, "").trim() : null;
-      const genericName = [comp1, comp2].filter(Boolean).join(" + ") || null;
-      currentBatch.push([name, genericName, manufacturer, "master_reference"]);
-      if (currentBatch.length >= batchSize) {
-        await insertBatch(db2, currentBatch);
-        loaded += currentBatch.length;
-        currentBatch = [];
+      if (isFullMedicinesCsv) {
+        const fields = parseCsvLine2(line);
+        const rawName = fields[col["medicine_name"]];
+        const name = clean(rawName);
+        if (!name) continue;
+        const legacyId = clean(fields[col["medicine_id"]]);
+        const mfg = clean(fields[col["manufacturer_name"]]);
+        const mkt = clean(fields[col["marketer_name"]]);
+        const pkg2 = clean(fields[col["medicine_packaging"]]);
+        const itemType = clean(fields[col["itemtype"]]);
+        const hsn = clean(fields[col["hsn_code"]]);
+        const cgst = cleanNum(fields[col["cgst"]]);
+        const sgst = cleanNum(fields[col["sgst"]]);
+        const igst = cleanNum(fields[col["igst"]]);
+        const sellPrice = cleanPrice(fields[col["selling_price"]]);
+        const barcode = clean(fields[col["barcode"]]);
+        const rack = clean(fields[col["rack"]]);
+        const therapeutic = clean(fields[col["therapeutic"]]);
+        const subTherapeutic = clean(fields[col["subtherapeutic"]]);
+        const shortCode = clean(fields[col["medicine_short_code"]]);
+        const ucode = clean(fields[col["ucode"]]);
+        csvBatch.push([
+          name,
+          name,
+          name.toLowerCase(),
+          mfg,
+          mkt,
+          pkg2,
+          pkg2,
+          itemType,
+          hsn,
+          cgst,
+          sgst,
+          igst,
+          sellPrice,
+          barcode,
+          rack,
+          therapeutic,
+          subTherapeutic,
+          shortCode,
+          ucode,
+          legacyId
+        ]);
+        if (csvBatch.length >= batchSize) {
+          await insertMedicinesCsvBatch(db2, csvBatch);
+          loaded += csvBatch.length;
+          csvBatch = [];
+        }
+      } else {
+        const parts = parseCsvLine2(line);
+        if (parts.length < 1) continue;
+        const name = clean(parts[0]);
+        if (!name) continue;
+        const comp1 = clean(parts[1]);
+        const comp2 = clean(parts[2]);
+        const manufacturer = clean(parts[3]);
+        const genericName = [comp1, comp2].filter(Boolean).join(" + ") || null;
+        simpleBatch.push([name, genericName, manufacturer, "master_reference"]);
+        if (simpleBatch.length >= batchSize) {
+          await insertSimpleBatch(db2, simpleBatch);
+          loaded += simpleBatch.length;
+          simpleBatch = [];
+        }
       }
     }
-    if (currentBatch.length > 0) {
-      await insertBatch(db2, currentBatch);
-      loaded += currentBatch.length;
+    if (csvBatch.length > 0) {
+      await insertMedicinesCsvBatch(db2, csvBatch);
+      loaded += csvBatch.length;
+    }
+    if (simpleBatch.length > 0) {
+      await insertSimpleBatch(db2, simpleBatch);
+      loaded += simpleBatch.length;
     }
     console.log(`[MasterSeed] Successfully seeded ${loaded} master medicines into database.`);
     return { loaded };
@@ -69665,7 +69969,35 @@ async function seedMasterMedicines(force = false) {
     throw err;
   }
 }
-async function insertBatch(db2, rows) {
+async function insertMedicinesCsvBatch(db2, rows) {
+  await db2.run("BEGIN TRANSACTION");
+  try {
+    const stmt = await db2.prepare(`
+      INSERT OR IGNORE INTO medicines (
+        name, canonical_name, normalized_name, manufacturer, marketed_by,
+        packaging, pack_size, item_type, hsn_code, cgst_per,
+        sgst_per, igst_per, sell_price, barcode, rack,
+        therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
+        source, status
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        'master_reference', 'ACTIVE'
+      )
+    `);
+    for (const row of rows) {
+      await stmt.run(...row);
+    }
+    await stmt.finalize();
+    await db2.run("COMMIT");
+  } catch (err) {
+    await db2.run("ROLLBACK");
+    throw err;
+  }
+}
+async function insertSimpleBatch(db2, rows) {
   await db2.run("BEGIN TRANSACTION");
   try {
     const stmt = await db2.prepare(
@@ -78487,7 +78819,7 @@ var init_medicines = __esm({
             parsedDrugInteractions = clinicalInfo.drug_interactions;
           }
         }
-        const apiRef = medicine.api_reference || medicine.generic_name || clinicalInfo?.salt_composition || "";
+        const apiRef = medicine.api_reference || medicine.generic_name || medicine.therapeutic || clinicalInfo?.salt_composition || "";
         let inStockAlts = [];
         let purchaseHistory = [];
         const salesSummary = { total_units_sold: 0, last_sold_date: null };
@@ -80612,19 +80944,32 @@ ${order.items || "Standard Pharmacy Order"}
             targetBoyName = "Admin Contact";
           }
         }
+        const defaultCleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone || "");
         const boyGroups = /* @__PURE__ */ new Map();
         for (const o of orders) {
-          const rawBoyPhone = o.deliveryBoyPhone || targetBoyPhone;
-          const bName = o.deliveryBoyName || targetBoyName;
+          let rawBoyPhone = o.deliveryBoyPhone;
+          let bName = o.deliveryBoyName;
+          if (o.deliveryBoyId && (!rawBoyPhone || !bName)) {
+            const dbBoy = await db2.get(
+              "SELECT name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1",
+              [o.deliveryBoyId]
+            );
+            if (dbBoy) {
+              rawBoyPhone = rawBoyPhone || dbBoy.whatsapp_number;
+              bName = bName || dbBoy.name;
+            }
+          }
+          if (!rawBoyPhone && !o.deliveryBoyId) {
+            continue;
+          }
           const cleanBPhone = normalizeWhatsAppPhone(rawBoyPhone || "");
           if (cleanBPhone && cleanBPhone.length >= 10) {
             if (!boyGroups.has(cleanBPhone)) {
-              boyGroups.set(cleanBPhone, { boyName: bName, boyPhone: cleanBPhone, orders: [] });
+              boyGroups.set(cleanBPhone, { boyName: bName || "Delivery Staff", boyPhone: cleanBPhone, orders: [] });
             }
             boyGroups.get(cleanBPhone).orders.push(o);
           }
         }
-        const defaultCleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone || "");
         if (boyGroups.size === 0 && defaultCleanBoyPhone && defaultCleanBoyPhone.length >= 10) {
           boyGroups.set(defaultCleanBoyPhone, { boyName: targetBoyName, boyPhone: defaultCleanBoyPhone, orders: [...orders] });
         }

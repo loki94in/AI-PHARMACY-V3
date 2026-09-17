@@ -384,3 +384,93 @@ export async function cleanupStagedRefillNotifications(
   }
 }
 
+/**
+ * Sends a morning operational briefing strictly to the Store Owner's WhatsApp.
+ * Summarizes today's refills, special orders, and whether today has pause/holiday rules.
+ * Does NOT send any automated messages to patients.
+ */
+export async function sendMorningScheduleBriefingToAdmin(db: Database): Promise<void> {
+  try {
+    const { waAdminEscalationService } = await import('./waAdminEscalationService.js');
+    const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db);
+    if (!adminWhatsapp) {
+      console.log('[RefillService] No store owner WhatsApp configured for morning schedule briefing.');
+      return;
+    }
+
+    const { getPharmacyOperatingSchedule, getConfiguredPharmacyName } = await import('./storeSettingsService.js');
+    const storeName = await getConfiguredPharmacyName(db);
+    const operatingSchedule = await getPharmacyOperatingSchedule(db);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const todayDayName = dayNames[new Date().getDay()];
+    const isWeeklyOff = (operatingSchedule.weeklyOff || '').toLowerCase() === todayDayName.toLowerCase();
+    const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr);
+
+    let statusLine = '🟢 Open as usual';
+    if (isHoliday) {
+      statusLine = '🔴 Holiday / Closed today (Orders shifted to next open day)';
+    } else if (isWeeklyOff) {
+      statusLine = `🟡 Weekly Off (${todayDayName}) (Orders shifted to next open day)`;
+    }
+
+    // Due refills today
+    const dueRefills = await db.all(
+      `SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed, pr.is_ready, pr.hold_for_stock
+       FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE pr.status = 'pending' AND pr.is_active = 1 AND DATE(pr.next_refill_date) <= DATE('now')
+       ORDER BY pr.patient_name ASC LIMIT 20`
+    );
+
+    // Active special orders today
+    const specialOrders = await db.all(
+      `SELECT requester, product, qty, status, pharmarack_distributor
+       FROM special_orders
+       WHERE (status = 'Confirmed' OR status = 'Pending' OR status = 'Ready') AND DATE(date) >= DATE('now', '-2 days')
+       ORDER BY date DESC LIMIT 20`
+    );
+
+    let refillsBlock = '• No pending refills for today';
+    if (dueRefills.length > 0) {
+      refillsBlock = dueRefills.slice(0, 8).map((r, i) => {
+        const stockBadge = r.is_ready ? '✅ In Stock' : (r.hold_for_stock ? '⏳ Hold for Stock' : '⚠️ Checking');
+        return `${i + 1}. *${r.patient_name}*: ${r.medicine_name} (${stockBadge})`;
+      }).join('\n');
+      if (dueRefills.length > 8) {
+        refillsBlock += `\n...and ${dueRefills.length - 8} more in Refills page`;
+      }
+    }
+
+    let ordersBlock = '• No pending special orders';
+    if (specialOrders.length > 0) {
+      ordersBlock = specialOrders.slice(0, 8).map((o, i) => {
+        const dist = o.pharmarack_distributor ? ` → ${o.pharmarack_distributor}` : '';
+        return `${i + 1}. *${o.requester || 'Customer'}*: ${o.product} × ${o.qty} [${o.status}]${dist}`;
+      }).join('\n');
+      if (specialOrders.length > 8) {
+        ordersBlock += `\n...and ${specialOrders.length - 8} more in Orders page`;
+      }
+    }
+
+    const messageText = `☀️ *Morning Schedule & Refill Briefing* — ${storeName}
+📅 *Date*: ${todayStr} (${todayDayName})
+🏪 *Store Status*: ${statusLine}
+
+📋 *Refills Due*:
+${refillsBlock}
+
+📦 *WhatsApp & Special Orders*:
+${ordersBlock}
+
+🔒 *Customer Communication*: Customer reminders remain STAGED in Quick Assist for manual review.`;
+
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_morning_briefing', 'Admin / Store Owner');
+    console.log(`[RefillService] Morning schedule briefing sent to owner ${adminWhatsapp}.`);
+  } catch (err) {
+    console.error('[RefillService] Failed to send morning schedule briefing to admin:', err);
+  }
+}
+

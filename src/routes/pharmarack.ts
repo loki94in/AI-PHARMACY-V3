@@ -961,6 +961,368 @@ export async function warmupStartupCart(): Promise<void> {
   }
 }
 
+/**
+ * Checks if a distributor item has active, orderable stock (skips 0, OOS, nil).
+ */
+export function isItemInStock(stockVal: any): boolean {
+  if (stockVal === null || stockVal === undefined || stockVal === '') return false;
+  if (typeof stockVal === 'number') {
+    return !isNaN(stockVal) && stockVal > 0;
+  }
+  const str = String(stockVal).trim().toLowerCase();
+  if (['0', 'out of stock', 'oos', 'nil', 'none', 'false', 'no', 'unavailable'].includes(str)) {
+    return false;
+  }
+  const num = parseFloat(str);
+  if (!isNaN(num)) {
+    return num > 0;
+  }
+  return true;
+}
+
+/**
+ * Resolves the preferred distributor when adding an item to Live Cart:
+ * 1. Checks if current Live Cart already has an active distributor matching one of the candidates.
+ * 2. If cart is empty or no match, checks historical purchase frequency from local DB.
+ * 3. Falls back to first candidate.
+ */
+export async function resolveCommonOrFrequentDistributor(
+  db: any,
+  candidateDistributors: { storeId: number; storeName: string }[]
+): Promise<{ storeId: number; storeName: string } | null> {
+  if (!candidateDistributors || candidateDistributors.length === 0) return null;
+  if (candidateDistributors.length === 1) return candidateDistributors[0];
+
+  // 1. Check if the active Live Cart already has items from one of these candidates
+  try {
+    const liveCartPromise = loadLiveCartCore();
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+    const liveCart = await Promise.race([liveCartPromise, timeoutPromise]).catch(() => null);
+    if (liveCart && Array.isArray(liveCart.distributors) && liveCart.distributors.length > 0) {
+      for (const cartDist of liveCart.distributors) {
+        if (!cartDist.items || cartDist.items.length === 0) continue;
+        const matched = candidateDistributors.find(c =>
+          (Number(c.storeId) > 0 && Number(c.storeId) === Number(cartDist.storeId)) ||
+          (c.storeName && cartDist.storeName && c.storeName.trim().toLowerCase() === cartDist.storeName.trim().toLowerCase())
+        );
+        if (matched) {
+          return matched;
+        }
+      }
+    }
+  } catch (_) {
+    // Non-fatal, continue to purchase history
+  }
+
+  // 2. Query historical purchases to find the distributor most frequently purchased from
+  try {
+    if (db) {
+      const rows = await db.all(`
+        SELECT d.name, COUNT(p.id) as order_count 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY order_count DESC
+      `).catch(() => []);
+
+      for (const row of rows) {
+        const rowName = String(row.name || '').trim().toLowerCase();
+        const matched = candidateDistributors.find(c => {
+          const cName = c.storeName.trim().toLowerCase();
+          return cName === rowName || cName.includes(rowName) || rowName.includes(cName);
+        });
+        if (matched) {
+          return matched;
+        }
+      }
+    }
+  } catch (_) {
+    // Non-fatal
+  }
+
+  // 3. Fallback to the first candidate
+  return candidateDistributors[0];
+}
+
+/**
+ * Add items to Pharmarack cart (callable both from internal services and HTTP endpoint).
+ */
+export async function addItemsToPharmarackCart(items: any[]): Promise<{
+  success: boolean;
+  mode?: string;
+  offline?: boolean;
+  message?: string;
+  error?: string;
+  details?: string;
+  code?: string;
+}> {
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return { success: false, error: 'No items provided' };
+  }
+
+  const settings = await getPharmarackSettings();
+  const token = settings['pharmarack_session_token'] || '';
+
+  if (!token) {
+    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+      return {
+        success: true,
+        offline: true,
+        message: 'Item saved to distributor cart (offline mode). Sync will occur when connected.'
+      };
+    }
+    return { success: false, error: 'Need to login to Pharmarack to add items to cart', code: 'NEED_LOGIN' };
+  }
+
+  // Try to enrich each item's properties from the searchCache or on-the-fly search
+  for (const item of items) {
+    if (!item.productCode || !item.productName) {
+      // Look in search cache
+      for (const [_, cacheEntry] of searchCache.entries()) {
+        const matched = cacheEntry.data.find((p: any) => p.productId === item.productId && p.storeId === item.storeId);
+        if (matched) {
+          item.productCode = matched.productCode;
+          item.productName = matched.name;
+          item.storeName = matched.distributor;
+          item.company = matched.company;
+          item.mrp = matched.mrp;
+          item.rate = matched.rate;
+          break;
+        }
+      }
+    }
+
+    // If productId is missing/0, resolve exact PrProductId.
+    // Fast path first: a recent autocomplete/search for the SAME product name
+    // already carries the real ids — reuse it instead of paying another
+    // OpenSearch round trip (exact normalized-name match only, never guessed).
+    const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
+    if (!hasValidId && token) {
+      try {
+        let cleanKeyword = (item.productName || item.product || item.name || '').trim();
+        cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        const norm = (s: unknown) => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/\s*\([^)]*\)\s*$/, '').trim();
+        const wantName = norm(cleanKeyword);
+        const wantStore = String(item.storeName || '').toLowerCase().trim();
+        if (wantName) {
+          let best: any = null;
+          let bestIsStoreMatch = false;
+          for (const [_, cacheEntry] of searchCache.entries()) {
+            for (const p of (cacheEntry.data || [])) {
+              const nShort = norm(p.shortName || p.name);
+              const nFull = norm(p.fullName || p.name);
+              if (nShort !== wantName && nFull !== wantName) continue;
+              const storeMatch = !wantStore || String(p.distributor || '').toLowerCase().includes(wantStore);
+              if (!best || (storeMatch && !bestIsStoreMatch)) {
+                best = p;
+                bestIsStoreMatch = storeMatch;
+              }
+              if (bestIsStoreMatch) break;
+            }
+            if (bestIsStoreMatch) break;
+          }
+          if (best) {
+            item.productId = Number(best.productId || item.productId || 0);
+            item.storeId = Number(best.storeId || item.storeId || 0);
+            item.productCode = best.productCode || item.productCode || '';
+            item.storeName = best.distributor || item.storeName || '';
+            item.company = best.company || item.company || '';
+            item.mrp = Number(best.mrp || item.mrp || 0);
+            item.rate = Number(best.rate || item.rate || 0);
+            continue;
+          }
+        }
+
+        if (cleanKeyword) {
+          const searchPayload = {
+            SearchKeyword: cleanKeyword,
+            StoreId: item.storeId ? [Number(item.storeId)] : [],
+            NonMappedStoreId: [],
+            Count: 10,
+            SkipCount: 0,
+            isMappedSearch: null,
+            IsStock: 2,
+            IsScheme: 2,
+            IsSort: 1,
+            CartSource: 'MOVP'
+          };
+          const searchRes = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
+            method: 'POST',
+            body: JSON.stringify(searchPayload),
+            signal: AbortSignal.timeout(4000)
+          });
+          if (searchRes.ok) {
+            const searchData: any = await searchRes.json().catch(() => null);
+            if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+              const matched = searchData.data.find((p: any) => 
+                (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
+                Number(p.StoreId) === Number(item.storeId)
+              ) || searchData.data.find((p: any) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
+
+              if (matched) {
+                item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
+                item.storeId = Number(matched.StoreId || item.storeId || 0);
+                item.productCode = matched.ProductCode || item.productCode || '';
+                item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || '';
+                item.storeName = matched.StoreName || item.storeName || '';
+                item.company = matched.Company || item.company || '';
+                item.mrp = Number(matched.MRP || item.mrp || 0);
+                item.rate = Number(matched.PTR || item.rate || 0);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('On-the-fly search enrichment failed:', err);
+      }
+    }
+  }
+
+  let cartSuccess = false;
+  let lastError = '';
+
+  // Primary: Call the official AddUserProductCartDetail API
+  try {
+    for (const item of items) {
+      const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
+      const payload = {
+        StoreId: Number(item.storeId) || 0,
+        StoreName: item.storeName || '',
+        ProductCode: item.productCode || '',
+        Quantity: Number(item.qty || item.Quantity || 1),
+        PTR: rateVal,
+        Free: 0,
+        HiddenPTR: rateVal,
+        NetRate: rateVal,
+        Scheme: item.scheme || '',
+        SchemeType: '',
+        GSTPercentage: 0,
+        ItemGSTValue: 0,
+        CartSource: 'MOVP',
+        DeliveryOption: '',
+        RemarkForStore: '',
+        ProductAddedBy: 0,
+        Priority: '',
+        OrderPlaced: 0,
+        OrderPlacedBy: 0,
+        CreatedBy: 0,
+        ProductName: item.productName || item.product || '',
+        StoreProductName: item.productName || item.product || '',
+        StoreWiseAmount: 0,
+        StoreWiseGSTAmount: 0,
+        IsDeleted: 0,
+        AllowMinQty: 0,
+        AllowMaxQty: 0,
+        StepUpValue: 1,
+        AllowMOQ: true,
+        MinItemLimit: 0,
+        MaxItemLimit: 0,
+        MinAmountLimit: 0,
+        MaxAmountLimit: 0,
+        DODIsPrefenceSet: 0,
+        IsDODPreferenceSet: 0,
+        DisplayHalfSchemeOn: '',
+        DisplayHalfScheme: '0',
+        RetailerSchemePreference: 1,
+        HalfSchemeValueToRetailer: 0,
+        RoundOffDisplayHS: '',
+        MinOrderQuantity: 0,
+        MaxOrderQuantity: 0,
+        IsDODProduct: 0,
+        IsDODProductCheck: 0,
+        IsDODProductSelected: 0,
+        OrderDeliveryModeStatus: 1,
+        OrderRemarks: 1,
+        SpecialRate: 0,
+        Stock: 999,
+        RShowPtr: 1,
+        IsPartyLocked: 0,
+        RewardSchemeId: 0,
+        IsProductChecked: 1,
+        DeliveryPerson: '',
+        DeliveryPersonCode: '',
+        RShowPtrForAllCompanies: 1,
+        Company: item.company || '',
+        IsGroupWisePTR: 0,
+        IsGroupWisePTRRetailer: 0,
+        RateValidity: null,
+        IsShowNonMappedOrderStock: 1,
+        RStockVisibility: 0,
+        IsMapped: (item.mapped === false || item.isMapped === false) ? 0 : 1,
+        ProductId: (() => { const v = item.productId; if (!v) return 0; const n = Number(v); if (!isNaN(n) && n > 0) return n; const stripped = String(v).replace(/^PR/i, ''); const sn = Number(stripped); return (!isNaN(sn) && sn > 0) ? sn : 0; })(),
+        MRP: String(item.mrp || 0),
+        ProductWiseAmount: 0,
+        ProductWiseGSTAmount: 0,
+        ProductWiseSchemeAmount: 0,
+        ProductWiseSchemeGSTAmount: 0,
+        StoreWiseSchemeAmount: 0,
+        StoreWiseSchemeGSTAmount: 0,
+        ProductLock: 0,
+        BoxPacking: '0',
+        CasePacking: item.packaging || item.Packing || '1 strip',
+        Packing: item.packaging || item.Packing || '1 strip'
+      };
+
+      const response = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (response.ok) {
+        const resJson = await response.json().catch(() => ({}));
+        const isOk = resJson && (
+          resJson.StatusCode === 200 || 
+          resJson.statusCode === 200 || 
+          String(resJson.StatusCode) === '200' || 
+          resJson.status === 200 || 
+          resJson.status === 'success' || 
+          resJson.success === true ||
+          (resJson.Message && String(resJson.Message).toLowerCase().includes('success')) ||
+          (resJson.message && String(resJson.message).toLowerCase().includes('success'))
+        );
+
+        if (isOk) {
+          cartSuccess = true;
+        } else {
+          lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
+          cartSuccess = false;
+          break;
+        }
+      } else {
+        const errText = await response.text().catch(() => '');
+        lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
+        cartSuccess = false;
+        break;
+      }
+    }
+  } catch (err: any) {
+    lastError = err.message;
+    cartSuccess = false;
+  }
+  // If direct API call failed, do not block main thread with synchronous Puppeteer launches
+  if (!cartSuccess) {
+    console.warn('[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:', lastError);
+  } 
+
+  if (cartSuccess) {
+    invalidatePharmarackCartCache();
+    // P1 events-not-timers: every cart WRITE pushes one SSE frame so any open
+    // Pharmarack Cart page (this tab or another device) silently re-syncs.
+    eventService.broadcast('pharmarack_cart_changed', { action: 'add', at: Date.now() });
+    return { success: true, message: 'Successfully added to Pharmarack cart!', mode: 'Live' };
+  } else {
+    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
+      return {
+        success: true,
+        offline: true,
+        message: 'Item saved to distributor cart (offline mode).'
+      };
+    }
+    return { success: false, error: 'Failed to add items to actual Pharmarack cart', details: lastError };
+  }
+}
+
 // Add to Pharmarack cart
 router.post('/cart/add', async (req, res) => {
   const { items } = req.body;
@@ -969,267 +1331,14 @@ router.post('/cart/add', async (req, res) => {
   }
 
   try {
-    const settings = await getPharmarackSettings();
-    const token = settings['pharmarack_session_token'] || '';
-
-    if (!token) {
-      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
-        return res.json({
-          success: true,
-          offline: true,
-          message: 'Item saved to distributor cart (offline mode). Sync will occur when connected.'
-        });
-      }
-      return res.status(401).json({ error: 'Need to login to Pharmarack to add items to cart', code: 'NEED_LOGIN' });
+    const result = await addItemsToPharmarackCart(items);
+    if (result.success) {
+      return res.json(result);
     }
-
-    // Try to enrich each item's properties from the searchCache or on-the-fly search
-    for (const item of items) {
-      if (!item.productCode || !item.productName) {
-        // Look in search cache
-        for (const [_, cacheEntry] of searchCache.entries()) {
-          const matched = cacheEntry.data.find((p: any) => p.productId === item.productId && p.storeId === item.storeId);
-          if (matched) {
-            item.productCode = matched.productCode;
-            item.productName = matched.name;
-            item.storeName = matched.distributor;
-            item.company = matched.company;
-            item.mrp = matched.mrp;
-            item.rate = matched.rate;
-            break;
-          }
-        }
-      }
-
-      // If productId is missing/0, resolve exact PrProductId.
-      // Fast path first: a recent autocomplete/search for the SAME product name
-      // already carries the real ids — reuse it instead of paying another
-      // OpenSearch round trip (exact normalized-name match only, never guessed).
-      const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
-      if (!hasValidId && token) {
-        try {
-          let cleanKeyword = (item.productName || item.product || item.name || '').trim();
-          cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, '').trim();
-          const norm = (s: unknown) => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/\s*\([^)]*\)\s*$/, '').trim();
-          const wantName = norm(cleanKeyword);
-          const wantStore = String(item.storeName || '').toLowerCase().trim();
-          if (wantName) {
-            let best: any = null;
-            let bestIsStoreMatch = false;
-            for (const [_, cacheEntry] of searchCache.entries()) {
-              for (const p of (cacheEntry.data || [])) {
-                const nShort = norm(p.shortName || p.name);
-                const nFull = norm(p.fullName || p.name);
-                if (nShort !== wantName && nFull !== wantName) continue;
-                const storeMatch = !wantStore || String(p.distributor || '').toLowerCase().includes(wantStore);
-                if (!best || (storeMatch && !bestIsStoreMatch)) {
-                  best = p;
-                  bestIsStoreMatch = storeMatch;
-                }
-                if (bestIsStoreMatch) break;
-              }
-              if (bestIsStoreMatch) break;
-            }
-            if (best) {
-              item.productId = Number(best.productId || item.productId || 0);
-              item.storeId = Number(best.storeId || item.storeId || 0);
-              item.productCode = best.productCode || item.productCode || '';
-              item.storeName = best.distributor || item.storeName || '';
-              item.company = best.company || item.company || '';
-              item.mrp = Number(best.mrp || item.mrp || 0);
-              item.rate = Number(best.rate || item.rate || 0);
-              continue;
-            }
-          }
-
-          if (cleanKeyword) {
-            const searchPayload = {
-              SearchKeyword: cleanKeyword,
-              StoreId: item.storeId ? [Number(item.storeId)] : [],
-              NonMappedStoreId: [],
-              Count: 10,
-              SkipCount: 0,
-              isMappedSearch: null,
-              IsStock: 2,
-              IsScheme: 2,
-              IsSort: 1,
-              CartSource: 'MOVP'
-            };
-            const searchRes = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
-              method: 'POST',
-              body: JSON.stringify(searchPayload),
-              signal: AbortSignal.timeout(4000)
-            });
-            if (searchRes.ok) {
-              const searchData: any = await searchRes.json().catch(() => null);
-              if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-                const matched = searchData.data.find((p: any) => 
-                  (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
-                  Number(p.StoreId) === Number(item.storeId)
-                ) || searchData.data.find((p: any) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
-
-                if (matched) {
-                  item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
-                  item.storeId = Number(matched.StoreId || item.storeId || 0);
-                  item.productCode = matched.ProductCode || item.productCode || '';
-                  item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || '';
-                  item.storeName = matched.StoreName || item.storeName || '';
-                  item.company = matched.Company || item.company || '';
-                  item.mrp = Number(matched.MRP || item.mrp || 0);
-                  item.rate = Number(matched.PTR || item.rate || 0);
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.error('On-the-fly search enrichment failed:', err);
-        }
-      }
+    if (result.code === 'NEED_LOGIN') {
+      return res.status(401).json(result);
     }
-
-    let cartSuccess = false;
-    let lastError = '';
-
-    // Primary: Call the official AddUserProductCartDetail API
-    try {
-      for (const item of items) {
-        const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
-        const payload = {
-          StoreId: Number(item.storeId) || 0,
-          StoreName: item.storeName || '',
-          ProductCode: item.productCode || '',
-          Quantity: Number(item.qty || item.Quantity || 1),
-          PTR: rateVal,
-          Free: 0,
-          HiddenPTR: rateVal,
-          NetRate: rateVal,
-          Scheme: item.scheme || '',
-          SchemeType: '',
-          GSTPercentage: 0,
-          ItemGSTValue: 0,
-          CartSource: 'MOVP',
-          DeliveryOption: '',
-          RemarkForStore: '',
-          ProductAddedBy: 0,
-          Priority: '',
-          OrderPlaced: 0,
-          OrderPlacedBy: 0,
-          CreatedBy: 0,
-          ProductName: item.productName || item.product || '',
-          StoreProductName: item.productName || item.product || '',
-          StoreWiseAmount: 0,
-          StoreWiseGSTAmount: 0,
-          IsDeleted: 0,
-          AllowMinQty: 0,
-          AllowMaxQty: 0,
-          StepUpValue: 1,
-          AllowMOQ: true,
-          MinItemLimit: 0,
-          MaxItemLimit: 0,
-          MinAmountLimit: 0,
-          MaxAmountLimit: 0,
-          DODIsPrefenceSet: 0,
-          IsDODPreferenceSet: 0,
-          DisplayHalfSchemeOn: '',
-          DisplayHalfScheme: '0',
-          RetailerSchemePreference: 1,
-          HalfSchemeValueToRetailer: 0,
-          RoundOffDisplayHS: '',
-          MinOrderQuantity: 0,
-          MaxOrderQuantity: 0,
-          IsDODProduct: 0,
-          IsDODProductCheck: 0,
-          IsDODProductSelected: 0,
-          OrderDeliveryModeStatus: 1,
-          OrderRemarks: 1,
-          SpecialRate: 0,
-          Stock: 999,
-          RShowPtr: 1,
-          IsPartyLocked: 0,
-          RewardSchemeId: 0,
-          IsProductChecked: 1,
-          DeliveryPerson: '',
-          DeliveryPersonCode: '',
-          RShowPtrForAllCompanies: 1,
-          Company: item.company || '',
-          IsGroupWisePTR: 0,
-          IsGroupWisePTRRetailer: 0,
-          RateValidity: null,
-          IsShowNonMappedOrderStock: 1,
-          RStockVisibility: 0,
-          IsMapped: (item.mapped === false || item.isMapped === false) ? 0 : 1,
-          ProductId: (() => { const v = item.productId; if (!v) return 0; const n = Number(v); if (!isNaN(n) && n > 0) return n; const stripped = String(v).replace(/^PR/i, ''); const sn = Number(stripped); return (!isNaN(sn) && sn > 0) ? sn : 0; })(),
-          MRP: String(item.mrp || 0),
-          ProductWiseAmount: 0,
-          ProductWiseGSTAmount: 0,
-          ProductWiseSchemeAmount: 0,
-          ProductWiseSchemeGSTAmount: 0,
-          StoreWiseSchemeAmount: 0,
-          StoreWiseSchemeGSTAmount: 0,
-          ProductLock: 0,
-          BoxPacking: '0',
-          CasePacking: item.packaging || item.Packing || '1 strip',
-          Packing: item.packaging || item.Packing || '1 strip'
-        };
-
-        const response = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (response.ok) {
-          const resJson = await response.json().catch(() => ({}));
-          const isOk = resJson && (
-            resJson.StatusCode === 200 || 
-            resJson.statusCode === 200 || 
-            String(resJson.StatusCode) === '200' || 
-            resJson.status === 200 || 
-            resJson.status === 'success' || 
-            resJson.success === true ||
-            (resJson.Message && String(resJson.Message).toLowerCase().includes('success')) ||
-            (resJson.message && String(resJson.message).toLowerCase().includes('success'))
-          );
-
-          if (isOk) {
-            cartSuccess = true;
-          } else {
-            lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
-            cartSuccess = false;
-            break;
-          }
-        } else {
-          const errText = await response.text().catch(() => '');
-          lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
-          cartSuccess = false;
-          break;
-        }
-      }
-    } catch (err: any) {
-      lastError = err.message;
-      cartSuccess = false;
-    }
-    // If direct API call failed, do not block main thread with synchronous Puppeteer launches
-    if (!cartSuccess) {
-      console.warn('[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:', lastError);
-    } 
-
-    if (cartSuccess) {
-      invalidatePharmarackCartCache();
-      // P1 events-not-timers: every cart WRITE pushes one SSE frame so any open
-      // Pharmarack Cart page (this tab or another device) silently re-syncs.
-      eventService.broadcast('pharmarack_cart_changed', { action: 'add', at: Date.now() });
-      return res.json({ success: true, message: 'Successfully added to Pharmarack cart!', mode: 'Live' });
-    } else {
-      if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
-        return res.json({
-          success: true,
-          offline: true,
-          message: 'Item saved to distributor cart (offline mode).'
-        });
-      }
-      return res.status(503).json({ error: 'Failed to add items to actual Pharmarack cart', details: lastError });
-    }
+    return res.status(503).json(result);
   } catch (err: any) {
     console.error('Pharmarack cart route error:', err);
     res.status(500).json({ error: 'Internal server error' });

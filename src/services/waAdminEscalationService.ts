@@ -664,11 +664,87 @@ export async function notifyAdminOfCustomerConfirmation(payload: CustomerConfirm
   }
 }
 
+export interface LiveCartAddNotificationPayload {
+  customer: { id?: number; name?: string; phone?: string } | null;
+  phone: string;
+  orderId?: string | number;
+  items: Array<{
+    name: string;
+    quantity: number;
+    distributor: string;
+    rate?: number | null;
+    mrp?: number | null;
+  }>;
+  success: boolean;
+  error?: string;
+  chatId?: string;
+}
+
+/**
+ * Notifies the store owner on WhatsApp when a confirmed order is auto-added to the Pharmarack Live Cart.
+ * Per master plan: Owner notification is automatic; customer communication remains STAGED.
+ */
+export async function notifyAdminOfLiveCartAdd(payload: LiveCartAddNotificationPayload): Promise<void> {
+  try {
+    const db = await dbManager.getConnection();
+    const guard = await escalateGuard(db, payload.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+
+    const { display: displayPhone, waDigits } = await resolvePhone(db, payload.phone, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} (https://wa.me/${waDigits})` : displayPhone;
+    const custName = payload.customer?.name || 'Customer';
+
+    const itemsList = payload.items.map(it => {
+      const rateStr = it.rate ? ` | PTR: ₹${Number(it.rate).toFixed(2)}` : '';
+      const mrpStr = it.mrp ? ` | MRP: ₹${Number(it.mrp).toFixed(2)}` : '';
+      return `• *${it.name}* × ${it.quantity} → *${it.distributor}*${rateStr}${mrpStr}`;
+    }).join('\n');
+
+    let messageText = '';
+    if (payload.success) {
+      messageText = `🛒 *WhatsApp Order Added to Live Cart*
+
+👤 Customer: ${custName}
+📞 Phone: ${phoneLine}
+📋 Order Ref: #${payload.orderId || 'WA-ORDER'}
+
+Medicines:
+${itemsList}
+
+Cart: ✅ Successfully Added to Pharmarack Live Cart
+📋 Customer message: STAGED
+🔒 Customer auto-send: OFF
+
+The order has been added to the Live Cart.
+Customer communication is waiting in Staged Messages for manual review and sending.`;
+    } else {
+      messageText = `⚠️ *WhatsApp Order Requires Attention*
+
+👤 Customer: ${custName}
+📞 Phone: ${phoneLine}
+📋 Order Ref: #${payload.orderId || 'WA-ORDER'}
+
+Medicines:
+${itemsList}
+
+Pharmarack Cart: ❌ Add failed (${payload.error || 'Cart error'})
+Action required in application.`;
+    }
+
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation_cart_add', 'Admin / Store Owner');
+    console.log(`[Admin Escalation] Live Cart add alert sent to admin for order #${payload.orderId}.`);
+  } catch (err) {
+    console.error('[Admin Escalation] Error in notifyAdminOfLiveCartAdd:', err);
+  }
+}
+
 export const waAdminEscalationService = {
   maybeEscalate,
   notifyAdminOfUnprocessedMedia,
   resolveAdminWhatsappNumber,
   notifyAdminOfNonAllopathic,
   notifyAdminOfUnmatchedQuery,
-  notifyAdminOfCustomerConfirmation
+  notifyAdminOfCustomerConfirmation,
+  notifyAdminOfLiveCartAdd
 };
