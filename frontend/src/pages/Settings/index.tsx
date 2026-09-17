@@ -1696,6 +1696,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
   const [reorderWindowMonths, setReorderWindowMonths] = useState(rawSettings.pharmarack_reorder_window_months || '2');
   const [waIdleSleepMin, setWaIdleSleepMin] = useState(rawSettings.whatsapp_idle_sleep_min || '0');
   const [combinePharmarackSearch, setCombinePharmarackSearch] = useState(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+  const [autoAddToLiveCart, setAutoAddToLiveCart] = useState(rawSettings.auto_add_to_live_cart !== 'false');
   const [geminiApiKey, setGeminiApiKey] = useState(rawSettings.gemini_api_key || '');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [testingGemini, setTestingGemini] = useState(false);
@@ -1864,6 +1865,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setWaIdleSleepMin(rawSettings.whatsapp_idle_sleep_min || '0');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart !== 'false');
     setGeminiApiKey(rawSettings.gemini_api_key || '');
     setCfAutostart(rawSettings.cloudflare_tunnel_autostart === '1' || rawSettings.cloudflare_tunnel_autostart === 'true');
     setCfToken(rawSettings.cloudflare_tunnel_token || '');
@@ -1930,7 +1932,8 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
         pharmarack_password: pharmarackPass,
         pharmarack_mode: 'Live',
         pharmarack_reorder_window_months: reorderWindowMonths,
-        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false'
+        combine_pharmarack_pharmacy_search: combinePharmarackSearch ? 'true' : 'false',
+        auto_add_to_live_cart: autoAddToLiveCart ? 'true' : 'false'
       };
       await apiClient.post('/settings/save', payload);
       toastEvent.trigger('Pharmarack B2B credentials and settings saved!', 'success');
@@ -1949,6 +1952,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
     setPharmarackPass(rawSettings.pharmarack_password || '');
     setReorderWindowMonths(rawSettings.pharmarack_reorder_window_months || '2');
     setCombinePharmarackSearch(rawSettings.combine_pharmarack_pharmacy_search !== 'false');
+    setAutoAddToLiveCart(rawSettings.auto_add_to_live_cart !== 'false');
     toastEvent.trigger('Pharmarack credentials reset to saved parameters', 'info');
   };
 
@@ -2156,6 +2160,17 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
       refetchSettings();
     } catch {
       toastEvent.trigger('Failed to update setting', 'error');
+    }
+  };
+
+  const handleToggleAutoAddToCart = async (val: boolean) => {
+    setAutoAddToLiveCart(val);
+    try {
+      await apiClient.post('/settings', { key: 'auto_add_to_live_cart', value: val ? 'true' : 'false' });
+      toastEvent.trigger(`Auto Add to Live Cart ${val ? 'enabled' : 'disabled'}`, 'success');
+      refetchSettings();
+    } catch {
+      toastEvent.trigger('Failed to update Auto Add to Live Cart setting', 'error');
     }
   };
 
@@ -2730,6 +2745,30 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
               />
               <label htmlFor="combinePharmarackSearchToggle" className="text-xs font-semibold text-text cursor-pointer">
                 {combinePharmarackSearch ? 'Enabled' : 'Disabled'}
+              </label>
+            </div>
+          </div>
+
+          {/* Auto Add to Live Cart Toggle */}
+          <div className="bg-bg3/30 border border-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
+            <div className="space-y-0.5">
+              <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                <ShoppingCart size={14} className="text-primary" /> Auto Add to Live Cart
+              </span>
+              <p className="text-[11px] text-muted max-w-xl">
+                When enabled, confirmed customer orders are automatically added into your Pharmarack Live Cart. When disabled, requests are staged for your manual review and addition.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="autoAddToLiveCartToggle"
+                checked={autoAddToLiveCart}
+                onChange={(e) => handleToggleAutoAddToCart(e.target.checked)}
+                className="w-4 h-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+              />
+              <label htmlFor="autoAddToLiveCartToggle" className="text-xs font-semibold text-text cursor-pointer">
+                {autoAddToLiveCart ? 'Enabled' : 'Disabled'}
               </label>
             </div>
           </div>

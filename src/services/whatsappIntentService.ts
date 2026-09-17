@@ -517,31 +517,39 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
       packaging: selectedProductInfo?.packaging || unit || '1 strip'
     };
 
-    // 4. Add to Pharmarack Live Cart
-    const cartResult = await addItemsToPharmarackCart([cartItem]);
-    console.log(`[Intent Service] Live Cart add attempt for "${cartItem.productName}": success=${cartResult.success} (${cartResult.mode || (cartResult.offline ? 'Offline' : 'Failed')})`);
+    // 4. Evaluate Auto Add to Live Cart setting
+    const { isAutoAddToLiveCartEnabled } = await import('./storeSettingsService.js');
+    const autoAddToCart = await isAutoAddToLiveCartEnabled(db);
 
-    // HARD GATE: Verify cart success before proceeding with order creation or customer staging
-    if (!cartResult.success) {
-      console.warn(`[Intent Service] Pharmarack Live Cart addition failed for "${cartItem.productName}". Halting order confirmation.`);
-      // Notify Store Owner of failure so manual action can be taken
-      await waAdminEscalationService.notifyAdminOfLiveCartAdd({
-        orderId: 'FAILED',
-        customer,
-        phone: cleanDigits,
-        chatId,
-        items: [{
-          name: cartItem.productName,
-          quantity: cartItem.qty,
-          distributor: cartItem.storeName,
-          rate: cartItem.rate,
-          mrp: cartItem.mrp
-        }],
-        success: false,
-        error: cartResult.error || cartResult.details || 'Failed to add items to Pharmarack Live Cart'
-      });
-      // STOP: Do NOT record Confirmed order, do NOT create customer staged message
-      return;
+    if (autoAddToCart) {
+      // Add to Pharmarack Live Cart
+      const cartResult = await addItemsToPharmarackCart([cartItem]);
+      console.log(`[Intent Service] Live Cart add attempt for "${cartItem.productName}": success=${cartResult.success} (${cartResult.mode || (cartResult.offline ? 'Offline' : 'Failed')})`);
+
+      // HARD GATE: Verify cart success before proceeding with order creation or customer staging
+      if (!cartResult.success) {
+        console.warn(`[Intent Service] Pharmarack Live Cart addition failed for "${cartItem.productName}". Halting order confirmation.`);
+        // Notify Store Owner of failure so manual action can be taken
+        await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+          orderId: 'FAILED',
+          customer,
+          phone: cleanDigits,
+          chatId,
+          items: [{
+            name: cartItem.productName,
+            quantity: cartItem.qty,
+            distributor: cartItem.storeName,
+            rate: cartItem.rate,
+            mrp: cartItem.mrp
+          }],
+          success: false,
+          error: cartResult.error || (cartResult as any).details || 'Failed to add items to Pharmarack Live Cart'
+        });
+        // STOP: Do NOT record Confirmed order, do NOT create customer staged message
+        return;
+      }
+    } else {
+      console.log(`[Intent Service] Auto Add to Live Cart is OFF. Skipping automatic cart call for "${cartItem.productName}". Queuing for manual review.`);
     }
 
     // 5. Calculate scheduling (business hours, cutoff, holidays)
@@ -624,7 +632,8 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
         rate: cartItem.rate,
         mrp: cartItem.mrp
       }],
-      success: true
+      success: true,
+      manualReview: !autoAddToCart
     });
 
     // 9. Broadcast real-time order update event to UI

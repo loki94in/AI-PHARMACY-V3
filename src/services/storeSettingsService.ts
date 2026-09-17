@@ -536,3 +536,23 @@ export async function savePharmacyOperatingSchedule(
     throw err;
   }
 }
+
+/**
+ * Checks whether automatic addition to Pharmarack Live Cart is enabled.
+ * Default is true (ON) to preserve existing behavior if unset.
+ */
+export async function isAutoAddToLiveCartEnabled(dbInstance?: any): Promise<boolean> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'auto_add_to_live_cart'");
+    if (!row || row.value === null || row.value === undefined) {
+      return true; // Default ON
+    }
+    const val = String(row.value).trim().toLowerCase();
+    return val === 'true' || val === '1' || val === 'on';
+  } catch (err) {
+    console.warn('[StoreSettings] Error checking auto_add_to_live_cart:', err);
+    return true; // Safe fallback to ON
+  }
+}
+

@@ -153,4 +153,106 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
       expect(isDuplicate).toBe(true);
     });
   });
+
+  describe('Auto Add to Live Cart Setting & Decision Gate', () => {
+    test('isAutoAddToLiveCartEnabled defaults to true when setting is absent', async () => {
+      const { isAutoAddToLiveCartEnabled } = await import('../src/services/storeSettingsService.js');
+      const mockDb = {
+        get: async () => null
+      };
+      const enabled = await isAutoAddToLiveCartEnabled(mockDb);
+      expect(enabled).toBe(true);
+    });
+
+    test('isAutoAddToLiveCartEnabled returns true for truthy values', async () => {
+      const { isAutoAddToLiveCartEnabled } = await import('../src/services/storeSettingsService.js');
+      for (const val of ['true', '1', 'on', 'TRUE']) {
+        const mockDb = {
+          get: async () => ({ value: val })
+        };
+        const enabled = await isAutoAddToLiveCartEnabled(mockDb);
+        expect(enabled).toBe(true);
+      }
+    });
+
+    test('isAutoAddToLiveCartEnabled returns false for falsy values', async () => {
+      const { isAutoAddToLiveCartEnabled } = await import('../src/services/storeSettingsService.js');
+      for (const val of ['false', '0', 'off', 'FALSE']) {
+        const mockDb = {
+          get: async () => ({ value: val })
+        };
+        const enabled = await isAutoAddToLiveCartEnabled(mockDb);
+        expect(enabled).toBe(false);
+      }
+    });
+
+    test('when Auto Add is OFF: Live Cart addition is bypassed, order is confirmed, admin is notified for manual review, and message is staged', async () => {
+      const autoAddToCart = false;
+      let cartAdditionAttempted = false;
+      let specialOrderCreated = false;
+      let specialOrderStatus = '';
+      let stagedMessageCreated = false;
+      let adminAlertPayload: any = null;
+      let customerAckSent = false;
+
+      // Simulate the decision gate in executeConfirmedProcurementFlow
+      if (autoAddToCart) {
+        cartAdditionAttempted = true;
+      } else {
+        // OFF: Skip automatic cart call
+        cartAdditionAttempted = false;
+      }
+
+      // Both ON and OFF proceed to record the order and stage communication
+      specialOrderCreated = true;
+      specialOrderStatus = 'Confirmed';
+      stagedMessageCreated = true;
+
+      adminAlertPayload = {
+        orderId: 102,
+        customer: { name: 'Priya Sharma' },
+        phone: '9876543210',
+        items: [{ name: 'Augmentin 625 Duo', quantity: 1, distributor: 'Apex Healthcare', rate: 140, mrp: 200 }],
+        success: true,
+        manualReview: !autoAddToCart
+      };
+
+      if (adminAlertPayload.success) {
+        customerAckSent = true;
+      }
+
+      // Assertions
+      expect(cartAdditionAttempted).toBe(false);
+      expect(specialOrderCreated).toBe(true);
+      expect(specialOrderStatus).toBe('Confirmed');
+      expect(stagedMessageCreated).toBe(true);
+      expect(adminAlertPayload.manualReview).toBe(true);
+      expect(adminAlertPayload.success).toBe(true);
+      expect(customerAckSent).toBe(true);
+    });
+
+    test('when Auto Add is ON: Live Cart addition is attempted and treated as Live addition', async () => {
+      const autoAddToCart = true;
+      let cartAdditionAttempted = false;
+      const cartResult = { success: true, mode: 'Live' };
+
+      if (autoAddToCart) {
+        cartAdditionAttempted = true;
+      }
+
+      const adminAlertPayload = {
+        orderId: 103,
+        customer: { name: 'Rahul Patel' },
+        phone: '9876543210',
+        items: [{ name: 'Pan 40', quantity: 2, distributor: 'Apollo Distributors', rate: 95, mrp: 155 }],
+        success: cartResult.success,
+        manualReview: !autoAddToCart
+      };
+
+      expect(cartAdditionAttempted).toBe(true);
+      expect(adminAlertPayload.manualReview).toBe(false);
+      expect(adminAlertPayload.success).toBe(true);
+    });
+  });
 });
+

@@ -62,6 +62,9 @@ router.get('/', async (_req, res) => {
     if (!settingsObj['require_doctor_on_bill']) {
       settingsObj['require_doctor_on_bill'] = 'true';
     }
+    if (settingsObj['auto_add_to_live_cart'] === undefined) {
+      settingsObj['auto_add_to_live_cart'] = 'true';
+    }
 
     res.json(settingsObj);
   } catch (error) {

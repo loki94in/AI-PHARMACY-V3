@@ -676,12 +676,15 @@ export interface LiveCartAddNotificationPayload {
     mrp?: number | null;
   }>;
   success: boolean;
+  manualReview?: boolean;
   error?: string;
   chatId?: string;
 }
 
 /**
- * Notifies the store owner on WhatsApp when a confirmed order is auto-added to the Pharmarack Live Cart.
+ * Notifies the store owner on WhatsApp when a confirmed order is processed.
+ * When auto_add_to_live_cart is ON: notifies of live addition or failure.
+ * When auto_add_to_live_cart is OFF: notifies that request was received and requires manual Live Cart review.
  * Per master plan: Owner notification is automatic; customer communication remains STAGED.
  */
 export async function notifyAdminOfLiveCartAdd(payload: LiveCartAddNotificationPayload): Promise<void> {
@@ -702,7 +705,23 @@ export async function notifyAdminOfLiveCartAdd(payload: LiveCartAddNotificationP
     }).join('\n');
 
     let messageText = '';
-    if (payload.success) {
+    if (payload.manualReview) {
+      messageText = `📝 *WhatsApp Order Received (Manual Cart Review)*
+
+👤 Customer: ${custName}
+📞 Phone: ${phoneLine}
+📋 Order Ref: #${payload.orderId || 'WA-ORDER'}
+
+Medicines:
+${itemsList}
+
+Cart: ⏸️ Auto Add OFF (Requires Manual Review)
+📋 Customer message: STAGED
+🔒 Customer auto-send: OFF
+
+The order has been recorded and is ready for your manual review in Live Cart / Quick Assist.
+Customer communication is waiting in Staged Messages for manual review and sending.`;
+    } else if (payload.success) {
       messageText = `🛒 *WhatsApp Order Added to Live Cart*
 
 👤 Customer: ${custName}
