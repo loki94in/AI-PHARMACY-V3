@@ -1275,8 +1275,9 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
     let resolvedPtr = Number(ptr || 0);
     let resolvedMrp = Number(mrp || 0);
 
-    // Step A: Search enrichment if ProductId or ProductCode is missing/0 (+1s adaptive timeout buffer for slow internet)
-    if ((!resolvedProductId || !resolvedProductCode) && token) {
+    // Step A: Search enrichment ONLY if ProductCode is missing/empty.
+    // Never overwrite an existing valid productCode or look across different stores!
+    if (!resolvedProductCode && token) {
       try {
         let cleanKeyword = (productName || '').trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
         if (cleanKeyword) {
@@ -1300,7 +1301,7 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
           if (searchRes.ok) {
             const searchData: any = await searchRes.json().catch(() => null);
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-              const matched = searchData.data.find((p: any) => Number(p.StoreId) === Number(storeId)) || searchData.data[0];
+              const matched = searchData.data.find((p: any) => Number(p.StoreId) === Number(storeId));
               if (matched) {
                 resolvedProductId = Number(matched.PrProductId || matched.ProductId || resolvedProductId);
                 resolvedProductCode = matched.ProductCode || resolvedProductCode;
@@ -1329,20 +1330,39 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
         });
 
         if (secRes.ok) {
-          const secJson = await secRes.json().catch(() => ({}));
-          const isSecOk = secJson && (
-            secJson.StatusCode === 200 || 
-            secJson.statusCode === 200 || 
-            String(secJson.StatusCode) === '200' || 
-            secJson.status === 200 || 
-            secJson.status === 'success' || 
-            secJson.code === 200 ||
-            secJson.success === true ||
-            (secJson.Message && String(secJson.Message).toLowerCase().includes('delete')) ||
-            (secJson.message && String(secJson.message).toLowerCase().includes('delete'))
-          );
-          if (isSecOk || secRes.status === 200) {
-            deleteSuccess = true;
+          const secJson: any = await secRes.json().catch(() => ({}));
+          const rawList = secJson.IList || secJson.data || secJson.Data;
+          if (Array.isArray(rawList)) {
+            // Check if the item still exists under target storeId in returned live cart
+            const targetStore = rawList.find((s: any) => Number(s.StoreId || s.storeId) === Number(storeId));
+            if (!targetStore) {
+              // Store is empty or removed entirely -> item definitely removed
+              deleteSuccess = true;
+            } else {
+              const rawItems = targetStore.lineItems || targetStore.LineItems || targetStore.items || targetStore.Items || targetStore.CartItemList || [];
+              const stillExists = rawItems.some((it: any) => {
+                const codeMatch = String(it.ProductCode || it.productCode || '') === String(resolvedProductCode);
+                const nameMatch = productName && (it.ProductName || it.productName || '').trim().toLowerCase() === productName.trim().toLowerCase();
+                return codeMatch || nameMatch;
+              });
+              deleteSuccess = !stillExists;
+              if (stillExists) {
+                lastError = `Item still returned in distributor cart by upstream server`;
+              }
+            }
+          } else {
+            // Fallback for non-array responses: check status code
+            const isSecOk = secJson && (
+              secJson.StatusCode === 200 || 
+              secJson.statusCode === 200 || 
+              secJson.status === 'success' || 
+              secJson.success === true
+            );
+            if (isSecOk) {
+              deleteSuccess = true;
+            } else {
+              lastError = secJson?.message || secJson?.Message || 'Upstream delete failed';
+            }
           }
         } else {
           lastError = `DeleteUserCartDetailByStoreIdV2 returned HTTP ${secRes.status}`;
@@ -1350,6 +1370,8 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
       } catch (err: any) {
         lastError = err.message;
       }
+    } else {
+      lastError = 'Missing ProductCode for cart item deletion';
     }
 
     if (deleteSuccess) {

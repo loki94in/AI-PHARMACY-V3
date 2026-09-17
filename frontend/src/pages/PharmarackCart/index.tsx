@@ -33,9 +33,10 @@ interface CartLineItem {
 }
 
 // ── Silent Cart Deletion Configuration ──
-export const PHARMARACK_DELETE_BUFFER_MS = 5000;     // Base silent buffer: 5s
-export const PHARMARACK_DELETE_RETRY_STEP_MS = 2000; // +2s per retry: 7s, 9s
+export const PHARMARACK_DELETE_BUFFER_MS = 800;      // Base silent buffer: 800ms (backend mutex serializes)
+export const PHARMARACK_DELETE_RETRY_STEP_MS = 1000; // +1s per retry: 1.8s, 2.8s
 export const PHARMARACK_DELETE_MAX_RETRIES = 3;      // Max 3 tries
+const CART_CACHE_MAX_AGE_MS = 15 * 60 * 1000;        // 15-minute freshness TTL for local cart line cache
 
 interface Distributor {
   storeId: number;
@@ -177,7 +178,8 @@ const loadPersistedCartCache = (): { distributors: Distributor[]; priceHistory: 
     const raw = localStorage.getItem(CART_CACHE_STORAGE_KEY);
     if (raw) {
       const parsed: PersistedCartCache = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.distributors)) {
+      const isFresh = parsed && typeof parsed.savedAt === 'number' && (Date.now() - parsed.savedAt < CART_CACHE_MAX_AGE_MS);
+      if (parsed && Array.isArray(parsed.distributors) && isFresh) {
         const sorted = [...parsed.distributors]
           .map(d => ({
             ...d,
@@ -192,6 +194,8 @@ const loadPersistedCartCache = (): { distributors: Distributor[]; priceHistory: 
           distributors: sorted,
           priceHistory: (parsed.priceHistory && typeof parsed.priceHistory === 'object') ? parsed.priceHistory : {}
         };
+      } else if (parsed && typeof parsed.priceHistory === 'object') {
+        return { distributors: [], priceHistory: parsed.priceHistory };
       }
     }
   } catch (_) { }
@@ -319,6 +323,16 @@ let cachedSentDates: string[] = [];
 let cachedSelectedSentDate: string = '';
 const cachedSentOrdersMap: Record<string, LocalSentOrder[]> = {};
 
+// Module-level delete queue and pending keys to survive background navigation or page transitions
+let globalDeleteQueue: Array<{
+  item: CartLineItem;
+  storeName: string;
+  key: string;
+  attempt: number;
+}> = [];
+let globalIsProcessingDeleteQueue = false;
+const globalPendingDeleteKeys = new Set<string>();
+
 const USER_CHECK_STORAGE_KEY = 'pharmacart_user_check_overrides_v1';
 const getTodayDateKey = () => new Date().toISOString().slice(0, 10);
 
@@ -423,9 +437,11 @@ export default function PharmarackCart() {
     storeName: string;
     key: string;
     attempt: number;
-  }>>([]);
-  const isProcessingDeleteQueueRef = useRef<boolean>(false);
-  const pendingDeleteKeysRef = useRef<Set<string>>(new Set());
+  }>>(globalDeleteQueue);
+  deleteQueueRef.current = globalDeleteQueue;
+  const isProcessingDeleteQueueRef = useRef<boolean>(globalIsProcessingDeleteQueue);
+  const pendingDeleteKeysRef = useRef<Set<string>>(globalPendingDeleteKeys);
+  pendingDeleteKeysRef.current = globalPendingDeleteKeys;
   // In-flight optimistic quantity tracker: preserves user clicks during background sync settling
   const pendingQtyMapRef = useRef<Map<string, { qty: number; timestamp: number }>>(new Map());
   const highPriorityActiveRef = useRef<boolean>(false);
@@ -1692,6 +1708,12 @@ export default function PharmarackCart() {
     if (resolvedBoy?.name && resolvedBoy?.whatsapp_number) {
       boyName = resolvedBoy.name;
       boyPhone = formatPhone(resolvedBoy.whatsapp_number);
+    } else if (resolvedBoy === null) {
+      // Explicitly marked as Unassigned / Admin Fallback
+      if (storeInfo.adminPhone || storeInfo.phone) {
+        boyName = 'Admin / Store Owner';
+        boyPhone = formatPhone(storeInfo.adminPhone || storeInfo.phone);
+      }
     }
 
     // 0.5. Check persistent distributor mapping or saved distributors list
@@ -1785,13 +1807,17 @@ export default function PharmarackCart() {
 
     if (dist.storeName && boyId) {
       const normName = dist.storeName.toLowerCase().trim();
-      setDistributorMappings(prev => ({
-        ...prev,
-        [normName]: {
-          ...(prev[normName] || {}),
-          deliveryBoyId: boyId
-        }
-      }));
+      setDistributorMappings(prev => {
+        const existing = prev[normName];
+        return {
+          ...prev,
+          [normName]: {
+            distributorId: existing?.distributorId ?? null,
+            phone: existing?.phone ?? '',
+            deliveryBoyId: boyId
+          }
+        };
+      });
       try {
         await apiClient.post('/pharmarack/distributor-mappings', {
           store_name: dist.storeName,
@@ -1875,12 +1901,16 @@ export default function PharmarackCart() {
 
       // Also trigger backend notification to Delivery Boys ONLY if targetMode is 'both'
       // Pass skipDistributor: true to avoid sending a duplicate order message to the distributor
+      const effectiveDeliveryPersons = resolvedBoy
+        ? [{ name: resolvedBoy.name, phone: resolvedBoy.whatsapp_number, id: (resolvedBoy as any).id }]
+        : dist.deliveryPersons;
+
       if (targetMode === 'both') {
         try {
           await apiClient.post('/pharmarack/cart/notify-manual', {
             storeId: dist.storeId,
             storeName: dist.storeName,
-            deliveryPersons: dist.deliveryPersons,
+            deliveryPersons: effectiveDeliveryPersons,
             items: itemsToOrder,
             skipDistributor: true
           });
@@ -1896,7 +1926,7 @@ export default function PharmarackCart() {
           store_id: dist.storeId,
           store_name: dist.storeName,
           items: itemsToLog,
-          delivery_persons: dist.deliveryPersons
+          delivery_persons: effectiveDeliveryPersons
         });
         setHasUnreadSentHistory(true);
         specialOrdersEvent.triggerUpdated();
@@ -2029,7 +2059,15 @@ export default function PharmarackCart() {
         const assignedBoyId = effectiveBoyMap[dist.storeId];
         const assignedBoy = assignedBoyId
           ? (liveBoys.find(b => b.id === assignedBoyId) ?? null)
-          : (primaryBoy ?? null);
+          : null;
+
+        // Persist distributor mapping choice if selected in batch modal so system remembers next time
+        if (assignedBoyId !== undefined && assignedBoyId !== null) {
+          apiClient.post('/pharmarack/distributor-mappings', {
+            store_name: dist.storeName,
+            delivery_boy_id: assignedBoyId
+          }).catch(() => {});
+        }
 
         const msg = buildDistributorOrderMessage(dist, assignedBoy);
         ordersPayload.push({
@@ -2473,7 +2511,7 @@ export default function PharmarackCart() {
     // Safeguard: Never restore items that are currently pending deletion in background
     const filteredIncoming = normalizedIncoming.map(dist => ({
       ...dist,
-      items: dist.items.filter(it => !pendingDeleteKeysRef.current.has(getItemCheckKey(dist.storeId, it)))
+      items: dist.items.filter(it => !pendingDeleteKeysRef.current.has(getItemCheckKey(dist.storeId, it)) && !globalPendingDeleteKeys.has(getItemCheckKey(dist.storeId, it)))
     })).filter(dist => dist.items.length > 0);
 
     const currentItemMap = new Map<string, CartLineItem>();
@@ -2567,6 +2605,7 @@ export default function PharmarackCart() {
           for (const k of Array.from(pendingDeleteKeysRef.current)) {
             if (!liveKeys.has(k)) {
               pendingDeleteKeysRef.current.delete(k);
+              globalPendingDeleteKeys.delete(k);
             }
           }
         }
@@ -2624,6 +2663,7 @@ export default function PharmarackCart() {
           for (const k of Array.from(pendingDeleteKeysRef.current)) {
             if (!liveKeys.has(k)) {
               pendingDeleteKeysRef.current.delete(k);
+              globalPendingDeleteKeys.delete(k);
             }
           }
         }
@@ -2645,9 +2685,11 @@ export default function PharmarackCart() {
 
     // Cancel pending delete if user is adjusting quantity on this medicine
     const itemKey = getItemCheckKey(item.storeId, item);
-    if (pendingDeleteKeysRef.current.has(itemKey)) {
+    if (pendingDeleteKeysRef.current.has(itemKey) || globalPendingDeleteKeys.has(itemKey)) {
       pendingDeleteKeysRef.current.delete(itemKey);
+      globalPendingDeleteKeys.delete(itemKey);
       deleteQueueRef.current = deleteQueueRef.current.filter(q => q.key !== itemKey);
+      globalDeleteQueue = globalDeleteQueue.filter(q => q.key !== itemKey);
     }
 
     // 1. Optimistic UI Update (< 5ms perception, instant response)
@@ -2725,8 +2767,9 @@ export default function PharmarackCart() {
   };
 
   const processDeleteQueue = async () => {
-    if (isProcessingDeleteQueueRef.current) return;
+    if (isProcessingDeleteQueueRef.current || globalIsProcessingDeleteQueue) return;
     isProcessingDeleteQueueRef.current = true;
+    globalIsProcessingDeleteQueue = true;
 
     try {
       while (deleteQueueRef.current.length > 0) {
@@ -2767,7 +2810,7 @@ export default function PharmarackCart() {
           deleteQueueRef.current.shift();
           toastEvent.trigger(`Removed "${currentTask.item.productName}" from live cart`, 'success');
 
-          // If more items remain in queue, wait the base 5s buffer before next request
+          // If more items remain in queue, wait the base buffer before next request
           if (deleteQueueRef.current.length > 0) {
             await interruptibleSleep(PHARMARACK_DELETE_BUFFER_MS);
           }
@@ -2783,12 +2826,13 @@ export default function PharmarackCart() {
               'info'
             );
 
-            // Wait backoff time (7s, 9s), yielding immediately if user performs a high-priority action
+            // Wait backoff time (1.8s, 2.8s), yielding immediately if user performs a high-priority action
             await interruptibleSleep(retryDelayMs);
           } else {
             // All 3 tries exhausted
             deleteQueueRef.current.shift();
             pendingDeleteKeysRef.current.delete(currentTask.key);
+            globalPendingDeleteKeys.delete(currentTask.key);
             toastEvent.trigger(
               `Could not remove "${currentTask.item.productName}" from live cart after ${PHARMARACK_DELETE_MAX_RETRIES} attempts. (${errorMsg})`,
               'error'
@@ -2798,6 +2842,7 @@ export default function PharmarackCart() {
       }
     } finally {
       isProcessingDeleteQueueRef.current = false;
+      globalIsProcessingDeleteQueue = false;
       // When the entire queue finishes, trigger a silent verified sync to ensure state accuracy
       scheduleCartSync(1000);
     }
@@ -2806,6 +2851,7 @@ export default function PharmarackCart() {
   const handleDeleteItem = async (item: CartLineItem) => {
     const itemKey = getItemCheckKey(item.storeId, item);
     pendingDeleteKeysRef.current.add(itemKey);
+    globalPendingDeleteKeys.add(itemKey);
 
     // 1. Optimistic UI update (immediately remove item from UI state & update totals in < 5ms)
     setDistributors(prev => {
@@ -2851,9 +2897,11 @@ export default function PharmarackCart() {
 
     const targetStoreId = storeId || item.storeId || 0;
     const itemKey = getItemCheckKey(targetStoreId, { productCode: item.productCode, productId: item.productId, productName: medName });
-    if (pendingDeleteKeysRef.current.has(itemKey)) {
+    if (pendingDeleteKeysRef.current.has(itemKey) || globalPendingDeleteKeys.has(itemKey)) {
       pendingDeleteKeysRef.current.delete(itemKey);
+      globalPendingDeleteKeys.delete(itemKey);
       deleteQueueRef.current = deleteQueueRef.current.filter(q => q.key !== itemKey);
+      globalDeleteQueue = globalDeleteQueue.filter(q => q.key !== itemKey);
     }
 
     setReaddingSentItems(true);

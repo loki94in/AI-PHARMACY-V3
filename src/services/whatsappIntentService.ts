@@ -136,13 +136,18 @@ async function isIgnored(phone: string): Promise<boolean> {
 /**
  * Ignore distributors and internal numbers (owner/admin) so customer ordering
  * bot workflows never interfere with distributor messaging or self-messages.
+ * Checks all registered supplier / staff tables:
+ *   1. distributors (main)
+ *   2. pharmarack_distributors (Pharmarack-synced suppliers)
+ *   3. delivery_boys (dispatch staff)
+ *   4. distributor_dispatch_reminders (reminder-registered contacts)
  */
 async function isDistributorOrInternal(phone: string, db: any): Promise<boolean> {
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanDigits) return false;
 
   try {
-    // 1. Check if number belongs to a registered distributor
+    // 1. Check if number belongs to a registered distributor (main table)
     const dist = await db.get(
       `SELECT id, name FROM distributors WHERE contact IS NOT NULL AND (contact LIKE ? OR contact LIKE ?) LIMIT 1`,
       [`%${cleanDigits}`, `%${cleanDigits}%`]
@@ -152,7 +157,43 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
       return true;
     }
 
-    // 2. Check if number belongs to owner / admin
+    // 2. Check pharmarack_distributors (Pharmarack-synced suppliers)
+    try {
+      const pharmaracDist = await db.get(
+        `SELECT id, name FROM pharmarack_distributors WHERE contact IS NOT NULL AND (contact LIKE ? OR contact LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (pharmaracDist) {
+        console.log(`[Intent Service] Skipping customer bot for Pharmarack distributor "${pharmaracDist.name}" (${cleanDigits}).`);
+        return true;
+      }
+    } catch { /* table may not exist on older installs */ }
+
+    // 3. Check delivery_boys (dispatch staff)
+    try {
+      const deliveryBoy = await db.get(
+        `SELECT id, name FROM delivery_boys WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (deliveryBoy) {
+        console.log(`[Intent Service] Skipping customer bot for delivery staff "${deliveryBoy.name}" (${cleanDigits}).`);
+        return true;
+      }
+    } catch { /* table may not exist on older installs */ }
+
+    // 4. Check distributor_dispatch_reminders (reminder-registered contacts)
+    try {
+      const reminderContact = await db.get(
+        `SELECT id FROM distributor_dispatch_reminders WHERE phone IS NOT NULL AND (phone LIKE ? OR phone LIKE ?) LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      if (reminderContact) {
+        console.log(`[Intent Service] Skipping customer bot for dispatch reminder contact (${cleanDigits}).`);
+        return true;
+      }
+    } catch { /* table may not exist on older installs */ }
+
+    // 5. Check if number belongs to owner / admin
     const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db) || '';
     const cleanAdmin = (adminPhone || '').replace(/\D/g, '').slice(-10);
     if (cleanAdmin && cleanAdmin === cleanDigits) {
@@ -164,6 +205,7 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
 
   return false;
 }
+
 
 /**
  * Sanitize raw medicine name down to the first 2-3 core words for Pharmarack catalog/live search.

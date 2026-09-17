@@ -113,24 +113,43 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
       }
     }
 
+    const defaultCleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone || '');
+
     // A. ENQUEUE PER-DELIVERY-BOY SUMMARY MESSAGES FIRST (Position #1)
-    // Group orders by their assigned delivery boy to give each boy their tailored pickup list
+    // Group orders strictly by their assigned delivery boy to give each boy their tailored pickup list
     const boyGroups = new Map<string, { boyName: string; boyPhone: string; orders: any[] }>();
 
     for (const o of orders) {
-      const rawBoyPhone = o.deliveryBoyPhone || targetBoyPhone;
-      const bName = o.deliveryBoyName || targetBoyName;
+      let rawBoyPhone = o.deliveryBoyPhone;
+      let bName = o.deliveryBoyName;
+
+      // If deliveryBoyId provided, resolve from database if name or phone is missing
+      if (o.deliveryBoyId && (!rawBoyPhone || !bName)) {
+        const dbBoy = await db.get(
+          "SELECT name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1",
+          [o.deliveryBoyId]
+        );
+        if (dbBoy) {
+          rawBoyPhone = rawBoyPhone || dbBoy.whatsapp_number;
+          bName = bName || dbBoy.name;
+        }
+      }
+
+      // If still no phone, and NO deliveryBoyId was passed, this order was genuinely unassigned
+      if (!rawBoyPhone && !o.deliveryBoyId) {
+        continue;
+      }
+
       const cleanBPhone = normalizeWhatsAppPhone(rawBoyPhone || '');
       if (cleanBPhone && cleanBPhone.length >= 10) {
         if (!boyGroups.has(cleanBPhone)) {
-          boyGroups.set(cleanBPhone, { boyName: bName, boyPhone: cleanBPhone, orders: [] });
+          boyGroups.set(cleanBPhone, { boyName: bName || 'Delivery Staff', boyPhone: cleanBPhone, orders: [] });
         }
         boyGroups.get(cleanBPhone)!.orders.push(o);
       }
     }
 
-    // If no order had a valid phone, fallback to targetBoyPhone if valid
-    const defaultCleanBoyPhone = normalizeWhatsAppPhone(targetBoyPhone || '');
+    // Only if ZERO orders had an assigned delivery boy, fall back to targetBoyPhone if valid
     if (boyGroups.size === 0 && defaultCleanBoyPhone && defaultCleanBoyPhone.length >= 10) {
       boyGroups.set(defaultCleanBoyPhone, { boyName: targetBoyName, boyPhone: defaultCleanBoyPhone, orders: [...orders] });
     }

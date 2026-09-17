@@ -474,10 +474,15 @@ export class NotificationService {
         for (const boy of deliveryPersons) {
           if (!boy.name) continue;
           let boyName = boy.name;
-          const dbBoy = await db.get(
-            "SELECT name, whatsapp_number FROM delivery_boys WHERE (name LIKE ? OR name = ?) AND is_active = 1",
-            [`%${boy.name}%`, boy.name]
-          );
+          let dbBoy = boy.id
+            ? await db.get("SELECT name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [boy.id])
+            : null;
+          if (!dbBoy) {
+            dbBoy = await db.get(
+              "SELECT name, whatsapp_number FROM delivery_boys WHERE (name LIKE ? OR name = ?) AND is_active = 1",
+              [`%${boy.name}%`, boy.name]
+            );
+          }
 
           if (dbBoy?.name) {
             boyName = dbBoy.name;

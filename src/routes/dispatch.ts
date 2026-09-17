@@ -163,8 +163,16 @@ router.get('/delivery-boys', async (req, res) => {
 router.post('/delivery-boys', async (req, res) => {
   const { name, whatsapp_number, telegram_chat_id, is_active } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Delivery boy name is required' });
-  const rawDigits = whatsapp_number ? String(whatsapp_number).replace(/\D/g, '') : '';
-  const cleanPhone = rawDigits ? rawDigits : null;
+
+  let cleanPhone: string | null = null;
+  if (whatsapp_number !== undefined && whatsapp_number !== null && String(whatsapp_number).trim()) {
+    const rawDigits = String(whatsapp_number).replace(/\D/g, '');
+    const normalized = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+    if (normalized.length !== 10) {
+      return res.status(400).json({ error: 'Phone number must be exactly 10 digits' });
+    }
+    cleanPhone = normalized;
+  }
   const cleanName = String(name).trim();
 
   try {
@@ -217,8 +225,21 @@ router.put('/delivery-boys/:id', async (req, res) => {
     await ensureDeliveryBoysTable(db);
     const existing = await db.get('SELECT * FROM delivery_boys WHERE id = ?', id);
     if (!existing) { return res.status(404).json({ error: 'Delivery boy not found' }); }
-    const rawDigits = whatsapp_number !== undefined ? (whatsapp_number ? String(whatsapp_number).replace(/\D/g, '') : '') : null;
-    const cleanPhone = whatsapp_number !== undefined ? (rawDigits ? rawDigits : null) : existing.whatsapp_number;
+
+    let cleanPhone = existing.whatsapp_number;
+    if (whatsapp_number !== undefined) {
+      if (whatsapp_number === null || !String(whatsapp_number).trim()) {
+        cleanPhone = null;
+      } else {
+        const rawDigits = String(whatsapp_number).replace(/\D/g, '');
+        const normalized = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+        if (normalized.length !== 10) {
+          return res.status(400).json({ error: 'Phone number must be exactly 10 digits' });
+        }
+        cleanPhone = normalized;
+      }
+    }
+
     await db.run(
       `UPDATE delivery_boys SET name=?, whatsapp_number=?, telegram_chat_id=?, is_active=? WHERE id=?`,
       [
@@ -550,7 +571,11 @@ router.post('/distributor-reminders/:id/retry', async (req, res) => {
     if (!reminder) return res.status(404).json({ error: 'Reminder not found' });
 
     if (updated_phone && String(updated_phone).trim()) {
-      const cleanPhone = String(updated_phone).replace(/[^0-9]/g, '');
+      const rawDigits = String(updated_phone).replace(/[^0-9]/g, '');
+      const cleanPhone = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+      if (cleanPhone.length !== 10) {
+        return res.status(400).json({ error: 'Phone number must be exactly 10 digits' });
+      }
       await db.run('UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?', [cleanPhone, id]);
       if (reminder.distributor_id) {
         await db.run('UPDATE distributors SET phone = ? WHERE id = ?', [cleanPhone, reminder.distributor_id]);

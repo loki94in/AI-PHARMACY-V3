@@ -113,7 +113,7 @@ function App() {
     // mounts at boot as the landing page). Each step fires only while the user
     // is idle (>45s without input) and the tab is visible; page-level data
     // fetching still honors its own useFetchMode / data_fetch_control gates.
-    const WARMUP_PATHS = ['/dashboard', '/inventory', '/crm', '/mail', '/purchases', '/settings'];
+    const WARMUP_PATHS = ['/dashboard', '/inventory', '/crm', '/mail', '/purchases', '/pharmarack-cart', '/settings'];
     let lastInteraction = Date.now();
     let idx = 0;
     let timer: ReturnType<typeof setTimeout>;

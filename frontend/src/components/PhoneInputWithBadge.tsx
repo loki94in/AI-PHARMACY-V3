@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Phone, MessageSquare, Check, X, HelpCircle, Loader2 } from 'lucide-react';
 import { sanitizePhoneInput } from '../utils/phone';
 import { apiClient } from '../services/api';
@@ -34,6 +34,15 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
 }) => {
   const [isShaking, setIsShaking] = useState(false);
   const [waStatus, setWaStatus] = useState<'idle' | 'checking' | 'available' | 'not_available' | 'unable_to_verify'>('idle');
+  const prewarmed = useRef(false);
+
+  // Silent fire-and-forget prewarm — called on first focus so WhatsApp is
+  // never sleeping by the time the user finishes typing 10 digits.
+  const prewarmWhatsApp = useCallback(() => {
+    if (prewarmed.current) return;
+    prewarmed.current = true;
+    apiClient.post('/messaging/prewarm').catch(() => { /* silent */ });
+  }, []);
 
   const cleanDigits = (value || '').replace(/\D/g, '');
   const isComplete = cleanDigits.length === 10;
@@ -93,6 +102,10 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
       setIsShaking(true);
       setTimeout(() => setIsShaking(false), 400);
     }
+  };
+
+  const handleFocus = () => {
+    prewarmWhatsApp();
   };
 
   let badgeText;
@@ -184,20 +197,41 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
           value={value}
           onChange={handleChange}
           onBlur={handleBlur}
+          onFocus={handleFocus}
           placeholder={placeholder}
           disabled={disabled}
           maxLength={10}
           className={`
             w-full bg-bg border rounded-xl px-3.5 py-2.5 text-xs text-text placeholder:text-muted/60
             focus:outline-none transition-all duration-200
-            ${!label ? 'pr-28' : ''}
+            ${!label ? (checkWhatsApp && isComplete ? 'pr-36' : 'pr-28') : ''}
             ${borderClass}
             ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           `}
         />
         {!label && (
-          <span className={`absolute right-2 text-[10px] px-2 py-0.5 rounded-md border pointer-events-none select-none transition-all ${badgeColor}`}>
-            {badgeText}
+          <span className="absolute right-2 flex items-center gap-1 pointer-events-none select-none">
+            {/* WA status morphing icon — only when check is on and number is complete */}
+            {checkWhatsApp && isComplete && waStatus !== 'idle' && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-md border flex items-center gap-0.5 font-semibold transition-all duration-300 ${
+                waStatus === 'available'
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : waStatus === 'checking'
+                  ? 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                  : waStatus === 'not_available'
+                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                  : 'bg-bg2 text-muted border-border'
+              }`}>
+                {waStatus === 'checking' && <Loader2 size={9} className="animate-spin" />}
+                {waStatus === 'available' && <Check size={9} />}
+                {waStatus === 'not_available' && <X size={9} />}
+                {waStatus === 'unable_to_verify' && <HelpCircle size={9} />}
+                WA
+              </span>
+            )}
+            <span className={`text-[10px] px-2 py-0.5 rounded-md border transition-all ${badgeColor}`}>
+              {badgeText}
+            </span>
           </span>
         )}
       </div>

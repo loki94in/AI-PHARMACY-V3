@@ -28,7 +28,8 @@ const HIGH_PRIORITY_PATHS = new Set([
   '/sells',
   '/purchases',
   '/manual-purchase',
-  '/crm'
+  '/crm',
+  '/pharmarack-cart'
 ]);
 
 export function KeepAliveOutlet({ routes, notFoundElement, fallback }: Props) {

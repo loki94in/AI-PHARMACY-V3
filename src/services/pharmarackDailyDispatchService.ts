@@ -361,7 +361,6 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
     await ensureWhatsAppReady(30000);
   } catch (_) {}
 
-  const { summaryMessage } = await buildSeparateDispatchMessages(db, orders, isLate);
   const boys = await resolveDeliveryBoyPhones(db, orders);
 
   if (boys.length === 0) {
@@ -369,12 +368,62 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
     return;
   }
 
+  // Group orders strictly by assigned delivery boy
+  const boyOrderMap = new Map<string, any[]>();
+  for (const b of boys) {
+    boyOrderMap.set(b.phone, []);
+  }
+
+  const unassignedOrders: any[] = [];
+  for (const order of orders) {
+    let persons: any[] = [];
+    try {
+      persons = typeof order.delivery_persons_json === 'string'
+        ? JSON.parse(order.delivery_persons_json)
+        : (order.delivery_persons_json || []);
+    } catch { persons = []; }
+
+    let matchedBoy: { name: string; phone: string } | null = null;
+    for (const p of persons) {
+      const pName = (p.name || '').trim().toLowerCase();
+      const pPhone = String(p.phone || p.whatsapp || '').replace(/\D/g, '').slice(-10);
+      const matched = boys.find(b =>
+        (pPhone && b.phone.endsWith(pPhone)) ||
+        (pName && b.name.toLowerCase().includes(pName)) ||
+        (pName && pName.includes(b.name.toLowerCase()))
+      );
+      if (matched) {
+        matchedBoy = matched;
+        break;
+      }
+    }
+
+    if (matchedBoy && boyOrderMap.has(matchedBoy.phone)) {
+      boyOrderMap.get(matchedBoy.phone)!.push(order);
+    } else {
+      unassignedOrders.push(order);
+    }
+  }
+
+  // If only 1 delivery boy exists, assign unassigned orders to him
+  if (boys.length === 1 && unassignedOrders.length > 0) {
+    boyOrderMap.get(boys[0].phone)!.push(...unassignedOrders);
+    unassignedOrders.length = 0;
+  }
+
   const orderIds = orders.map((o: any) => o.id);
   const now = Date.now();
 
   for (const boy of boys) {
+    const assignedOrders = boyOrderMap.get(boy.phone) || [];
+    if (assignedOrders.length === 0) {
+      console.log(`[PharmarackBatch] No orders assigned for ${boy.name} (${boy.phone}), skipping summary.`);
+      continue;
+    }
+
+    const { summaryMessage } = await buildSeparateDispatchMessages(db, assignedOrders, isLate);
     try {
-      // Enqueue ONLY the summary message (Delivery Boy strictly receives the distributor summary list, no raw medicine spam)
+      // Enqueue ONLY the summary message tailored to this specific delivery boy
       const notifType = isLate ? 'pharmarack_additional_batch_summary' : 'pharmarack_daily_batch_summary';
       const queueId = await whatsappQueueWorker.enqueue(boy.phone, summaryMessage, notifType, boy.name);
       const refId = queueId ? `queue_${queueId}` : (isLate ? `batch_additional_${todayIST()}_${now}` : `batch_summary_${todayIST()}`);

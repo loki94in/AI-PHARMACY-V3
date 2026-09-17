@@ -582,11 +582,17 @@ const Dispatch = () => {
   const handleAddDeliveryBoy = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBoyName.trim()) { showNotif('Delivery boy name is required', 'error'); return; }
+    const rawDigits = newBoyPhone.replace(/\D/g, '');
+    const cleanPhone = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+    if (cleanPhone && cleanPhone.length !== 10) {
+      showNotif('Phone number must be exactly 10 digits', 'error');
+      return;
+    }
     setAddingBoy(true);
     try {
       await api.addDeliveryBoy({
         name: newBoyName.trim(),
-        whatsapp_number: newBoyPhone.trim() || undefined,
+        whatsapp_number: cleanPhone || undefined,
         is_active: 1,
       });
       showNotif(`Delivery boy "${newBoyName.trim()}" added successfully!`);
@@ -602,11 +608,17 @@ const Dispatch = () => {
 
   const handleSaveBoyEdit = async (id: number) => {
     if (!editBoyName.trim()) { showNotif('Delivery boy name is required', 'error'); return; }
+    const rawDigits = editBoyPhone.replace(/\D/g, '');
+    const cleanPhone = rawDigits.length === 12 && rawDigits.startsWith('91') ? rawDigits.slice(2) : rawDigits;
+    if (cleanPhone && cleanPhone.length !== 10) {
+      showNotif('Phone number must be exactly 10 digits', 'error');
+      return;
+    }
     setSavingBoyEdit(true);
     try {
       await api.updateDeliveryBoy(id, {
         name: editBoyName.trim(),
-        whatsapp_number: editBoyPhone.trim() || undefined,
+        whatsapp_number: cleanPhone || undefined,
       });
       showNotif(`Delivery boy updated successfully!`);
       setEditingBoyId(null);
@@ -2317,9 +2329,10 @@ const Dispatch = () => {
                 <input
                   type="text"
                   placeholder="WhatsApp Phone (10 digits)"
+                  maxLength={10}
                   className="premium-input w-full text-xs font-mono"
                   value={newBoyPhone}
-                  onChange={e => setNewBoyPhone(sanitizePhoneInput(e.target.value))}
+                  onChange={e => setNewBoyPhone(sanitizePhoneInput(e.target.value).slice(0, 10))}
                 />
               </div>
               <button
@@ -2352,8 +2365,10 @@ const Dispatch = () => {
                           />
                           <input
                             type="text"
+                            placeholder="10-digit mobile"
+                            maxLength={10}
                             value={editBoyPhone}
-                            onChange={e => setEditBoyPhone(sanitizePhoneInput(e.target.value))}
+                            onChange={e => setEditBoyPhone(sanitizePhoneInput(e.target.value).slice(0, 10))}
                             className="premium-input w-full text-xs font-mono"
                           />
                         </div>
@@ -2384,9 +2399,14 @@ const Dispatch = () => {
                               {boy.is_active ? 'Active' : 'Inactive'}
                             </span>
                           </div>
-                          <p className="text-[11px] font-mono text-muted">
-                            📞 {boy.whatsapp_number || 'No phone set'}
-                          </p>
+                          <div className="text-[11px] font-mono text-muted flex items-center gap-2">
+                            <span>📞 {boy.whatsapp_number || 'No phone set'}</span>
+                            {boy.whatsapp_number && boy.whatsapp_number.replace(/\D/g, '').length !== 10 && (
+                              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
+                                ⚠️ Needs 10 digits ({boy.whatsapp_number.replace(/\D/g, '').length}/10)
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <button

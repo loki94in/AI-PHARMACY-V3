@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } from '../whatsappClient.js';
+import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered } from '../whatsappClient.js';
 import { whatsappDeliveryRegister } from './whatsappDeliveryRegister.js';
 
 const SERVER_BOOT_TIME = Date.now();
@@ -10,7 +10,7 @@ export interface QueueItem {
   number: string;
   message: string;
   type: string;
-  status: 'pending' | 'sending' | 'waiting' | 'sent' | 'failed_offline' | 'failed_perm' | 'cancelled' | 'review_required';
+  status: 'pending' | 'sending' | 'waiting' | 'sent' | 'failed_offline' | 'failed_perm' | 'cancelled' | 'review_required' | 'skipped_not_on_whatsapp' | 'skipped_invalid_phone';
   retry_count: number;
   created_at: number;
   sent_at: number | null;
@@ -680,6 +680,69 @@ class WhatsAppQueueWorker {
             [`queue_${item.id}`, String(item.id)]
           ).catch(() => {});
           continue;
+        }
+
+        // Extract sanitized digits for phone validation & registration check
+        const rawItemDigits = (item.number || '').replace(/\D/g, '');
+        const target10Digits = rawItemDigits.length === 12 && rawItemDigits.startsWith('91')
+          ? rawItemDigits.slice(2)
+          : (rawItemDigits.length >= 10 ? rawItemDigits.slice(-10) : rawItemDigits);
+
+        // 1. Invalid phone length guard: exactly 10 digits required for mobile dispatch
+        if (!target10Digits || target10Digits.length !== 10) {
+          console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
+          await db.run(
+            "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
+            [item.id]
+          );
+          await db.run(
+            `UPDATE automation_notifications 
+             SET status = 'skipped', error_message = 'Invalid phone number (requires 10 digits)' 
+             WHERE reference_id = ? OR reference_id = ?`,
+            [`queue_${item.id}`, String(item.id)]
+          ).catch(() => {});
+          if (item.type === 'refill_reminder') {
+            await db.run("UPDATE patient_refills SET reminder_status = 'SKIPPED' WHERE reminder_job_id = ?", [item.id]).catch(() => {});
+          }
+          this.broadcastQueueState(true);
+          try {
+            eventService.broadcast('automation_hub_updated', { type: 'skipped', id: item.id, reason: 'invalid_phone' });
+            eventService.broadcast('toast_alert', {
+              type: 'warning',
+              message: `⚠️ Skipped WhatsApp to ${item.target_name || item.number}: Phone must be 10 digits`
+            });
+          } catch (_) {}
+          continue;
+        }
+
+        // 2. WhatsApp Registration Gate: verify number is registered on WhatsApp before dispatch
+        if (!useBusiness && status.isReady) {
+          const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
+          if (regStatus === 'NOT_AVAILABLE') {
+            console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || 'unknown'}) is NOT registered on WhatsApp.`);
+            await db.run(
+              "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', error_message = 'Number not registered on WhatsApp' WHERE id = ?",
+              [item.id]
+            );
+            await db.run(
+              `UPDATE automation_notifications 
+               SET status = 'skipped', error_message = 'Number not registered on WhatsApp' 
+               WHERE reference_id = ? OR reference_id = ?`,
+              [`queue_${item.id}`, String(item.id)]
+            ).catch(() => {});
+            if (item.type === 'refill_reminder') {
+              await db.run("UPDATE patient_refills SET reminder_status = 'SKIPPED' WHERE reminder_job_id = ?", [item.id]).catch(() => {});
+            }
+            this.broadcastQueueState(true);
+            try {
+              eventService.broadcast('automation_hub_updated', { type: 'skipped', id: item.id, reason: 'not_on_whatsapp' });
+              eventService.broadcast('toast_alert', {
+                type: 'warning',
+                message: `⚠️ Skipped WhatsApp to ${item.target_name || item.number}: Not registered on WhatsApp`
+              });
+            } catch (_) {}
+            continue;
+          }
         }
 
         this.lastWasOffline = false;

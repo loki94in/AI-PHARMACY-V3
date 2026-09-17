@@ -507,7 +507,7 @@ export interface WhatsAppQueueItem {
   number: string;
   message: string;
   type: string;
-  status: 'pending' | 'sending' | 'waiting' | 'sent' | 'failed_offline' | 'failed_perm' | 'cancelled' | 'review_required';
+  status: 'pending' | 'sending' | 'waiting' | 'sent' | 'failed_offline' | 'failed_perm' | 'cancelled' | 'review_required' | 'skipped_not_on_whatsapp' | 'skipped_invalid_phone';
   retry_count: number;
   created_at: number;
   sent_at: number | null;
@@ -1342,6 +1342,7 @@ export const api = {
   getWhatsappChats: () => apiClient.get('/messaging/chats').then(res => res.data),
   getWhatsappMessages: (chatId: string) => apiClient.get(`/messaging/chats/${encodeURIComponent(chatId)}/messages`).then(res => res.data),
   sendWhatsappMessage: (number: string, message: string, file?: { mimetype: string; data: string; filename?: string }) => apiClient.post('/messaging/send', { number, message, file }).then(res => res.data),
+  prewarmWhatsapp: () => apiClient.post('/messaging/prewarm').then(res => res.data).catch(() => null),
   getWhatsappMessageMedia: (chatId: string, messageId: string) => apiClient.get(`/messaging/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/media`).then(res => res.data),
   getIgnoredPhones: () => apiClient.get('/messaging/ignored-phones').then(res => res.data),
   toggleIgnore: (phone: string, ignore: boolean, reason?: string) => apiClient.post('/messaging/toggle-ignore', { phone, ignore, reason }).then(res => res.data),

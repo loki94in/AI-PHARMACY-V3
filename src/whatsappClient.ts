@@ -1794,30 +1794,52 @@ export async function downloadMessageMediaById(serializedId: string): Promise<{ 
   return await fresh.downloadMedia();
 }
 
+// In-memory cache for WhatsApp registration status (24 hours for verified, 12 hours for not registered)
+const waRegistrationCache = new Map<string, { status: 'AVAILABLE' | 'NOT_AVAILABLE'; expiresAt: number }>();
+
 /**
  * Checks WhatsApp capability for a phone number.
  * Conforms to MULTI-PHARMACY.md §16 (debounced, non-blocking, non-waking probe).
  */
 export async function checkPhoneWhatsAppRegistered(cleanDigits10: string): Promise<'AVAILABLE' | 'NOT_AVAILABLE' | 'UNABLE_TO_VERIFY'> {
   if (!cleanDigits10 || cleanDigits10.length !== 10) return 'NOT_AVAILABLE';
+
+  // Check cache first for instant resolution
+  const cached = waRegistrationCache.get(cleanDigits10);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.status;
+  }
+
   if (!isReady || !clientInstance) {
     return 'UNABLE_TO_VERIFY';
   }
   try {
     const formatted = cleanDigits10.startsWith('91') ? cleanDigits10 : `91${cleanDigits10}`;
-    const numberDetails = await Promise.race([
+    const TIMEOUT_SENTINEL = Symbol('TIMEOUT');
+
+    const result = await Promise.race([
       clientInstance.getNumberId(formatted),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+      new Promise<typeof TIMEOUT_SENTINEL>((resolve) => setTimeout(() => resolve(TIMEOUT_SENTINEL), 3000))
     ]);
-    if (numberDetails && (numberDetails as any)._serialized) {
+
+    if (result === TIMEOUT_SENTINEL) {
+      return 'UNABLE_TO_VERIFY';
+    }
+
+    if (result && (result as any)._serialized) {
+      waRegistrationCache.set(cleanDigits10, { status: 'AVAILABLE', expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
       return 'AVAILABLE';
     }
-    if (numberDetails === null) {
+
+    if (result === null) {
+      waRegistrationCache.set(cleanDigits10, { status: 'NOT_AVAILABLE', expiresAt: Date.now() + 12 * 60 * 60 * 1000 });
       return 'NOT_AVAILABLE';
     }
+
     return 'UNABLE_TO_VERIFY';
   } catch (_) {
     return 'UNABLE_TO_VERIFY';
   }
 }
+
 
