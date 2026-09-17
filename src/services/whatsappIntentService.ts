@@ -442,7 +442,7 @@ function extractQuantityFromText(text: string): { quantity: number; unit: string
   return null;
 }
 
-interface ConfirmedProcurementParams {
+export interface ConfirmedProcurementParams {
   phone: string;
   chatId?: string;
   confirmedMedicine: string;
@@ -451,7 +451,7 @@ interface ConfirmedProcurementParams {
   customer: any;
 }
 
-async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParams): Promise<void> {
+export async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParams): Promise<void> {
   const { phone, chatId, confirmedMedicine, quantity, unit, customer } = params;
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
 
@@ -519,7 +519,30 @@ async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParam
 
     // 4. Add to Pharmarack Live Cart
     const cartResult = await addItemsToPharmarackCart([cartItem]);
-    console.log(`[Intent Service] Auto-added confirmed medicine "${cartItem.productName}" to Live Cart (${cartResult.mode || (cartResult.offline ? 'Offline' : 'Failed')})`);
+    console.log(`[Intent Service] Live Cart add attempt for "${cartItem.productName}": success=${cartResult.success} (${cartResult.mode || (cartResult.offline ? 'Offline' : 'Failed')})`);
+
+    // HARD GATE: Verify cart success before proceeding with order creation or customer staging
+    if (!cartResult.success) {
+      console.warn(`[Intent Service] Pharmarack Live Cart addition failed for "${cartItem.productName}". Halting order confirmation.`);
+      // Notify Store Owner of failure so manual action can be taken
+      await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+        orderId: 'FAILED',
+        customer,
+        phone: cleanDigits,
+        chatId,
+        items: [{
+          name: cartItem.productName,
+          quantity: cartItem.qty,
+          distributor: cartItem.storeName,
+          rate: cartItem.rate,
+          mrp: cartItem.mrp
+        }],
+        success: false,
+        error: cartResult.error || cartResult.details || 'Failed to add items to Pharmarack Live Cart'
+      });
+      // STOP: Do NOT record Confirmed order, do NOT create customer staged message
+      return;
+    }
 
     // 5. Calculate scheduling (business hours, cutoff, holidays)
     let calculatedSchedule: any = null;
@@ -575,7 +598,7 @@ async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParam
     );
     const specialOrderId = orderRes.lastID;
 
-    // 7. Stage customer-facing message in automation_notifications (NEVER auto-sent)
+    // 7. Stage customer-facing message in automation_notifications (STRICTLY STAGED, NEVER AUTO-SENT)
     const { getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
     const storeLabel = await getStoreMedicalName(db);
     const storePhone = await getStorePhone(db);
@@ -601,8 +624,7 @@ async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParam
         rate: cartItem.rate,
         mrp: cartItem.mrp
       }],
-      success: cartResult.success,
-      error: cartResult.error || cartResult.details
+      success: true
     });
 
     // 9. Broadcast real-time order update event to UI
@@ -610,12 +632,12 @@ async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParam
       eventService.broadcast('order_updated', { at: Date.now(), id: specialOrderId });
     } catch (_) {}
 
-    // 10. Send polite customer conversational acknowledgment on WhatsApp
-    const custAckMsg = `Thank you! We have confirmed your request for *${cartItem.productName}* × ${cartItem.qty}.\nOur pharmacist is arranging it and will message you once ready for pickup.${phoneSuffix}`;
+    // 10. Send customer courtesy acknowledgment ONLY AFTER owner notification
+    const custAckMsg = `Thank you! Your request for *${cartItem.productName}* × ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, custAckMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
 
-    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Staged message created.`);
+    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
   } catch (procErr) {
     console.error('[Intent Service] Error in executeConfirmedProcurementFlow:', procErr);
   }
