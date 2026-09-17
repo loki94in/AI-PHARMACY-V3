@@ -63,14 +63,14 @@ const NOISE_WORDS = new Set([
   'divas', 'diwas', 'roj', 'roji', 'daily', 'weekly', 'monthly',
   'mi', 'majhe', 'maza', 'mazi', 'mazya', 'tuzhe', 'tuza', 'tuzi', 'tuzya', 'aamhi', 'amhi', 'aamche',
   'tumhi', 'tumche', 'te', 'tya', 'tyanche', 'tyacha', 'tyachi', 'tyachya', 'hye', 'he', 'ha', 'hi', 'he',
-  'ya', 'hyanchi', 'hyancha',
+  'ya', 'hyanchi', 'hyancha', 'mala', 'tula', 'tyala', 'tila',
   // More Marathi/Hindi conversational leaks observed in production
-  'asudet', 'asu', 'asel', 'aslel', 'aahet', 'ahet', 'hote', 'hota', 'hoti', 'zale', 'zala', 'zali',
+  'asudet', 'asu', 'asel', 'aslel', 'aahet', 'ahet', 'ahee', 'hote', 'hota', 'hoti', 'zale', 'zala', 'zali',
   'baki', 'bakiche', 'bakichya', 'urlele', 'shillak',
   'milel', 'milte', 'milto', 'milali', 'milala', 'bhetel', 'bhetla', 'bhetli',
   'kadhi', 'kevha', 'udya', 'udhya', 'sandhyakali', 'sakali', 'dupari', 'ratri',
   'thik', 'theek', 'thike', 'barobar', 'hoy', 'chalel', 'chala', 'done', 'accha', 'acha', 'bara', 'bar',
-  'madam', 'tai', 'dada', 'kaka', 'anna', 'bhau', 'saheb',
+  'madam', 'tai', 'dada', 'kaka', 'anna', 'bhau', 'saheb', 'dya', 'daya', 'sang', 'sanga', 'bol', 'bola',
   // Common English filler/pronoun words — a "thank you so much" style residual
   // (after stripping 'thank'/'bhai' etc.) must not be searched as a medicine.
   'you', 'your', 'yours', 'so', 'much', 'too', 'also', 'well', 'how', 'are',
@@ -79,7 +79,7 @@ const NOISE_WORDS = new Set([
   // Common Devanagari chatter (greetings/particles/questions)
   'ना', 'नाही', 'आहे', 'आहेत', 'का', 'हो', 'हा', 'नको', 'ठीक', 'बाकी', 'आज', 'उद्या',
   'कधी', 'केव्हा', 'कसे', 'कसा', 'काय', 'क्या', 'कब', 'कहा', 'कैसे', 'हां', 'हाँ', 'जी',
-  'नमस्ते', 'नमस्कार', 'धन्यवाद',
+  'नमस्ते', 'नमस्कार', 'धन्यवाद', 'मला', 'तुला', 'त्याला', 'द्या',
   // Hinglish conversation verbs/particles seen in mixed messages ("main aa raha
   // hu", "kal mil jayega") — exact-token matches only, so real brand names
   // (single tokens like "Dolo") can never collide.
@@ -87,6 +87,23 @@ const NOISE_WORDS = new Set([
   'mein', 'jayega', 'jayenge', 'mil', 'milega', 'milenge', 'lene', 'lena',
   'liye', 'liya', 'karna', 'kar', 'krna', 'krdo', 'sakta', 'sakte',
   'wala', 'wali', 'vale'
+]);
+
+// Tokens representing dosage forms or packaging units to strip when generating clean distributor / catalog search queries
+export const DOSAGE_AND_PACKAGING_NOISE_TOKENS = new Set([
+  // Dosage forms
+  'tab', 'tabs', 'tablet', 'tablets', 'cap', 'caps', 'capsule', 'capsules',
+  'syp', 'syrup', 'syrups', 'sus', 'susp', 'suspension', 'inj', 'injection', 'injections',
+  'infusion', 'cream', 'creams', 'gel', 'gels', 'oint', 'ointment', 'ointments',
+  'drops', 'drop', 'lotion', 'lotions', 'respule', 'respules', 'rotacap', 'rotacaps',
+  'inhaler', 'inhalers', 'spray', 'sprays', 'sachet', 'sachets', 'soap', 'soaps',
+  'solution', 'solutions', 'powder', 'powders', 'shampoo', 'shampoos', 'wash',
+  // Packaging forms & units
+  'strip', 'strips', 'patti', 'pack', 'packs', 'packet', 'packets', 'box', 'boxes',
+  'bottle', 'bottles', 'tube', 'tubes', 'vial', 'vials', 'amp', 'ampoule', 'ampoules',
+  'jar', 'jars', 'dabba', 'peti',
+  // Unit suffixes
+  'mg', 'ml', 'gm', 'g', 'mcg', 'iu', '%'
 ]);
 
 // Commercial, marketing, and scheme words commonly seen in promotional broadcasts, spam flyers, and B2B updates

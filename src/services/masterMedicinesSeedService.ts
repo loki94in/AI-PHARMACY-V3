@@ -4,8 +4,52 @@ import readline from 'readline';
 import { dbManager } from '../database/connection.js';
 import { config } from '../config/index.js';
 
+function clean(v: any): string | null {
+  if (v === undefined || v === null) return null;
+  const t = String(v).trim();
+  return (!t || t.toLowerCase() === 'null') ? null : t;
+}
+
+function cleanNum(v: any): number {
+  const c = clean(v);
+  if (!c) return 0.0;
+  const n = parseFloat(c);
+  return isNaN(n) ? 0.0 : n;
+}
+
+function cleanPrice(v: any): number | null {
+  const c = clean(v);
+  if (!c) return null;
+  const n = parseFloat(c);
+  return isNaN(n) ? null : n;
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(cur);
+      cur = '';
+    } else {
+      cur += char;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
 /**
- * Seeds the master medicines database table from reference_medicines.csv
+ * Seeds the master medicines database table from medicines.csv or reference_medicines.csv
  * if medicines count is low or after a system reset.
  */
 export async function seedMasterMedicines(force = false): Promise<{ loaded: number }> {
@@ -61,41 +105,117 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
       crlfDelay: Infinity
     });
 
+    // Ensure unique legacy_id index exists for idempotent inserts
+    try {
+      await db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id 
+        ON medicines(legacy_id) 
+        WHERE legacy_id IS NOT NULL
+      `);
+    } catch (_) {}
+
     let loaded = 0;
-    let isHeader = true;
+    let headerParsed = false;
+    let isFullMedicinesCsv = false;
+    const col: Record<string, number> = {};
     const batchSize = 1000;
-    let currentBatch: Array<[string, string | null, string | null, string]> = [];
+    let csvBatch: any[][] = [];
+    let simpleBatch: Array<[string, string | null, string | null, string]> = [];
 
     for await (const line of rl) {
-      if (isHeader) {
-        isHeader = false;
-        continue;
-      }
       if (!line.trim()) continue;
 
-      const parts = line.split(',');
-      if (parts.length < 1) continue;
+      if (!headerParsed) {
+        headerParsed = true;
+        const headerCols = parseCsvLine(line).map(h => h.trim().replace(/^"|"$/g, ''));
+        headerCols.forEach((c, idx) => { col[c] = idx; });
+        if (col['medicine_name'] !== undefined) {
+          isFullMedicinesCsv = true;
+        }
+        continue;
+      }
 
-      const name = parts[0].replace(/^"|"$/g, '').trim();
-      if (!name) continue;
+      if (isFullMedicinesCsv) {
+        const fields = parseCsvLine(line);
+        const rawName = fields[col['medicine_name']];
+        const name = clean(rawName);
+        if (!name) continue;
 
-      const comp1 = parts[1] ? parts[1].replace(/^"|"$/g, '').trim() : null;
-      const comp2 = parts[2] ? parts[2].replace(/^"|"$/g, '').trim() : null;
-      const manufacturer = parts[3] ? parts[3].replace(/^"|"$/g, '').trim() : null;
+        const legacyId = clean(fields[col['medicine_id']]);
+        const mfg = clean(fields[col['manufacturer_name']]);
+        const mkt = clean(fields[col['marketer_name']]);
+        const pkg = clean(fields[col['medicine_packaging']]);
+        const itemType = clean(fields[col['itemtype']]);
+        const hsn = clean(fields[col['hsn_code']]);
+        const cgst = cleanNum(fields[col['cgst']]);
+        const sgst = cleanNum(fields[col['sgst']]);
+        const igst = cleanNum(fields[col['igst']]);
+        const sellPrice = cleanPrice(fields[col['selling_price']]);
+        const barcode = clean(fields[col['barcode']]);
+        const rack = clean(fields[col['rack']]);
+        const therapeutic = clean(fields[col['therapeutic']]);
+        const subTherapeutic = clean(fields[col['subtherapeutic']]);
+        const shortCode = clean(fields[col['medicine_short_code']]);
+        const ucode = clean(fields[col['ucode']]);
 
-      const genericName = [comp1, comp2].filter(Boolean).join(' + ') || null;
-      currentBatch.push([name, genericName, manufacturer, 'master_reference']);
+        csvBatch.push([
+          name,
+          name,
+          name.toLowerCase(),
+          mfg,
+          mkt,
+          pkg,
+          pkg,
+          itemType,
+          hsn,
+          cgst,
+          sgst,
+          igst,
+          sellPrice,
+          barcode,
+          rack,
+          therapeutic,
+          subTherapeutic,
+          shortCode,
+          ucode,
+          legacyId
+        ]);
 
-      if (currentBatch.length >= batchSize) {
-        await insertBatch(db, currentBatch);
-        loaded += currentBatch.length;
-        currentBatch = [];
+        if (csvBatch.length >= batchSize) {
+          await insertMedicinesCsvBatch(db, csvBatch);
+          loaded += csvBatch.length;
+          csvBatch = [];
+        }
+      } else {
+        // Fallback for simple 4-column CSV: name, comp1, comp2, manufacturer
+        const parts = parseCsvLine(line);
+        if (parts.length < 1) continue;
+
+        const name = clean(parts[0]);
+        if (!name) continue;
+
+        const comp1 = clean(parts[1]);
+        const comp2 = clean(parts[2]);
+        const manufacturer = clean(parts[3]);
+
+        const genericName = [comp1, comp2].filter(Boolean).join(' + ') || null;
+        simpleBatch.push([name, genericName, manufacturer, 'master_reference']);
+
+        if (simpleBatch.length >= batchSize) {
+          await insertSimpleBatch(db, simpleBatch);
+          loaded += simpleBatch.length;
+          simpleBatch = [];
+        }
       }
     }
 
-    if (currentBatch.length > 0) {
-      await insertBatch(db, currentBatch);
-      loaded += currentBatch.length;
+    if (csvBatch.length > 0) {
+      await insertMedicinesCsvBatch(db, csvBatch);
+      loaded += csvBatch.length;
+    }
+    if (simpleBatch.length > 0) {
+      await insertSimpleBatch(db, simpleBatch);
+      loaded += simpleBatch.length;
     }
 
     console.log(`[MasterSeed] Successfully seeded ${loaded} master medicines into database.`);
@@ -106,7 +226,36 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
   }
 }
 
-async function insertBatch(db: any, rows: Array<[string, string | null, string | null, string]>) {
+async function insertMedicinesCsvBatch(db: any, rows: any[][]) {
+  await db.run('BEGIN TRANSACTION');
+  try {
+    const stmt = await db.prepare(`
+      INSERT OR IGNORE INTO medicines (
+        name, canonical_name, normalized_name, manufacturer, marketed_by,
+        packaging, pack_size, item_type, hsn_code, cgst_per,
+        sgst_per, igst_per, sell_price, barcode, rack,
+        therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
+        source, status
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        'master_reference', 'ACTIVE'
+      )
+    `);
+    for (const row of rows) {
+      await stmt.run(...row);
+    }
+    await stmt.finalize();
+    await db.run('COMMIT');
+  } catch (err) {
+    await db.run('ROLLBACK');
+    throw err;
+  }
+}
+
+async function insertSimpleBatch(db: any, rows: Array<[string, string | null, string | null, string]>) {
   await db.run('BEGIN TRANSACTION');
   try {
     const stmt = await db.prepare(

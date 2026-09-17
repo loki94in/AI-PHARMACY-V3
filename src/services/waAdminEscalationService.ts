@@ -356,6 +356,36 @@ ${phoneLine}
         const units = payload.inventoryStock?.[String(name).toLowerCase()];
         return units === undefined ? name : `${name} — ${units} unit${units === 1 ? '' : 's'}`;
       };
+      const formatStockBadge = (stock: any): string => {
+        if (stock === undefined || stock === null || stock === '') return '';
+        const s = String(stock).toLowerCase().trim();
+        if (s === '0' || s.includes('out') || s.includes('no') || s.includes('unavail')) {
+          return ' | 🔴 Out of Stock';
+        }
+        const num = parseInt(s, 10);
+        if (!isNaN(num)) {
+          if (num <= 0) return ' | 🔴 Out of Stock';
+          if (num <= 5) return ` | 🟡 Low Stock (${num})`;
+          return ` | 🟢 In Stock (${num})`;
+        }
+        if (s.includes('low') || s.includes('limited')) {
+          return ` | 🟡 Low Stock (${stock})`;
+        }
+        return ` | 🟢 In Stock (${stock})`;
+      };
+
+      const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
+      const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
+      const distLines = [...mappedTop, ...nonMappedTop]
+        .map((p: any, i: number) => {
+          const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
+          const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
+          const avail = formatStockBadge(p.availability ?? p.stock);
+          const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
+          return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || 'Unknown'}`;
+        })
+        .join('\n');
+
       if (inStock) {
         messageText = `🔔 *Prescription Medicine Extracted*
 
@@ -364,37 +394,9 @@ ${customerBlock}
  💊 *Extracted Medicine*: ${payload.medicineName}
  📦 *Quantity*: ${payload.quantity} ${payload.unit}${formLine}
  ⭐ *Match Confidence*: ${Math.round(payload.confidence)}%
-✅ *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(', ')}${relatedBlock}${contextBlock}`;
+✅ *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(', ')}
+${distLines ? `\n🚚 *Distributor Availability (Pharmarack)*:\n${distLines}\n` : ''}${relatedBlock}${contextBlock}`;
       } else {
-        const formatStockBadge = (stock: any): string => {
-          if (stock === undefined || stock === null || stock === '') return '';
-          const s = String(stock).toLowerCase().trim();
-          if (s === '0' || s.includes('out') || s.includes('no') || s.includes('unavail')) {
-            return ' | 🔴 Out of Stock';
-          }
-          const num = parseInt(s, 10);
-          if (!isNaN(num)) {
-            if (num <= 0) return ' | 🔴 Out of Stock';
-            if (num <= 5) return ` | 🟡 Low Stock (${num})`;
-            return ` | 🟢 In Stock (${num})`;
-          }
-          if (s.includes('low') || s.includes('limited')) {
-            return ` | 🟡 Low Stock (${stock})`;
-          }
-          return ` | 🟢 In Stock (${stock})`;
-        };
-
-        const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
-        const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
-        const distLines = [...mappedTop, ...nonMappedTop]
-          .map((p: any, i: number) => {
-            const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
-            const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
-            const avail = formatStockBadge(p.availability ?? p.stock);
-            const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
-            return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || 'Unknown'}`;
-          })
-          .join('\n');
         messageText = `⚠️ *Medicine Registered in DB but NOT in Physical Stock*
 
 ${customerBlock}

@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
@@ -131,6 +131,125 @@ async function isIgnored(phone: string): Promise<boolean> {
     }
   }
   return isGroupOrBroadcast;
+}
+
+/**
+ * Ignore distributors and internal numbers (owner/admin) so customer ordering
+ * bot workflows never interfere with distributor messaging or self-messages.
+ */
+async function isDistributorOrInternal(phone: string, db: any): Promise<boolean> {
+  const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+  if (!cleanDigits) return false;
+
+  try {
+    // 1. Check if number belongs to a registered distributor
+    const dist = await db.get(
+      `SELECT id, name FROM distributors WHERE contact IS NOT NULL AND (contact LIKE ? OR contact LIKE ?) LIMIT 1`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`]
+    );
+    if (dist) {
+      console.log(`[Intent Service] Skipping customer bot for distributor "${dist.name}" (${cleanDigits}).`);
+      return true;
+    }
+
+    // 2. Check if number belongs to owner / admin
+    const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db) || '';
+    const cleanAdmin = (adminPhone || '').replace(/\D/g, '').slice(-10);
+    if (cleanAdmin && cleanAdmin === cleanDigits) {
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Intent Service] Non-fatal check in isDistributorOrInternal:', err);
+  }
+
+  return false;
+}
+
+/**
+ * Sanitize raw medicine name down to the first 2-3 core words for Pharmarack catalog/live search.
+ * Strips dosage forms (TAB, CAP, SYP, SUS, CREAM, INJ, etc.), packaging forms (STRIP, BOTTLE, BOX, PACK, TUBE),
+ * and measurement suffixes (MG, ML, GM, MCG) to ensure maximum API hit rate on Pharmarack.
+ */
+export function sanitizePharmarackQuery(rawName: string): string {
+  if (!rawName) return '';
+  const cleaned = rawName
+    .replace(/[+/,._\-()\[\]#*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const coreWords: string[] = [];
+
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    if (DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(lower)) {
+      continue;
+    }
+    const unitMatch = w.match(/^(\d+(?:\.\d+)?)(mg|ml|gm|g|mcg|iu|%|tabs?|caps?)$/i);
+    if (unitMatch) {
+      coreWords.push(unitMatch[1]);
+    } else {
+      coreWords.push(w);
+    }
+
+    if (coreWords.length >= 3) {
+      break;
+    }
+  }
+
+  if (coreWords.length === 0) {
+    return words.slice(0, 2).join(' ');
+  }
+
+  return coreWords.slice(0, 3).join(' ');
+}
+
+/**
+ * Send medicine ordering guidance prompt to customer if they sent conversational chat or greeting with no medicine name.
+ * Debounced per customer phone (maximum once per 12 hours) to prevent spam.
+ */
+async function maybeSendGuidancePrompt(phone: string, customerName: string, db: any): Promise<void> {
+  const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+  if (!cleanDigits || cleanDigits.length < 10) return;
+
+  try {
+    const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000;
+    const recent = await db.get(
+      `SELECT id FROM whatsapp_sent_register
+       WHERE phone_last10 = ? AND type = 'customer_guidance_prompt' AND sent_at > ?
+       LIMIT 1`,
+      [cleanDigits, twelveHoursAgo]
+    );
+    if (recent) {
+      console.log(`[Intent Service] Guidance prompt debounced for ${cleanDigits} (sent recently).`);
+      return;
+    }
+
+    const { getStoreMedicalName } = await import('./storeSettingsService.js');
+    const storeName = await getStoreMedicalName(db);
+
+    const guidanceMsg = 
+      `Namaste! Welcome to *${storeName}* 🏥\n\n` +
+      `To check medicine availability or place an order, please send:\n\n` +
+      `📸 *Option 1: Prescription / Strip Photo*\n` +
+      `Send a clear photo of your doctor's prescription or medicine strip.\n\n` +
+      `✍️ *Option 2: Medicine Name(s)*\n` +
+      `Type *only* the medicine name and quantity (e.g. *Dolo 650 - 1 strip*).\n\n` +
+      `🔁 *Existing Regular Patients:*\n` +
+      `To repeat your regular prescription, simply reply with *Refill* or *Same*.\n\n` +
+      `⏱️ Our pharmacist will check availability and message you shortly!`;
+
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    await whatsappQueueWorker.enqueue(
+      phone,
+      guidanceMsg,
+      'customer_guidance_prompt',
+      customerName || 'Customer'
+    );
+    console.log(`[Intent Service] Sent medicine ordering guidance prompt to ${cleanDigits}.`);
+  } catch (err) {
+    console.warn('[Intent Service] Failed to send guidance prompt:', err);
+  }
 }
 
 /**
@@ -322,6 +441,13 @@ export async function handleInbound(msg: any): Promise<void> {
 
     // 1. IGNORE CHECK
     if (await isIgnored(chatId)) return;
+
+    const db = await dbManager.getConnection();
+
+    // 1a. DISTRIBUTOR & INTERNAL CHECK
+    if (await isDistributorOrInternal(phone || chatId, db)) {
+      return;
+    }
 
     // 1b. PROMOTIONAL & BROADCAST FILTER
     // Reject marketing schemes, B2B broadcasts, festive deals, and spam before doing any work
@@ -596,6 +722,11 @@ export async function handleInbound(msg: any): Promise<void> {
           isStale
         });
       }
+    } else if (!hasMedia && !isStale && phone) {
+      const cleanBody = body.trim();
+      if (cleanBody.length >= 2) {
+        await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db);
+      }
     }
 
   } catch (err) {
@@ -750,14 +881,14 @@ async function searchAndBroadcast(opts: {
     return;
   }
 
-  // If no local match, also try direct Pharmarack catalog search
+  // 2-3 word sanitized search query for Pharmarack (never full sentences/packaging/forms)
+  const pharmaQuery = sanitizePharmarackQuery(medicineName);
+
+  // ALWAYS search Pharmarack catalog cache (NEVER skip, even if in physical shelf stock)
   let catalogResults = filterResult.catalogResults || null;
-  // Consult Pharmarack whenever there is NO exact local brand match (near-match
-  // or no-match), not only when local is completely empty — so admin always sees
-  // real distributor availability instead of a possibly-wrong local name.
-  if ((filterResult.matches.length === 0 || !isExactLocal || availability === 'REGISTERED_NO_STOCK') && !catalogResults) {
+  if (!catalogResults && pharmaQuery) {
     try {
-      catalogResults = await searchCatalog(medicineName, dosageForm, mrp);
+      catalogResults = await searchCatalog(pharmaQuery, dosageForm, mrp);
     } catch (catErr) {
       console.warn('[Intent Service] Catalog search failed:', catErr);
     }
@@ -768,19 +899,16 @@ async function searchAndBroadcast(opts: {
     catalogResults?.nonMapped?.[0]?.score ?? 0
   );
 
-  // Live Pharmarack search as last resort — only with explicit intent (or a
-  // photo or plausible medicine name); a conversational word must never trigger a live API search.
+  // Live Pharmarack search — ALWAYS query distributor network using sanitized 2-3 word term
   let livePharmarackResults: any[] | null = null;
-  const nothingFound = filterResult.matches.length === 0 &&
-    (!catalogResults || (catalogResults.mapped.length === 0 && catalogResults.nonMapped.length === 0));
-  const isPlausible = isPlausibleMedicineName(medicineName);
-  if ((nothingFound || !isExactLocal || availability === 'REGISTERED_NO_STOCK') && (hasIntentWords || source !== 'text' || isPlausible)) {
+  const isPlausible = isPlausibleMedicineName(pharmaQuery || medicineName);
+  if (pharmaQuery && (hasIntentWords || source !== 'text' || isPlausible)) {
     try {
       const { performPharmarackSearch } = await import('../routes/pharmarack.js');
-      const searchTerms = [medicineName];
+      const searchTerms = [pharmaQuery];
       if (filterResult.matches[0]) {
-        const cleanMatched = filterResult.matches[0].split(/\s+/).slice(0, 3).join(' ');
-        if (cleanMatched.toLowerCase() !== medicineName.toLowerCase()) {
+        const cleanMatched = sanitizePharmarackQuery(filterResult.matches[0]);
+        if (cleanMatched && cleanMatched.toLowerCase() !== pharmaQuery.toLowerCase() && !searchTerms.includes(cleanMatched)) {
           searchTerms.unshift(cleanMatched);
         }
       }
@@ -796,7 +924,7 @@ async function searchAndBroadcast(opts: {
               distributor_name: p.distributor,
               distributorPrice: p.rate,
               availability: p.stock,
-              score: scoreProductName(medicineName, p.name || '')
+              score: scoreProductName(pharmaQuery, p.name || '')
             }))
             .filter((p: any) => p.score >= 0.50)
             .sort((a: any, b: any) => b.score - a.score);
@@ -971,8 +1099,8 @@ async function searchAndBroadcast(opts: {
     imagePath
   }).catch(err => console.error('[Intent Service] Admin escalation failed:', err));
 
-  // Customer clarification prompt (Option A):
-  // When medicine inquiry comes from text and we matched a product, ask customer to confirm (skip if stale offline message)
+  // Customer clarification / confirmation prompt:
+  // When medicine inquiry comes from text and we matched a product, acknowledge or ask customer to confirm
   if (source === 'text' && phone && !opts.isStale) {
     try {
       const db = await dbManager.getConnection();
@@ -980,27 +1108,36 @@ async function searchAndBroadcast(opts: {
       if (!toggle || toggle.value !== 'false') {
         const topMatched = filterResult.matches[0] || catalogResults?.mapped?.[0]?.productName || catalogResults?.mapped?.[0]?.name;
         if (topMatched) {
-          await db.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
-            phone TEXT PRIMARY KEY,
-            suggested_name TEXT NOT NULL,
-            original_query TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )`);
           const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
-          await db.run(
-            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, created_at)
-             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-             ON CONFLICT(phone) DO UPDATE SET
-               suggested_name = excluded.suggested_name,
-               original_query = excluded.original_query,
-               created_at = CURRENT_TIMESTAMP`,
-            [cleanPhone, topMatched, medicineName]
-          );
+          const isExactName = topMatched.toLowerCase().replace(/[^a-z0-9]/g, '') === medicineName.toLowerCase().replace(/[^a-z0-9]/g, '') || confidence >= 90;
 
-          const promptMsg = `Namaste! Did you mean *${topMatched}*? Please reply *Yes* or *No*.`;
-          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-          await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
-          console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+          if (isExactName) {
+            const ackMsg = `✅ Received your request for *${topMatched}*.\nOur pharmacist is checking availability and will message you shortly.`;
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(phone, ackMsg, 'customer_medicine_ack', customer?.name || 'Customer');
+            console.log(`[Intent Service] Sent medicine request ack for "${topMatched}" to ${cleanPhone}.`);
+          } else {
+            await db.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+              phone TEXT PRIMARY KEY,
+              suggested_name TEXT NOT NULL,
+              original_query TEXT,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+            await db.run(
+              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, created_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(phone) DO UPDATE SET
+                 suggested_name = excluded.suggested_name,
+                 original_query = excluded.original_query,
+                 created_at = CURRENT_TIMESTAMP`,
+              [cleanPhone, topMatched, medicineName]
+            );
+
+            const promptMsg = `Namaste! Did you mean *${topMatched}*? Please reply *Yes* or *No*.`;
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+            console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+          }
         }
       }
     } catch (clarifyErr) {

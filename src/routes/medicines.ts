@@ -681,7 +681,7 @@ router.get('/medicines/:id/composition-intelligence', async (req, res) => {
       }
     }
 
-    const apiRef = medicine.api_reference || medicine.generic_name || clinicalInfo?.salt_composition || '';
+    const apiRef = medicine.api_reference || medicine.generic_name || medicine.therapeutic || clinicalInfo?.salt_composition || '';
 
     let inStockAlts: any[] = [];
     let purchaseHistory: any[] = [];
