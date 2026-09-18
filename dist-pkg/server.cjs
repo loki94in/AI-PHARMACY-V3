@@ -4554,7 +4554,7 @@ function isPromotionalOrBroadcastMessage(text) {
   if (!text || !text.trim()) return false;
   const raw = text.trim();
   const lower = raw.toLowerCase();
-  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|rate list|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily))\b/i;
+  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|rate list|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily)|flat\s+\d+%\s+off|up\s+to\s+\d+%\s+off|\d+%\s+discount|buy\s+\d+\s+get\s+\d+|bogo|exclusive\s+offers?|festive\s+offers?|special\s+offers?|best\s+deals?|mega\s+offer|bumper\s+offer|todays?\s+offer|today'?s\s+deal|deal\s+of\s+the\s+day)\b/i;
   if (PROMO_PHRASES_REGEX.test(lower)) return true;
   if (/\b(?:happy (?:diwali|new year|eid|holi|navratri|makar sankranti|ganesh chaturthi)|dear (?:retailer|chemist|partner|customer)s?|attention (?:chemists|retailers))\b/i.test(lower)) {
     return true;
@@ -14116,6 +14116,28 @@ async function ensureSchema(dbPath) {
         } catch (_) {
         }
         await db2.run("CREATE INDEX IF NOT EXISTS idx_special_orders_medicine_id ON special_orders(medicine_id)");
+        try {
+          const chatCols = await db2.all("PRAGMA table_info(whatsapp_chats)");
+          const chatNames = new Set(chatCols.map((c) => c.name));
+          if (chatCols.length > 0) {
+            if (!chatNames.has("session_mode")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_mode TEXT DEFAULT 'auto'");
+            }
+            if (!chatNames.has("manual_active_until")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN manual_active_until INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has("last_patient_message_at")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN last_patient_message_at INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has("last_pharmacist_message_at")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN last_pharmacist_message_at INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has("session_status")) {
+              await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+            }
+          }
+        } catch (_) {
+        }
         await ensureOrderTimingSchema(db2);
         await ensureMedicinesFts(db2);
         await ensureMedicineSearchSummaryTriggers(db2);
@@ -16012,7 +16034,12 @@ async function ensureSchema(dbPath) {
       timestamp INTEGER,
       last_message TEXT,
       is_group INTEGER DEFAULT 0,
-      resolved_number TEXT
+      resolved_number TEXT,
+      session_mode TEXT DEFAULT 'auto',
+      manual_active_until INTEGER DEFAULT 0,
+      last_patient_message_at INTEGER DEFAULT 0,
+      last_pharmacist_message_at INTEGER DEFAULT 0,
+      session_status TEXT DEFAULT 'idle'
     );
 
     -- WhatsApp local messages cache
@@ -16969,6 +16996,28 @@ async function ensureSchema(dbPath) {
       CREATE INDEX IF NOT EXISTS idx_clinical_salt ON medicine_clinical_info(salt_composition);
       CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category);
     `);
+    try {
+      const chatCols = await db2.all("PRAGMA table_info(whatsapp_chats)");
+      const chatNames = new Set(chatCols.map((c) => c.name));
+      if (chatCols.length > 0) {
+        if (!chatNames.has("session_mode")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_mode TEXT DEFAULT 'auto'");
+        }
+        if (!chatNames.has("manual_active_until")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN manual_active_until INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has("last_patient_message_at")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN last_patient_message_at INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has("last_pharmacist_message_at")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN last_pharmacist_message_at INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has("session_status")) {
+          await db2.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+        }
+      }
+    } catch (_) {
+    }
     await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
     await db2.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
     console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
@@ -16982,7 +17031,7 @@ var init_database = __esm({
     "use strict";
     import_crypto2 = __toESM(require("crypto"), 1);
     init_connection();
-    CURRENT_SCHEMA_VERSION = 65;
+    CURRENT_SCHEMA_VERSION = 66;
     FTS_SHADOW_TABLES = ["medicines_fts_data", "medicines_fts_idx", "medicines_fts_docsize", "medicines_fts_config"];
     FTS_CREATE_SQL = `CREATE VIRTUAL TABLE medicines_fts USING fts5(name, content='medicines', content_rowid='id', tokenize='trigram')`;
     FTS_TRIGGER_SQL = `
@@ -23609,7 +23658,7 @@ ${mrpLine}
       /**
        * Send ultra-short dispatch status reminder message to a distributor
        */
-      async sendDistributorDispatchReminder(reminderId, customMessage) {
+      async sendDistributorDispatchReminder(reminderId, customMessage, scheduledAt) {
         try {
           const db2 = await dbManager.getConnection();
           const reminder = await db2.get(
@@ -23631,6 +23680,23 @@ ${mrpLine}
           if (!recipientPhone || !String(recipientPhone).trim()) {
             console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
             return false;
+          }
+          const startOfDay = /* @__PURE__ */ new Date();
+          startOfDay.setHours(0, 0, 0, 0);
+          const startOfDayMs = startOfDay.getTime();
+          const clean10Digits = String(recipientPhone).replace(/\D/g, "").slice(-10);
+          const existingQueueItem = await db2.get(
+            `SELECT id, status FROM whatsapp_send_queue 
+         WHERE type = 'distributor_dispatch_reminder'
+           AND (target_name = ? OR number LIKE ?)
+           AND created_at >= ?
+           AND status NOT IN ('cancelled', 'failed_perm', 'skipped_invalid_phone', 'skipped_not_on_whatsapp')
+         LIMIT 1`,
+            [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
+          );
+          if (existingQueueItem && !customMessage) {
+            console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
+            return true;
           }
           let message = "";
           if (customMessage && String(customMessage).trim()) {
@@ -23667,13 +23733,13 @@ ${mrpLine}
               message = `\u{1F4E6} Has today's order been dispatched or collected by ${boyName} (${boyPhone})? - ${storeName}`;
             }
           }
-          console.log(`[DistributorReminder] Enqueuing reminder to ${reminder.distributor_name} (${recipientPhone}): ${message}`);
+          console.log(`[DistributorReminder] Enqueuing reminder to ${reminder.distributor_name} (${recipientPhone}): ${message}${scheduledAt ? ` [scheduled for ${new Date(scheduledAt).toLocaleTimeString()}]` : ""}`);
           const queueId = await whatsappQueueWorker.enqueue(
             recipientPhone,
             message,
             "distributor_dispatch_reminder",
             reminder.distributor_name,
-            void 0,
+            scheduledAt,
             void 0,
             void 0,
             { skipDedupe: true }
@@ -24525,6 +24591,14 @@ async function allocateDynamicReminderTimes(db2, todayStr2) {
         [formattedTime, rem.id]
       );
       rem.scheduled_send_time = formattedTime;
+      try {
+        const sendDate = /* @__PURE__ */ new Date();
+        sendDate.setHours(resH, resM, 0, 0);
+        const scheduledAtMs = sendDate.getTime();
+        await notificationService.sendDistributorDispatchReminder(rem.id, void 0, scheduledAtMs);
+      } catch (enqErr) {
+        console.warn(`[DistributorReminderWorker] Advance enqueue note for #${rem.id}:`, enqErr?.message || enqErr);
+      }
     }
   } catch (err) {
     console.error("[DistributorReminderWorker] Error allocating dynamic reminder times:", err.message);
@@ -24569,11 +24643,12 @@ async function checkAndSendAutoReminders() {
     const currentMinutesTotal = hours * 60 + minutes;
     const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
     const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
-    const isWithinWindow = currentMinutesTotal >= startMinutesTotal && currentMinutesTotal <= endMinutesTotal + 15;
-    if (!isWithinWindow) {
+    const isBeforeWindow = currentMinutesTotal < startMinutesTotal;
+    if (isBeforeWindow) {
       isWorkerRunning = false;
       return;
     }
+    const isPastWindow = currentMinutesTotal > endMinutesTotal + 15;
     await syncTodayActiveDistributors();
     await allocateDynamicReminderTimes(db2, todayStr2);
     const activeReminders = await db2.all(
@@ -24593,39 +24668,36 @@ async function checkAndSendAutoReminders() {
         continue;
       }
       let isDue = true;
+      let targetScheduledMs = now.getTime();
       if (item.scheduled_send_time && item.scheduled_send_time.includes(":")) {
         const [schH, schM] = item.scheduled_send_time.split(":").map(Number);
         if (!isNaN(schH) && !isNaN(schM)) {
           const schMinutes = schH * 60 + schM;
+          const sDate = /* @__PURE__ */ new Date();
+          sDate.setHours(schH, schM, 0, 0);
+          targetScheduledMs = sDate.getTime();
           if (currentMinutesTotal < schMinutes) {
             isDue = false;
           }
         }
       }
-      if (isDue) {
-        dueReminders.push({ id: item.id, distributor_name: item.distributor_name });
+      if (isDue || isPastWindow) {
+        dueReminders.push({ id: item.id, distributor_name: item.distributor_name, scheduledAtMs: targetScheduledMs });
       }
     }
     if (dueReminders.length > 0) {
-      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
+      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due/overdue distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}${isPastWindow ? " [outage recovery]" : ""}).`);
       try {
         const { ensureWhatsAppReady: ensureWhatsAppReady2, isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
-        if (!await isWhatsAppAutoConnectAllowed2()) {
-          console.log("[DistributorReminderWorker] WhatsApp not configured \u2014 skipping reminder dispatch.");
-          isWorkerRunning = false;
-          return;
-        }
-        const isReady2 = await ensureWhatsAppReady2(3e4);
-        if (!isReady2) {
-          console.warn("[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.");
-          isWorkerRunning = false;
-          return;
+        if (await isWhatsAppAutoConnectAllowed2()) {
+          await ensureWhatsAppReady2(3e4).catch(() => {
+          });
         }
       } catch (waReadyErr) {
         console.warn("[DistributorReminderWorker] WhatsApp readiness check warning:", waReadyErr?.message || waReadyErr);
       }
       for (const item of dueReminders) {
-        await notificationService.sendDistributorDispatchReminder(item.id);
+        await notificationService.sendDistributorDispatchReminder(item.id, void 0, item.scheduledAtMs);
         await new Promise((res) => setTimeout(res, 1e3));
       }
     }
@@ -29131,6 +29203,9 @@ async function ensureClarificationsTable(db2) {
   try {
     const cols = await db2.all("PRAGMA table_info(wa_pending_clarifications)");
     const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("items_json")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN items_json TEXT DEFAULT NULL");
+    }
     if (!colNames.has("options_json")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN options_json TEXT DEFAULT NULL");
     }
@@ -29330,9 +29405,11 @@ async function executeConfirmedProcurementFlow(params) {
       eventService.broadcast("order_updated", { at: Date.now(), id: specialOrderId });
     } catch (_) {
     }
-    const custAckMsg = `Thank you! Your request for *${cartItem.productName}* \xD7 ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
-    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+    if (!params.isBundle) {
+      const custAckMsg = `Thank you! Your request for *${cartItem.productName}* \xD7 ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+    }
     console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
   } catch (procErr) {
     console.error("[Intent Service] Error in executeConfirmedProcurementFlow:", procErr);
@@ -29345,7 +29422,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     const db2 = await dbManager.getConnection();
     await ensureClarificationsTable(db2);
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step 
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json 
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
       [`%${cleanDigits}`, `%${cleanDigits}%`]
@@ -29446,15 +29523,52 @@ Reply *YES* to confirm.`;
     }
     if (isAffirmative) {
       await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
-      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}" x ${pending2.quantity || 1}. Initiating procurement...`);
-      await executeConfirmedProcurementFlow({
-        phone,
-        chatId,
-        confirmedMedicine: pending2.suggested_name,
-        quantity: pending2.quantity || 1,
-        unit: pending2.unit || "strip",
-        customer
-      });
+      let bundle = [];
+      if (pending2.items_json) {
+        try {
+          bundle = JSON.parse(pending2.items_json);
+        } catch (_) {
+        }
+      }
+      if (bundle && bundle.length > 0) {
+        console.log(`[Intent Service] Customer ${cleanDigits} confirmed multi-medicine bundle of ${bundle.length} items. Initiating procurement...`);
+        for (const item of bundle) {
+          await executeConfirmedProcurementFlow({
+            phone,
+            chatId,
+            confirmedMedicine: item.matchedName,
+            quantity: item.quantity || 1,
+            unit: item.unit || "strip",
+            customer,
+            isBundle: true
+          });
+        }
+        try {
+          const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+          const storeLabel = await getStoreMedicalName4(db2);
+          const storePhone = await getStorePhone3(db2);
+          const phoneSuffix = storePhone ? `
+\u{1F4DE} ${storePhone}` : "";
+          const medListText = bundle.map((b, i) => `${i + 1}. *${b.matchedName}* \xD7 ${b.quantity} ${b.unit}`).join("\n");
+          const custAckMsg = `Thank you! Your request for:
+${medListText}
+has been received and forwarded to our pharmacy team at ${storeLabel}. We are arranging your medicines with our distributors and will message you as soon as they are ready for collection.${phoneSuffix}`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+        } catch (bundleAckErr) {
+          console.warn("[Intent Service] Multi-item confirmation acknowledgment error:", bundleAckErr);
+        }
+      } else {
+        console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}" x ${pending2.quantity || 1}. Initiating procurement...`);
+        await executeConfirmedProcurementFlow({
+          phone,
+          chatId,
+          confirmedMedicine: pending2.suggested_name,
+          quantity: pending2.quantity || 1,
+          unit: pending2.unit || "strip",
+          customer
+        });
+      }
       return true;
     }
   } catch (err) {
@@ -29494,10 +29608,29 @@ async function handleInbound(msg) {
     if (await isDistributorOrInternal(phone || chatId, db2)) {
       return;
     }
-    if (isPromotionalOrBroadcastMessage(body)) {
-      console.log(`[Intent Service] Discarded promotional/marketing broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, " ")}..."`);
+    if (chatId.includes("g.us") || isPromotionalOrBroadcastMessage(body)) {
+      console.log(`[Intent Service] Discarded promotional/group broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, " ")}..."`);
       return;
     }
+    const cleanBodyForSignOff = body.trim().toLowerCase().replace(/[^\w\s]/g, "").trim();
+    const isSignOff = /^(thanks|thank you|thank you so much|shukriya|dhanyawad|dhanyavad|ok|okay|ok done|okay done|done|bye|bye bye|good night|gn|ok bye|thx|tq|done ji|theek hai|accha theek hai)$/i.test(cleanBodyForSignOff);
+    if (isSignOff) {
+      await db2.run(
+        `UPDATE whatsapp_chats SET session_status = 'ended', manual_active_until = 0, session_mode = 'auto' WHERE id = ?`,
+        [chatId]
+      );
+      eventService.broadcast("wa_session_updated", { chat_id: chatId, session_mode: "auto", session_status: "ended" });
+      console.log(`[Intent Service] Natural sign-off ("${body.trim()}") from ${chatId}. Session marked as ended.`);
+      return;
+    }
+    const chatSessionRow = await db2.get(
+      "SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?",
+      [chatId]
+    );
+    const nowMs = Date.now();
+    const isManualSession = Boolean(
+      chatSessionRow?.session_mode === "manual" && Number(chatSessionRow?.manual_active_until || 0) > nowMs
+    );
     await startupSyncCoordinator.waitForCartSync();
     const customer = await lookupCustomer(phone);
     const isNewCustomer = !customer;
@@ -29533,15 +29666,16 @@ async function handleInbound(msg) {
             patient_name: primaryRefill.patient_name,
             refill_count: pendingRefills.length
           });
-          try {
-            const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-            const sched = await getPharmacyOperatingSchedule2(db3);
-            const storeName = await getStoreMedicalName4(db3);
-            const storePhone = await getStorePhone3(db3);
-            const phoneSuffix = storePhone ? `
+          if (!isManualSession) {
+            try {
+              const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+              const sched = await getPharmacyOperatingSchedule2(db3);
+              const storeName = await getStoreMedicalName4(db3);
+              const storePhone = await getStorePhone3(db3);
+              const phoneSuffix = storePhone ? `
 \u{1F4DE} ${storePhone}` : "";
-            const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
-            const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
+              const medListText = pendingRefills.length === 1 ? `*${primaryRefill.medicine_name}*` : pendingRefills.map((r) => `\u2022 ${r.medicine_name}`).join("\n");
+              const ackMsg = `\u2705 *Refill Confirmed \u2014 ${storeName}*
 
 Thank you ${primaryRefill.patient_name}! Your regular prescription for:
 ${medListText}
@@ -29549,22 +29683,23 @@ has been confirmed.
 
 \u{1F552} *Store Hours:* ${sched.openTime} to ${sched.closeTime}
 Our team will keep your medicines ready for collection.${phoneSuffix}`;
-            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-            await whatsappQueueWorker2.enqueue(
-              phone,
-              ackMsg,
-              "refill_reminder",
-              primaryRefill.patient_name
-            );
-          } catch (ackErr) {
-            console.warn("[Intent Service] Refill confirmation acknowledgment note:", ackErr);
+              const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+              await whatsappQueueWorker2.enqueue(
+                phone,
+                ackMsg,
+                "refill_reminder",
+                primaryRefill.patient_name
+              );
+            } catch (ackErr) {
+              console.warn("[Intent Service] Refill confirmation acknowledgment note:", ackErr);
+            }
           }
           console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);
           return;
         }
       }
     }
-    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    if (!isManualSession && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
     }
     const parsed = parseMessage(body);
@@ -29612,6 +29747,10 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
       }
     }
     if (hasMedia) {
+      if (chatId.includes("g.us") || isPromotionalOrBroadcastMessage(body)) {
+        console.log(`[Intent Service] Pre-OCR filter: skipped promotional or group image from ${phone || chatId}`);
+        return;
+      }
       try {
         const waClient = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
         const waStatus = await waClient.getWhatsAppStatus();
@@ -29700,6 +29839,7 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
       if (candidates.some((c) => c.fromScispacy)) {
         console.log(`[Intent Service] scispaCy rescued medicine name(s): ${candidates.filter((c) => c.fromScispacy).map((c) => `"${c.name}"`).join(", ")} (regex missed them)`);
       }
+      const suppressAutoReply = isManualSession || candidates.length > 1;
       for (const cand of candidates) {
         await searchAndBroadcast({
           medicineName: cand.name,
@@ -29714,10 +29854,68 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
           phone,
           chatId,
           hasIntentWords: parsed.rawIntentWords.length > 0 || cand.fromScispacy,
-          isStale
+          isStale,
+          suppressClarification: suppressAutoReply
         });
       }
-    } else if (!hasMedia && !isStale && phone) {
+      if (candidates.length > 1 && !isManualSession && !isStale && phone) {
+        try {
+          const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
+          if (!toggle || toggle.value !== "false") {
+            const bundledItems = [];
+            for (const cand of candidates) {
+              let matched = cand.name;
+              try {
+                const res = await productNameFilterService.filterProductNames(cand.name, { minConfidenceThreshold: 0.6 });
+                if (res?.matches?.[0]) matched = res.matches[0];
+              } catch (_) {
+              }
+              bundledItems.push({
+                requestedName: cand.name,
+                matchedName: matched,
+                quantity: cand.quantity || 1,
+                unit: cand.unit || "strip"
+              });
+            }
+            const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
+            await ensureClarificationsTable(db2);
+            await db2.run(
+              `INSERT INTO wa_pending_clarifications (
+                 phone, suggested_name, original_query, options_json, quantity, unit, step, items_json, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_confirmation', ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(phone) DO UPDATE SET
+                 suggested_name = excluded.suggested_name,
+                 original_query = excluded.original_query,
+                 options_json = NULL,
+                 quantity = excluded.quantity,
+                 unit = excluded.unit,
+                 step = 'awaiting_confirmation',
+                 items_json = excluded.items_json,
+                 created_at = CURRENT_TIMESTAMP`,
+              [
+                cleanPhone,
+                bundledItems[0].matchedName,
+                body,
+                null,
+                bundledItems[0].quantity,
+                bundledItems[0].unit,
+                JSON.stringify(bundledItems)
+              ]
+            );
+            const itemListText = bundledItems.map((item, idx) => `${idx + 1}. *${item.matchedName}* \xD7 ${item.quantity} ${item.unit}`).join("\n");
+            const promptMsg = `Please confirm your order for:
+${itemListText}
+
+Reply *YES* to confirm or *NO* to cancel.`;
+            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+            console.log(`[Intent Service] Sent consolidated multi-item confirmation for ${bundledItems.length} medicines to ${cleanPhone}.`);
+          }
+        } catch (bundleErr) {
+          console.warn("[Intent Service] Consolidated multi-item confirmation failed:", bundleErr);
+        }
+      }
+    } else if (!hasMedia && !isStale && phone && !isManualSession) {
       const cleanBody = body.trim();
       if (cleanBody.length >= 2) {
         await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2);
@@ -30006,7 +30204,7 @@ async function searchAndBroadcast(opts) {
     relatedMedicines: opts.relatedMedicines,
     imagePath
   }).catch((err) => console.error("[Intent Service] Admin escalation failed:", err));
-  if (source === "text" && phone && !opts.isStale) {
+  if (source === "text" && phone && !opts.isStale && !opts.suppressClarification) {
     try {
       const db2 = await dbManager.getConnection();
       const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
@@ -30315,6 +30513,17 @@ async function handleOcrComplete(data) {
     }
     const relatedMedicines = await resolveRelatedMedicinesLocal(passingNames.slice(1));
     const captionHit = captionCandidates.find((c) => c.medicineName.toLowerCase() === finalName.toLowerCase());
+    let isManualChatSession = false;
+    if (chatId) {
+      try {
+        const db2 = await dbManager.getConnection();
+        const chatRow = await db2.get("SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?", [chatId]);
+        if (chatRow?.session_mode === "manual" && Number(chatRow?.manual_active_until || 0) > Date.now()) {
+          isManualChatSession = true;
+        }
+      } catch (_) {
+      }
+    }
     searchAndBroadcast({
       medicineName: finalName,
       quantity: textParsed.quantity || captionHit?.quantity || 1,
@@ -30330,6 +30539,7 @@ async function handleOcrComplete(data) {
       chatId,
       imagePath,
       hasIntentWords: textParsed.rawIntentWords.length > 0,
+      suppressClarification: isManualChatSession,
       relatedMedicines
     }).catch((err) => console.error("[Intent Service] OCR post-search failed:", err));
   }).catch((err) => {
@@ -30610,6 +30820,7 @@ __export(whatsappClient_exports, {
   normalizeWhatsAppPhone: () => normalizeWhatsAppPhone,
   prewarmWhatsApp: () => prewarmWhatsApp,
   reconnectClient: () => reconnectClient,
+  resolveChatSession: () => resolveChatSession,
   sendMessage: () => sendMessage,
   setCurrentQr: () => setCurrentQr,
   setIsReady: () => setIsReady,
@@ -31331,23 +31542,63 @@ function launchClientInstance(forceQr) {
           } catch (e) {
           }
         }
+        const isFromMe = !!msg.fromMe;
+        const nowMs = Date.now();
+        const manualTimeoutMs = 45 * 60 * 1e3;
+        const existingChatRow = await db2.get(
+          "SELECT session_mode, manual_active_until, last_pharmacist_message_at FROM whatsapp_chats WHERE id = ?",
+          [chatId]
+        );
+        let sessionMode = existingChatRow?.session_mode || "auto";
+        let manualUntil = Number(existingChatRow?.manual_active_until || 0);
+        let sessionStatus = existingChatRow?.session_status || "idle";
+        if (isFromMe) {
+          sessionMode = "manual";
+          manualUntil = nowMs + manualTimeoutMs;
+          sessionStatus = "active";
+        } else {
+          if (sessionMode === "manual") {
+            if (manualUntil > nowMs) {
+              sessionStatus = "waiting";
+            } else {
+              sessionMode = "auto";
+              manualUntil = 0;
+              sessionStatus = "idle";
+            }
+          }
+        }
         await db2.run(
-          `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO whatsapp_chats (
+             id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+             session_mode, manual_active_until, last_patient_message_at, last_pharmacist_message_at, session_status
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              timestamp=excluded.timestamp,
              last_message=excluded.last_message,
              resolved_number=excluded.resolved_number,
-             unread_count = CASE WHEN ? = 0 THEN unread_count + 1 ELSE unread_count END`,
+             unread_count = CASE WHEN ? = 0 THEN unread_count + 1 ELSE unread_count END,
+             session_mode = excluded.session_mode,
+             manual_active_until = excluded.manual_active_until,
+             last_patient_message_at = CASE WHEN ? = 1 THEN excluded.last_patient_message_at ELSE last_patient_message_at END,
+             last_pharmacist_message_at = CASE WHEN ? = 1 THEN excluded.last_pharmacist_message_at ELSE last_pharmacist_message_at END,
+             session_status = excluded.session_status`,
           [
             chatId,
             chatName,
-            msg.fromMe ? 0 : 1,
+            isFromMe ? 0 : 1,
             msg.timestamp,
             msg.body || "",
             chatId.includes("g.us") ? 1 : 0,
             resolvedNumber,
-            msg.fromMe ? 1 : 0
+            sessionMode,
+            manualUntil,
+            isFromMe ? 0 : nowMs,
+            isFromMe ? nowMs : 0,
+            sessionStatus,
+            isFromMe ? 1 : 0,
+            isFromMe ? 0 : 1,
+            isFromMe ? 1 : 0
           ]
         );
         eventService.broadcast("wa_new_message", {
@@ -31362,6 +31613,15 @@ function launchClientInstance(forceQr) {
             hasMedia: msg.hasMedia
           }
         });
+        if (isFromMe || sessionMode === "manual") {
+          eventService.broadcast("wa_session_updated", {
+            chat_id: chatId,
+            resolved_number: resolvedNumber,
+            session_mode: sessionMode,
+            session_status: sessionStatus,
+            manual_active_until: manualUntil
+          });
+        }
         if (!msg.fromMe) {
           Promise.resolve().then(() => (init_whatsappIntentService(), whatsappIntentService_exports)).then((mod) => {
             const handler = mod.handleInbound || mod.whatsappIntentService?.handleInbound || mod.default?.handleInbound;
@@ -31708,14 +31968,23 @@ async function sendMessage(to, mediaPath, caption, file) {
           );
           const existingChatRow = await db2.get("SELECT name FROM whatsapp_chats WHERE id = ?", [chatId]);
           const chatNameProv = existingChatRow?.name || cleanPhone;
+          const nowProv = Date.now();
           await db2.run(
-            `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO whatsapp_chats (
+               id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+               session_mode, manual_active_until, last_pharmacist_message_at, session_status
+             )
+             VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
              ON CONFLICT(id) DO UPDATE SET
                timestamp = EXCLUDED.timestamp,
                last_message = EXCLUDED.last_message,
-               resolved_number = EXCLUDED.resolved_number`,
-            [chatId, chatNameProv, 0, provTimestamp, provisionalBody, 0, cleanPhone]
+               resolved_number = EXCLUDED.resolved_number,
+               session_mode = 'manual',
+               manual_active_until = EXCLUDED.manual_active_until,
+               last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
+               session_status = 'active',
+               unread_count = 0`,
+            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, nowProv + 45 * 60 * 1e3, nowProv]
           );
           eventService.broadcast("wa_new_message", {
             chat_id: chatId,
@@ -31728,6 +31997,13 @@ async function sendMessage(to, mediaPath, caption, file) {
               type: file || mediaPath ? "document" : "text",
               hasMedia: !!provHasMedia
             }
+          });
+          eventService.broadcast("wa_session_updated", {
+            chat_id: chatId,
+            resolved_number: cleanPhone,
+            session_mode: "manual",
+            session_status: "active",
+            manual_active_until: nowProv + 45 * 60 * 1e3
           });
           Promise.resolve().then(() => (init_whatsappDeliveryRegister(), whatsappDeliveryRegister_exports)).then((m) => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, provisionalBody, file || mediaPath ? "media" : "text", void 0, void 0, messageId)).catch(() => {
           });
@@ -31783,14 +32059,23 @@ async function sendMessage(to, mediaPath, caption, file) {
       );
       const existingChat = await db2.get("SELECT name FROM whatsapp_chats WHERE id = ?", [chatId]);
       const chatName = existingChat?.name || cleanPhone;
+      const nowFinal = Date.now();
       await db2.run(
-        `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO whatsapp_chats (
+           id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+           session_mode, manual_active_until, last_pharmacist_message_at, session_status
+         )
+         VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
          ON CONFLICT(id) DO UPDATE SET
            timestamp = EXCLUDED.timestamp,
            last_message = EXCLUDED.last_message,
-           resolved_number = EXCLUDED.resolved_number`,
-        [chatId, chatName, 0, timestamp, bodyText, 0, cleanPhone]
+           resolved_number = EXCLUDED.resolved_number,
+           session_mode = 'manual',
+           manual_active_until = EXCLUDED.manual_active_until,
+           last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
+           session_status = 'active',
+           unread_count = 0`,
+        [chatId, chatName, timestamp, bodyText, cleanPhone, nowFinal + 45 * 60 * 1e3, nowFinal]
       );
       eventService.broadcast("wa_new_message", {
         chat_id: chatId,
@@ -31802,6 +32087,13 @@ async function sendMessage(to, mediaPath, caption, file) {
           type: file || mediaPath ? "document" : "text",
           hasMedia: !!hasMedia
         }
+      });
+      eventService.broadcast("wa_session_updated", {
+        chat_id: chatId,
+        resolved_number: cleanPhone,
+        session_mode: "manual",
+        session_status: "active",
+        manual_active_until: nowFinal + 45 * 60 * 1e3
       });
       Promise.resolve().then(() => (init_whatsappDeliveryRegister(), whatsappDeliveryRegister_exports)).then((m) => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, bodyText, file || mediaPath ? "media" : "text", void 0, void 0, messageId)).catch(() => {
       });
@@ -31817,24 +32109,49 @@ async function getChats() {
     markWhatsAppActivity();
     const db2 = await dbManager.getConnection();
     const rows = await db2.all(
-      `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber
+      `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber,
+              session_mode as sessionMode, manual_active_until as manualActiveUntil,
+              last_patient_message_at as lastPatientMessageAt, last_pharmacist_message_at as lastPharmacistMessageAt,
+              session_status as sessionStatus
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );
+    const nowMs = Date.now();
     const dedupedMap = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const rawNum = r.resolvedNumber || (r.id ? r.id.split("@")[0] : "");
       const digits = rawNum.replace(/\D/g, "");
       const key = digits.length >= 10 ? digits.slice(-10) : r.id || rawNum;
+      let mode = r.sessionMode || "auto";
+      let status = r.sessionStatus || "idle";
+      if (mode === "manual" && r.manualActiveUntil && r.manualActiveUntil < nowMs) {
+        mode = "auto";
+        status = "idle";
+      }
+      const lastPatientTime = Number(r.lastPatientMessageAt || (r.timestamp ? r.timestamp * 1e3 : 0));
+      const lastPharmacistTime = Number(r.lastPharmacistMessageAt || 0);
+      const isWaitingForPharmacist = status === "waiting" || mode === "manual" && lastPatientTime > lastPharmacistTime;
+      const isUnansweredOver5Min = Boolean(
+        isWaitingForPharmacist && lastPatientTime > 0 && nowMs - lastPatientTime > 5 * 60 * 1e3
+      );
+      const enrichedItem = {
+        ...r,
+        sessionMode: mode,
+        sessionStatus: status,
+        isUnansweredOver5Min
+      };
       if (dedupedMap.has(key)) {
         const existing = dedupedMap.get(key);
         existing.unreadCount = (existing.unreadCount || 0) + (r.unreadCount || 0);
         if (r.timestamp && r.timestamp > (existing.timestamp || 0)) {
           existing.timestamp = r.timestamp;
           if (r.lastMessage) existing.lastMessage = r.lastMessage;
+          existing.sessionMode = enrichedItem.sessionMode;
+          existing.sessionStatus = enrichedItem.sessionStatus;
+          existing.isUnansweredOver5Min = enrichedItem.isUnansweredOver5Min;
         }
       } else {
-        dedupedMap.set(key, { ...r });
+        dedupedMap.set(key, enrichedItem);
       }
     }
     const resultRows = Array.from(dedupedMap.values());
@@ -32001,6 +32318,27 @@ async function checkPhoneWhatsAppRegistered(cleanDigits10) {
     return "UNABLE_TO_VERIFY";
   }
 }
+async function resolveChatSession(chatId) {
+  try {
+    const db2 = await dbManager.getConnection();
+    await db2.run(
+      `UPDATE whatsapp_chats 
+       SET session_mode = 'auto', session_status = 'ended', manual_active_until = 0, unread_count = 0 
+       WHERE id = ?`,
+      [chatId]
+    );
+    eventService.broadcast("wa_session_updated", {
+      chat_id: chatId,
+      session_mode: "auto",
+      session_status: "ended",
+      manual_active_until: 0
+    });
+    return true;
+  } catch (err) {
+    console.error("[WhatsApp Client] Failed to resolve chat session:", err);
+    return false;
+  }
+}
 var import_whatsapp_web, import_fs20, import_path22, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
@@ -32089,6 +32427,10 @@ var init_whatsappQueueWorker = __esm({
       pacingMinMs = 1e4;
       pacingMaxMs = 15e3;
       cancelPacingSleep = null;
+      lastHeartbeatTime = null;
+      detectedOutageInterval = null;
+      heartbeatTimer = null;
+      scheduledReadinessTimers = /* @__PURE__ */ new Map();
       isWorkerPaused() {
         return this.isPaused;
       }
@@ -32144,6 +32486,137 @@ var init_whatsappQueueWorker = __esm({
           void this.startWorkerLoop();
         }
       }
+      /**
+       * Periodic lightweight heartbeat tracking process presence in DB app_settings.
+       * Runs every 25 seconds while backend process is alive.
+       */
+      async recordProcessHeartbeat() {
+        const now = Date.now();
+        this.lastHeartbeatTime = now;
+        try {
+          const db2 = await dbManager.getConnection();
+          await db2.run(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_worker_heartbeat_last_seen', ?)",
+            [String(now)]
+          );
+        } catch (_) {
+        }
+      }
+      /**
+       * Initializes heartbeat and inspects previous shutdown/crash state.
+       * If last heartbeat was >60s before current boot time, infer outage interval.
+       */
+      async initProcessHeartbeat() {
+        if (this.heartbeatTimer) return;
+        try {
+          const db2 = await dbManager.getConnection();
+          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_worker_heartbeat_last_seen'");
+          if (row?.value) {
+            const prevHeartbeat = parseInt(row.value, 10);
+            if (!isNaN(prevHeartbeat) && SERVER_BOOT_TIME - prevHeartbeat > 6e4) {
+              this.detectedOutageInterval = { start: prevHeartbeat, end: SERVER_BOOT_TIME };
+              console.log(
+                `[WhatsAppQueueWorker] Inferred PC/app outage from heartbeat gap: ${new Date(prevHeartbeat).toLocaleTimeString()} -> ${new Date(SERVER_BOOT_TIME).toLocaleTimeString()}`
+              );
+            }
+          }
+        } catch (_) {
+        }
+        await this.recordProcessHeartbeat();
+        this.heartbeatTimer = setInterval(() => {
+          void this.recordProcessHeartbeat();
+        }, 25e3);
+        if (this.heartbeatTimer && typeof this.heartbeatTimer.unref === "function") {
+          this.heartbeatTimer.unref();
+        }
+      }
+      /**
+       * Returns truthful availability state distinguishing PC availability from WhatsApp readiness:
+       * - READY: App running + WhatsApp ready
+       * - WHATSAPP_SLEEPING: App running + WhatsApp sleeping
+       * - WHATSAPP_DISCONNECTED: App running + WhatsApp not ready / disconnected
+       * - APP_OUTAGE_RECOVERED: App booted after detected outage interval
+       */
+      async getSystemAvailabilityState() {
+        const waStatus = await getWhatsAppStatus();
+        let state;
+        if (waStatus.isReady) {
+          state = "READY";
+        } else if (waStatus.sleeping) {
+          state = "WHATSAPP_SLEEPING";
+        } else if (this.detectedOutageInterval && Date.now() - SERVER_BOOT_TIME < 3e5) {
+          state = "APP_OUTAGE_RECOVERED";
+        } else {
+          state = "WHATSAPP_DISCONNECTED";
+        }
+        return {
+          state,
+          isReady: waStatus.isReady,
+          isSleeping: waStatus.sleeping === true,
+          lastHeartbeatAt: this.lastHeartbeatTime,
+          outageInterval: this.detectedOutageInterval
+        };
+      }
+      /**
+       * Arm proactive T-5 pre-warm and T-1 readiness check timers for scheduled items
+       */
+      armScheduledReadiness(itemId, scheduledAt, _type) {
+        const now = Date.now();
+        const timers = [];
+        const t5Time = scheduledAt - 5 * 60 * 1e3;
+        if (t5Time > now) {
+          const t5Timer = setTimeout(() => {
+            console.log(`[WhatsAppQueueWorker] T-5 readiness: Pre-warming WhatsApp for scheduled reminder #${itemId}...`);
+            void this.prewarm();
+          }, t5Time - now);
+          if (typeof t5Timer.unref === "function") t5Timer.unref();
+          timers.push(t5Timer);
+        } else if (now < scheduledAt - 6e4) {
+          void this.prewarm();
+        }
+        const t1Time = scheduledAt - 6e4;
+        if (t1Time > now) {
+          const t1Timer = setTimeout(async () => {
+            console.log(`[WhatsAppQueueWorker] T-1 readiness: Performing final readiness check for scheduled reminder #${itemId}...`);
+            await this.checkAndEnsureReadinessForScheduled();
+          }, t1Time - now);
+          if (typeof t1Timer.unref === "function") t1Timer.unref();
+          timers.push(t1Timer);
+        } else if (now < scheduledAt) {
+          void this.checkAndEnsureReadinessForScheduled();
+        }
+        if (timers.length > 0) {
+          const existing = this.scheduledReadinessTimers.get(itemId);
+          if (existing) {
+            for (const t of existing) clearTimeout(t);
+          }
+          this.scheduledReadinessTimers.set(itemId, timers);
+        }
+      }
+      /**
+       * T-1 minute readiness check: Wakes WhatsApp if sleeping or restores saved session if permitted
+       */
+      async checkAndEnsureReadinessForScheduled() {
+        try {
+          const status = await getWhatsAppStatus();
+          if (status.isReady) return true;
+          if (status.sleeping) {
+            console.log("[WhatsAppQueueWorker] T-1 readiness: WhatsApp is sleeping, waking client before scheduled send...");
+            await ensureWhatsAppReady(3e4).catch(() => {
+            });
+            return (await getWhatsAppStatus()).isReady;
+          }
+          if (await isWhatsAppAutoConnectAllowed()) {
+            console.log("[WhatsAppQueueWorker] T-1 readiness: WhatsApp not ready, initiating pre-dispatch reconnect...");
+            await ensureWhatsAppReady(3e4).catch(() => {
+            });
+            return (await getWhatsAppStatus()).isReady;
+          }
+        } catch (err) {
+          console.warn("[WhatsAppQueueWorker] Error in checkAndEnsureReadinessForScheduled:", err?.message || err);
+        }
+        return false;
+      }
       schemaEnsured = false;
       async ensureSchema(db2) {
         if (this.schemaEnsured) return;
@@ -32187,6 +32660,12 @@ var init_whatsappQueueWorker = __esm({
           await this.ensureSchema(db2);
           const minRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_queue_pacing_min'");
           const maxRow = await db2.get("SELECT value FROM app_settings WHERE key = 'whatsapp_queue_pacing_max'");
+          const isTestEnv = process.env.NODE_ENV === "test";
+          if (isTestEnv) {
+            this.pacingMinMs = 0;
+            this.pacingMaxMs = 0;
+            return { minMs: 0, maxMs: 0 };
+          }
           const rawMin = minRow ? parseInt(minRow.value, 10) : 1e4;
           const rawMax = maxRow ? parseInt(maxRow.value, 10) : 15e3;
           this.pacingMinMs = Math.max(1e4, isNaN(rawMin) ? 1e4 : rawMin);
@@ -32387,6 +32866,7 @@ var init_whatsappQueueWorker = __esm({
         if (scheduledAt <= now) {
           this.triggerProcessing();
         } else {
+          this.armScheduledReadiness(lastId, scheduledAt, type);
           const delay = Math.min(scheduledAt - now, 2147483647);
           setTimeout(() => this.triggerProcessing(), delay);
         }
@@ -32406,6 +32886,7 @@ var init_whatsappQueueWorker = __esm({
       async cleanupOldSentItems() {
         try {
           const db2 = await dbManager.getConnection();
+          await this.initProcessHeartbeat();
           try {
             const interruptedItems = await db2.all("SELECT id, number, message FROM whatsapp_send_queue WHERE status = 'sending'");
             for (const item of interruptedItems || []) {
@@ -32431,22 +32912,52 @@ var init_whatsappQueueWorker = __esm({
           }
           try {
             const preBootPending = await db2.all(
-              "SELECT id, number, message FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
+              "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
               [SERVER_BOOT_TIME]
             );
+            let recoveredDistributorCount = 0;
             for (const item of preBootPending || []) {
-              const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(item.number, item.message, 72);
+              const isDistributorReminder = item.type === "distributor_dispatch_reminder";
+              const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
+                item.number,
+                item.message,
+                isDistributorReminder ? 12 : 72
+              );
               if (deliveryCheck.delivered) {
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
                   [deliveryCheck.sentAt || Date.now(), item.id]
                 );
+                await db2.run(
+                  "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
+                  [`queue_${item.id}`, String(item.id)]
+                ).catch(() => {
+                });
+              } else if (isDistributorReminder) {
+                const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && item.scheduled_at >= this.detectedOutageInterval.start - 6e4 && item.scheduled_at <= this.detectedOutageInterval.end + 6e4;
+                const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
+                const reason = wasDueDuringOutage ? "Recovered after PC/application outage during scheduled dispatch" : isOverdueToday ? "Recovered overdue scheduled reminder after app restart" : "Restored scheduled reminder";
+                console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
+                await db2.run(
+                  "UPDATE whatsapp_send_queue SET status = 'pending', error_message = ? WHERE id = ?",
+                  [reason, item.id]
+                );
+                await db2.run(
+                  "UPDATE automation_notifications SET status = 'pending', error_message = ? WHERE reference_id = ? OR reference_id = ?",
+                  [reason, `queue_${item.id}`, String(item.id)]
+                ).catch(() => {
+                });
+                recoveredDistributorCount++;
               } else {
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = 'review_required', error_message = 'App restarted/updated \u2014 held for review to prevent unintended dispatch' WHERE id = ?",
                   [item.id]
                 );
               }
+            }
+            if (recoveredDistributorCount > 0) {
+              console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredDistributorCount} scheduled distributor reminder(s) recovered, triggering queue worker processing...`);
+              this.triggerProcessing();
             }
           } catch (_) {
           }
@@ -32491,11 +33002,28 @@ var init_whatsappQueueWorker = __esm({
                 `SELECT COUNT(*) as cnt FROM whatsapp_send_queue 
              WHERE status IN ('pending', 'failed_offline') 
                AND (scheduled_at IS NULL OR scheduled_at <= ?)
-               AND retry_count < 3`,
+               AND (retry_count < 3 OR type = 'distributor_dispatch_reminder')`,
                 [Date.now()]
               );
               if (!pendingRow || pendingRow.cnt === 0) {
                 delay = IDLE_TICK_MS;
+              }
+            }
+          } catch (_) {
+          }
+          try {
+            const db2 = await dbManager.getConnection();
+            const nowMs = Date.now();
+            const upcomingWindow = nowMs + 6 * 60 * 1e3;
+            const upcomingItems = await db2.all(
+              `SELECT id, scheduled_at, type FROM whatsapp_send_queue 
+           WHERE status IN ('pending', 'failed_offline') 
+             AND scheduled_at > ? AND scheduled_at <= ?`,
+              [nowMs, upcomingWindow]
+            );
+            for (const upItem of upcomingItems || []) {
+              if (!this.scheduledReadinessTimers.has(upItem.id)) {
+                this.armScheduledReadiness(upItem.id, upItem.scheduled_at, upItem.type);
               }
             }
           } catch (_) {
@@ -32535,7 +33063,7 @@ var init_whatsappQueueWorker = __esm({
               `SELECT * FROM whatsapp_send_queue 
            WHERE status IN ('pending', 'failed_offline') 
              AND (scheduled_at IS NULL OR scheduled_at <= ?)
-             AND retry_count < 3 
+             AND (retry_count < 3 OR type = 'distributor_dispatch_reminder') 
            ORDER BY created_at ASC
            LIMIT 1`,
               [now]
@@ -32591,6 +33119,16 @@ var init_whatsappQueueWorker = __esm({
                 [`queue_${item.id}`, String(item.id)]
               ).catch(() => {
               });
+              if (item.type === "distributor_dispatch_reminder") {
+                const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+                await db2.run(
+                  `UPDATE distributor_dispatch_reminders 
+               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                  [todayStr2, item.target_name || "", item.id]
+                ).catch(() => {
+                });
+              }
               continue;
             }
             const rawItemDigits = (item.number || "").replace(/\D/g, "");
@@ -32692,7 +33230,8 @@ var init_whatsappQueueWorker = __esm({
                 }
               }
               const sendResult = await sendMessage(item.number, item.media_url || void 0, item.message, fileObj);
-              if (!sendResult || !sendResult.sent) {
+              const isSent = sendResult === true || Boolean(sendResult && sendResult.sent);
+              if (!isSent) {
                 throw new Error("WhatsApp message could not be sent (client not ready or disconnected)");
               }
               const last10 = item.number.replace(/\D/g, "").slice(-10);
@@ -32724,6 +33263,16 @@ var init_whatsappQueueWorker = __esm({
               if (item.type === "pharmarack_distributor_order") {
                 await this.markPharmarackOrderSent(db2, item.target_name);
               }
+              if (item.type === "distributor_dispatch_reminder") {
+                const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+                await db2.run(
+                  `UPDATE distributor_dispatch_reminders 
+               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                  [todayStr2, item.target_name || "", item.id]
+                ).catch(() => {
+                });
+              }
               if (item.type === "refill_reminder") {
                 await db2.run(
                   "UPDATE patient_refills SET reminder_status = 'SENT', reminder_sent_at = datetime('now'), status = 'notified' WHERE reminder_job_id = ?",
@@ -32737,14 +33286,14 @@ var init_whatsappQueueWorker = __esm({
                 });
               }
               const recordedWaMsgId = outboxRecord?.id || sendResult?.messageId || void 0;
-              void whatsappDeliveryRegister.recordDelivery(
+              await whatsappDeliveryRegister.recordDelivery(
                 item.number,
                 item.message,
                 item.type,
                 item.target_name,
                 String(item.id),
                 recordedWaMsgId
-              );
+              ).catch((e) => console.error("[WhatsAppQueueWorker] recordDelivery failed:", e));
               this.broadcastQueueState(true);
               try {
                 eventService.broadcast("automation_hub_updated", { type: "sent", id: item.id });
@@ -32773,6 +33322,16 @@ var init_whatsappQueueWorker = __esm({
                 if (item.type === "pharmarack_distributor_order") {
                   await this.markPharmarackOrderSent(db2, item.target_name);
                 }
+                if (item.type === "distributor_dispatch_reminder") {
+                  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+                  await db2.run(
+                    `UPDATE distributor_dispatch_reminders 
+                   SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+                   WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                    [todayStr2, item.target_name || "", item.id]
+                  ).catch(() => {
+                  });
+                }
                 if (item.type === "refill_reminder") {
                   await db2.run(
                     "UPDATE patient_refills SET reminder_status = 'SENT', reminder_sent_at = datetime('now'), status = 'notified' WHERE reminder_job_id = ?",
@@ -32785,13 +33344,13 @@ var init_whatsappQueueWorker = __esm({
                   ).catch(() => {
                   });
                 }
-                void whatsappDeliveryRegister.recordDelivery(
+                await whatsappDeliveryRegister.recordDelivery(
                   item.number,
                   item.message,
                   item.type,
                   item.target_name,
                   String(item.id)
-                );
+                ).catch((e) => console.error("[WhatsAppQueueWorker] recordDelivery failed:", e));
                 this.broadcastQueueState(true);
                 try {
                   eventService.broadcast("automation_hub_updated", { type: "sent", id: item.id });
@@ -32799,9 +33358,11 @@ var init_whatsappQueueWorker = __esm({
                 }
                 console.log(`[WhatsAppQueueWorker] Outbox match \u2014 marking #${item.id} as sent despite error: ${errMsg}`);
               } else {
+                const isDistributorReminder = item.type === "distributor_dispatch_reminder";
                 const newRetryCount = item.retry_count + 1;
-                const newStatus = newRetryCount >= 3 ? "failed_perm" : "failed_offline";
-                console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}/3): ${errMsg}`);
+                const isTemporaryError = errMsg.includes("client not ready") || errMsg.includes("disconnected") || errMsg.includes("timeout") || errMsg.includes("detached") || errMsg.includes("Execution context was destroyed") || errMsg.includes("Session closed") || errMsg.includes("Target closed") || errMsg.includes("could not be sent");
+                const newStatus = isDistributorReminder && isTemporaryError ? "failed_offline" : newRetryCount >= 3 ? "failed_perm" : "failed_offline";
+                console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? " [retryable availability]" : "/3"}): ${errMsg}`);
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
                   [newStatus, newRetryCount, errMsg, item.id]
@@ -32845,17 +33406,20 @@ var init_whatsappQueueWorker = __esm({
                     message: `\u274C WhatsApp to ${targetDesc} failed: ${cleanReason}`
                   });
                 }
+                if (isTemporaryError) {
+                  break;
+                }
               }
             }
             const remainingCheck = await db2.get(
               `SELECT COUNT(*) as cnt FROM whatsapp_send_queue
            WHERE status IN ('pending', 'failed_offline')
              AND (scheduled_at IS NULL OR scheduled_at <= ?)
-             AND retry_count < 3`,
+             AND (retry_count < 3 OR type = 'distributor_dispatch_reminder')`,
               [Date.now()]
             );
             const hasMoreItems = (remainingCheck?.cnt || 0) > 0;
-            if (hasMoreItems && !this.isPaused) {
+            if (hasMoreItems && !this.isPaused && this.pacingMaxMs > 0) {
               const delayRange = this.pacingMaxMs - this.pacingMinMs;
               const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
               this.nextDispatchTimestamp = Date.now() + randomDelay;
@@ -33255,6 +33819,7 @@ var init_whatsappQueueWorker = __esm({
         if (this.pacingMinMs === 1e4 && this.pacingMaxMs === 15e3) {
           preset = "safe";
         }
+        const avail = await this.getSystemAvailabilityState();
         return {
           isProcessing: this.isProcessing,
           isPaused: this.isPaused,
@@ -33295,6 +33860,9 @@ var init_whatsappQueueWorker = __esm({
             whatsapp_delay_distributor: Number(delayDistRow?.value || 0),
             whatsapp_delay_delivery_boy: Number(delayDelivRow?.value || 0)
           },
+          availabilityState: avail.state,
+          lastHeartbeatAt: avail.lastHeartbeatAt,
+          detectedOutage: avail.outageInterval,
           recentItems
         };
       }
@@ -35722,10 +36290,7 @@ var init_inventory = __esm({
             const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
             const tokens = cleanToken.split(/\s+/).filter((t) => t.length >= 1);
             if (cleanToken.length >= 2) {
-              let ftsQuery = `"${cleanToken}"`;
-              if (tokens.length > 1) {
-                ftsQuery = tokens.map((t) => `${t}*`).join(" AND ");
-              }
+              let ftsQuery = tokens.length > 1 ? tokens.map((t) => `${t}*`).join(" AND ") : `${cleanToken}*`;
               const ftsRows = await db2.all(
                 `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
                     COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
@@ -56476,7 +57041,13 @@ var init_messaging = __esm({
               timestamp: c.timestamp,
               isGroup: !!c.isGroup,
               lastMessage: c.lastMessage,
-              resolvedNumber: c.resolvedNumber || c.id.split("@")[0]
+              resolvedNumber: c.resolvedNumber || c.id.split("@")[0],
+              sessionMode: c.sessionMode || "auto",
+              manualActiveUntil: c.manualActiveUntil || 0,
+              lastPatientMessageAt: c.lastPatientMessageAt || 0,
+              lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
+              sessionStatus: c.sessionStatus || "idle",
+              isUnansweredOver5Min: !!c.isUnansweredOver5Min
             };
           }
           return {
@@ -56486,7 +57057,13 @@ var init_messaging = __esm({
             timestamp: c.timestamp,
             isGroup: c.isGroup,
             lastMessage: c.lastMessage ? c.lastMessage.body : null,
-            resolvedNumber: c.id.user
+            resolvedNumber: c.id.user,
+            sessionMode: c.sessionMode || "auto",
+            manualActiveUntil: c.manualActiveUntil || 0,
+            lastPatientMessageAt: c.lastPatientMessageAt || 0,
+            lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
+            sessionStatus: c.sessionStatus || "idle",
+            isUnansweredOver5Min: !!c.isUnansweredOver5Min
           };
         });
         res.json(sanitizedChats);
@@ -56651,6 +57228,20 @@ var init_messaging = __esm({
       } catch (err) {
         console.error("Error toggling ignore status:", err);
         res.status(500).json({ error: err.message || "Failed to toggle ignore status" });
+      }
+    });
+    router16.post("/chats/:id/resolve", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const { resolveChatSession: resolveChatSession2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
+        const success = await resolveChatSession2(id);
+        if (success) {
+          return res.json({ success: true, message: "Session marked as resolved" });
+        }
+        return res.status(400).json({ success: false, error: "Failed to resolve session" });
+      } catch (err) {
+        console.error("Error resolving chat session:", err);
+        return res.status(500).json({ error: err.message || "Failed to resolve chat session" });
       }
     });
     router16.post("/chats/:chatId/messages/:messageId/scan", async (req, res) => {

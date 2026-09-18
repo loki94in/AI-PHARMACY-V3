@@ -556,6 +556,22 @@ server.on('error', (err: any) => {
         })
         .catch(seedErr => console.warn('[Boot:Phase2] Bundled reference seed failed:', seedErr));
 
+      // Fire-and-forget: enrich master medicines from medicines.csv on every boot.
+      // Fills empty packaging/manufacturer/therapeutic/etc. fields on existing
+      // master_reference rows via INSERT ... ON CONFLICT(legacy_id) DO UPDATE.
+      // User-edited records and already-populated fields are never overwritten.
+      // Safe if CSV is absent (logs a warning and returns 0).
+      import('./services/masterMedicinesSeedService.js')
+        .then(m => m.enrichMasterMedicinesFromCsv())
+        .then(res => {
+          if (res.enriched > 0) {
+            console.log(`[Boot:Phase2] Master medicines enriched: ${res.enriched} rows updated from CSV.`);
+          } else {
+            console.log('[Boot:Phase2] Master medicines enrichment: no rows needed update (already enriched or CSV absent).');
+          }
+        })
+        .catch(err => console.warn('[Boot:Phase2] Master medicines CSV enrichment failed (non-fatal):', err?.message || err));
+
       console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
 
       // Pharmarack session validation starts as soon as the DB is ready — the
