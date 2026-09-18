@@ -651,10 +651,10 @@ router.get('/catalog-search', async (req, res) => {
         const cleanToken = q.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
         const tokens = cleanToken.split(/\s+/).filter(t => t.length >= 1);
         if (cleanToken.length >= 2) {
-          let ftsQuery = `"${cleanToken}"`;
-          if (tokens.length > 1) {
-            ftsQuery = tokens.map(t => `${t}*`).join(' AND ');
-          }
+          // ponytail: single-token → prefix match (uses FTS5 B-tree); phrase match `"token"` bypasses the index.
+          let ftsQuery = tokens.length > 1
+            ? tokens.map(t => `${t}*`).join(' AND ')
+            : `${cleanToken}*`;
           const ftsRows = await db.all(
             `SELECT m.id, m.name, m.item_code, m.manufacturer, m.strength, m.packaging, m.pack_unit, m.mrp, m.rate, m.cgst_per, m.sgst_per, m.hsn_code, m.generic_name,
                     COALESCE(m.total_stock, 0) as stock_qty, COALESCE(m.total_loose_stock, 0) as loose_qty,
