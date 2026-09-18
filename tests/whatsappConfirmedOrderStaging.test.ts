@@ -145,6 +145,35 @@ describe('WhatsApp Confirmed Order — customer message staging (WhatsApp Confir
     expect(ownerMessages.some(m => m.includes('STAGED') || m.includes('Live Cart'))).toBe(true);
   });
 
+  test('CONFIRM PAYMENT SO-xxxx (widened phrase) is accepted the same as CONFIRM SO-xxxx', async () => {
+    const { dbManager } = await import('../src/database/connection.js');
+    const db = await dbManager.getConnection();
+
+    const insertRes = await db.run(
+      `INSERT INTO special_orders (
+         store_id, requester, phone, medicine_name, product, qty, priority, status,
+         payment_status, pharmarack_distributor, pharmarack_rate, pharmarack_mrp
+       ) VALUES (1, 'Amit', ?, 'Dolo 650 Tablet', 'Dolo 650 Tablet', 1, 'Normal', 'Pending',
+                 'SCREENSHOT_RECEIVED', 'MedLife Pharma', 20, 30)`,
+      ['916666666666']
+    );
+    const orderId = insertRes.lastID;
+    const soCode = `SO-${orderId}`;
+
+    await handleInbound({ from: `${OWNER_PHONE}@c.us`, body: `CONFIRM PAYMENT ${soCode}` });
+
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    expect(order.payment_status).toBe('VERIFIED');
+    expect(order.status).toBe('Confirmed');
+
+    const staged = await db.get(
+      `SELECT * FROM automation_notifications WHERE reference_id = ? AND type = 'whatsapp_order'`,
+      [String(orderId)]
+    );
+    expect(staged).toBeTruthy();
+    expect(staged.status).toBe('staged');
+  });
+
   test('Auto-confirm flow (executeConfirmedProcurementFlow): stages customer message, does not send a direct courtesy ack', async () => {
     const { executeConfirmedProcurementFlow } = await import('../src/services/whatsappIntentService.js');
     const { dbManager } = await import('../src/database/connection.js');

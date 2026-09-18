@@ -1098,8 +1098,11 @@ async function checkIsOwnerPhone(phone: string, db: any): Promise<boolean> {
 async function handleOwnerInteractiveReply(phone: string, body: string, db: any): Promise<boolean> {
   const cleanBody = body.trim().toUpperCase();
 
-  // 1. Check for owner payment verification: "CONFIRM SO-10452"
-  const confirmPaymentMatch = cleanBody.match(/^CONFIRM\s+(SO-\d+)$/i);
+  // 1. Check for owner payment verification. Accepts "CONFIRM SO-10452" and common variants:
+  // "CONFIRM PAYMENT SO-10452", "PAYMENT CONFIRMED SO-10452", "CONFIRMED SO-10452".
+  const confirmPaymentMatch =
+    cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?\s+(SO-\d+)$/i) ||
+    cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?\s+(SO-\d+)$/i);
   if (confirmPaymentMatch) {
     const soCode = confirmPaymentMatch[1].toUpperCase();
     const orderId = parseInt(soCode.replace(/\D/g, ''), 10);
