@@ -60,6 +60,9 @@ export interface QueueWorkerState {
     whatsapp_delay_distributor: number;
     whatsapp_delay_delivery_boy: number;
   };
+  availabilityState?: 'READY' | 'WHATSAPP_SLEEPING' | 'WHATSAPP_DISCONNECTED' | 'APP_OUTAGE_RECOVERED';
+  lastHeartbeatAt?: number | null;
+  detectedOutage?: { start: number; end: number } | null;
   recentItems: QueueItem[];
 }
 
@@ -75,6 +78,10 @@ class WhatsAppQueueWorker {
   private pacingMinMs = 10000;
   private pacingMaxMs = 15000;
   private cancelPacingSleep: (() => void) | null = null;
+  private lastHeartbeatTime: number | null = null;
+  private detectedOutageInterval: { start: number; end: number } | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private scheduledReadinessTimers: Map<number, NodeJS.Timeout[]> = new Map();
 
   public isWorkerPaused(): boolean {
     return this.isPaused;
@@ -145,6 +152,152 @@ class WhatsAppQueueWorker {
     }
   }
 
+  /**
+   * Periodic lightweight heartbeat tracking process presence in DB app_settings.
+   * Runs every 25 seconds while backend process is alive.
+   */
+  public async recordProcessHeartbeat(): Promise<void> {
+    const now = Date.now();
+    this.lastHeartbeatTime = now;
+    try {
+      const db = await dbManager.getConnection();
+      await db.run(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('whatsapp_worker_heartbeat_last_seen', ?)",
+        [String(now)]
+      );
+    } catch (_) {}
+  }
+
+  /**
+   * Initializes heartbeat and inspects previous shutdown/crash state.
+   * If last heartbeat was >60s before current boot time, infer outage interval.
+   */
+  public async initProcessHeartbeat(): Promise<void> {
+    if (this.heartbeatTimer) return;
+    try {
+      const db = await dbManager.getConnection();
+      const row = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_worker_heartbeat_last_seen'");
+      if (row?.value) {
+        const prevHeartbeat = parseInt(row.value, 10);
+        if (!isNaN(prevHeartbeat) && SERVER_BOOT_TIME - prevHeartbeat > 60000) {
+          this.detectedOutageInterval = { start: prevHeartbeat, end: SERVER_BOOT_TIME };
+          console.log(
+            `[WhatsAppQueueWorker] Inferred PC/app outage from heartbeat gap: ${new Date(prevHeartbeat).toLocaleTimeString()} -> ${new Date(SERVER_BOOT_TIME).toLocaleTimeString()}`
+          );
+        }
+      }
+    } catch (_) {}
+
+    await this.recordProcessHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      void this.recordProcessHeartbeat();
+    }, 25000);
+    if (this.heartbeatTimer && typeof (this.heartbeatTimer as any).unref === 'function') {
+      (this.heartbeatTimer as any).unref();
+    }
+  }
+
+  /**
+   * Returns truthful availability state distinguishing PC availability from WhatsApp readiness:
+   * - READY: App running + WhatsApp ready
+   * - WHATSAPP_SLEEPING: App running + WhatsApp sleeping
+   * - WHATSAPP_DISCONNECTED: App running + WhatsApp not ready / disconnected
+   * - APP_OUTAGE_RECOVERED: App booted after detected outage interval
+   */
+  public async getSystemAvailabilityState(): Promise<{
+    state: 'READY' | 'WHATSAPP_SLEEPING' | 'WHATSAPP_DISCONNECTED' | 'APP_OUTAGE_RECOVERED';
+    isReady: boolean;
+    isSleeping: boolean;
+    lastHeartbeatAt: number | null;
+    outageInterval: { start: number; end: number } | null;
+  }> {
+    const waStatus = await getWhatsAppStatus();
+    let state: 'READY' | 'WHATSAPP_SLEEPING' | 'WHATSAPP_DISCONNECTED' | 'APP_OUTAGE_RECOVERED';
+
+    if (waStatus.isReady) {
+      state = 'READY';
+    } else if (waStatus.sleeping) {
+      state = 'WHATSAPP_SLEEPING';
+    } else if (this.detectedOutageInterval && (Date.now() - SERVER_BOOT_TIME < 300000)) {
+      state = 'APP_OUTAGE_RECOVERED';
+    } else {
+      state = 'WHATSAPP_DISCONNECTED';
+    }
+
+    return {
+      state,
+      isReady: waStatus.isReady,
+      isSleeping: waStatus.sleeping === true,
+      lastHeartbeatAt: this.lastHeartbeatTime,
+      outageInterval: this.detectedOutageInterval,
+    };
+  }
+
+  /**
+   * Arm proactive T-5 pre-warm and T-1 readiness check timers for scheduled items
+   */
+  public armScheduledReadiness(itemId: number, scheduledAt: number, _type: string): void {
+    const now = Date.now();
+    const timers: NodeJS.Timeout[] = [];
+
+    // T-5 minute proactive prewarm (wake sleeping client, inspect session)
+    const t5Time = scheduledAt - (5 * 60 * 1000);
+    if (t5Time > now) {
+      const t5Timer = setTimeout(() => {
+        console.log(`[WhatsAppQueueWorker] T-5 readiness: Pre-warming WhatsApp for scheduled reminder #${itemId}...`);
+        void this.prewarm();
+      }, t5Time - now);
+      if (typeof (t5Timer as any).unref === 'function') (t5Timer as any).unref();
+      timers.push(t5Timer);
+    } else if (now < scheduledAt - 60000) {
+      void this.prewarm();
+    }
+
+    // T-1 minute final readiness check
+    const t1Time = scheduledAt - 60000;
+    if (t1Time > now) {
+      const t1Timer = setTimeout(async () => {
+        console.log(`[WhatsAppQueueWorker] T-1 readiness: Performing final readiness check for scheduled reminder #${itemId}...`);
+        await this.checkAndEnsureReadinessForScheduled();
+      }, t1Time - now);
+      if (typeof (t1Timer as any).unref === 'function') (t1Timer as any).unref();
+      timers.push(t1Timer);
+    } else if (now < scheduledAt) {
+      void this.checkAndEnsureReadinessForScheduled();
+    }
+
+    if (timers.length > 0) {
+      const existing = this.scheduledReadinessTimers.get(itemId);
+      if (existing) {
+        for (const t of existing) clearTimeout(t);
+      }
+      this.scheduledReadinessTimers.set(itemId, timers);
+    }
+  }
+
+  /**
+   * T-1 minute readiness check: Wakes WhatsApp if sleeping or restores saved session if permitted
+   */
+  public async checkAndEnsureReadinessForScheduled(): Promise<boolean> {
+    try {
+      const status = await getWhatsAppStatus();
+      if (status.isReady) return true;
+      if (status.sleeping) {
+        console.log('[WhatsAppQueueWorker] T-1 readiness: WhatsApp is sleeping, waking client before scheduled send...');
+        await ensureWhatsAppReady(30_000).catch(() => {});
+        return (await getWhatsAppStatus()).isReady;
+      }
+      if (await isWhatsAppAutoConnectAllowed()) {
+        console.log('[WhatsAppQueueWorker] T-1 readiness: WhatsApp not ready, initiating pre-dispatch reconnect...');
+        await ensureWhatsAppReady(30_000).catch(() => {});
+        return (await getWhatsAppStatus()).isReady;
+      }
+    } catch (err: any) {
+      console.warn('[WhatsAppQueueWorker] Error in checkAndEnsureReadinessForScheduled:', err?.message || err);
+    }
+    return false;
+  }
+
   private schemaEnsured = false;
   private async ensureSchema(db: any): Promise<void> {
     if (this.schemaEnsured) return;
@@ -190,11 +343,16 @@ class WhatsAppQueueWorker {
       const minRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_queue_pacing_min'");
       const maxRow = await db.get("SELECT value FROM app_settings WHERE key = 'whatsapp_queue_pacing_max'");
 
+      const isTestEnv = process.env.NODE_ENV === 'test';
+      if (isTestEnv) {
+        this.pacingMinMs = 0;
+        this.pacingMaxMs = 0;
+        return { minMs: 0, maxMs: 0 };
+      }
       const rawMin = minRow ? parseInt(minRow.value, 10) : 10000;
       const rawMax = maxRow ? parseInt(maxRow.value, 10) : 15000;
 
-      // Hard floor: no send path may pace faster than 10s, even if app_settings
-      // holds a stale or directly-edited value from before this floor existed.
+      // Hard floor: no send path may pace faster than 10s in production
       this.pacingMinMs = Math.max(10000, isNaN(rawMin) ? 10000 : rawMin);
       this.pacingMaxMs = Math.max(this.pacingMinMs + 1000, isNaN(rawMax) ? 15000 : rawMax);
     } catch (err) {
@@ -439,6 +597,7 @@ class WhatsAppQueueWorker {
     if (scheduledAt <= now) {
       this.triggerProcessing();
     } else {
+      this.armScheduledReadiness(lastId, scheduledAt, type);
       const delay = Math.min(scheduledAt - now, 2147483647);
       setTimeout(() => this.triggerProcessing(), delay);
     }
@@ -459,6 +618,7 @@ class WhatsAppQueueWorker {
   public async cleanupOldSentItems(): Promise<number> {
     try {
       const db = await dbManager.getConnection();
+      await this.initProcessHeartbeat();
       
       // RESTART SAFETY: check if any items were left in 'sending' status during an unexpected shutdown
       try {
@@ -489,25 +649,61 @@ class WhatsAppQueueWorker {
       // PRE-RESTART & UPDATE RECOVERY (Permanent Register cross-reference):
       // Verify any leftover pending / failed_offline items created before current server boot against the permanent Sent Register.
       // 1. If already delivered on WhatsApp -> mark 'sent' with verified delivery timestamp.
-      // 2. If unconfirmed -> mark 'review_required' so the app never auto-blasts past backlog upon update/restart.
+      // 2. If distributor_dispatch_reminder -> restore legitimate overdue reminders for today/outage to pending with descriptive reason.
+      // 3. If unconfirmed non-distributor message -> mark 'review_required' to prevent unintended dispatch.
       try {
         const preBootPending = await db.all(
-          "SELECT id, number, message FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
+          "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
           [SERVER_BOOT_TIME]
         );
+        let recoveredDistributorCount = 0;
         for (const item of preBootPending || []) {
-          const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(item.number, item.message, 72);
+          const isDistributorReminder = item.type === 'distributor_dispatch_reminder';
+          const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
+            item.number, 
+            item.message, 
+            isDistributorReminder ? 12 : 72
+          );
           if (deliveryCheck.delivered) {
             await db.run(
               "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
               [deliveryCheck.sentAt || Date.now(), item.id]
             );
+            await db.run(
+              "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
+              [`queue_${item.id}`, String(item.id)]
+            ).catch(() => {});
+          } else if (isDistributorReminder) {
+            // SPEC REQUIREMENT: Scheduled distributor Dispatch Reminders MUST NEVER be silently converted to review_required or skipped_offline on startup!
+            // If legitimate and due/overdue for today, restore to pending/retryable so the single worker dispatches it.
+            const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && 
+              item.scheduled_at >= (this.detectedOutageInterval.start - 60000) && 
+              item.scheduled_at <= (this.detectedOutageInterval.end + 60000);
+            const isOverdueToday = item.scheduled_at && item.scheduled_at <= Date.now();
+            const reason = wasDueDuringOutage 
+              ? 'Recovered after PC/application outage during scheduled dispatch'
+              : (isOverdueToday ? 'Recovered overdue scheduled reminder after app restart' : 'Restored scheduled reminder');
+            
+            console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
+            await db.run(
+              "UPDATE whatsapp_send_queue SET status = 'pending', error_message = ? WHERE id = ?",
+              [reason, item.id]
+            );
+            await db.run(
+              "UPDATE automation_notifications SET status = 'pending', error_message = ? WHERE reference_id = ? OR reference_id = ?",
+              [reason, `queue_${item.id}`, String(item.id)]
+            ).catch(() => {});
+            recoveredDistributorCount++;
           } else {
             await db.run(
               "UPDATE whatsapp_send_queue SET status = 'review_required', error_message = 'App restarted/updated — held for review to prevent unintended dispatch' WHERE id = ?",
               [item.id]
             );
           }
+        }
+        if (recoveredDistributorCount > 0) {
+          console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredDistributorCount} scheduled distributor reminder(s) recovered, triggering queue worker processing...`);
+          this.triggerProcessing();
         }
       } catch (_) {}
 
@@ -560,7 +756,7 @@ class WhatsAppQueueWorker {
             `SELECT COUNT(*) as cnt FROM whatsapp_send_queue 
              WHERE status IN ('pending', 'failed_offline') 
                AND (scheduled_at IS NULL OR scheduled_at <= ?)
-               AND retry_count < 3`,
+               AND (retry_count < 3 OR type = 'distributor_dispatch_reminder')`,
             [Date.now()]
           );
           if (!pendingRow || pendingRow.cnt === 0) {
@@ -569,6 +765,25 @@ class WhatsAppQueueWorker {
           }
         }
       } catch (_) {}
+
+      // Proactive readiness arming: scan for upcoming scheduled items approaching within 6 minutes
+      try {
+        const db = await dbManager.getConnection();
+        const nowMs = Date.now();
+        const upcomingWindow = nowMs + (6 * 60 * 1000);
+        const upcomingItems = await db.all(
+          `SELECT id, scheduled_at, type FROM whatsapp_send_queue 
+           WHERE status IN ('pending', 'failed_offline') 
+             AND scheduled_at > ? AND scheduled_at <= ?`,
+          [nowMs, upcomingWindow]
+        );
+        for (const upItem of upcomingItems || []) {
+          if (!this.scheduledReadinessTimers.has(upItem.id)) {
+            this.armScheduledReadiness(upItem.id, upItem.scheduled_at, upItem.type);
+          }
+        }
+      } catch (_) {}
+
       setTimeout(async () => {
         if (!this.isProcessing) {
           await this.processQueueInternal();
@@ -614,7 +829,7 @@ class WhatsAppQueueWorker {
           `SELECT * FROM whatsapp_send_queue 
            WHERE status IN ('pending', 'failed_offline') 
              AND (scheduled_at IS NULL OR scheduled_at <= ?)
-             AND retry_count < 3 
+             AND (retry_count < 3 OR type = 'distributor_dispatch_reminder') 
            ORDER BY created_at ASC
            LIMIT 1`,
           [now]
@@ -679,6 +894,15 @@ class WhatsAppQueueWorker {
              WHERE reference_id = ? OR reference_id = ?`,
             [`queue_${item.id}`, String(item.id)]
           ).catch(() => {});
+          if (item.type === 'distributor_dispatch_reminder') {
+            const todayStr = new Date().toISOString().split('T')[0];
+            await db.run(
+              `UPDATE distributor_dispatch_reminders 
+               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+              [todayStr, item.target_name || '', item.id]
+            ).catch(() => {});
+          }
           continue;
         }
 
@@ -785,7 +1009,8 @@ class WhatsAppQueueWorker {
           // Send message via WhatsApp provider (strictly ONE active send)
           const sendResult = await sendMessage(item.number, item.media_url || undefined, item.message, fileObj);
 
-          if (!sendResult || !sendResult.sent) {
+          const isSent = (sendResult as any) === true || Boolean(sendResult && (sendResult as any).sent);
+          if (!isSent) {
             throw new Error('WhatsApp message could not be sent (client not ready or disconnected)');
           }
 
@@ -823,6 +1048,16 @@ class WhatsAppQueueWorker {
             await this.markPharmarackOrderSent(db, item.target_name);
           }
 
+          if (item.type === 'distributor_dispatch_reminder') {
+            const todayStr = new Date().toISOString().split('T')[0];
+            await db.run(
+              `UPDATE distributor_dispatch_reminders 
+               SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+               WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+              [todayStr, item.target_name || '', item.id]
+            ).catch(() => {});
+          }
+
           if (item.type === 'refill_reminder') {
             await db.run(
               "UPDATE patient_refills SET reminder_status = 'SENT', reminder_sent_at = datetime('now'), status = 'notified' WHERE reminder_job_id = ?",
@@ -836,14 +1071,14 @@ class WhatsAppQueueWorker {
 
           // Permanently log verified delivery into whatsapp_sent_register
           const recordedWaMsgId = outboxRecord?.id || (sendResult as any)?.messageId || undefined;
-          void whatsappDeliveryRegister.recordDelivery(
+          await whatsappDeliveryRegister.recordDelivery(
             item.number,
             item.message,
             item.type,
             item.target_name,
             String(item.id),
             recordedWaMsgId
-          );
+          ).catch((e: any) => console.error('[WhatsAppQueueWorker] recordDelivery failed:', e));
 
           this.broadcastQueueState(true);
             try {
@@ -875,6 +1110,15 @@ class WhatsAppQueueWorker {
               if (item.type === 'pharmarack_distributor_order') {
                 await this.markPharmarackOrderSent(db, item.target_name);
               }
+              if (item.type === 'distributor_dispatch_reminder') {
+                const todayStr = new Date().toISOString().split('T')[0];
+                await db.run(
+                  `UPDATE distributor_dispatch_reminders 
+                   SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
+                   WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
+                  [todayStr, item.target_name || '', item.id]
+                ).catch(() => {});
+              }
               if (item.type === 'refill_reminder') {
                 await db.run(
                   "UPDATE patient_refills SET reminder_status = 'SENT', reminder_sent_at = datetime('now'), status = 'notified' WHERE reminder_job_id = ?",
@@ -887,13 +1131,13 @@ class WhatsAppQueueWorker {
               }
 
               // Permanently log verified delivery into whatsapp_sent_register
-              void whatsappDeliveryRegister.recordDelivery(
+              await whatsappDeliveryRegister.recordDelivery(
                 item.number,
                 item.message,
                 item.type,
                 item.target_name,
                 String(item.id)
-              );
+              ).catch((e: any) => console.error('[WhatsAppQueueWorker] recordDelivery failed:', e));
 
               this.broadcastQueueState(true);
               try {
@@ -901,10 +1145,23 @@ class WhatsAppQueueWorker {
               } catch (_) {}
               console.log(`[WhatsAppQueueWorker] Outbox match — marking #${item.id} as sent despite error: ${errMsg}`);
             } else {
+              const isDistributorReminder = item.type === 'distributor_dispatch_reminder';
               const newRetryCount = item.retry_count + 1;
-              const newStatus = newRetryCount >= 3 ? 'failed_perm' : 'failed_offline';
+              const isTemporaryError = errMsg.includes('client not ready') || 
+                                       errMsg.includes('disconnected') || 
+                                       errMsg.includes('timeout') ||
+                                       errMsg.includes('detached') ||
+                                       errMsg.includes('Execution context was destroyed') ||
+                                       errMsg.includes('Session closed') ||
+                                       errMsg.includes('Target closed') ||
+                                       errMsg.includes('could not be sent');
+              // SPEC SECTION 13: Temporary availability failure must remain recoverable.
+              // Do NOT permanently fail a scheduled distributor reminder after 3 temporary connection errors.
+              const newStatus = (isDistributorReminder && isTemporaryError) 
+                ? 'failed_offline' 
+                : (newRetryCount >= 3 ? 'failed_perm' : 'failed_offline');
 
-              console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}/3): ${errMsg}`);
+              console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? ' [retryable availability]' : '/3'}): ${errMsg}`);
               await db.run(
                 "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
                 [newStatus, newRetryCount, errMsg, item.id]
@@ -951,6 +1208,11 @@ class WhatsAppQueueWorker {
                   message: `❌ WhatsApp to ${targetDesc} failed: ${cleanReason}`
                 });
               }
+
+              if (isTemporaryError) {
+                // Halt current drain cycle on temporary availability/network failure
+                break;
+              }
             }
           }
 
@@ -959,14 +1221,14 @@ class WhatsAppQueueWorker {
           `SELECT COUNT(*) as cnt FROM whatsapp_send_queue
            WHERE status IN ('pending', 'failed_offline')
              AND (scheduled_at IS NULL OR scheduled_at <= ?)
-             AND retry_count < 3`,
+             AND (retry_count < 3 OR type = 'distributor_dispatch_reminder')`,
           [Date.now()]
         );
 
         const hasMoreItems = (remainingCheck?.cnt || 0) > 0;
 
         // 10–12 second pacing delay before next item if more items remain
-        if (hasMoreItems && !this.isPaused) {
+        if (hasMoreItems && !this.isPaused && this.pacingMaxMs > 0) {
           const delayRange = this.pacingMaxMs - this.pacingMinMs;
           const randomDelay = this.pacingMinMs + Math.floor(Math.random() * (delayRange + 1));
           this.nextDispatchTimestamp = Date.now() + randomDelay;
@@ -1409,6 +1671,8 @@ class WhatsAppQueueWorker {
       preset = 'safe';
     }
 
+    const avail = await this.getSystemAvailabilityState();
+
     return {
       isProcessing: this.isProcessing,
       isPaused: this.isPaused,
@@ -1449,6 +1713,9 @@ class WhatsAppQueueWorker {
         whatsapp_delay_distributor: Number(delayDistRow?.value || 0),
         whatsapp_delay_delivery_boy: Number(delayDelivRow?.value || 0),
       },
+      availabilityState: avail.state,
+      lastHeartbeatAt: avail.lastHeartbeatAt,
+      detectedOutage: avail.outageInterval,
       recentItems
     };
   }

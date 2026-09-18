@@ -816,7 +816,7 @@ export class NotificationService {
   /**
    * Send ultra-short dispatch status reminder message to a distributor
    */
-  async sendDistributorDispatchReminder(reminderId: number, customMessage?: string): Promise<boolean> {
+  async sendDistributorDispatchReminder(reminderId: number, customMessage?: string, scheduledAt?: number): Promise<boolean> {
     try {
       const db = await dbManager.getConnection();
       const reminder = await db.get(
@@ -842,6 +842,26 @@ export class NotificationService {
       if (!recipientPhone || !String(recipientPhone).trim()) {
         console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
         return false;
+      }
+
+      // Deduplication guard: do not double-enqueue the same distributor reminder on the same date
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDayMs = startOfDay.getTime();
+      const clean10Digits = String(recipientPhone).replace(/\D/g, '').slice(-10);
+
+      const existingQueueItem = await db.get(
+        `SELECT id, status FROM whatsapp_send_queue 
+         WHERE type = 'distributor_dispatch_reminder'
+           AND (target_name = ? OR number LIKE ?)
+           AND created_at >= ?
+           AND status NOT IN ('cancelled', 'failed_perm', 'skipped_invalid_phone', 'skipped_not_on_whatsapp')
+         LIMIT 1`,
+        [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
+      );
+      if (existingQueueItem && !customMessage) {
+        console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
+        return true;
       }
 
       let message = '';
@@ -894,13 +914,13 @@ export class NotificationService {
         }
       }
 
-      console.log(`[DistributorReminder] Enqueuing reminder to ${reminder.distributor_name} (${recipientPhone}): ${message}`);
+      console.log(`[DistributorReminder] Enqueuing reminder to ${reminder.distributor_name} (${recipientPhone}): ${message}${scheduledAt ? ` [scheduled for ${new Date(scheduledAt).toLocaleTimeString()}]` : ''}`);
       const queueId = await whatsappQueueWorker.enqueue(
         recipientPhone,
         message,
         'distributor_dispatch_reminder',
         reminder.distributor_name,
-        undefined,
+        scheduledAt,
         undefined,
         undefined,
         { skipDedupe: true }

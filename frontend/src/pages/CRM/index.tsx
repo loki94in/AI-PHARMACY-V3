@@ -3882,6 +3882,17 @@ const SpecialOrdersSection: React.FC = () => {
   }
   const [cartAdjustmentNotice, setCartAdjustmentNotice] = useState<CartAdjustmentNotice | null>(null);
 
+  // Proactive early readiness: pre-warm WhatsApp client when Special Orders workflow is entered
+  useEffect(() => {
+    api.prewarmWhatsApp().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (showAddModal || showEditModal || arrivalModalData) {
+      api.prewarmWhatsApp().catch(() => {});
+    }
+  }, [showAddModal, showEditModal, arrivalModalData]);
+
   useEffect(() => {
     if (!cartAdjustmentNotice) return;
     const timer = setTimeout(() => {

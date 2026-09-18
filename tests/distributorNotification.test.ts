@@ -24,7 +24,8 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   currentQr: null,
   isReady: true,
   setCurrentQr: jest.fn(),
-  setIsReady: jest.fn()
+  setIsReady: jest.fn(),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE'))
 }));
 
 import fs from 'fs';
@@ -67,6 +68,7 @@ describe('Distributor WhatsApp Notification Automation Tests', () => {
     await db.run('DELETE FROM automation_notifications');
     await db.run('DELETE FROM action_logs');
     await db.run('DELETE FROM medicines');
+    await db.run('DELETE FROM whatsapp_send_queue');
   });
 
   test('Successful flow: Distributor receives notification with medicines and delivery boy', async () => {

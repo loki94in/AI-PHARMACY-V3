@@ -70,6 +70,13 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
   const [items, setItems] = useState<EditOrderItem[]>([]);
   const [saving, setSaving] = useState(false);
 
+  // Proactive early readiness: pre-warm WhatsApp client when Special Order action is entered
+  useEffect(() => {
+    if (isOpen) {
+      api.prewarmWhatsApp().catch(() => {});
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     if (editGroup) {
       setPhone(editGroup.customerPhone || '');

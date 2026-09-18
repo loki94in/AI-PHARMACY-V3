@@ -614,6 +614,17 @@ export async function allocateDynamicReminderTimes(db: any, todayStr: string): P
         [formattedTime, rem.id]
       );
       rem.scheduled_send_time = formattedTime;
+
+      // SPEC SECTION 5 & 8: Pre-enqueue into single whatsapp_send_queue with calculated scheduled_at
+      // so T-5 prewarm, T-1 readiness check, and scheduled-time processing run reliably through existing worker.
+      try {
+        const sendDate = new Date();
+        sendDate.setHours(resH, resM, 0, 0);
+        const scheduledAtMs = sendDate.getTime();
+        await notificationService.sendDistributorDispatchReminder(rem.id, undefined, scheduledAtMs);
+      } catch (enqErr: any) {
+        console.warn(`[DistributorReminderWorker] Advance enqueue note for #${rem.id}:`, enqErr?.message || enqErr);
+      }
     }
   } catch (err: any) {
     console.error('[DistributorReminderWorker] Error allocating dynamic reminder times:', err.message);
@@ -672,13 +683,15 @@ export async function checkAndSendAutoReminders() {
     const startMinutesTotal = (isNaN(startH) ? 12 : startH) * 60 + (isNaN(startM) ? 30 : startM);
     const endMinutesTotal = (isNaN(endH) ? 13 : endH) * 60 + (isNaN(endM) ? 0 : endM);
 
-    // Active window check (with 15 min buffer to catch late slots)
-    const isWithinWindow = currentMinutesTotal >= startMinutesTotal && currentMinutesTotal <= (endMinutesTotal + 15);
-
-    if (!isWithinWindow) {
+    // Active window check:
+    // If before window, do not dispatch yet.
+    // If past window (e.g. PC was offline during window and booted late), allow recovery of today's missed reminders.
+    const isBeforeWindow = currentMinutesTotal < startMinutesTotal;
+    if (isBeforeWindow) {
       isWorkerRunning = false;
       return;
     }
+    const isPastWindow = currentMinutesTotal > (endMinutesTotal + 15);
 
     await syncTodayActiveDistributors();
     await allocateDynamicReminderTimes(db, todayStr);
@@ -693,7 +706,7 @@ export async function checkAndSendAutoReminders() {
       [todayStr, todayStr]
     );
 
-    const dueReminders: Array<{ id: number; distributor_name: string }> = [];
+    const dueReminders: Array<{ id: number; distributor_name: string; scheduledAtMs: number }> = [];
     const missingPhone: Array<{ id: number; distributor_name: string }> = [];
 
     for (const item of activeReminders) {
@@ -703,40 +716,35 @@ export async function checkAndSendAutoReminders() {
         continue;
       }
 
-      // Check if scheduled time has arrived
+      // Check if scheduled time has arrived or was missed due to outage
       let isDue = true;
+      let targetScheduledMs = now.getTime();
       if (item.scheduled_send_time && item.scheduled_send_time.includes(':')) {
         const [schH, schM] = item.scheduled_send_time.split(':').map(Number);
         if (!isNaN(schH) && !isNaN(schM)) {
           const schMinutes = schH * 60 + schM;
+          const sDate = new Date();
+          sDate.setHours(schH, schM, 0, 0);
+          targetScheduledMs = sDate.getTime();
           if (currentMinutesTotal < schMinutes) {
             isDue = false;
           }
         }
       }
 
-      if (isDue) {
-        dueReminders.push({ id: item.id, distributor_name: item.distributor_name });
+      if (isDue || isPastWindow) {
+        dueReminders.push({ id: item.id, distributor_name: item.distributor_name, scheduledAtMs: targetScheduledMs });
       }
     }
 
     if (dueReminders.length > 0) {
-      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}).`);
+      console.log(`[DistributorReminderWorker] Found ${dueReminders.length} due/overdue distributor reminder(s) to send (Window ${startTimeStr}-${endTimeStr}${isPastWindow ? ' [outage recovery]' : ''}).`);
 
-      // Ensure WhatsApp client is ready (wake from idle sleep if needed) before dispatching
-      // Guard: skip entirely if WhatsApp was never configured / explicitly logged out
+      // Proactive readiness check (wakes WhatsApp if sleeping or auto-connect allowed)
       try {
         const { ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } = await import('../whatsappClient.js');
-        if (!(await isWhatsAppAutoConnectAllowed())) {
-          console.log('[DistributorReminderWorker] WhatsApp not configured — skipping reminder dispatch.');
-          isWorkerRunning = false;
-          return;
-        }
-        const isReady = await ensureWhatsAppReady(30000);
-        if (!isReady) {
-          console.warn('[DistributorReminderWorker] WhatsApp not ready for reminders window. Standing down to avoid queue stalling.');
-          isWorkerRunning = false;
-          return;
+        if (await isWhatsAppAutoConnectAllowed()) {
+          await ensureWhatsAppReady(30000).catch(() => {});
         }
       } catch (waReadyErr: any) {
         console.warn('[DistributorReminderWorker] WhatsApp readiness check warning:', waReadyErr?.message || waReadyErr);
@@ -744,7 +752,7 @@ export async function checkAndSendAutoReminders() {
 
       for (const item of dueReminders) {
         // Enqueue reminder to notificationService -> whatsappQueueWorker (where 10-15s non-bulk pacing is enforced)
-        await notificationService.sendDistributorDispatchReminder(item.id);
+        await notificationService.sendDistributorDispatchReminder(item.id, undefined, item.scheduledAtMs);
         // Micro-yield between queue additions
         await new Promise(res => setTimeout(res, 1000));
       }

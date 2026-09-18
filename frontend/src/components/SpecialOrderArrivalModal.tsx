@@ -52,6 +52,13 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
   const [copied, setCopied] = useState(false);
   const [recentNotif, setRecentNotif] = useState<{ recentlyNotified: boolean; minutesAgo?: number } | null>(null);
 
+  // Proactive early readiness: pre-warm WhatsApp client when Special Order arrival modal is opened
+  useEffect(() => {
+    if (isOpen) {
+      api.prewarmWhatsApp().catch(() => {});
+    }
+  }, [isOpen]);
+
   // Check if an arrival message was queued for this customer in the last 60 minutes
   useEffect(() => {
     let active = true;

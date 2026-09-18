@@ -1931,9 +1931,12 @@ export default function PharmarackCart() {
         setHasUnreadSentHistory(true);
         specialOrdersEvent.triggerUpdated();
         window.dispatchEvent(new CustomEvent('refresh-special-orders'));
-        await fetchPendingOrders();
-        await fetchLatestSentMap();
-        await loadSentDates();
+        // Refresh orders and sent dates asynchronously in background without blocking UI
+        Promise.allSettled([
+          fetchPendingOrders(),
+          fetchLatestSentMap(),
+          loadSentDates()
+        ]).catch(() => {});
       } catch (logErr) {
         console.warn('Could not log placed order:', logErr);
       }
@@ -1973,9 +1976,12 @@ export default function PharmarackCart() {
         setHasUnreadSentHistory(true);
         specialOrdersEvent.triggerUpdated();
         window.dispatchEvent(new CustomEvent('refresh-special-orders'));
-        await fetchPendingOrders();
-        await fetchLatestSentMap();
-        await loadSentDates();
+        // Refresh orders and sent dates asynchronously in background without blocking UI
+        Promise.allSettled([
+          fetchPendingOrders(),
+          fetchLatestSentMap(),
+          loadSentDates()
+        ]).catch(() => {});
       } catch (logErr) {
         console.warn('Could not log placed order:', logErr);
       }
@@ -1993,13 +1999,20 @@ export default function PharmarackCart() {
       return;
     }
 
+    isSendingBatchRef.current = true;
+    setIsSendingBatchWhatsApp(true);
+
     if (!hasPharmacySettings()) {
+      isSendingBatchRef.current = false;
+      setIsSendingBatchWhatsApp(false);
       toastEvent.trigger('Pharmacy Name and Contact Phone are required in Settings before sending orders.', 'error');
       navigate('/settings?missing=pharmacy_details');
       return;
     }
 
     if (!bypassMissingBoyCheck && !hasDeliveryBoyContacts()) {
+      isSendingBatchRef.current = false;
+      setIsSendingBatchWhatsApp(false);
       setPendingTargetDistributor('ALL');
       setShowMissingBoyModal(true);
       return;
@@ -2009,18 +2022,19 @@ export default function PharmarackCart() {
     const unmapped = distributors.filter(d => !isDistributorMapped(d));
 
     if (distributors.length === 0) {
+      isSendingBatchRef.current = false;
+      setIsSendingBatchWhatsApp(false);
       toastEvent.trigger('Your cart is empty.', 'error');
       return;
     }
 
     if (mapped.length === 0) {
+      isSendingBatchRef.current = false;
+      setIsSendingBatchWhatsApp(false);
       toastEvent.trigger('No distributor phone numbers linked. Please add phone numbers.', 'info');
       if (unmapped.length > 0) handleOpenEditModal(unmapped[0]);
       return;
     }
-
-    isSendingBatchRef.current = true;
-    setIsSendingBatchWhatsApp(true);
 
     try {
       // Resolve primary delivery boy FIRST — re-fetch live to avoid stale React state closure
@@ -2114,14 +2128,22 @@ export default function PharmarackCart() {
         whatsappQueueEvent.triggerUpdated();
         window.dispatchEvent(new CustomEvent('refresh-special-orders'));
         window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
-        await fetchPendingOrders();
-        await fetchLatestSentMap();
-        await loadSentDates();
 
         toastEvent.trigger(
           `⚡ WhatsApp Queue started in background! Enqueued 1 Delivery Boy + ${ordersPayload.length} Distributor orders. Dispatching automatically!`,
           'info'
         );
+
+        // Resume UI immediately without waiting for background data refreshes
+        isSendingBatchRef.current = false;
+        setIsSendingBatchWhatsApp(false);
+
+        // Refresh orders and sent dates asynchronously in background without blocking UI
+        Promise.allSettled([
+          fetchPendingOrders(),
+          fetchLatestSentMap(),
+          loadSentDates()
+        ]).catch(() => {});
       } else {
         throw new Error(res?.message || 'Failed to enqueue WhatsApp batch orders');
       }
@@ -5663,22 +5685,33 @@ export default function PharmarackCart() {
             <div className="bg-bg3/60 px-5 py-3.5 border-t border-glass-border flex items-center justify-end gap-2.5 shrink-0">
               <button
                 type="button"
+                disabled={isSendingBatchWhatsApp}
                 onClick={() => setShowConfirmBatchModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 border border-glass-border transition-all cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 border border-glass-border transition-all cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => {
+                  if (isSendingBatchRef.current || isSendingBatchWhatsApp) return;
                   setShowConfirmBatchModal(false);
                   handleSendAllWhatsAppOrders(false, selectedBatchDeliveryBoys);
                 }}
                 disabled={isSendingBatchWhatsApp || batchSummaryList.length === 0}
                 className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2 active:scale-95 transition-all shadow-[0_2px_10px_rgba(16,185,129,0.3)] disabled:opacity-50 cursor-pointer"
               >
-                <Send size={13} />
-                <span>Confirm & Send</span>
+                {isSendingBatchWhatsApp ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    <span>Sending orders…</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={13} />
+                    <span>Confirm & Send</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

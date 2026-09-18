@@ -3248,7 +3248,7 @@ const QuickAssistSidebar = memo(({
           setArrivalModalGroup(null);
           setExpanded(true);
         }}
-        className="w-10 h-full min-h-0 overflow-hidden bg-bg2 border-l border-border flex flex-col items-center py-4 gap-4 hover:bg-bg3 hover:text-text transition-all duration-200 cursor-pointer shrink-0 z-20 select-none shadow-sm"
+        className="w-10 h-full min-h-0 overflow-hidden bg-bg2 border-l border-border flex flex-col items-center py-4 gap-4 hover:bg-bg3 hover:text-text transition-all duration-200 cursor-pointer shrink-0 z-20 select-none"
         title="Expand Quick Assist"
       >
         <ChevronLeftIcon size={16} className="text-muted mt-1" />
@@ -3318,7 +3318,7 @@ const QuickAssistSidebar = memo(({
   }
 
   return (
-    <div ref={sidebarRef} className="w-80 max-w-[85vw] bg-bg border-l border-border shadow-2xl flex flex-col h-full min-h-0 overflow-hidden shrink-0 z-20 transition-all duration-300">
+    <div ref={sidebarRef} className="w-80 max-w-[85vw] bg-bg border-l border-border flex flex-col h-full min-h-0 overflow-hidden shrink-0 z-20 transition-all duration-300">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between shrink-0 bg-bg2/80 backdrop-blur-md">
         <div className="flex items-center gap-2">
