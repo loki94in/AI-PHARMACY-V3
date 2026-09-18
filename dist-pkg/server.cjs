@@ -1302,9 +1302,9 @@ function findChromePath(options) {
   ];
   if (options?.includeEdge) {
     paths.push(
-      process.env.PROGRAMFILES ? import_path4.default.join(process.env.PROGRAMFILES, "Google\\Chrome\\Application\\chrome.exe") : null,
-      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      process.env.PROGRAMFILES ? import_path4.default.join(process.env.PROGRAMFILES, "Microsoft\\Edge\\Application\\msedge.exe") : null,
       process.env.LOCALAPPDATA ? import_path4.default.join(process.env.LOCALAPPDATA, "Microsoft\\Edge\\Application\\msedge.exe") : null
     );
   }
@@ -10682,6 +10682,7 @@ var init_ocrScanQueue = __esm({
 // src/services/waAdminEscalationService.ts
 var waAdminEscalationService_exports = {};
 __export(waAdminEscalationService_exports, {
+  ensureOwnerPendingRequestsTable: () => ensureOwnerPendingRequestsTable,
   maybeEscalate: () => maybeEscalate,
   notifyAdminOfCustomerConfirmation: () => notifyAdminOfCustomerConfirmation,
   notifyAdminOfLiveCartAdd: () => notifyAdminOfLiveCartAdd,
@@ -10938,15 +10939,25 @@ ${contextLines.join("\n")}` : "";
         }
         return ` | \u{1F7E2} In Stock (${stock})`;
       };
-      const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
-      const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
-      const distLines = [...mappedTop, ...nonMappedTop].map((p, i) => {
+      const isStockAvailable = (p) => {
+        const stock = p.availability ?? p.stock;
+        if (stock === void 0 || stock === null || stock === "") return false;
+        const s = String(stock).toLowerCase().trim();
+        if (s === "0" || s.includes("out") || s.includes("no") || s.includes("unavail")) return false;
+        const num = parseInt(s, 10);
+        if (!isNaN(num) && num <= 0) return false;
+        return true;
+      };
+      const mappedInStock = (payload.catalogResults?.mapped || []).filter(isStockAvailable);
+      const nonMappedInStock = (payload.catalogResults?.nonMapped || []).filter(isStockAvailable);
+      const allInStock = [...mappedInStock, ...nonMappedInStock].slice(0, 4);
+      const distLines = allInStock.length > 0 ? allInStock.map((p, i) => {
         const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
         const ptrStr = ptr ? ` | PTR \u20B9${ptr}` : "";
         const avail = formatStockBadge(p.availability ?? p.stock);
         const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : "";
         return `${i + 1}. ${p.name || p.productName || "Unknown"} | MRP \u20B9${p.mrp ?? p.MRP ?? "-"}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || "Unknown"}`;
-      }).join("\n");
+      }).join("\n") : "\u{1F534} All checked distributors currently Out of Stock";
       if (inStock) {
         messageText = `\u{1F514} *Prescription Medicine Extracted*
 
@@ -10961,19 +10972,51 @@ ${distLines ? `
 ${distLines}
 ` : ""}${relatedBlock}${contextBlock}`;
       } else {
-        messageText = `\u26A0\uFE0F *Medicine Registered in DB but NOT in Physical Stock*
+        const reqNum = Math.floor(100 + Math.random() * 900);
+        const reqCode = `REQ-${reqNum}`;
+        try {
+          await ensureOwnerPendingRequestsTable(db2);
+          await db2.run(
+            `INSERT INTO wa_owner_pending_requests (req_code, customer_phone, customer_name, medicine_name, quantity, unit, options_json, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+             ON CONFLICT(req_code) DO UPDATE SET
+               customer_phone = excluded.customer_phone,
+               customer_name = excluded.customer_name,
+               medicine_name = excluded.medicine_name,
+               quantity = excluded.quantity,
+               unit = excluded.unit,
+               options_json = excluded.options_json,
+               status = 'pending',
+               created_at = CURRENT_TIMESTAMP`,
+            [
+              reqCode,
+              payload.phone || payload.customer?.phone || "",
+              payload.customer?.name || "Customer",
+              payload.medicineName,
+              payload.quantity || 1,
+              payload.unit || "strip",
+              JSON.stringify(allInStock)
+            ]
+          );
+        } catch (saveErr) {
+          console.warn("[Escalation] Failed to save owner pending request:", saveErr);
+        }
+        const replyGuide = allInStock.length > 0 ? `
+
+\u{1F4AC} *Reply with \`${reqCode}-1\` or \`1\` to add ${payload.quantity || 1} ${payload.unit || "strip"} to Live Cart & create Special Order.*` : "";
+        messageText = `\u26A0\uFE0F *Special Order Request #${reqCode} (0 on Physical Shelf)*
 
 ${customerBlock}
 
- \u{1F48A} *Extracted Medicine*: ${payload.medicineName}
+ \u{1F48A} *Confirmed Medicine*: ${payload.medicineName}
  \u{1F4E6} *Quantity*: ${payload.quantity} ${payload.unit}${formLine}
  \u2B50 *Match Confidence*: ${Math.round(payload.confidence)}%
  \u{1F5C4}\uFE0F *DB match (0 on shelf)*: ${payload.localMatches.slice(0, 3).join(", ")}
 ${distLines ? `
-\u{1F69A} *Distributor options*:
+\u{1F69A} *In-Stock Distributor Options*:
 ${distLines}
 ` : ""}${relatedBlock}
-\u{1F449} Needs a purchase order before confirming to the customer.${contextBlock}`;
+\u{1F449} Needs a purchase order before confirming to the customer.${replyGuide}${contextBlock}`;
       }
     } else {
       const formatStockBadge = (stock) => {
@@ -11219,13 +11262,33 @@ Action required in application.`;
     console.error("[Admin Escalation] Error in notifyAdminOfLiveCartAdd:", err);
   }
 }
-var ADMIN_PHONE_SETTING_KEYS, waAdminEscalationService;
+async function ensureOwnerPendingRequestsTable(db2) {
+  if (ownerPendingTableEnsured) return;
+  await db2.exec(`
+    CREATE TABLE IF NOT EXISTS wa_owner_pending_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      req_code TEXT UNIQUE,
+      customer_phone TEXT,
+      customer_name TEXT,
+      medicine_name TEXT,
+      quantity INTEGER DEFAULT 1,
+      unit TEXT DEFAULT 'strip',
+      options_json TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_req_code ON wa_owner_pending_requests(req_code);
+  `);
+  ownerPendingTableEnsured = true;
+}
+var ADMIN_PHONE_SETTING_KEYS, ownerPendingTableEnsured, waAdminEscalationService;
 var init_waAdminEscalationService = __esm({
   "src/services/waAdminEscalationService.ts"() {
     "use strict";
     init_connection();
     init_whatsappQueueWorker();
     ADMIN_PHONE_SETTING_KEYS = ["admin_whatsapp", "owner_whatsapp_number", "admin_whatsapp_number", "shop_phone", "store_phone"];
+    ownerPendingTableEnsured = false;
     waAdminEscalationService = {
       maybeEscalate,
       notifyAdminOfUnprocessedMedia,
@@ -11233,7 +11296,8 @@ var init_waAdminEscalationService = __esm({
       notifyAdminOfNonAllopathic,
       notifyAdminOfUnmatchedQuery,
       notifyAdminOfCustomerConfirmation,
-      notifyAdminOfLiveCartAdd
+      notifyAdminOfLiveCartAdd,
+      ensureOwnerPendingRequestsTable
     };
   }
 });
@@ -28944,6 +29008,7 @@ __export(whatsappIntentService_exports, {
   resolveOcrGateDecision: () => resolveOcrGateDecision,
   sanitizePharmarackQuery: () => sanitizePharmarackQuery,
   saveInboundMedia: () => saveInboundMedia,
+  selectFormDiverseMatches: () => selectFormDiverseMatches,
   whatsappIntentService: () => whatsappIntentService
 });
 function passesGate(bestScore, hasIntentWords, source, hasConfirmedMatch = false) {
@@ -29221,9 +29286,52 @@ async function ensureClarificationsTable(db2) {
     if (!colNames.has("step")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN step TEXT DEFAULT 'awaiting_confirmation'");
     }
+    if (!colNames.has("raw_qty_given")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN raw_qty_given INTEGER DEFAULT 0");
+    }
   } catch (_) {
   }
   clarificationsTableEnsured = true;
+}
+function selectFormDiverseMatches(matches) {
+  if (!matches || matches.length <= 1) return matches || [];
+  const categories = {
+    syrup: [],
+    capsule_tablet: [],
+    drops: [],
+    injection: [],
+    other: []
+  };
+  for (const m of matches) {
+    const upper = m.toUpperCase();
+    if (/\b(SYP|SYRUP|SUSP|SUSPENSION|LIQUID|ELIXIR)\b/.test(upper)) {
+      categories.syrup.push(m);
+    } else if (/\b(CAP|CAPSULE|TAB|TABLET|DT|CAPLET|SOFGEL)\b/.test(upper)) {
+      categories.capsule_tablet.push(m);
+    } else if (/\b(DROP|DROPS)\b/.test(upper)) {
+      categories.drops.push(m);
+    } else if (/\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(upper)) {
+      categories.injection.push(m);
+    } else {
+      categories.other.push(m);
+    }
+  }
+  const result = [];
+  const order = ["syrup", "capsule_tablet", "drops", "injection", "other"];
+  for (const cat of order) {
+    if (categories[cat].length > 0) {
+      result.push(categories[cat][0]);
+    }
+  }
+  if (result.length < 4) {
+    for (const m of matches) {
+      if (!result.includes(m)) {
+        result.push(m);
+        if (result.length >= 4) break;
+      }
+    }
+  }
+  return result.slice(0, 4);
 }
 function extractQuantityFromText(text) {
   if (!text) return null;
@@ -29576,6 +29684,114 @@ has been received and forwarded to our pharmacy team at ${storeLabel}. We are ar
   }
   return false;
 }
+async function checkIsOwnerPhone(phone, db2) {
+  const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
+  if (!cleanDigits) return false;
+  const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2) || "";
+  const cleanAdmin = (adminPhone || "").replace(/\D/g, "").slice(-10);
+  return Boolean(cleanAdmin && cleanAdmin === cleanDigits);
+}
+async function handleOwnerInteractiveReply(phone, body, db2) {
+  const cleanBody = body.trim().toUpperCase();
+  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-4])$/i);
+  const singleNumMatch = cleanBody.match(/^([1-4])$/);
+  if (!reqCodeMatch && !singleNumMatch) return false;
+  await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
+  let targetRow = null;
+  let chosenOptionIdx = -1;
+  if (reqCodeMatch) {
+    const reqCode = reqCodeMatch[1].toUpperCase();
+    chosenOptionIdx = parseInt(reqCodeMatch[2], 10) - 1;
+    targetRow = await db2.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? AND status = 'pending'`,
+      [reqCode]
+    );
+  } else if (singleNumMatch) {
+    chosenOptionIdx = parseInt(singleNumMatch[1], 10) - 1;
+    targetRow = await db2.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
+    );
+  }
+  if (!targetRow || chosenOptionIdx < 0) return false;
+  let options = [];
+  try {
+    options = JSON.parse(targetRow.options_json || "[]");
+  } catch (_) {
+  }
+  const selectedDist = options[chosenOptionIdx];
+  if (!selectedDist) {
+    const errGuide = `\u26A0\uFE0F Option ${chosenOptionIdx + 1} not found for Request #${targetRow.req_code}. Available options: 1 to ${options.length}.`;
+    const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker3.enqueue(phone, errGuide, "admin_escalation", "Owner");
+    return true;
+  }
+  const cartItem = {
+    productName: targetRow.medicine_name,
+    product: targetRow.medicine_name,
+    productId: selectedDist.productId || selectedDist.product_id || 0,
+    productCode: selectedDist.productCode || selectedDist.product_code || "",
+    storeId: Number(selectedDist.store_id || selectedDist.storeId || 0),
+    storeName: selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || "Standard Distributor",
+    company: selectedDist.manufacturer || selectedDist.company || "",
+    qty: targetRow.quantity > 0 ? targetRow.quantity : 1,
+    rate: selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0,
+    mrp: selectedDist.mrp ?? selectedDist.MRP ?? 0,
+    packaging: selectedDist.packaging || targetRow.unit || "1 strip"
+  };
+  const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+  const cartRes = await addItemsToPharmarackCart2([cartItem]);
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const orderRes = await db2.run(
+    `INSERT INTO special_orders (
+      store_id, requester, phone, medicine_name, product, qty, priority, status,
+      date, notified, customer_order_source,
+      pharmarack_distributor, pharmarack_rate, pharmarack_mrp
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?)`,
+    [
+      1,
+      targetRow.customer_name || "WhatsApp Customer",
+      targetRow.customer_phone,
+      cartItem.productName,
+      cartItem.productName,
+      cartItem.qty,
+      todayStr2,
+      cartItem.storeName,
+      cartItem.rate,
+      cartItem.mrp
+    ]
+  );
+  const specialOrderId = orderRes.lastID;
+  await db2.run(
+    `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE id = ?`,
+    [targetRow.id]
+  );
+  const ownerAck = `\u2705 *Special Order #${targetRow.req_code} Processed!*
+
+Added *${cartItem.productName}* \xD7 ${cartItem.qty} ${targetRow.unit}
+Distributor: *${cartItem.storeName}* (PTR \u20B9${cartItem.rate.toFixed(2)})
+directly into your *Pharmarack Live Cart*.
+
+Created Special Order #${specialOrderId} for customer *${targetRow.customer_name}*.`;
+  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+  await whatsappQueueWorker2.enqueue(phone, ownerAck, "admin_escalation", "Owner");
+  if (targetRow.customer_phone) {
+    const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const storeLabel = await getStoreMedicalName4(db2);
+    const storePhone = await getStorePhone3(db2);
+    const phoneSuffix = storePhone ? `
+\u{1F4DE} ${storePhone}` : "";
+    const custAck = `Namaste ${targetRow.customer_name} ji! \u{1F64F}
+
+Your order for *${cartItem.productName}* \xD7 ${cartItem.qty} ${targetRow.unit} is confirmed and being arranged with our distributor at ${storeLabel}. We will message you as soon as it is ready for collection.${phoneSuffix}`;
+    await whatsappQueueWorker2.enqueue(targetRow.customer_phone, custAck, "customer_inquiry_confirmed", targetRow.customer_name || "Customer");
+  }
+  try {
+    eventService.broadcast("order_updated", { at: Date.now(), id: specialOrderId });
+  } catch (_) {
+  }
+  console.log(`[Intent Service] Owner fulfilled request #${targetRow.req_code} via WhatsApp reply. Cart addition & special order created.`);
+  return true;
+}
 async function handleInbound(msg) {
   try {
     let phone = msg.from || "";
@@ -29605,6 +29821,11 @@ async function handleInbound(msg) {
     }
     if (await isIgnored(chatId)) return;
     const db2 = await dbManager.getConnection();
+    const isOwner = await checkIsOwnerPhone(phone || chatId, db2);
+    if (isOwner) {
+      const handled = await handleOwnerInteractiveReply(phone || chatId, body, db2);
+      if (handled) return;
+    }
     if (await isDistributorOrInternal(phone || chatId, db2)) {
       return;
     }
