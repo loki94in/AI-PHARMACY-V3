@@ -52,6 +52,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   wa_queue_update: ['sse-wa-status-changed', 'sse-wa-queue-updated', 'app-wa-queue-updated', 'app-automation-hub-updated'],
   automation_hub_updated: ['app-automation-hub-updated', 'app-wa-queue-updated', 'sse-wa-queue-updated', 'sse-wa-status-changed'],
   wa_new_message: ['sse-wa-new-message'],
+  wa_session_updated: ['sse-wa-session-updated'],
   wa_medicine_match: ['sse-wa-medicine-match'],
   ocr_scan_complete: ['sse-ocr-scan-complete'],
   auth_failure: ['sse-auth-failure'],

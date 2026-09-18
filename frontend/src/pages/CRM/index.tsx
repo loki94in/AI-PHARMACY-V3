@@ -2596,6 +2596,10 @@ interface WaChatItem {
   isGroup?: boolean;
   lastMessage?: string | null;
   resolvedNumber?: string;
+  sessionMode?: 'auto' | 'manual';
+  sessionStatus?: 'idle' | 'active' | 'waiting' | 'unanswered' | 'ended';
+  isUnansweredOver5Min?: boolean;
+  manualActiveUntil?: number;
 }
 
 interface WaMessageItem {
@@ -3277,9 +3281,22 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                           <span className="text-[10px] text-muted">{formatTs(c.timestamp)}</span>
                         )}
                       </div>
-                      <p className="text-[11px] text-muted truncate mt-0.5">
-                        {display.subtitle ? `${display.subtitle} • ` : ''}{c.lastMessage || 'No messages yet'}
-                      </p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <p className="text-[11px] text-muted truncate flex-1">
+                          {display.subtitle ? `${display.subtitle} • ` : ''}{c.lastMessage || 'No messages yet'}
+                        </p>
+                        {c.sessionMode === 'manual' && (
+                          c.isUnansweredOver5Min ? (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex-shrink-0 animate-pulse">
+                              ⚠️ &gt;5m
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30 flex-shrink-0">
+                              👤 Manual
+                            </span>
+                          )
+                        )}
+                      </div>
                     </div>
                     {c.unreadCount > 0 && (
                       <span className="px-1.5 py-0.5 rounded-full bg-primary text-white font-bold text-[10px]">
@@ -3325,6 +3342,38 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                           </p>
                         )}
                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {activeChat.sessionMode === 'manual' && (
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
+                            activeChat.isUnansweredOver5Min
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse'
+                              : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                          }`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                            {activeChat.isUnansweredOver5Min ? 'Patient Waiting (>5m)' : 'Human Active (AI Paused)'}
+                          </span>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.resolveWhatsappSession(activeChat.id);
+                                setActiveChat(prev => prev ? { ...prev, sessionMode: 'auto', sessionStatus: 'ended', isUnansweredOver5Min: false } : null);
+                                setChats(prev => prev.map(c => c.id === activeChat.id ? { ...c, sessionMode: 'auto', sessionStatus: 'ended', isUnansweredOver5Min: false } : c));
+                                toastEvent.trigger('Session resolved. AI returned to standby.', 'success', '/crm');
+                              } catch (_) {
+                                toastEvent.trigger('Failed to resolve session', 'error', '/crm');
+                              }
+                            }}
+                            className="px-2 py-1 rounded bg-bg text-text hover:bg-bg3 border border-border text-[11px] font-medium transition-colors flex items-center gap-1"
+                            title="End manual takeover and return chat to AI standby"
+                          >
+                            <Check size={12} className="text-emerald-400" />
+                            Resolve Session
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

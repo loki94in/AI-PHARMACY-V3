@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Loader2, PackageCheck, PackageX, Globe, User, Image as ImageIcon, MessagesSquare } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Search, Loader2, PackageCheck, PackageX, Globe, User, Image as ImageIcon, MessagesSquare, Check } from 'lucide-react';
 import { api } from '../../services/api';
+import { toastEvent } from '../../services/events';
 
 // ─── Payload shape of the backend SSE event `wa_medicine_match` ──────────────
 // Broadcast by src/services/whatsappIntentService.ts after its pipeline:
@@ -39,6 +40,22 @@ interface WaMatchRow {
 }
 
 interface WaCustomerInfo { id?: number; name?: string; phone?: string }
+
+export interface ChatSessionInfo {
+  id: string;
+  name?: string;
+  sessionMode?: 'auto' | 'manual';
+  sessionStatus?: 'idle' | 'active' | 'waiting' | 'unanswered' | 'ended';
+  isUnansweredOver5Min?: boolean;
+  manualActiveUntil?: number;
+  resolvedNumber?: string;
+}
+
+const getPhoneKey = (phoneOrId?: string): string => {
+  if (!phoneOrId) return '';
+  const digits = phoneOrId.replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : phoneOrId;
+};
 
 // Module-level feed buffer (SPA contract): survives tab switches within session.
 const feedCache: WaMatchRow[] = [];
@@ -180,8 +197,16 @@ const WaThumb: React.FC<{ mediaId: string }> = ({ mediaId }) => {
   );
 };
 
-const WaMatchCard: React.FC<{ row: WaMatchRow }> = ({ row }) => {
+const WaMatchCard: React.FC<{
+  row: WaMatchRow;
+  session?: ChatSessionInfo;
+  onResolveSession?: (chatId: string) => void;
+  resolving?: boolean;
+}> = ({ row, session, onResolveSession, resolving }) => {
   const avail = availabilityBadge(row);
+  const isManual = session?.sessionMode === 'manual';
+  const isWaiting5m = !!session?.isUnansweredOver5Min;
+
   return (
     <div className="bg-bg2 border border-glass-border rounded-2xl p-4 space-y-3">
       {/* Patient + request */}
@@ -197,6 +222,35 @@ const WaMatchCard: React.FC<{ row: WaMatchRow }> = ({ row }) => {
               <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 text-[9px] font-black uppercase">New</span>
             )}
             {row.source === 'image' && <span title="Photo request" className="inline-flex"><ImageIcon size={12} className="text-muted" /></span>}
+
+            {/* WhatsApp Human-in-the-Loop Session Status Badge */}
+            {isManual ? (
+              <div className="inline-flex items-center gap-1.5 flex-wrap">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                  isWaiting5m
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse'
+                    : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                }`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {isWaiting5m ? 'Waiting for Reply (>5m)' : 'Manual (AI Paused)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onResolveSession?.(session?.id || row.customerPhone)}
+                  disabled={resolving}
+                  className="px-2 py-0.5 rounded-lg bg-bg text-text hover:bg-bg3 border border-border text-[10px] font-semibold transition-colors flex items-center gap-1 shadow-sm active:scale-95 disabled:opacity-50"
+                  title="End manual takeover and return AI to standby"
+                >
+                  <Check size={11} className="text-emerald-400" />
+                  {resolving ? 'Resolving...' : 'Resolve Session'}
+                </button>
+              </div>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Auto
+              </span>
+            )}
           </div>
           {row.messageBody && (
             <p className="text-xs text-muted mt-1 truncate italic">&ldquo;{row.messageBody}&rdquo;</p>
@@ -301,6 +355,9 @@ const WaMatchCard: React.FC<{ row: WaMatchRow }> = ({ row }) => {
 
 const WaRequestsPanel: React.FC = () => {
   const [rows, setRows] = useState<WaMatchRow[]>(feedCache);
+  const [sessionsByPhone, setSessionsByPhone] = useState<Record<string, ChatSessionInfo>>({});
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
   // One-shot manual lookup: exactly ONE searchPharmarack call per explicit click.
   const [lookupQ, setLookupQ] = useState('');
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -308,6 +365,52 @@ const WaRequestsPanel: React.FC = () => {
   interface LookupHit { name?: string; productName?: string; mrp?: number | null; rate?: number | null; distributor?: string }
   const [lookupHits, setLookupHits] = useState<LookupHit[]>([]);
   const [lastLookupTerm, setLastLookupTerm] = useState('');
+
+  const refreshSessions = useCallback(() => {
+    api.getWhatsappChats()
+      .then((chats: any[]) => {
+        if (Array.isArray(chats)) {
+          const map: Record<string, ChatSessionInfo> = {};
+          chats.forEach(c => {
+            const info: ChatSessionInfo = {
+              id: c.id,
+              name: c.name,
+              sessionMode: c.sessionMode || 'auto',
+              sessionStatus: c.sessionStatus || 'idle',
+              isUnansweredOver5Min: !!c.isUnansweredOver5Min,
+              manualActiveUntil: c.manualActiveUntil || 0,
+              resolvedNumber: c.resolvedNumber
+            };
+            const phoneKey = getPhoneKey(c.resolvedNumber || c.id);
+            if (phoneKey) map[phoneKey] = info;
+            map[c.id] = info;
+          });
+          setSessionsByPhone(map);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleResolveSession = async (chatId: string) => {
+    if (!chatId || resolvingId) return;
+    setResolvingId(chatId);
+    try {
+      await api.resolveWhatsappSession(chatId);
+      const key = getPhoneKey(chatId);
+      setSessionsByPhone(prev => {
+        const next = { ...prev };
+        const updated: Partial<ChatSessionInfo> = { sessionMode: 'auto', sessionStatus: 'ended', isUnansweredOver5Min: false };
+        if (key && next[key]) next[key] = { ...next[key], ...updated };
+        if (next[chatId]) next[chatId] = { ...next[chatId], ...updated };
+        return next;
+      });
+      toastEvent.trigger('Session resolved. AI returned to standby.', 'success', '/ai-engineering');
+    } catch {
+      toastEvent.trigger('Failed to resolve session', 'error', '/ai-engineering');
+    } finally {
+      setResolvingId(null);
+    }
+  };
 
   useEffect(() => {
     // 1. Load persistent history from SQLite database on mount
@@ -331,14 +434,47 @@ const WaRequestsPanel: React.FC = () => {
       })
       .catch(err => console.warn('Could not load persistent wa-requests:', err));
 
+    refreshSessions();
+
     const onMatch = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       recordIncomingMatch(detail);
       setRows(feedCache.slice());
     };
+
+    const onSessionUpdated = (e: Event) => {
+      const data = (e as CustomEvent).detail;
+      const payload = data?.payload || data;
+      if (payload) {
+        const chatId = payload.chat_id || payload.id;
+        const phone = payload.resolved_number || chatId;
+        const key = getPhoneKey(phone);
+        setSessionsByPhone(prev => {
+          const updated: ChatSessionInfo = {
+            id: chatId,
+            sessionMode: payload.session_mode || 'auto',
+            sessionStatus: payload.session_status || 'idle',
+            manualActiveUntil: payload.manual_active_until || 0,
+            isUnansweredOver5Min: false,
+            resolvedNumber: payload.resolved_number
+          };
+          const next = { ...prev };
+          if (key) next[key] = { ...(prev[key] || {}), ...updated };
+          if (chatId) next[chatId] = { ...(prev[chatId] || {}), ...updated };
+          return next;
+        });
+      }
+    };
+
     window.addEventListener('sse-wa-medicine-match', onMatch);
-    return () => window.removeEventListener('sse-wa-medicine-match', onMatch);
-  }, []);
+    window.addEventListener('sse-wa-session-updated', onSessionUpdated);
+    window.addEventListener('sse-wa-new-message', refreshSessions);
+    return () => {
+      window.removeEventListener('sse-wa-medicine-match', onMatch);
+      window.removeEventListener('sse-wa-session-updated', onSessionUpdated);
+      window.removeEventListener('sse-wa-new-message', refreshSessions);
+    };
+  }, [refreshSessions]);
 
   const handleLookup = async () => {
     const q = lookupQ.trim();
@@ -445,7 +581,19 @@ const WaRequestsPanel: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-3">
-          {rows.map((row) => <WaMatchCard key={`${row.ts}-${row.medicineName}`} row={row} />)}
+          {rows.map((row) => {
+            const key = getPhoneKey(row.customerPhone);
+            const session = sessionsByPhone[key] || sessionsByPhone[row.customerPhone];
+            return (
+              <WaMatchCard
+                key={`${row.ts}-${row.medicineName}`}
+                row={row}
+                session={session}
+                onResolveSession={handleResolveSession}
+                resolving={resolvingId === session?.id}
+              />
+            );
+          })}
         </div>
       )}
     </div>

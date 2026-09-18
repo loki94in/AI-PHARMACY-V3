@@ -401,6 +401,9 @@ async function ensureClarificationsTable(db: any): Promise<void> {
   try {
     const cols = await db.all('PRAGMA table_info(wa_pending_clarifications)');
     const colNames = new Set(cols.map((c: any) => c.name));
+    if (!colNames.has('items_json')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN items_json TEXT DEFAULT NULL');
+    }
     if (!colNames.has('options_json')) {
       await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN options_json TEXT DEFAULT NULL');
     }
@@ -449,6 +452,7 @@ export interface ConfirmedProcurementParams {
   quantity: number;
   unit: string;
   customer: any;
+  isBundle?: boolean;
 }
 
 export async function executeConfirmedProcurementFlow(params: ConfirmedProcurementParams): Promise<void> {
@@ -641,10 +645,12 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
       eventService.broadcast('order_updated', { at: Date.now(), id: specialOrderId });
     } catch (_) {}
 
-    // 10. Send customer courtesy acknowledgment ONLY AFTER owner notification
-    const custAckMsg = `Thank you! Your request for *${cartItem.productName}* × ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
-    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-    await whatsappQueueWorker.enqueue(phone, custAckMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
+    // 10. Send customer courtesy acknowledgment ONLY AFTER owner notification (skipped if handling a bundle)
+    if (!params.isBundle) {
+      const custAckMsg = `Thank you! Your request for *${cartItem.productName}* × ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, custAckMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
+    }
 
     console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
   } catch (procErr) {
@@ -664,7 +670,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     await ensureClarificationsTable(db);
 
     const pending = await db.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step 
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json 
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
       [`%${cleanDigits}`, `%${cleanDigits}%`]
@@ -772,15 +778,51 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     // Step 4: Explicit Final Confirmation ("YES", "haan", etc.)
     if (isAffirmative) {
       await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
-      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending.suggested_name}" x ${pending.quantity || 1}. Initiating procurement...`);
-      await executeConfirmedProcurementFlow({
-        phone,
-        chatId,
-        confirmedMedicine: pending.suggested_name,
-        quantity: pending.quantity || 1,
-        unit: pending.unit || 'strip',
-        customer
-      });
+
+      let bundle: Array<{ matchedName: string; quantity: number; unit: string }> = [];
+      if (pending.items_json) {
+        try {
+          bundle = JSON.parse(pending.items_json);
+        } catch (_) {}
+      }
+
+      if (bundle && bundle.length > 0) {
+        console.log(`[Intent Service] Customer ${cleanDigits} confirmed multi-medicine bundle of ${bundle.length} items. Initiating procurement...`);
+        for (const item of bundle) {
+          await executeConfirmedProcurementFlow({
+            phone,
+            chatId,
+            confirmedMedicine: item.matchedName,
+            quantity: item.quantity || 1,
+            unit: item.unit || 'strip',
+            customer,
+            isBundle: true
+          });
+        }
+        // Send single combined courtesy acknowledgment for the bundle
+        try {
+          const { getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+          const storeLabel = await getStoreMedicalName(db);
+          const storePhone = await getStorePhone(db);
+          const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+          const medListText = bundle.map((b, i) => `${i + 1}. *${b.matchedName}* × ${b.quantity} ${b.unit}`).join('\n');
+          const custAckMsg = `Thank you! Your request for:\n${medListText}\nhas been received and forwarded to our pharmacy team at ${storeLabel}. We are arranging your medicines with our distributors and will message you as soon as they are ready for collection.${phoneSuffix}`;
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(phone, custAckMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
+        } catch (bundleAckErr) {
+          console.warn('[Intent Service] Multi-item confirmation acknowledgment error:', bundleAckErr);
+        }
+      } else {
+        console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending.suggested_name}" x ${pending.quantity || 1}. Initiating procurement...`);
+        await executeConfirmedProcurementFlow({
+          phone,
+          chatId,
+          confirmedMedicine: pending.suggested_name,
+          quantity: pending.quantity || 1,
+          unit: pending.unit || 'strip',
+          customer
+        });
+      }
       return true;
     }
 
@@ -835,11 +877,35 @@ export async function handleInbound(msg: any): Promise<void> {
     }
 
     // 1b. PROMOTIONAL & BROADCAST FILTER
-    // Reject marketing schemes, B2B broadcasts, festive deals, and spam before doing any work
-    if (isPromotionalOrBroadcastMessage(body)) {
-      console.log(`[Intent Service] Discarded promotional/marketing broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, ' ')}..."`);
+    // Reject marketing schemes, B2B broadcasts, festive deals, groups, and spam before doing any work
+    if (chatId.includes('g.us') || isPromotionalOrBroadcastMessage(body)) {
+      console.log(`[Intent Service] Discarded promotional/group broadcast message from ${phone || chatId}: "${body.slice(0, 80).replace(/\r?\n/g, ' ')}..."`);
       return;
     }
+
+    // 1c. NATURAL CONVERSATION SIGN-OFF DETECTION
+    const cleanBodyForSignOff = body.trim().toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const isSignOff = /^(thanks|thank you|thank you so much|shukriya|dhanyawad|dhanyavad|ok|okay|ok done|okay done|done|bye|bye bye|good night|gn|ok bye|thx|tq|done ji|theek hai|accha theek hai)$/i.test(cleanBodyForSignOff);
+    if (isSignOff) {
+      await db.run(
+        `UPDATE whatsapp_chats SET session_status = 'ended', manual_active_until = 0, session_mode = 'auto' WHERE id = ?`,
+        [chatId]
+      );
+      eventService.broadcast('wa_session_updated', { chat_id: chatId, session_mode: 'auto', session_status: 'ended' });
+      console.log(`[Intent Service] Natural sign-off ("${body.trim()}") from ${chatId}. Session marked as ended.`);
+      return;
+    }
+
+    // 1d. HUMAN TAKEOVER / ACTIVE SESSION CHECK
+    const chatSessionRow = await db.get(
+      'SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?',
+      [chatId]
+    );
+    const nowMs = Date.now();
+    const isManualSession = Boolean(
+      chatSessionRow?.session_mode === 'manual' &&
+      Number(chatSessionRow?.manual_active_until || 0) > nowMs
+    );
 
     // Await startup cart synchronization window so existing cart items are loaded
     await startupSyncCoordinator.waitForCartSync();
@@ -886,31 +952,33 @@ export async function handleInbound(msg: any): Promise<void> {
             refill_count: pendingRefills.length
           });
 
-          // Optional acknowledgement to patient via queue worker
-          try {
-            const { getPharmacyOperatingSchedule, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
-            const sched = await getPharmacyOperatingSchedule(db);
-            const storeName = await getStoreMedicalName(db);
-            const storePhone = await getStorePhone(db);
-            const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
-            const medListText = pendingRefills.length === 1 
-              ? `*${primaryRefill.medicine_name}*` 
-              : pendingRefills.map((r: any) => `• ${r.medicine_name}`).join('\n');
+          // Optional acknowledgement to patient via queue worker (suppressed in active manual takeover)
+          if (!isManualSession) {
+            try {
+              const { getPharmacyOperatingSchedule, getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+              const sched = await getPharmacyOperatingSchedule(db);
+              const storeName = await getStoreMedicalName(db);
+              const storePhone = await getStorePhone(db);
+              const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+              const medListText = pendingRefills.length === 1 
+                ? `*${primaryRefill.medicine_name}*` 
+                : pendingRefills.map((r: any) => `• ${r.medicine_name}`).join('\n');
 
-            const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
-              `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
-              `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n` +
-              `Our team will keep your medicines ready for collection.${phoneSuffix}`;
+              const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
+                `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
+                `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n` +
+                `Our team will keep your medicines ready for collection.${phoneSuffix}`;
 
-            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-            await whatsappQueueWorker.enqueue(
-              phone,
-              ackMsg,
-              'refill_reminder',
-              primaryRefill.patient_name
-            );
-          } catch (ackErr) {
-            console.warn('[Intent Service] Refill confirmation acknowledgment note:', ackErr);
+              const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+              await whatsappQueueWorker.enqueue(
+                phone,
+                ackMsg,
+                'refill_reminder',
+                primaryRefill.patient_name
+              );
+            } catch (ackErr) {
+              console.warn('[Intent Service] Refill confirmation acknowledgment note:', ackErr);
+            }
           }
 
           console.log(`[Intent Service] Patient ${primaryRefill.patient_name} confirmed ${pendingRefills.length} refill(s) via WhatsApp.`);
@@ -920,7 +988,8 @@ export async function handleInbound(msg: any): Promise<void> {
     }
 
     // 2c. MEDICINE CLARIFICATION CHECK ("yes", "haan", "ho", "no", "nahi", etc.)
-    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    // Bypassed if in active manual session so the bot never intercepts patient replies to the pharmacist
+    if (!isManualSession && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
     }
 
@@ -980,6 +1049,11 @@ export async function handleInbound(msg: any): Promise<void> {
 
     // 5. MEDIA CHECK — if has image, queue for OCR
     if (hasMedia) {
+      // PRE-OCR PROMOTIONAL & GROUP FILTER: skip download and OCR if caption is promotional or group media
+      if (chatId.includes('g.us') || isPromotionalOrBroadcastMessage(body)) {
+        console.log(`[Intent Service] Pre-OCR filter: skipped promotional or group image from ${phone || chatId}`);
+        return;
+      }
       try {
         // Media decryption requires a READY client. Images arriving during the
         // boot session-restore window (T+45s+) or right after an idle-sleep
@@ -1090,6 +1164,10 @@ export async function handleInbound(msg: any): Promise<void> {
       if (candidates.some(c => c.fromScispacy)) {
         console.log(`[Intent Service] scispaCy rescued medicine name(s): ${candidates.filter(c => c.fromScispacy).map(c => `"${c.name}"`).join(', ')} (regex missed them)`);
       }
+
+      // If in active manual session, AI broadcasts events for UI suggestions but suppresses autonomous customer-facing replies
+      const suppressAutoReply = isManualSession || candidates.length > 1;
+
       for (const cand of candidates) {
         await searchAndBroadcast({
           medicineName: cand.name,
@@ -1104,10 +1182,74 @@ export async function handleInbound(msg: any): Promise<void> {
           phone,
           chatId,
           hasIntentWords: parsed.rawIntentWords.length > 0 || cand.fromScispacy,
-          isStale
+          isStale,
+          suppressClarification: suppressAutoReply
         });
       }
-    } else if (!hasMedia && !isStale && phone) {
+
+      // If multiple candidates exist and not in manual session, send ONE consolidated confirmation bundle
+      if (candidates.length > 1 && !isManualSession && !isStale && phone) {
+        try {
+          const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
+          if (!toggle || toggle.value !== 'false') {
+            const bundledItems: Array<{
+              requestedName: string;
+              matchedName: string;
+              quantity: number;
+              unit: string;
+            }> = [];
+
+            for (const cand of candidates) {
+              let matched = cand.name;
+              try {
+                const res = await productNameFilterService.filterProductNames(cand.name, { minConfidenceThreshold: 0.6 });
+                if (res?.matches?.[0]) matched = res.matches[0];
+              } catch (_) {}
+              bundledItems.push({
+                requestedName: cand.name,
+                matchedName: matched,
+                quantity: cand.quantity || 1,
+                unit: cand.unit || 'strip'
+              });
+            }
+
+            const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
+            await ensureClarificationsTable(db);
+            await db.run(
+              `INSERT INTO wa_pending_clarifications (
+                 phone, suggested_name, original_query, options_json, quantity, unit, step, items_json, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, 'awaiting_confirmation', ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(phone) DO UPDATE SET
+                 suggested_name = excluded.suggested_name,
+                 original_query = excluded.original_query,
+                 options_json = NULL,
+                 quantity = excluded.quantity,
+                 unit = excluded.unit,
+                 step = 'awaiting_confirmation',
+                 items_json = excluded.items_json,
+                 created_at = CURRENT_TIMESTAMP`,
+              [
+                cleanPhone,
+                bundledItems[0].matchedName,
+                body,
+                null,
+                bundledItems[0].quantity,
+                bundledItems[0].unit,
+                JSON.stringify(bundledItems)
+              ]
+            );
+
+            const itemListText = bundledItems.map((item, idx) => `${idx + 1}. *${item.matchedName}* × ${item.quantity} ${item.unit}`).join('\n');
+            const promptMsg = `Please confirm your order for:\n${itemListText}\n\nReply *YES* to confirm or *NO* to cancel.`;
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+            console.log(`[Intent Service] Sent consolidated multi-item confirmation for ${bundledItems.length} medicines to ${cleanPhone}.`);
+          }
+        } catch (bundleErr) {
+          console.warn('[Intent Service] Consolidated multi-item confirmation failed:', bundleErr);
+        }
+      }
+    } else if (!hasMedia && !isStale && phone && !isManualSession) {
       const cleanBody = body.trim();
       if (cleanBody.length >= 2) {
         await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db);
@@ -1191,6 +1333,7 @@ async function searchAndBroadcast(opts: {
   // They ride along on the primary card + owner message — zero extra network.
   relatedMedicines?: Array<{ name: string; registered: boolean; inventoryStock: number }>;
   isStale?: boolean;
+  suppressClarification?: boolean;
 }): Promise<void> {
   const { medicineName, quantity, unit, customer, isNewCustomer, messageBody, source, dosageForm, mrp, msgId, phone, chatId, imagePath } = opts;
   const hasIntentWords = !!opts.hasIntentWords;
@@ -1486,7 +1629,7 @@ async function searchAndBroadcast(opts: {
 
   // Customer clarification / confirmation prompt:
   // When medicine inquiry comes from text and we matched a product, clarify options or ask customer to confirm
-  if (source === 'text' && phone && !opts.isStale) {
+  if (source === 'text' && phone && !opts.isStale && !opts.suppressClarification) {
     try {
       const db = await dbManager.getConnection();
       const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
@@ -1880,6 +2023,17 @@ export async function handleOcrComplete(data: any): Promise<void> {
     const relatedMedicines = await resolveRelatedMedicinesLocal(passingNames.slice(1));
     const captionHit = captionCandidates
       .find(c => c.medicineName.toLowerCase() === finalName.toLowerCase());
+    let isManualChatSession = false;
+    if (chatId) {
+      try {
+        const db = await dbManager.getConnection();
+        const chatRow = await db.get('SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?', [chatId]);
+        if (chatRow?.session_mode === 'manual' && Number(chatRow?.manual_active_until || 0) > Date.now()) {
+          isManualChatSession = true;
+        }
+      } catch (_) {}
+    }
+
     searchAndBroadcast({
       medicineName: finalName,
       quantity: textParsed.quantity || captionHit?.quantity || 1,
@@ -1895,6 +2049,7 @@ export async function handleOcrComplete(data: any): Promise<void> {
       chatId,
       imagePath,
       hasIntentWords: textParsed.rawIntentWords.length > 0,
+      suppressClarification: isManualChatSession,
       relatedMedicines
     }).catch(err => console.error('[Intent Service] OCR post-search failed:', err));
   }).catch(err => {

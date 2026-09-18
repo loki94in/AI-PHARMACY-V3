@@ -322,6 +322,7 @@ __export(storeSettingsService_exports, {
   getStoreMedicalName: () => getStoreMedicalName,
   getStoreMedicalNameAndPhone: () => getStoreMedicalNameAndPhone,
   getStorePhone: () => getStorePhone,
+  isAutoAddToLiveCartEnabled: () => isAutoAddToLiveCartEnabled,
   savePharmacyOperatingSchedule: () => savePharmacyOperatingSchedule
 });
 async function getConfiguredPharmacyName(dbInstance) {
@@ -819,6 +820,20 @@ async function savePharmacyOperatingSchedule(schedule, dbInstance) {
   } catch (err) {
     console.warn("[StoreSettings] Failed to save operating schedule:", err);
     throw err;
+  }
+}
+async function isAutoAddToLiveCartEnabled(dbInstance) {
+  try {
+    const db2 = dbInstance || await dbManager.getConnection();
+    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'auto_add_to_live_cart'");
+    if (!row || row.value === null || row.value === void 0) {
+      return true;
+    }
+    const val = String(row.value).trim().toLowerCase();
+    return val === "true" || val === "1" || val === "on";
+  } catch (err) {
+    console.warn("[StoreSettings] Error checking auto_add_to_live_cart:", err);
+    return true;
   }
 }
 var init_storeSettingsService = __esm({
@@ -10665,6 +10680,17 @@ var init_ocrScanQueue = __esm({
 });
 
 // src/services/waAdminEscalationService.ts
+var waAdminEscalationService_exports = {};
+__export(waAdminEscalationService_exports, {
+  maybeEscalate: () => maybeEscalate,
+  notifyAdminOfCustomerConfirmation: () => notifyAdminOfCustomerConfirmation,
+  notifyAdminOfLiveCartAdd: () => notifyAdminOfLiveCartAdd,
+  notifyAdminOfNonAllopathic: () => notifyAdminOfNonAllopathic,
+  notifyAdminOfUnmatchedQuery: () => notifyAdminOfUnmatchedQuery,
+  notifyAdminOfUnprocessedMedia: () => notifyAdminOfUnprocessedMedia,
+  resolveAdminWhatsappNumber: () => resolveAdminWhatsappNumber,
+  waAdminEscalationService: () => waAdminEscalationService
+});
 async function resolvePhone(db2, raw, chatId, customerPhone) {
   const strip = (p) => {
     let s = String(p || "").trim();
@@ -11127,6 +11153,72 @@ async function notifyAdminOfCustomerConfirmation(payload) {
     console.error("[Admin Escalation] Error in notifyAdminOfCustomerConfirmation:", err);
   }
 }
+async function notifyAdminOfLiveCartAdd(payload) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const guard = await escalateGuard(db2, payload.phone, payload.customer?.phone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+    const { display: displayPhone, waDigits } = await resolvePhone(db2, payload.phone, payload.chatId, payload.customer?.phone);
+    const phoneLine = waDigits ? `${displayPhone} (https://wa.me/${waDigits})` : displayPhone;
+    const custName = payload.customer?.name || "Customer";
+    const itemsList = payload.items.map((it) => {
+      const rateStr = it.rate ? ` | PTR: \u20B9${Number(it.rate).toFixed(2)}` : "";
+      const mrpStr = it.mrp ? ` | MRP: \u20B9${Number(it.mrp).toFixed(2)}` : "";
+      return `\u2022 *${it.name}* \xD7 ${it.quantity} \u2192 *${it.distributor}*${rateStr}${mrpStr}`;
+    }).join("\n");
+    let messageText = "";
+    if (payload.manualReview) {
+      messageText = `\u{1F4DD} *WhatsApp Order Received (Manual Cart Review)*
+
+\u{1F464} Customer: ${custName}
+\u{1F4DE} Phone: ${phoneLine}
+\u{1F4CB} Order Ref: #${payload.orderId || "WA-ORDER"}
+
+Medicines:
+${itemsList}
+
+Cart: \u23F8\uFE0F Auto Add OFF (Requires Manual Review)
+\u{1F4CB} Customer message: STAGED
+\u{1F512} Customer auto-send: OFF
+
+The order has been recorded and is ready for your manual review in Live Cart / Quick Assist.
+Customer communication is waiting in Staged Messages for manual review and sending.`;
+    } else if (payload.success) {
+      messageText = `\u{1F6D2} *WhatsApp Order Added to Live Cart*
+
+\u{1F464} Customer: ${custName}
+\u{1F4DE} Phone: ${phoneLine}
+\u{1F4CB} Order Ref: #${payload.orderId || "WA-ORDER"}
+
+Medicines:
+${itemsList}
+
+Cart: \u2705 Successfully Added to Pharmarack Live Cart
+\u{1F4CB} Customer message: STAGED
+\u{1F512} Customer auto-send: OFF
+
+The order has been added to the Live Cart.
+Customer communication is waiting in Staged Messages for manual review and sending.`;
+    } else {
+      messageText = `\u26A0\uFE0F *WhatsApp Order Requires Attention*
+
+\u{1F464} Customer: ${custName}
+\u{1F4DE} Phone: ${phoneLine}
+\u{1F4CB} Order Ref: #${payload.orderId || "WA-ORDER"}
+
+Medicines:
+${itemsList}
+
+Pharmarack Cart: \u274C Add failed (${payload.error || "Cart error"})
+Action required in application.`;
+    }
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, "admin_escalation_cart_add", "Admin / Store Owner");
+    console.log(`[Admin Escalation] Live Cart add alert sent to admin for order #${payload.orderId}.`);
+  } catch (err) {
+    console.error("[Admin Escalation] Error in notifyAdminOfLiveCartAdd:", err);
+  }
+}
 var ADMIN_PHONE_SETTING_KEYS, waAdminEscalationService;
 var init_waAdminEscalationService = __esm({
   "src/services/waAdminEscalationService.ts"() {
@@ -11140,310 +11232,9 @@ var init_waAdminEscalationService = __esm({
       resolveAdminWhatsappNumber,
       notifyAdminOfNonAllopathic,
       notifyAdminOfUnmatchedQuery,
-      notifyAdminOfCustomerConfirmation
+      notifyAdminOfCustomerConfirmation,
+      notifyAdminOfLiveCartAdd
     };
-  }
-});
-
-// src/services/startupSyncCoordinator.ts
-var StartupSyncCoordinator, startupSyncCoordinator;
-var init_startupSyncCoordinator = __esm({
-  "src/services/startupSyncCoordinator.ts"() {
-    "use strict";
-    StartupSyncCoordinator = class {
-      cartLoaded = false;
-      syncPending = true;
-      startupTime = Date.now();
-      maxTimeoutMs = 45e3;
-      resolveCallbacks = [];
-      timeoutHandle = null;
-      constructor() {
-        this.timeoutHandle = setTimeout(() => {
-          if (this.syncPending && !this.cartLoaded) {
-            console.log("[StartupSyncCoordinator] 45s startup window elapsed. Releasing background scanners.");
-            this.releaseWaiters();
-          }
-        }, this.maxTimeoutMs);
-      }
-      /**
-       * Called when Pharmarack cart items are successfully loaded or synchronized.
-       */
-      markCartLoaded() {
-        if (!this.cartLoaded) {
-          this.cartLoaded = true;
-          this.syncPending = false;
-          console.log(`[StartupSyncCoordinator] Pharmarack cart loaded successfully in ${Date.now() - this.startupTime}ms. Releasing scanners.`);
-          this.releaseWaiters();
-        }
-      }
-      /**
-       * Called by background workers (WhatsApp intent scanner, OCR queue, refill scanner)
-       * on cold boot to await cart readiness before processing new shortage scans.
-       */
-      async waitForCartSync() {
-        if (this.cartLoaded || !this.syncPending) {
-          return Promise.resolve();
-        }
-        if (Date.now() - this.startupTime >= this.maxTimeoutMs) {
-          this.releaseWaiters();
-          return Promise.resolve();
-        }
-        return new Promise((resolve) => {
-          this.resolveCallbacks.push(resolve);
-        });
-      }
-      /**
-       * Release all waiting promises.
-       */
-      releaseWaiters() {
-        this.syncPending = false;
-        if (this.timeoutHandle) {
-          clearTimeout(this.timeoutHandle);
-          this.timeoutHandle = null;
-        }
-        const callbacks = [...this.resolveCallbacks];
-        this.resolveCallbacks = [];
-        callbacks.forEach((cb) => {
-          try {
-            cb();
-          } catch (err) {
-            console.error("[StartupSyncCoordinator] Error in release waiter callback:", err);
-          }
-        });
-      }
-      /**
-       * Check if cart sync is complete.
-       */
-      isReady() {
-        return this.cartLoaded || !this.syncPending;
-      }
-      /**
-       * Get current sync status for UI alerting.
-       */
-      getStatus() {
-        const elapsed = Date.now() - this.startupTime;
-        const timedOut = !this.cartLoaded && elapsed >= this.maxTimeoutMs;
-        return {
-          cartLoaded: this.cartLoaded,
-          syncPending: this.syncPending && !timedOut,
-          elapsedMs: elapsed,
-          timedOut
-        };
-      }
-    };
-    startupSyncCoordinator = new StartupSyncCoordinator();
-  }
-});
-
-// scanGateAlgorithms.ts
-function countDocSigns(t) {
-  let n = 0;
-  for (const s of DOC_SIGNS) if (t.includes(s)) n++;
-  return n;
-}
-function hasStrongDoc(t) {
-  return STRONG_DOC_SIGNS.some((s) => t.includes(s));
-}
-function hasDoseForm(t) {
-  return DOSE_FORMS.some((f) => t.includes(f));
-}
-function hasStrength(t) {
-  return STRENGTH_RE.test(t);
-}
-function hasKnownApi(t, ctx) {
-  const set = ctx?.knownApis;
-  if (!set || set.size === 0) return false;
-  const tl = t.toLowerCase();
-  for (const a of set) {
-    if (a && tl.includes(a.toLowerCase())) return true;
-  }
-  return false;
-}
-var DOC_SIGNS, STRONG_DOC_SIGNS, DOSE_FORMS, STRENGTH_RE, GATE_VARIANTS;
-var init_scanGateAlgorithms = __esm({
-  "scanGateAlgorithms.ts"() {
-    "use strict";
-    init_intentKeywords();
-    DOC_SIGNS = [
-      "invoice",
-      "bill no",
-      "booking",
-      "ticket",
-      "train",
-      "flight",
-      "pnr",
-      "rail",
-      "journey",
-      "boarding",
-      "passenger",
-      "fare",
-      "seat",
-      "berth",
-      "airline",
-      "bank",
-      "payment",
-      "receipt",
-      "statement",
-      "aadhaar",
-      "aadhar",
-      "pan card",
-      "gst",
-      "tax invoice",
-      "salary",
-      "payslip",
-      "order id",
-      "tracking",
-      "courier",
-      "transaction",
-      "upi",
-      "neft",
-      "imps",
-      "shipment",
-      "waybill",
-      "consignment",
-      "biscuit",
-      "chocolate",
-      "snack",
-      "shampoo",
-      "soap",
-      "detergent",
-      "namkeen",
-      "chips",
-      "restaurant",
-      "menu",
-      "hotel",
-      "wb.",
-      "wb ",
-      "pnr no"
-    ];
-    STRONG_DOC_SIGNS = [
-      "invoice",
-      "booking",
-      "ticket",
-      "train",
-      "flight",
-      "pnr",
-      "rail",
-      "boarding",
-      "passenger",
-      "fare",
-      "berth",
-      "airline",
-      "bank",
-      "payment",
-      "receipt",
-      "statement",
-      "aadhaar",
-      "aadhar",
-      "gst",
-      "tax invoice",
-      "salary",
-      "payslip",
-      "tracking",
-      "courier",
-      "transaction",
-      "upi",
-      "neft",
-      "imps",
-      "shipment",
-      "waybill",
-      "consignment"
-    ];
-    DOSE_FORMS = [
-      "tablet",
-      "tablets",
-      "tab",
-      "capsule",
-      "capsules",
-      "cap",
-      "syrup",
-      "syp",
-      "liquid",
-      "oral solution",
-      "solution",
-      "suspension",
-      "susp",
-      "injection",
-      "inj",
-      "drops",
-      "drop",
-      "eye drop",
-      "ear drop",
-      "ointment",
-      "oint",
-      "cream",
-      "gel",
-      "lotion",
-      "powder",
-      "spray",
-      "inhaler",
-      "sachet",
-      "tonic",
-      "elixir"
-    ];
-    STRENGTH_RE = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|%|w\/v|wv|gm)(?:\s*\/\s*(?:ml|g|gm))?\b/i;
-    GATE_VARIANTS = [
-      {
-        id: "V1",
-        name: "Conservative",
-        description: "Adds: any plausible name. Skips: only when a plausible name is missing AND >=2 weak doc signs. Fewest skips.",
-        decide(ocrText, potentialName, ctx) {
-          const name = (potentialName || "").trim();
-          if (!name || !isPlausibleMedicineName(name)) return "skip";
-          if (countDocSigns(ocrText.toLowerCase()) >= 2) return "skip";
-          return "identify";
-        }
-      },
-      {
-        id: "V2",
-        name: "Signal-Required",
-        description: "Adds: only when OCR shows a dose-form OR strength OR known API. Skips: plausible name without any medicine signal (aggressive skip).",
-        decide(ocrText, potentialName, ctx) {
-          const name = (potentialName || "").trim();
-          if (!name || !isPlausibleMedicineName(name)) return "skip";
-          const t = ocrText.toLowerCase();
-          if (hasStrongDoc(t)) return "skip";
-          const nameLower = name.toLowerCase();
-          const isKnownName = Boolean(ctx?.knownApis && (ctx.knownApis.has(nameLower) || hasKnownApi(nameLower, ctx)));
-          const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName;
-          return hasSignal ? "identify" : "skip";
-        }
-      },
-      {
-        id: "V3",
-        name: "Doc-Strict",
-        description: "Adds: any plausible name. Skips: if ANY strong document sign present (invoice/booking/train/bank/...).",
-        decide(ocrText, potentialName, ctx) {
-          const name = (potentialName || "").trim();
-          if (!name || !isPlausibleMedicineName(name)) return "skip";
-          if (hasStrongDoc(ocrText.toLowerCase())) return "skip";
-          return "identify";
-        }
-      },
-      {
-        id: "V4",
-        name: "Hybrid-Balanced",
-        description: "Adds: any plausible name. Skips: if >=1 doc sign (any). Middle ground between V1 and V3.",
-        decide(ocrText, potentialName, ctx) {
-          const name = (potentialName || "").trim();
-          if (!name || !isPlausibleMedicineName(name)) return "skip";
-          if (countDocSigns(ocrText.toLowerCase()) >= 1) return "skip";
-          return "identify";
-        }
-      },
-      {
-        id: "V5",
-        name: "Dictionary-First",
-        description: "Adds: only when OCR contains a known API (from medicine_reference) OR both dose-form AND strength. Skips: everything else. Most strict.",
-        decide(ocrText, potentialName, ctx) {
-          const name = (potentialName || "").trim();
-          if (!name || !isPlausibleMedicineName(name)) return "skip";
-          const t = ocrText.toLowerCase();
-          const ok = hasKnownApi(t, ctx) || hasDoseForm(t) && hasStrength(t);
-          return ok ? "identify" : "skip";
-        }
-      }
-    ];
   }
 });
 
@@ -24987,6 +24778,96 @@ var init_distributorDispatchReminderWorker = __esm({
   }
 });
 
+// src/services/startupSyncCoordinator.ts
+var StartupSyncCoordinator, startupSyncCoordinator;
+var init_startupSyncCoordinator = __esm({
+  "src/services/startupSyncCoordinator.ts"() {
+    "use strict";
+    StartupSyncCoordinator = class {
+      cartLoaded = false;
+      syncPending = true;
+      startupTime = Date.now();
+      maxTimeoutMs = 45e3;
+      resolveCallbacks = [];
+      timeoutHandle = null;
+      constructor() {
+        this.timeoutHandle = setTimeout(() => {
+          if (this.syncPending && !this.cartLoaded) {
+            console.log("[StartupSyncCoordinator] 45s startup window elapsed. Releasing background scanners.");
+            this.releaseWaiters();
+          }
+        }, this.maxTimeoutMs);
+      }
+      /**
+       * Called when Pharmarack cart items are successfully loaded or synchronized.
+       */
+      markCartLoaded() {
+        if (!this.cartLoaded) {
+          this.cartLoaded = true;
+          this.syncPending = false;
+          console.log(`[StartupSyncCoordinator] Pharmarack cart loaded successfully in ${Date.now() - this.startupTime}ms. Releasing scanners.`);
+          this.releaseWaiters();
+        }
+      }
+      /**
+       * Called by background workers (WhatsApp intent scanner, OCR queue, refill scanner)
+       * on cold boot to await cart readiness before processing new shortage scans.
+       */
+      async waitForCartSync() {
+        if (this.cartLoaded || !this.syncPending) {
+          return Promise.resolve();
+        }
+        if (Date.now() - this.startupTime >= this.maxTimeoutMs) {
+          this.releaseWaiters();
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          this.resolveCallbacks.push(resolve);
+        });
+      }
+      /**
+       * Release all waiting promises.
+       */
+      releaseWaiters() {
+        this.syncPending = false;
+        if (this.timeoutHandle) {
+          clearTimeout(this.timeoutHandle);
+          this.timeoutHandle = null;
+        }
+        const callbacks = [...this.resolveCallbacks];
+        this.resolveCallbacks = [];
+        callbacks.forEach((cb) => {
+          try {
+            cb();
+          } catch (err) {
+            console.error("[StartupSyncCoordinator] Error in release waiter callback:", err);
+          }
+        });
+      }
+      /**
+       * Check if cart sync is complete.
+       */
+      isReady() {
+        return this.cartLoaded || !this.syncPending;
+      }
+      /**
+       * Get current sync status for UI alerting.
+       */
+      getStatus() {
+        const elapsed = Date.now() - this.startupTime;
+        const timedOut = !this.cartLoaded && elapsed >= this.maxTimeoutMs;
+        return {
+          cartLoaded: this.cartLoaded,
+          syncPending: this.syncPending && !timedOut,
+          elapsedMs: elapsed,
+          timedOut
+        };
+      }
+    };
+    startupSyncCoordinator = new StartupSyncCoordinator();
+  }
+});
+
 // src/services/medicineSalesMetricsService.ts
 var medicineSalesMetricsService_exports = {};
 __export(medicineSalesMetricsService_exports, {
@@ -25671,10 +25552,13 @@ var init_stockCalculatorWorker = __esm({
 // src/routes/pharmarack.ts
 var pharmarack_exports = {};
 __export(pharmarack_exports, {
+  addItemsToPharmarackCart: () => addItemsToPharmarackCart,
   adjustSpecialOrderInLiveCart: () => adjustSpecialOrderInLiveCart,
   default: () => pharmarack_default,
   invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
+  isItemInStock: () => isItemInStock,
   performPharmarackSearch: () => performPharmarackSearch,
+  resolveCommonOrFrequentDistributor: () => resolveCommonOrFrequentDistributor,
   warmupStartupCart: () => warmupStartupCart
 });
 function findChromePath2() {
@@ -26275,6 +26159,308 @@ async function warmupStartupCart() {
     console.warn("[StartupSync] Boot cart warm-up could not load live cart:", err?.message || err);
   } finally {
     isWarmingUpCart = false;
+  }
+}
+function isItemInStock(stockVal) {
+  if (stockVal === null || stockVal === void 0 || stockVal === "") return false;
+  if (typeof stockVal === "number") {
+    return !isNaN(stockVal) && stockVal > 0;
+  }
+  const str = String(stockVal).trim().toLowerCase();
+  if (["0", "out of stock", "oos", "nil", "none", "false", "no", "unavailable"].includes(str)) {
+    return false;
+  }
+  const num = parseFloat(str);
+  if (!isNaN(num)) {
+    return num > 0;
+  }
+  return true;
+}
+async function resolveCommonOrFrequentDistributor(db2, candidateDistributors) {
+  if (!candidateDistributors || candidateDistributors.length === 0) return null;
+  if (candidateDistributors.length === 1) return candidateDistributors[0];
+  try {
+    const liveCartPromise = loadLiveCartCore();
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
+    const liveCart = await Promise.race([liveCartPromise, timeoutPromise]).catch(() => null);
+    if (liveCart && Array.isArray(liveCart.distributors) && liveCart.distributors.length > 0) {
+      for (const cartDist of liveCart.distributors) {
+        if (!cartDist.items || cartDist.items.length === 0) continue;
+        const matched = candidateDistributors.find(
+          (c) => Number(c.storeId) > 0 && Number(c.storeId) === Number(cartDist.storeId) || c.storeName && cartDist.storeName && c.storeName.trim().toLowerCase() === cartDist.storeName.trim().toLowerCase()
+        );
+        if (matched) {
+          return matched;
+        }
+      }
+    }
+  } catch (_) {
+  }
+  try {
+    if (db2) {
+      const rows = await db2.all(`
+        SELECT d.name, COUNT(p.id) as order_count 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY order_count DESC
+      `).catch(() => []);
+      for (const row of rows) {
+        const rowName = String(row.name || "").trim().toLowerCase();
+        const matched = candidateDistributors.find((c) => {
+          const cName = c.storeName.trim().toLowerCase();
+          return cName === rowName || cName.includes(rowName) || rowName.includes(cName);
+        });
+        if (matched) {
+          return matched;
+        }
+      }
+    }
+  } catch (_) {
+  }
+  return candidateDistributors[0];
+}
+async function addItemsToPharmarackCart(items) {
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return { success: false, error: "No items provided" };
+  }
+  const settings = await getPharmarackSettings();
+  const token = settings["pharmarack_session_token"] || "";
+  if (!token) {
+    if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+      return {
+        success: true,
+        offline: true,
+        message: "Item saved to distributor cart (offline mode). Sync will occur when connected."
+      };
+    }
+    return { success: false, error: "Need to login to Pharmarack to add items to cart", code: "NEED_LOGIN" };
+  }
+  for (const item of items) {
+    if (!item.productCode || !item.productName) {
+      for (const [_, cacheEntry] of searchCache.entries()) {
+        const matched = cacheEntry.data.find((p) => p.productId === item.productId && p.storeId === item.storeId);
+        if (matched) {
+          item.productCode = matched.productCode;
+          item.productName = matched.name;
+          item.storeName = matched.distributor;
+          item.company = matched.company;
+          item.mrp = matched.mrp;
+          item.rate = matched.rate;
+          break;
+        }
+      }
+    }
+    const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
+    if (!hasValidId && token) {
+      try {
+        let cleanKeyword = (item.productName || item.product || item.name || "").trim();
+        cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
+        const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
+        const wantName = norm(cleanKeyword);
+        const wantStore = String(item.storeName || "").toLowerCase().trim();
+        if (wantName) {
+          let best = null;
+          let bestIsStoreMatch = false;
+          for (const [_, cacheEntry] of searchCache.entries()) {
+            for (const p of cacheEntry.data || []) {
+              const nShort = norm(p.shortName || p.name);
+              const nFull = norm(p.fullName || p.name);
+              if (nShort !== wantName && nFull !== wantName) continue;
+              const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
+              if (!best || storeMatch && !bestIsStoreMatch) {
+                best = p;
+                bestIsStoreMatch = storeMatch;
+              }
+              if (bestIsStoreMatch) break;
+            }
+            if (bestIsStoreMatch) break;
+          }
+          if (best) {
+            item.productId = Number(best.productId || item.productId || 0);
+            item.storeId = Number(best.storeId || item.storeId || 0);
+            item.productCode = best.productCode || item.productCode || "";
+            item.storeName = best.distributor || item.storeName || "";
+            item.company = best.company || item.company || "";
+            item.mrp = Number(best.mrp || item.mrp || 0);
+            item.rate = Number(best.rate || item.rate || 0);
+            continue;
+          }
+        }
+        if (cleanKeyword) {
+          const searchPayload = {
+            SearchKeyword: cleanKeyword,
+            StoreId: item.storeId ? [Number(item.storeId)] : [],
+            NonMappedStoreId: [],
+            Count: 10,
+            SkipCount: 0,
+            isMappedSearch: null,
+            IsStock: 2,
+            IsScheme: 2,
+            IsSort: 1,
+            CartSource: "MOVP"
+          };
+          const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
+            method: "POST",
+            body: JSON.stringify(searchPayload),
+            signal: AbortSignal.timeout(4e3)
+          });
+          if (searchRes.ok) {
+            const searchData = await searchRes.json().catch(() => null);
+            if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+              const matched = searchData.data.find(
+                (p) => (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) && Number(p.StoreId) === Number(item.storeId)
+              ) || searchData.data.find((p) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
+              if (matched) {
+                item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
+                item.storeId = Number(matched.StoreId || item.storeId || 0);
+                item.productCode = matched.ProductCode || item.productCode || "";
+                item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || "";
+                item.storeName = matched.StoreName || item.storeName || "";
+                item.company = matched.Company || item.company || "";
+                item.mrp = Number(matched.MRP || item.mrp || 0);
+                item.rate = Number(matched.PTR || item.rate || 0);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("On-the-fly search enrichment failed:", err);
+      }
+    }
+  }
+  let cartSuccess = false;
+  let lastError = "";
+  try {
+    for (const item of items) {
+      const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
+      const payload = {
+        StoreId: Number(item.storeId) || 0,
+        StoreName: item.storeName || "",
+        ProductCode: item.productCode || "",
+        Quantity: Number(item.qty || item.Quantity || 1),
+        PTR: rateVal,
+        Free: 0,
+        HiddenPTR: rateVal,
+        NetRate: rateVal,
+        Scheme: item.scheme || "",
+        SchemeType: "",
+        GSTPercentage: 0,
+        ItemGSTValue: 0,
+        CartSource: "MOVP",
+        DeliveryOption: "",
+        RemarkForStore: "",
+        ProductAddedBy: 0,
+        Priority: "",
+        OrderPlaced: 0,
+        OrderPlacedBy: 0,
+        CreatedBy: 0,
+        ProductName: item.productName || item.product || "",
+        StoreProductName: item.productName || item.product || "",
+        StoreWiseAmount: 0,
+        StoreWiseGSTAmount: 0,
+        IsDeleted: 0,
+        AllowMinQty: 0,
+        AllowMaxQty: 0,
+        StepUpValue: 1,
+        AllowMOQ: true,
+        MinItemLimit: 0,
+        MaxItemLimit: 0,
+        MinAmountLimit: 0,
+        MaxAmountLimit: 0,
+        DODIsPrefenceSet: 0,
+        IsDODPreferenceSet: 0,
+        DisplayHalfSchemeOn: "",
+        DisplayHalfScheme: "0",
+        RetailerSchemePreference: 1,
+        HalfSchemeValueToRetailer: 0,
+        RoundOffDisplayHS: "",
+        MinOrderQuantity: 0,
+        MaxOrderQuantity: 0,
+        IsDODProduct: 0,
+        IsDODProductCheck: 0,
+        IsDODProductSelected: 0,
+        OrderDeliveryModeStatus: 1,
+        OrderRemarks: 1,
+        SpecialRate: 0,
+        Stock: 999,
+        RShowPtr: 1,
+        IsPartyLocked: 0,
+        RewardSchemeId: 0,
+        IsProductChecked: 1,
+        DeliveryPerson: "",
+        DeliveryPersonCode: "",
+        RShowPtrForAllCompanies: 1,
+        Company: item.company || "",
+        IsGroupWisePTR: 0,
+        IsGroupWisePTRRetailer: 0,
+        RateValidity: null,
+        IsShowNonMappedOrderStock: 1,
+        RStockVisibility: 0,
+        IsMapped: item.mapped === false || item.isMapped === false ? 0 : 1,
+        ProductId: (() => {
+          const v = item.productId;
+          if (!v) return 0;
+          const n = Number(v);
+          if (!isNaN(n) && n > 0) return n;
+          const stripped = String(v).replace(/^PR/i, "");
+          const sn = Number(stripped);
+          return !isNaN(sn) && sn > 0 ? sn : 0;
+        })(),
+        MRP: String(item.mrp || 0),
+        ProductWiseAmount: 0,
+        ProductWiseGSTAmount: 0,
+        ProductWiseSchemeAmount: 0,
+        ProductWiseSchemeGSTAmount: 0,
+        StoreWiseSchemeAmount: 0,
+        StoreWiseSchemeGSTAmount: 0,
+        ProductLock: 0,
+        BoxPacking: "0",
+        CasePacking: item.packaging || item.Packing || "1 strip",
+        Packing: item.packaging || item.Packing || "1 strip"
+      };
+      const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15e3)
+      });
+      if (response.ok) {
+        const resJson = await response.json().catch(() => ({}));
+        const isOk = resJson && (resJson.StatusCode === 200 || resJson.statusCode === 200 || String(resJson.StatusCode) === "200" || resJson.status === 200 || resJson.status === "success" || resJson.success === true || resJson.Message && String(resJson.Message).toLowerCase().includes("success") || resJson.message && String(resJson.message).toLowerCase().includes("success"));
+        if (isOk) {
+          cartSuccess = true;
+        } else {
+          lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
+          cartSuccess = false;
+          break;
+        }
+      } else {
+        const errText = await response.text().catch(() => "");
+        lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
+        cartSuccess = false;
+        break;
+      }
+    }
+  } catch (err) {
+    lastError = err.message;
+    cartSuccess = false;
+  }
+  if (!cartSuccess) {
+    console.warn("[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:", lastError);
+  }
+  if (cartSuccess) {
+    invalidatePharmarackCartCache();
+    eventService.broadcast("pharmarack_cart_changed", { action: "add", at: Date.now() });
+    return { success: true, message: "Successfully added to Pharmarack cart!", mode: "Live" };
+  } else {
+    if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
+      return {
+        success: true,
+        offline: true,
+        message: "Item saved to distributor cart (offline mode)."
+      };
+    }
+    return { success: false, error: "Failed to add items to actual Pharmarack cart", details: lastError };
   }
 }
 async function executeSingleItemDelete(item) {
@@ -26887,244 +27073,14 @@ var init_pharmarack = __esm({
         return res.status(400).json({ error: "No items provided" });
       }
       try {
-        const settings = await getPharmarackSettings();
-        const token = settings["pharmarack_session_token"] || "";
-        if (!token) {
-          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-            return res.json({
-              success: true,
-              offline: true,
-              message: "Item saved to distributor cart (offline mode). Sync will occur when connected."
-            });
-          }
-          return res.status(401).json({ error: "Need to login to Pharmarack to add items to cart", code: "NEED_LOGIN" });
+        const result = await addItemsToPharmarackCart(items);
+        if (result.success) {
+          return res.json(result);
         }
-        for (const item of items) {
-          if (!item.productCode || !item.productName) {
-            for (const [_, cacheEntry] of searchCache.entries()) {
-              const matched = cacheEntry.data.find((p) => p.productId === item.productId && p.storeId === item.storeId);
-              if (matched) {
-                item.productCode = matched.productCode;
-                item.productName = matched.name;
-                item.storeName = matched.distributor;
-                item.company = matched.company;
-                item.mrp = matched.mrp;
-                item.rate = matched.rate;
-                break;
-              }
-            }
-          }
-          const hasValidId = Boolean(item.productId) && Number(item.productId) > 0;
-          if (!hasValidId && token) {
-            try {
-              let cleanKeyword = (item.productName || item.product || item.name || "").trim();
-              cleanKeyword = cleanKeyword.replace(/\s*\([^)]*\)\s*$/, "").trim();
-              const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\([^)]*\)\s*$/, "").trim();
-              const wantName = norm(cleanKeyword);
-              const wantStore = String(item.storeName || "").toLowerCase().trim();
-              if (wantName) {
-                let best = null;
-                let bestIsStoreMatch = false;
-                for (const [_, cacheEntry] of searchCache.entries()) {
-                  for (const p of cacheEntry.data || []) {
-                    const nShort = norm(p.shortName || p.name);
-                    const nFull = norm(p.fullName || p.name);
-                    if (nShort !== wantName && nFull !== wantName) continue;
-                    const storeMatch = !wantStore || String(p.distributor || "").toLowerCase().includes(wantStore);
-                    if (!best || storeMatch && !bestIsStoreMatch) {
-                      best = p;
-                      bestIsStoreMatch = storeMatch;
-                    }
-                    if (bestIsStoreMatch) break;
-                  }
-                  if (bestIsStoreMatch) break;
-                }
-                if (best) {
-                  item.productId = Number(best.productId || item.productId || 0);
-                  item.storeId = Number(best.storeId || item.storeId || 0);
-                  item.productCode = best.productCode || item.productCode || "";
-                  item.storeName = best.distributor || item.storeName || "";
-                  item.company = best.company || item.company || "";
-                  item.mrp = Number(best.mrp || item.mrp || 0);
-                  item.rate = Number(best.rate || item.rate || 0);
-                  continue;
-                }
-              }
-              if (cleanKeyword) {
-                const searchPayload = {
-                  SearchKeyword: cleanKeyword,
-                  StoreId: item.storeId ? [Number(item.storeId)] : [],
-                  NonMappedStoreId: [],
-                  Count: 10,
-                  SkipCount: 0,
-                  isMappedSearch: null,
-                  IsStock: 2,
-                  IsScheme: 2,
-                  IsSort: 1,
-                  CartSource: "MOVP"
-                };
-                const searchRes = await fetchPharmarack("https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search", {
-                  method: "POST",
-                  body: JSON.stringify(searchPayload),
-                  signal: AbortSignal.timeout(4e3)
-                });
-                if (searchRes.ok) {
-                  const searchData = await searchRes.json().catch(() => null);
-                  if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
-                    const matched = searchData.data.find(
-                      (p) => (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) && Number(p.StoreId) === Number(item.storeId)
-                    ) || searchData.data.find((p) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
-                    if (matched) {
-                      item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
-                      item.storeId = Number(matched.StoreId || item.storeId || 0);
-                      item.productCode = matched.ProductCode || item.productCode || "";
-                      item.productName = matched.ProductName || matched.ProductFullName || item.productName || item.product || "";
-                      item.storeName = matched.StoreName || item.storeName || "";
-                      item.company = matched.Company || item.company || "";
-                      item.mrp = Number(matched.MRP || item.mrp || 0);
-                      item.rate = Number(matched.PTR || item.rate || 0);
-                    }
-                  }
-                }
-              }
-            } catch (err) {
-              console.error("On-the-fly search enrichment failed:", err);
-            }
-          }
+        if (result.code === "NEED_LOGIN") {
+          return res.status(401).json(result);
         }
-        let cartSuccess = false;
-        let lastError = "";
-        try {
-          for (const item of items) {
-            const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
-            const payload = {
-              StoreId: Number(item.storeId) || 0,
-              StoreName: item.storeName || "",
-              ProductCode: item.productCode || "",
-              Quantity: Number(item.qty || item.Quantity || 1),
-              PTR: rateVal,
-              Free: 0,
-              HiddenPTR: rateVal,
-              NetRate: rateVal,
-              Scheme: item.scheme || "",
-              SchemeType: "",
-              GSTPercentage: 0,
-              ItemGSTValue: 0,
-              CartSource: "MOVP",
-              DeliveryOption: "",
-              RemarkForStore: "",
-              ProductAddedBy: 0,
-              Priority: "",
-              OrderPlaced: 0,
-              OrderPlacedBy: 0,
-              CreatedBy: 0,
-              ProductName: item.productName || item.product || "",
-              StoreProductName: item.productName || item.product || "",
-              StoreWiseAmount: 0,
-              StoreWiseGSTAmount: 0,
-              IsDeleted: 0,
-              AllowMinQty: 0,
-              AllowMaxQty: 0,
-              StepUpValue: 1,
-              AllowMOQ: true,
-              MinItemLimit: 0,
-              MaxItemLimit: 0,
-              MinAmountLimit: 0,
-              MaxAmountLimit: 0,
-              DODIsPrefenceSet: 0,
-              IsDODPreferenceSet: 0,
-              DisplayHalfSchemeOn: "",
-              DisplayHalfScheme: "0",
-              RetailerSchemePreference: 1,
-              HalfSchemeValueToRetailer: 0,
-              RoundOffDisplayHS: "",
-              MinOrderQuantity: 0,
-              MaxOrderQuantity: 0,
-              IsDODProduct: 0,
-              IsDODProductCheck: 0,
-              IsDODProductSelected: 0,
-              OrderDeliveryModeStatus: 1,
-              OrderRemarks: 1,
-              SpecialRate: 0,
-              Stock: 999,
-              RShowPtr: 1,
-              IsPartyLocked: 0,
-              RewardSchemeId: 0,
-              IsProductChecked: 1,
-              DeliveryPerson: "",
-              DeliveryPersonCode: "",
-              RShowPtrForAllCompanies: 1,
-              Company: item.company || "",
-              IsGroupWisePTR: 0,
-              IsGroupWisePTRRetailer: 0,
-              RateValidity: null,
-              IsShowNonMappedOrderStock: 1,
-              RStockVisibility: 0,
-              IsMapped: item.mapped === false || item.isMapped === false ? 0 : 1,
-              ProductId: (() => {
-                const v = item.productId;
-                if (!v) return 0;
-                const n = Number(v);
-                if (!isNaN(n) && n > 0) return n;
-                const stripped = String(v).replace(/^PR/i, "");
-                const sn = Number(stripped);
-                return !isNaN(sn) && sn > 0 ? sn : 0;
-              })(),
-              MRP: String(item.mrp || 0),
-              ProductWiseAmount: 0,
-              ProductWiseGSTAmount: 0,
-              ProductWiseSchemeAmount: 0,
-              ProductWiseSchemeGSTAmount: 0,
-              StoreWiseSchemeAmount: 0,
-              StoreWiseSchemeGSTAmount: 0,
-              ProductLock: 0,
-              BoxPacking: "0",
-              CasePacking: item.packaging || item.Packing || "1 strip",
-              Packing: item.packaging || item.Packing || "1 strip"
-            };
-            const response = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail", {
-              method: "POST",
-              body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(15e3)
-            });
-            if (response.ok) {
-              const resJson = await response.json().catch(() => ({}));
-              const isOk = resJson && (resJson.StatusCode === 200 || resJson.statusCode === 200 || String(resJson.StatusCode) === "200" || resJson.status === 200 || resJson.status === "success" || resJson.success === true || resJson.Message && String(resJson.Message).toLowerCase().includes("success") || resJson.message && String(resJson.message).toLowerCase().includes("success"));
-              if (isOk) {
-                cartSuccess = true;
-              } else {
-                lastError = `AddUserProductCartDetail response: ${resJson.message || resJson.Message || JSON.stringify(resJson)}`;
-                cartSuccess = false;
-                break;
-              }
-            } else {
-              const errText = await response.text().catch(() => "");
-              lastError = `AddUserProductCartDetail status: ${response.status}. Details: ${errText}`;
-              cartSuccess = false;
-              break;
-            }
-          }
-        } catch (err) {
-          lastError = err.message;
-          cartSuccess = false;
-        }
-        if (!cartSuccess) {
-          console.warn("[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:", lastError);
-        }
-        if (cartSuccess) {
-          invalidatePharmarackCartCache();
-          eventService.broadcast("pharmarack_cart_changed", { action: "add", at: Date.now() });
-          return res.json({ success: true, message: "Successfully added to Pharmarack cart!", mode: "Live" });
-        } else {
-          if (settings["combine_pharmarack_pharmacy_search"] !== "false") {
-            return res.json({
-              success: true,
-              offline: true,
-              message: "Item saved to distributor cart (offline mode)."
-            });
-          }
-          return res.status(503).json({ error: "Failed to add items to actual Pharmarack cart", details: lastError });
-        }
+        return res.status(503).json(result);
       } catch (err) {
         console.error("Pharmarack cart route error:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -28126,6 +28082,614 @@ var init_pharmarack = __esm({
   }
 });
 
+// scanGateAlgorithms.ts
+function countDocSigns(t) {
+  let n = 0;
+  for (const s of DOC_SIGNS) if (t.includes(s)) n++;
+  return n;
+}
+function hasStrongDoc(t) {
+  return STRONG_DOC_SIGNS.some((s) => t.includes(s));
+}
+function hasDoseForm(t) {
+  return DOSE_FORMS.some((f) => t.includes(f));
+}
+function hasStrength(t) {
+  return STRENGTH_RE.test(t);
+}
+function hasKnownApi(t, ctx) {
+  const set = ctx?.knownApis;
+  if (!set || set.size === 0) return false;
+  const tl = t.toLowerCase();
+  for (const a of set) {
+    if (a && tl.includes(a.toLowerCase())) return true;
+  }
+  return false;
+}
+var DOC_SIGNS, STRONG_DOC_SIGNS, DOSE_FORMS, STRENGTH_RE, GATE_VARIANTS;
+var init_scanGateAlgorithms = __esm({
+  "scanGateAlgorithms.ts"() {
+    "use strict";
+    init_intentKeywords();
+    DOC_SIGNS = [
+      "invoice",
+      "bill no",
+      "booking",
+      "ticket",
+      "train",
+      "flight",
+      "pnr",
+      "rail",
+      "journey",
+      "boarding",
+      "passenger",
+      "fare",
+      "seat",
+      "berth",
+      "airline",
+      "bank",
+      "payment",
+      "receipt",
+      "statement",
+      "aadhaar",
+      "aadhar",
+      "pan card",
+      "gst",
+      "tax invoice",
+      "salary",
+      "payslip",
+      "order id",
+      "tracking",
+      "courier",
+      "transaction",
+      "upi",
+      "neft",
+      "imps",
+      "shipment",
+      "waybill",
+      "consignment",
+      "biscuit",
+      "chocolate",
+      "snack",
+      "shampoo",
+      "soap",
+      "detergent",
+      "namkeen",
+      "chips",
+      "restaurant",
+      "menu",
+      "hotel",
+      "wb.",
+      "wb ",
+      "pnr no"
+    ];
+    STRONG_DOC_SIGNS = [
+      "invoice",
+      "booking",
+      "ticket",
+      "train",
+      "flight",
+      "pnr",
+      "rail",
+      "boarding",
+      "passenger",
+      "fare",
+      "berth",
+      "airline",
+      "bank",
+      "payment",
+      "receipt",
+      "statement",
+      "aadhaar",
+      "aadhar",
+      "gst",
+      "tax invoice",
+      "salary",
+      "payslip",
+      "tracking",
+      "courier",
+      "transaction",
+      "upi",
+      "neft",
+      "imps",
+      "shipment",
+      "waybill",
+      "consignment"
+    ];
+    DOSE_FORMS = [
+      "tablet",
+      "tablets",
+      "tab",
+      "capsule",
+      "capsules",
+      "cap",
+      "syrup",
+      "syp",
+      "liquid",
+      "oral solution",
+      "solution",
+      "suspension",
+      "susp",
+      "injection",
+      "inj",
+      "drops",
+      "drop",
+      "eye drop",
+      "ear drop",
+      "ointment",
+      "oint",
+      "cream",
+      "gel",
+      "lotion",
+      "powder",
+      "spray",
+      "inhaler",
+      "sachet",
+      "tonic",
+      "elixir"
+    ];
+    STRENGTH_RE = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|%|w\/v|wv|gm)(?:\s*\/\s*(?:ml|g|gm))?\b/i;
+    GATE_VARIANTS = [
+      {
+        id: "V1",
+        name: "Conservative",
+        description: "Adds: any plausible name. Skips: only when a plausible name is missing AND >=2 weak doc signs. Fewest skips.",
+        decide(ocrText, potentialName, ctx) {
+          const name = (potentialName || "").trim();
+          if (!name || !isPlausibleMedicineName(name)) return "skip";
+          if (countDocSigns(ocrText.toLowerCase()) >= 2) return "skip";
+          return "identify";
+        }
+      },
+      {
+        id: "V2",
+        name: "Signal-Required",
+        description: "Adds: only when OCR shows a dose-form OR strength OR known API. Skips: plausible name without any medicine signal (aggressive skip).",
+        decide(ocrText, potentialName, ctx) {
+          const name = (potentialName || "").trim();
+          if (!name || !isPlausibleMedicineName(name)) return "skip";
+          const t = ocrText.toLowerCase();
+          if (hasStrongDoc(t)) return "skip";
+          const nameLower = name.toLowerCase();
+          const isKnownName = Boolean(ctx?.knownApis && (ctx.knownApis.has(nameLower) || hasKnownApi(nameLower, ctx)));
+          const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName;
+          return hasSignal ? "identify" : "skip";
+        }
+      },
+      {
+        id: "V3",
+        name: "Doc-Strict",
+        description: "Adds: any plausible name. Skips: if ANY strong document sign present (invoice/booking/train/bank/...).",
+        decide(ocrText, potentialName, ctx) {
+          const name = (potentialName || "").trim();
+          if (!name || !isPlausibleMedicineName(name)) return "skip";
+          if (hasStrongDoc(ocrText.toLowerCase())) return "skip";
+          return "identify";
+        }
+      },
+      {
+        id: "V4",
+        name: "Hybrid-Balanced",
+        description: "Adds: any plausible name. Skips: if >=1 doc sign (any). Middle ground between V1 and V3.",
+        decide(ocrText, potentialName, ctx) {
+          const name = (potentialName || "").trim();
+          if (!name || !isPlausibleMedicineName(name)) return "skip";
+          if (countDocSigns(ocrText.toLowerCase()) >= 1) return "skip";
+          return "identify";
+        }
+      },
+      {
+        id: "V5",
+        name: "Dictionary-First",
+        description: "Adds: only when OCR contains a known API (from medicine_reference) OR both dose-form AND strength. Skips: everything else. Most strict.",
+        decide(ocrText, potentialName, ctx) {
+          const name = (potentialName || "").trim();
+          if (!name || !isPlausibleMedicineName(name)) return "skip";
+          const t = ocrText.toLowerCase();
+          const ok = hasKnownApi(t, ctx) || hasDoseForm(t) && hasStrength(t);
+          return ok ? "identify" : "skip";
+        }
+      }
+    ];
+  }
+});
+
+// src/services/orderScheduleService.ts
+var orderScheduleService_exports = {};
+__export(orderScheduleService_exports, {
+  OrderScheduleService: () => OrderScheduleService,
+  orderScheduleService: () => orderScheduleService
+});
+var OrderScheduleService, orderScheduleService;
+var init_orderScheduleService = __esm({
+  "src/services/orderScheduleService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    OrderScheduleService = class {
+      /**
+       * Load store/pharmacy timing configuration from app_settings and store_settings.
+       */
+      async getTimingConfig(dbOrStoreId, storeIdOrDb) {
+        let db2;
+        let storeId = 1;
+        if (dbOrStoreId && typeof dbOrStoreId.all === "function") {
+          db2 = dbOrStoreId;
+          if (typeof storeIdOrDb === "number") storeId = storeIdOrDb;
+        } else if (typeof dbOrStoreId === "number") {
+          storeId = dbOrStoreId;
+          if (storeIdOrDb && typeof storeIdOrDb.all === "function") {
+            db2 = storeIdOrDb;
+          }
+        } else {
+          db2 = await dbManager.getConnection();
+        }
+        try {
+          const rows = await db2.all("SELECT key, value FROM app_settings");
+          const settingsMap = {};
+          for (const r of rows) {
+            settingsMap[r.key] = r.value;
+          }
+          if (storeId > 0) {
+            try {
+              const storeRows = await db2.all("SELECT key, value FROM store_settings WHERE store_id = ?", [storeId]);
+              for (const sr of storeRows) {
+                settingsMap[sr.key] = sr.value;
+              }
+            } catch (_) {
+            }
+          }
+          return {
+            orderCutoffTime: settingsMap["pharmacy_cutoff_time"] || settingsMap["order_cutoff_time"] || "23:00",
+            sameDayDeliveryEnabled: settingsMap["same_day_delivery_enabled"] !== "false",
+            deliveryStartTime: settingsMap["delivery_window_start"] || settingsMap["delivery_start_time"] || "19:00",
+            deliveryEndTime: settingsMap["delivery_window_end"] || settingsMap["delivery_end_time"] || "21:00",
+            operatesSunday: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["operates_sunday"] === "true" || settingsMap["sunday_delivery"] === "true",
+            sundayDelivery: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["sunday_delivery"] === "true",
+            sundayWindowStart: settingsMap["sunday_window_start"] || "10:00",
+            sundayWindowEnd: settingsMap["sunday_window_end"] || "14:00",
+            holidayDelivery: settingsMap["holiday_delivery_enabled"] === "true" || settingsMap["holiday_delivery"] === "true",
+            holidayHandling: settingsMap["holiday_handling"] || "next_available_day",
+            is24Hours: settingsMap["is_24_hours"] === "true",
+            pharmacyTimezone: settingsMap["pharmacy_timezone"] || "Asia/Kolkata",
+            returnWindowDays: parseInt(settingsMap["return_window_days"] || "15", 10) || 15,
+            refillPauseAffectsDate: settingsMap["refill_pause_recalculation_enabled"] !== "false" && settingsMap["refill_pause_affects_date"] !== "false"
+          };
+        } catch (err) {
+          console.warn("[OrderScheduleService] Error fetching timing config, using defaults:", err);
+          return {
+            orderCutoffTime: "23:00",
+            sameDayDeliveryEnabled: true,
+            deliveryStartTime: "19:00",
+            deliveryEndTime: "21:00",
+            operatesSunday: false,
+            sundayDelivery: false,
+            sundayWindowStart: "10:00",
+            sundayWindowEnd: "14:00",
+            holidayDelivery: false,
+            holidayHandling: "next_available_day",
+            is24Hours: false,
+            pharmacyTimezone: "Asia/Kolkata",
+            returnWindowDays: 15,
+            refillPauseAffectsDate: true
+          };
+        }
+      }
+      /**
+       * Helper to format time strings (e.g. "19:00" -> "7:00 PM")
+       */
+      formatTime12h(timeStr) {
+        const [hStr, mStr] = (timeStr || "00:00").split(":");
+        let h = parseInt(hStr, 10) || 0;
+        const m = parseInt(mStr, 10) || 0;
+        const ampm = h >= 12 ? "PM" : "AM";
+        h = h % 12 || 12;
+        const mDisplay = m > 0 ? `:${m < 10 ? "0" : ""}${m}` : ":00";
+        return `${h}${mDisplay} ${ampm}`;
+      }
+      /**
+       * Format date as YYYY-MM-DD
+       */
+      formatDateYMD(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const d = String(dateObj.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      /**
+       * Helper to decompose a date into year, month, day, hour, minute, dayOfWeek for the pharmacy timezone.
+       */
+      getTimezoneParts(date, timeZone = "Asia/Kolkata") {
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+          weekday: "short"
+        });
+        const parts = formatter.formatToParts(date);
+        const map = {};
+        for (const p of parts) {
+          map[p.type] = p.value;
+        }
+        const year = parseInt(map.year, 10);
+        const month = parseInt(map.month, 10);
+        const day = parseInt(map.day, 10);
+        let hour = parseInt(map.hour, 10);
+        if (hour === 24) hour = 0;
+        const minute = parseInt(map.minute, 10);
+        const ymd = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const dayOfWeek = weekdayMap[map.weekday] ?? 0;
+        return { year, month, day, hour, minute, ymd, dayOfWeek };
+      }
+      /**
+       * Helper to format YYYY-MM-DD and HH:mm with IST timezone into ISO string.
+       */
+      combineYmdAndTime(ymd, timeStr, timeZone = "Asia/Kolkata") {
+        const [hStr, mStr] = (timeStr || "00:00").split(":");
+        const h = String(parseInt(hStr, 10) || 0).padStart(2, "0");
+        const m = String(parseInt(mStr, 10) || 0).padStart(2, "0");
+        return (/* @__PURE__ */ new Date(`${ymd}T${h}:${m}:00+05:30`)).toISOString();
+      }
+      /**
+       * Core Single Scheduling Engine:
+       * Supports both positional args: calculateOrderSchedule(orderTime, storeId, db)
+       * and object options: calculateOrderSchedule({ storeId, orderCreatedAt, dbInstance })
+       */
+      async calculateOrderSchedule(orderCreatedAtOrOpts, storeIdArg, dbInstanceArg) {
+        let storeId = 1;
+        let orderCreatedAt = /* @__PURE__ */ new Date();
+        let db2 = null;
+        if (orderCreatedAtOrOpts instanceof Date || typeof orderCreatedAtOrOpts === "string") {
+          orderCreatedAt = orderCreatedAtOrOpts;
+          if (typeof storeIdArg === "number") {
+            storeId = storeIdArg;
+          }
+          if (dbInstanceArg) {
+            db2 = dbInstanceArg;
+          }
+        } else if (orderCreatedAtOrOpts && typeof orderCreatedAtOrOpts === "object") {
+          if (orderCreatedAtOrOpts.storeId !== void 0) storeId = orderCreatedAtOrOpts.storeId;
+          if (orderCreatedAtOrOpts.orderCreatedAt !== void 0) orderCreatedAt = orderCreatedAtOrOpts.orderCreatedAt;
+          if (orderCreatedAtOrOpts.dbInstance !== void 0) db2 = orderCreatedAtOrOpts.dbInstance;
+        } else if (typeof storeIdArg === "number") {
+          storeId = storeIdArg;
+          if (dbInstanceArg) db2 = dbInstanceArg;
+        }
+        if (!db2) {
+          db2 = await dbManager.getConnection();
+        }
+        const config2 = await this.getTimingConfig(db2, storeId);
+        const now = orderCreatedAt ? new Date(orderCreatedAt) : /* @__PURE__ */ new Date();
+        const nowIso = now.toISOString();
+        let holidays = [];
+        try {
+          holidays = await db2.all(
+            `SELECT * FROM pharmacy_holidays 
+         WHERE (store_id = ? OR store_id = 1)
+         ORDER BY holiday_date ASC`,
+            [storeId]
+          );
+        } catch (_) {
+        }
+        const holidayMap = /* @__PURE__ */ new Map();
+        for (const h of holidays) {
+          holidayMap.set(h.holiday_date, h);
+        }
+        const currentTzParts = this.getTimezoneParts(now, config2.pharmacyTimezone);
+        const todayYmd = currentTzParts.ymd;
+        const isTodaySunday = currentTzParts.dayOfWeek === 0;
+        const todayHoliday = holidayMap.get(todayYmd);
+        const isTodayHoliday = Boolean(todayHoliday);
+        const [cutoffH, cutoffM] = config2.orderCutoffTime.split(":").map((x) => parseInt(x, 10));
+        const cutoffPassed = !config2.is24Hours && (currentTzParts.hour > cutoffH || currentTzParts.hour === cutoffH && currentTzParts.minute >= cutoffM);
+        const sundayAllowed = config2.operatesSunday || config2.sundayDelivery;
+        const isTodayHolidayClosed = Boolean(
+          todayHoliday && (Number(todayHoliday.is_closed) === 1 || todayHoliday.is_closed === true) && !config2.holidayDelivery
+        );
+        let isNextDayCutoff = false;
+        let isSundayShift = false;
+        let isHolidayShift = false;
+        let scheduleStatus = "standard";
+        let primaryShiftReason = null;
+        if (cutoffPassed) {
+          isNextDayCutoff = true;
+          scheduleStatus = "post_cutoff";
+          primaryShiftReason = `Order placed after ${this.formatTime12h(config2.orderCutoffTime)} cutoff (post-cutoff rollover)`;
+        } else if (isTodaySunday && !sundayAllowed) {
+          isSundayShift = true;
+          scheduleStatus = "sunday_shift";
+          primaryShiftReason = "Pharmacy closed on Sundays (Sunday rollover)";
+        } else if (isTodayHolidayClosed) {
+          isHolidayShift = true;
+          const hName = todayHoliday?.holiday_name || todayHoliday?.name || "Public Holiday";
+          scheduleStatus = "holiday_shift";
+          primaryShiftReason = `Pharmacy closed for ${hName}`;
+        }
+        let isSameDay = false;
+        let targetDate = new Date(now);
+        let daysAdvanced = 0;
+        if (!isNextDayCutoff && !isSundayShift && !isHolidayShift) {
+          isSameDay = true;
+          scheduleStatus = "standard";
+          primaryShiftReason = null;
+        } else {
+          while (daysAdvanced < 14) {
+            daysAdvanced++;
+            targetDate.setDate(targetDate.getDate() + 1);
+            const targetParts2 = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
+            const isSun = targetParts2.dayOfWeek === 0;
+            const holidayRec = holidayMap.get(targetParts2.ymd);
+            const isHolClosed = Boolean(
+              holidayRec && (Number(holidayRec.is_closed) === 1 || holidayRec.is_closed === true) && !config2.holidayDelivery
+            );
+            if (isSun && !sundayAllowed) {
+              continue;
+            }
+            if (isHolClosed) {
+              continue;
+            }
+            break;
+          }
+        }
+        const targetParts = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
+        const isTargetSunday = targetParts.dayOfWeek === 0;
+        const targetHoliday = holidayMap.get(targetParts.ymd);
+        let deliveryStartTime = config2.deliveryStartTime;
+        let deliveryEndTime = config2.deliveryEndTime;
+        if (isTargetSunday && sundayAllowed) {
+          deliveryStartTime = config2.sundayWindowStart || "10:00";
+          deliveryEndTime = config2.sundayWindowEnd || "14:00";
+        } else if (targetHoliday && (Number(targetHoliday.is_closed) === 0 || targetHoliday.is_closed === false)) {
+          if (targetHoliday.custom_window_start || targetHoliday.open_time) {
+            deliveryStartTime = targetHoliday.custom_window_start || targetHoliday.open_time || deliveryStartTime;
+          }
+          if (targetHoliday.custom_window_end || targetHoliday.close_time) {
+            deliveryEndTime = targetHoliday.custom_window_end || targetHoliday.close_time || deliveryEndTime;
+          }
+        }
+        const estimatedDeliveryStart = this.combineYmdAndTime(targetParts.ymd, deliveryStartTime, config2.pharmacyTimezone);
+        const estimatedDeliveryEnd = this.combineYmdAndTime(targetParts.ymd, deliveryEndTime, config2.pharmacyTimezone);
+        const scheduledProcessingAt = this.combineYmdAndTime(targetParts.ymd, "08:00", config2.pharmacyTimezone);
+        const cutoffAt = this.combineYmdAndTime(currentTzParts.ymd, config2.orderCutoffTime, config2.pharmacyTimezone);
+        const dayLabel = isSameDay ? "Today" : daysAdvanced === 1 ? "Tomorrow" : new Intl.DateTimeFormat("en-IN", { timeZone: config2.pharmacyTimezone, weekday: "short", month: "short", day: "numeric" }).format(targetDate);
+        const formattedWindow = `${dayLabel}, ${this.formatTime12h(deliveryStartTime)} \u2013 ${this.formatTime12h(deliveryEndTime)}`;
+        return {
+          // CamelCase
+          isNextDayCutoff,
+          isSundayShift,
+          isHolidayShift,
+          cutoffTime: config2.orderCutoffTime,
+          estimatedDeliveryWindowFormatted: formattedWindow,
+          scheduledProcessingAt,
+          estimatedDeliveryStart,
+          estimatedDeliveryEnd,
+          cutoffAt,
+          timezone: config2.pharmacyTimezone,
+          scheduleStatus,
+          scheduleReason: primaryShiftReason,
+          scheduleVersion: 1,
+          calculatedAt: nowIso,
+          // Snake_case
+          is_next_day_cutoff: isNextDayCutoff,
+          is_sunday_shift: isSundayShift,
+          is_holiday_shift: isHolidayShift,
+          is_same_day: isSameDay,
+          scheduled_processing_at: scheduledProcessingAt,
+          estimated_delivery_start: estimatedDeliveryStart,
+          estimated_delivery_end: estimatedDeliveryEnd,
+          cutoff_at: cutoffAt,
+          cutoff_passed: cutoffPassed,
+          is_holiday: isTodayHoliday,
+          is_sunday: isTodaySunday,
+          pharmacy_timezone: config2.pharmacyTimezone,
+          schedule_status: scheduleStatus,
+          schedule_reason: primaryShiftReason,
+          schedule_version: 1,
+          schedule_calculated_at: nowIso,
+          formatted_window: formattedWindow
+        };
+      }
+      /**
+       * Persists the calculated schedule directly into special_orders.
+       */
+      async persistOrderSchedule(orderId, schedule, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        await db2.run(
+          `UPDATE special_orders
+       SET scheduled_processing_at = ?,
+           estimated_delivery_start = ?,
+           estimated_delivery_end = ?,
+           cutoff_at = ?,
+           pharmacy_timezone = ?,
+           schedule_status = ?,
+           schedule_reason = ?,
+           schedule_version = ?,
+           schedule_calculated_at = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [
+            schedule.scheduled_processing_at,
+            schedule.estimated_delivery_start,
+            schedule.estimated_delivery_end,
+            schedule.cutoff_at,
+            schedule.pharmacy_timezone,
+            schedule.schedule_status,
+            schedule.schedule_reason,
+            schedule.schedule_version,
+            schedule.schedule_calculated_at,
+            orderId
+          ]
+        );
+        const reasonText = schedule.schedule_reason ? ` (Reason: ${schedule.schedule_reason})` : "";
+        try {
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'schedule_calculated', ?, 'system', CURRENT_TIMESTAMP)`,
+            [orderId, `Estimated delivery: ${schedule.formatted_window}${reasonText}`]
+          );
+        } catch (_) {
+        }
+      }
+      /**
+       * Staff manual override for delivery schedule.
+       */
+      async overrideOrderSchedule(orderId, opts, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const staff = (opts.overrideBy || opts.staffName || "Pharmacist Admin").trim();
+        const reason = (opts.reason || "Manual schedule adjustment").trim();
+        const start = opts.estimatedDeliveryStart || opts.newDeliveryStart;
+        const end = opts.estimatedDeliveryEnd || opts.newDeliveryEnd;
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          return null;
+        }
+        const currentVersion = (order.schedule_version || 1) + 1;
+        await db2.run(
+          `UPDATE special_orders
+       SET estimated_delivery_start = ?,
+           estimated_delivery_end = ?,
+           schedule_status = 'overridden',
+           schedule_reason = ?,
+           schedule_version = ?,
+           schedule_overridden_by = ?,
+           schedule_overridden_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [
+            start,
+            end,
+            reason,
+            currentVersion,
+            staff,
+            orderId
+          ]
+        );
+        try {
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'schedule_overridden', ?, ?, CURRENT_TIMESTAMP)`,
+            [orderId, `Delivery ETA overridden by ${staff}. New window: ${start} to ${end}. Reason: ${reason}`, staff]
+          );
+        } catch (_) {
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "schedule_overridden" });
+        } catch (_) {
+        }
+        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return updated;
+      }
+    };
+    orderScheduleService = new OrderScheduleService();
+  }
+});
+
 // src/services/shortageReminderService.ts
 var shortageReminderService_exports = {};
 __export(shortageReminderService_exports, {
@@ -28300,6 +28864,7 @@ __export(whatsappIntentService_exports, {
   classifyAvailability: () => classifyAvailability,
   default: () => whatsappIntentService_default,
   downloadMediaWithRetry: () => downloadMediaWithRetry,
+  executeConfirmedProcurementFlow: () => executeConfirmedProcurementFlow,
   handleInbound: () => handleInbound,
   handleOcrComplete: () => handleOcrComplete,
   passesGate: () => passesGate,
@@ -28550,52 +29115,346 @@ async function getCustomerContext(customer, chatId, currentMsgId) {
   }
   return context;
 }
+async function ensureClarificationsTable(db2) {
+  if (clarificationsTableEnsured) return;
+  await db2.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
+    phone TEXT PRIMARY KEY,
+    suggested_name TEXT NOT NULL,
+    original_query TEXT,
+    options_json TEXT,
+    selected_option TEXT,
+    quantity INTEGER DEFAULT 1,
+    unit TEXT DEFAULT 'strip',
+    step TEXT DEFAULT 'awaiting_confirmation',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  try {
+    const cols = await db2.all("PRAGMA table_info(wa_pending_clarifications)");
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("options_json")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN options_json TEXT DEFAULT NULL");
+    }
+    if (!colNames.has("selected_option")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN selected_option TEXT DEFAULT NULL");
+    }
+    if (!colNames.has("quantity")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN quantity INTEGER DEFAULT 1");
+    }
+    if (!colNames.has("unit")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN unit TEXT DEFAULT 'strip'");
+    }
+    if (!colNames.has("step")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN step TEXT DEFAULT 'awaiting_confirmation'");
+    }
+  } catch (_) {
+  }
+  clarificationsTableEnsured = true;
+}
+function extractQuantityFromText(text) {
+  if (!text) return null;
+  const clean2 = text.trim().toLowerCase();
+  const m = clean2.match(/(?:actually\s+)?(?:make\s+it\s+|need\s+|want\s+)?(\d+)\s*(strips?|packets?|box(?:es)?|bottles?|tabs?|tablets?|patti|dabba)?/i);
+  if (m) {
+    const qty = parseInt(m[1], 10);
+    if (!isNaN(qty) && qty > 0 && qty < 500) {
+      let unit = "strip";
+      if (m[2]) {
+        const u = m[2].toLowerCase();
+        if (u.startsWith("bottle")) unit = "bottle";
+        else if (u.startsWith("box") || u === "dabba") unit = "box";
+        else if (u.startsWith("tab")) unit = "tablet";
+        else if (u.startsWith("packet")) unit = "packet";
+        else unit = "strip";
+      }
+      return { quantity: qty, unit };
+    }
+  }
+  return null;
+}
+async function executeConfirmedProcurementFlow(params) {
+  const { phone, chatId, confirmedMedicine, quantity, unit, customer } = params;
+  const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
+  try {
+    const db2 = await dbManager.getConnection();
+    const recent = await db2.get(
+      `SELECT id FROM special_orders 
+       WHERE phone = ? AND (LOWER(product) = LOWER(?) OR LOWER(medicine_name) = LOWER(?)) 
+       AND created_at > datetime('now', '-15 minutes')
+       LIMIT 1`,
+      [cleanDigits, confirmedMedicine, confirmedMedicine]
+    );
+    if (recent) {
+      console.log(`[Intent Service] Duplicate confirmed order detected for ${cleanDigits} - ${confirmedMedicine} within 15 min. Skipping duplicate procurement.`);
+      return;
+    }
+    const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
+    const allCatalog = [...localCat.mapped || [], ...localCat.nonMapped || []];
+    const inStockCandidates = allCatalog.filter((c) => isItemInStock(c.availability ?? c.stock));
+    let selectedDistributor = null;
+    let selectedProductInfo = null;
+    if (inStockCandidates.length > 0) {
+      const candidateStores = inStockCandidates.map((c) => ({
+        storeId: Number(c.store_id || c.storeId || 0),
+        storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
+      })).filter((c) => c.storeName.length > 0);
+      selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
+      selectedProductInfo = inStockCandidates.find((c) => {
+        const distName = String(c.distributor || c.supplier_name || c.distributor_name || "");
+        return distName === selectedDistributor?.storeName || selectedDistributor?.storeId && Number(c.store_id) === selectedDistributor.storeId;
+      }) || inStockCandidates[0];
+    } else if (allCatalog.length > 0) {
+      const candidateStores = allCatalog.map((c) => ({
+        storeId: Number(c.store_id || c.storeId || 0),
+        storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
+      })).filter((c) => c.storeName.length > 0);
+      selectedDistributor = await resolveCommonOrFrequentDistributor(db2, candidateStores);
+      selectedProductInfo = allCatalog[0];
+    }
+    const cartItem = {
+      productName: selectedProductInfo?.productName || selectedProductInfo?.name || confirmedMedicine,
+      product: selectedProductInfo?.productName || selectedProductInfo?.name || confirmedMedicine,
+      productId: selectedProductInfo?.productId || selectedProductInfo?.product_id || 0,
+      productCode: selectedProductInfo?.productCode || selectedProductInfo?.product_code || "",
+      storeId: selectedDistributor?.storeId || selectedProductInfo?.store_id || 0,
+      storeName: selectedDistributor?.storeName || selectedProductInfo?.distributor || "Standard Distributor",
+      company: selectedProductInfo?.company || selectedProductInfo?.manufacturer || "",
+      qty: quantity > 0 ? quantity : 1,
+      rate: selectedProductInfo?.distributorPrice || selectedProductInfo?.ptr || selectedProductInfo?.rate || 0,
+      mrp: selectedProductInfo?.mrp || 0,
+      packaging: selectedProductInfo?.packaging || unit || "1 strip"
+    };
+    const { isAutoAddToLiveCartEnabled: isAutoAddToLiveCartEnabled2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const autoAddToCart = await isAutoAddToLiveCartEnabled2(db2);
+    if (autoAddToCart) {
+      const cartResult = await addItemsToPharmarackCart([cartItem]);
+      console.log(`[Intent Service] Live Cart add attempt for "${cartItem.productName}": success=${cartResult.success} (${cartResult.mode || (cartResult.offline ? "Offline" : "Failed")})`);
+      if (!cartResult.success) {
+        console.warn(`[Intent Service] Pharmarack Live Cart addition failed for "${cartItem.productName}". Halting order confirmation.`);
+        await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+          orderId: "FAILED",
+          customer,
+          phone: cleanDigits,
+          chatId,
+          items: [{
+            name: cartItem.productName,
+            quantity: cartItem.qty,
+            distributor: cartItem.storeName,
+            rate: cartItem.rate,
+            mrp: cartItem.mrp
+          }],
+          success: false,
+          error: cartResult.error || cartResult.details || "Failed to add items to Pharmarack Live Cart"
+        });
+        return;
+      }
+    } else {
+      console.log(`[Intent Service] Auto Add to Live Cart is OFF. Skipping automatic cart call for "${cartItem.productName}". Queuing for manual review.`);
+    }
+    let calculatedSchedule = null;
+    try {
+      const { orderScheduleService: orderScheduleService2 } = await Promise.resolve().then(() => (init_orderScheduleService(), orderScheduleService_exports));
+      calculatedSchedule = await orderScheduleService2.calculateOrderSchedule({ storeId: 1, orderCreatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    } catch (_) {
+      calculatedSchedule = {
+        scheduledProcessingAt: (/* @__PURE__ */ new Date()).toISOString(),
+        estimatedDeliveryStart: null,
+        estimatedDeliveryEnd: null,
+        cutoffAt: null,
+        timezone: "Asia/Kolkata",
+        scheduleStatus: "standard",
+        scheduleReason: null,
+        scheduleVersion: 1,
+        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const orderRes = await db2.run(
+      `INSERT INTO special_orders (
+        store_id, requester, phone, medicine_name, product, qty, priority, status,
+        date, notified, customer_order_source,
+        pharmarack_distributor, pharmarack_rate, pharmarack_mrp,
+        scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+        cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+        schedule_calculated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        1,
+        customer?.name || "WhatsApp Customer",
+        cleanDigits,
+        cartItem.productName,
+        cartItem.productName,
+        cartItem.qty,
+        todayStr2,
+        cartItem.storeName,
+        cartItem.rate,
+        cartItem.mrp,
+        calculatedSchedule.scheduledProcessingAt,
+        calculatedSchedule.estimatedDeliveryStart,
+        calculatedSchedule.estimatedDeliveryEnd,
+        calculatedSchedule.cutoffAt,
+        calculatedSchedule.timezone,
+        calculatedSchedule.scheduleStatus,
+        calculatedSchedule.scheduleReason,
+        calculatedSchedule.scheduleVersion,
+        calculatedSchedule.calculatedAt
+      ]
+    );
+    const specialOrderId = orderRes.lastID;
+    const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const storeLabel = await getStoreMedicalName4(db2);
+    const storePhone = await getStorePhone3(db2);
+    const phoneSuffix = storePhone ? `
+\u{1F4DE} ${storePhone}` : "";
+    const stagedCustomerMsg = `Hi ${customer?.name || "Customer"}, your order for *${cartItem.productName}* (Qty: ${cartItem.qty}) has been received at ${storeLabel}. We are arranging it with our distributor and will notify you as soon as it is ready for collection.${phoneSuffix}`;
+    await db2.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+       VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+      ["whatsapp_order", customer?.name || "Customer", cleanDigits, stagedCustomerMsg, String(specialOrderId)]
+    );
+    await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+      orderId: specialOrderId,
+      customer,
+      phone: cleanDigits,
+      chatId,
+      items: [{
+        name: cartItem.productName,
+        quantity: cartItem.qty,
+        distributor: cartItem.storeName,
+        rate: cartItem.rate,
+        mrp: cartItem.mrp
+      }],
+      success: true,
+      manualReview: !autoAddToCart
+    });
+    try {
+      eventService.broadcast("order_updated", { at: Date.now(), id: specialOrderId });
+    } catch (_) {
+    }
+    const custAckMsg = `Thank you! Your request for *${cartItem.productName}* \xD7 ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
+  } catch (procErr) {
+    console.error("[Intent Service] Error in executeConfirmedProcurementFlow:", procErr);
+  }
+}
 async function checkMedicineClarificationResponse(phone, body, customer, chatId) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits) return false;
   try {
     const db2 = await dbManager.getConnection();
-    await db2.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
-      phone TEXT PRIMARY KEY,
-      suggested_name TEXT NOT NULL,
-      original_query TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+    await ensureClarificationsTable(db2);
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query FROM wa_pending_clarifications 
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step 
+       FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
       [`%${cleanDigits}`, `%${cleanDigits}%`]
     );
     if (!pending2) return false;
     const lower = body.toLowerCase().trim();
-    const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay)$/i.test(lower);
+    const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm)$/i.test(lower);
     const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
-    if (isAffirmative) {
-      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
-      const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-      const storeName = await getStoreMedicalName4(db2);
-      const storePhone = await getStorePhone3(db2);
-      const phoneSuffix = storePhone ? `
-\u{1F4DE} ${storePhone}` : "";
-      const ackMsg = `Thank you! We have noted your confirmation for *${pending2.suggested_name}*.
-Our pharmacist is checking stock with our distributors and will contact you shortly.${phoneSuffix}`;
-      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
-      await waAdminEscalationService.notifyAdminOfCustomerConfirmation({
-        customer,
-        suggestedName: pending2.suggested_name,
-        originalQuery: pending2.original_query || pending2.suggested_name,
-        phone,
-        chatId
-      });
-      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}".`);
-      return true;
-    } else if (isNegative) {
+    if (isNegative) {
       await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
       const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
       await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", customer?.name || "Customer");
-      console.log(`[Intent Service] Customer ${cleanDigits} rejected suggested medicine "${pending2.suggested_name}".`);
+      console.log(`[Intent Service] Customer ${cleanDigits} cancelled suggested medicine "${pending2.suggested_name}".`);
+      return true;
+    }
+    if (pending2.step === "awaiting_selection" && pending2.options_json) {
+      let options = [];
+      try {
+        options = JSON.parse(pending2.options_json);
+      } catch (_) {
+        options = [];
+      }
+      let chosenIndex = -1;
+      const numMatch = lower.match(/^([1-9])\b/) || lower.match(/^(?:option\s*)?([1-9])/);
+      if (numMatch) {
+        const n = parseInt(numMatch[1], 10) - 1;
+        if (n >= 0 && n < options.length) {
+          chosenIndex = n;
+        }
+      } else {
+        const idx = options.findIndex((opt) => opt.toLowerCase().includes(lower) || lower.includes(opt.toLowerCase()));
+        if (idx !== -1) {
+          chosenIndex = idx;
+        }
+      }
+      if (chosenIndex !== -1 && options[chosenIndex]) {
+        const chosenMedicine = options[chosenIndex];
+        const pendingQty = Number(pending2.quantity || 0);
+        if (pendingQty > 0) {
+          await db2.run(
+            `UPDATE wa_pending_clarifications 
+             SET suggested_name = ?, selected_option = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
+             WHERE phone = ?`,
+            [chosenMedicine, chosenMedicine, pending2.phone]
+          );
+          const confirmPrompt = `Selected: *${chosenMedicine}* \xD7 ${pendingQty} ${pending2.unit || "strip"}.
+
+Please reply *YES* to confirm your order, or reply with a different quantity.`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        } else {
+          await db2.run(
+            `UPDATE wa_pending_clarifications 
+             SET suggested_name = ?, selected_option = ?, step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP 
+             WHERE phone = ?`,
+            [chosenMedicine, chosenMedicine, pending2.phone]
+          );
+          const qtyPrompt = `*${chosenMedicine}* selected.
+How many strips or units do you need?`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, qtyPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        }
+        return true;
+      }
+    }
+    if (pending2.step === "awaiting_qty") {
+      const parsedQty = extractQuantityFromText(body);
+      if (parsedQty && parsedQty.quantity > 0) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications 
+           SET quantity = ?, unit = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
+           WHERE phone = ?`,
+          [parsedQty.quantity, parsedQty.unit, pending2.phone]
+        );
+        const confirmPrompt = `Please confirm: *${pending2.suggested_name}* \xD7 ${parsedQty.quantity} ${parsedQty.unit}.
+
+Reply *YES* to confirm or *NO* to cancel.`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+    }
+    const adjustedQty = extractQuantityFromText(body);
+    if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
+      await db2.run(
+        `UPDATE wa_pending_clarifications 
+         SET quantity = ?, unit = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
+         WHERE phone = ?`,
+        [adjustedQty.quantity, adjustedQty.unit, pending2.phone]
+      );
+      const confirmPrompt = `Updated: *${pending2.suggested_name}* \xD7 ${adjustedQty.quantity} ${adjustedQty.unit}.
+
+Reply *YES* to confirm.`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+      return true;
+    }
+    if (isAffirmative) {
+      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+      console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}" x ${pending2.quantity || 1}. Initiating procurement...`);
+      await executeConfirmedProcurementFlow({
+        phone,
+        chatId,
+        confirmedMedicine: pending2.suggested_name,
+        quantity: pending2.quantity || 1,
+        unit: pending2.unit || "strip",
+        customer
+      });
       return true;
     }
   } catch (err) {
@@ -29152,36 +30011,76 @@ async function searchAndBroadcast(opts) {
       const db2 = await dbManager.getConnection();
       const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
       if (!toggle || toggle.value !== "false") {
-        const topMatched = filterResult.matches[0] || catalogResults?.mapped?.[0]?.productName || catalogResults?.mapped?.[0]?.name;
-        if (topMatched) {
-          const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
-          const isExactName = topMatched.toLowerCase().replace(/[^a-z0-9]/g, "") === medicineName.toLowerCase().replace(/[^a-z0-9]/g, "") || confidence >= 90;
-          if (isExactName) {
-            const ackMsg = `\u2705 Received your request for *${topMatched}*.
-Our pharmacist is checking availability and will message you shortly.`;
-            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-            await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_medicine_ack", customer?.name || "Customer");
-            console.log(`[Intent Service] Sent medicine request ack for "${topMatched}" to ${cleanPhone}.`);
-          } else {
-            await db2.run(`CREATE TABLE IF NOT EXISTS wa_pending_clarifications (
-              phone TEXT PRIMARY KEY,
-              suggested_name TEXT NOT NULL,
-              original_query TEXT,
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
+        const matches = filterResult.matches && filterResult.matches.length > 0 ? filterResult.matches : (catalogResults?.mapped || []).map((m) => m.productName || m.name).filter(Boolean);
+        const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
+        await ensureClarificationsTable(db2);
+        if (matches.length > 1) {
+          const topOptions = matches.slice(0, 3);
+          const optionsList = topOptions.map((opt, i) => `${i + 1}. *${opt}*`).join("\n");
+          const promptMsg = `I found multiple options for *${medicineName}*:
+
+${optionsList}
+
+Please reply with *1*, *2*, or *3* to choose, or specify the exact strength/form.`;
+          await db2.run(
+            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'awaiting_selection', CURRENT_TIMESTAMP)
+             ON CONFLICT(phone) DO UPDATE SET
+               suggested_name = excluded.suggested_name,
+               original_query = excluded.original_query,
+               options_json = excluded.options_json,
+               quantity = excluded.quantity,
+               unit = excluded.unit,
+               step = 'awaiting_selection',
+               created_at = CURRENT_TIMESTAMP`,
+            [cleanPhone, topOptions[0], medicineName, JSON.stringify(topOptions), quantity || 1, unit || "strip"]
+          );
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+          console.log(`[Intent Service] Sent medicine options prompt (1..${topOptions.length}) for "${medicineName}" to ${cleanPhone}.`);
+        } else if (matches.length === 1 || filterResult.matches[0]) {
+          const topMatched = matches[0] || filterResult.matches[0];
+          const hasQty = Boolean(quantity && quantity > 0);
+          if (hasQty) {
+            const promptMsg = `Please confirm your order:
+*${topMatched}* \xD7 ${quantity} ${unit || "strip"}
+
+Reply *YES* to confirm or *NO* to cancel.`;
             await db2.run(
-              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, created_at)
-               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'awaiting_confirmation', CURRENT_TIMESTAMP)
                ON CONFLICT(phone) DO UPDATE SET
                  suggested_name = excluded.suggested_name,
                  original_query = excluded.original_query,
+                 options_json = NULL,
+                 quantity = excluded.quantity,
+                 unit = excluded.unit,
+                 step = 'awaiting_confirmation',
                  created_at = CURRENT_TIMESTAMP`,
-              [cleanPhone, topMatched, medicineName]
+              [cleanPhone, topMatched, medicineName, null, quantity, unit || "strip"]
             );
-            const promptMsg = `Namaste! Did you mean *${topMatched}*? Please reply *Yes* or *No*.`;
             const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
             await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
-            console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+            console.log(`[Intent Service] Sent confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
+          } else {
+            const promptMsg = `I found *${topMatched}*.
+How many strips or units do you need?`;
+            await db2.run(
+              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'awaiting_qty', CURRENT_TIMESTAMP)
+               ON CONFLICT(phone) DO UPDATE SET
+                 suggested_name = excluded.suggested_name,
+                 original_query = excluded.original_query,
+                 options_json = NULL,
+                 quantity = 1,
+                 unit = excluded.unit,
+                 step = 'awaiting_qty',
+                 created_at = CURRENT_TIMESTAMP`,
+              [cleanPhone, topMatched, medicineName, null, 1, unit || "strip"]
+            );
+            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+            console.log(`[Intent Service] Sent quantity prompt for "${topMatched}" to ${cleanPhone}.`);
           }
         }
       }
@@ -29470,7 +30369,7 @@ async function resolveRelatedMedicinesLocal(names) {
   }
   return results;
 }
-var import_fs19, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, whatsappIntentService, whatsappIntentService_default;
+var import_fs19, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
@@ -29483,12 +30382,14 @@ var init_whatsappIntentService = __esm({
     init_productNameFilterService();
     init_pharmarackCatalogCache();
     init_waAdminEscalationService();
+    init_pharmarack();
     init_startupSyncCoordinator();
     init_visualIndexService();
     init_scanGateAlgorithms();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
     INBOUND_MEDIA_DIR = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
+    clarificationsTableEnsured = false;
     whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast };
     whatsappIntentService_default = whatsappIntentService;
   }
@@ -32740,6 +33641,7 @@ __export(refillService_exports, {
   checkAllRefills: () => checkAllRefills,
   cleanupStagedRefillNotifications: () => cleanupStagedRefillNotifications,
   createQuickBillForRefill: () => createQuickBillForRefill,
+  sendMorningScheduleBriefingToAdmin: () => sendMorningScheduleBriefingToAdmin,
   syncStagedRefillNotificationForPatient: () => syncStagedRefillNotificationForPatient,
   triggerPendingRefillsForMedicine: () => triggerPendingRefillsForMedicine,
   triggerPendingSpecialOrdersForMedicineName: () => triggerPendingSpecialOrdersForMedicineName
@@ -33057,6 +33959,81 @@ async function cleanupStagedRefillNotifications(db2, refillIds, targetStatus = "
     }
   } catch (cleanErr) {
     console.warn("[Refills] Cleanup of staged notifications warning:", cleanErr);
+  }
+}
+async function sendMorningScheduleBriefingToAdmin(db2) {
+  try {
+    const { waAdminEscalationService: waAdminEscalationService2 } = await Promise.resolve().then(() => (init_waAdminEscalationService(), waAdminEscalationService_exports));
+    const adminWhatsapp = await waAdminEscalationService2.resolveAdminWhatsappNumber(db2);
+    if (!adminWhatsapp) {
+      console.log("[RefillService] No store owner WhatsApp configured for morning schedule briefing.");
+      return;
+    }
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2, getConfiguredPharmacyName: getConfiguredPharmacyName2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const storeName = await getConfiguredPharmacyName2(db2);
+    const operatingSchedule = await getPharmacyOperatingSchedule2(db2);
+    const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayDayName = dayNames[(/* @__PURE__ */ new Date()).getDay()];
+    const isWeeklyOff = (operatingSchedule.weeklyOff || "").toLowerCase() === todayDayName.toLowerCase();
+    const isHoliday = (operatingSchedule.closedDates || []).includes(todayStr2);
+    let statusLine = "\u{1F7E2} Open as usual";
+    if (isHoliday) {
+      statusLine = "\u{1F534} Holiday / Closed today (Orders shifted to next open day)";
+    } else if (isWeeklyOff) {
+      statusLine = `\u{1F7E1} Weekly Off (${todayDayName}) (Orders shifted to next open day)`;
+    }
+    const dueRefills = await db2.all(
+      `SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed, pr.is_ready, pr.hold_for_stock
+       FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE pr.status = 'pending' AND pr.is_active = 1 AND DATE(pr.next_refill_date) <= DATE('now')
+       ORDER BY pr.patient_name ASC LIMIT 20`
+    );
+    const specialOrders = await db2.all(
+      `SELECT requester, product, qty, status, pharmarack_distributor
+       FROM special_orders
+       WHERE (status = 'Confirmed' OR status = 'Pending' OR status = 'Ready') AND DATE(date) >= DATE('now', '-2 days')
+       ORDER BY date DESC LIMIT 20`
+    );
+    let refillsBlock = "\u2022 No pending refills for today";
+    if (dueRefills.length > 0) {
+      refillsBlock = dueRefills.slice(0, 8).map((r, i) => {
+        const stockBadge = r.is_ready ? "\u2705 In Stock" : r.hold_for_stock ? "\u23F3 Hold for Stock" : "\u26A0\uFE0F Checking";
+        return `${i + 1}. *${r.patient_name}*: ${r.medicine_name} (${stockBadge})`;
+      }).join("\n");
+      if (dueRefills.length > 8) {
+        refillsBlock += `
+...and ${dueRefills.length - 8} more in Refills page`;
+      }
+    }
+    let ordersBlock = "\u2022 No pending special orders";
+    if (specialOrders.length > 0) {
+      ordersBlock = specialOrders.slice(0, 8).map((o, i) => {
+        const dist = o.pharmarack_distributor ? ` \u2192 ${o.pharmarack_distributor}` : "";
+        return `${i + 1}. *${o.requester || "Customer"}*: ${o.product} \xD7 ${o.qty} [${o.status}]${dist}`;
+      }).join("\n");
+      if (specialOrders.length > 8) {
+        ordersBlock += `
+...and ${specialOrders.length - 8} more in Orders page`;
+      }
+    }
+    const messageText = `\u2600\uFE0F *Morning Schedule & Refill Briefing* \u2014 ${storeName}
+\u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
+\u{1F3EA} *Store Status*: ${statusLine}
+
+\u{1F4CB} *Refills Due*:
+${refillsBlock}
+
+\u{1F4E6} *WhatsApp & Special Orders*:
+${ordersBlock}
+
+\u{1F512} *Customer Communication*: Customer reminders remain STAGED in Quick Assist for manual review.`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(adminWhatsapp, messageText, "admin_morning_briefing", "Admin / Store Owner");
+    console.log(`[RefillService] Morning schedule briefing sent to owner ${adminWhatsapp}.`);
+  } catch (err) {
+    console.error("[RefillService] Failed to send morning schedule briefing to admin:", err);
   }
 }
 var init_refillService = __esm({
@@ -53164,6 +54141,9 @@ var init_settings = __esm({
         if (!settingsObj["require_doctor_on_bill"]) {
           settingsObj["require_doctor_on_bill"] = "true";
         }
+        if (settingsObj["auto_add_to_live_cart"] === void 0) {
+          settingsObj["auto_add_to_live_cart"] = "true";
+        }
         res.json(settingsObj);
       } catch (error) {
         console.error("All settings fetch error:", error);
@@ -56737,397 +57717,6 @@ var init_telegramPrescription = __esm({
       }
     });
     telegramPrescription_default = router18;
-  }
-});
-
-// src/services/orderScheduleService.ts
-var OrderScheduleService, orderScheduleService;
-var init_orderScheduleService = __esm({
-  "src/services/orderScheduleService.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    OrderScheduleService = class {
-      /**
-       * Load store/pharmacy timing configuration from app_settings and store_settings.
-       */
-      async getTimingConfig(dbOrStoreId, storeIdOrDb) {
-        let db2;
-        let storeId = 1;
-        if (dbOrStoreId && typeof dbOrStoreId.all === "function") {
-          db2 = dbOrStoreId;
-          if (typeof storeIdOrDb === "number") storeId = storeIdOrDb;
-        } else if (typeof dbOrStoreId === "number") {
-          storeId = dbOrStoreId;
-          if (storeIdOrDb && typeof storeIdOrDb.all === "function") {
-            db2 = storeIdOrDb;
-          }
-        } else {
-          db2 = await dbManager.getConnection();
-        }
-        try {
-          const rows = await db2.all("SELECT key, value FROM app_settings");
-          const settingsMap = {};
-          for (const r of rows) {
-            settingsMap[r.key] = r.value;
-          }
-          if (storeId > 0) {
-            try {
-              const storeRows = await db2.all("SELECT key, value FROM store_settings WHERE store_id = ?", [storeId]);
-              for (const sr of storeRows) {
-                settingsMap[sr.key] = sr.value;
-              }
-            } catch (_) {
-            }
-          }
-          return {
-            orderCutoffTime: settingsMap["pharmacy_cutoff_time"] || settingsMap["order_cutoff_time"] || "23:00",
-            sameDayDeliveryEnabled: settingsMap["same_day_delivery_enabled"] !== "false",
-            deliveryStartTime: settingsMap["delivery_window_start"] || settingsMap["delivery_start_time"] || "19:00",
-            deliveryEndTime: settingsMap["delivery_window_end"] || settingsMap["delivery_end_time"] || "21:00",
-            operatesSunday: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["operates_sunday"] === "true" || settingsMap["sunday_delivery"] === "true",
-            sundayDelivery: settingsMap["sunday_orders_enabled"] === "true" || settingsMap["sunday_delivery"] === "true",
-            sundayWindowStart: settingsMap["sunday_window_start"] || "10:00",
-            sundayWindowEnd: settingsMap["sunday_window_end"] || "14:00",
-            holidayDelivery: settingsMap["holiday_delivery_enabled"] === "true" || settingsMap["holiday_delivery"] === "true",
-            holidayHandling: settingsMap["holiday_handling"] || "next_available_day",
-            is24Hours: settingsMap["is_24_hours"] === "true",
-            pharmacyTimezone: settingsMap["pharmacy_timezone"] || "Asia/Kolkata",
-            returnWindowDays: parseInt(settingsMap["return_window_days"] || "15", 10) || 15,
-            refillPauseAffectsDate: settingsMap["refill_pause_recalculation_enabled"] !== "false" && settingsMap["refill_pause_affects_date"] !== "false"
-          };
-        } catch (err) {
-          console.warn("[OrderScheduleService] Error fetching timing config, using defaults:", err);
-          return {
-            orderCutoffTime: "23:00",
-            sameDayDeliveryEnabled: true,
-            deliveryStartTime: "19:00",
-            deliveryEndTime: "21:00",
-            operatesSunday: false,
-            sundayDelivery: false,
-            sundayWindowStart: "10:00",
-            sundayWindowEnd: "14:00",
-            holidayDelivery: false,
-            holidayHandling: "next_available_day",
-            is24Hours: false,
-            pharmacyTimezone: "Asia/Kolkata",
-            returnWindowDays: 15,
-            refillPauseAffectsDate: true
-          };
-        }
-      }
-      /**
-       * Helper to format time strings (e.g. "19:00" -> "7:00 PM")
-       */
-      formatTime12h(timeStr) {
-        const [hStr, mStr] = (timeStr || "00:00").split(":");
-        let h = parseInt(hStr, 10) || 0;
-        const m = parseInt(mStr, 10) || 0;
-        const ampm = h >= 12 ? "PM" : "AM";
-        h = h % 12 || 12;
-        const mDisplay = m > 0 ? `:${m < 10 ? "0" : ""}${m}` : ":00";
-        return `${h}${mDisplay} ${ampm}`;
-      }
-      /**
-       * Format date as YYYY-MM-DD
-       */
-      formatDateYMD(dateObj) {
-        const y = dateObj.getFullYear();
-        const m = String(dateObj.getMonth() + 1).padStart(2, "0");
-        const d = String(dateObj.getDate()).padStart(2, "0");
-        return `${y}-${m}-${d}`;
-      }
-      /**
-       * Helper to decompose a date into year, month, day, hour, minute, dayOfWeek for the pharmacy timezone.
-       */
-      getTimezoneParts(date, timeZone = "Asia/Kolkata") {
-        const formatter = new Intl.DateTimeFormat("en-US", {
-          timeZone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-          weekday: "short"
-        });
-        const parts = formatter.formatToParts(date);
-        const map = {};
-        for (const p of parts) {
-          map[p.type] = p.value;
-        }
-        const year = parseInt(map.year, 10);
-        const month = parseInt(map.month, 10);
-        const day = parseInt(map.day, 10);
-        let hour = parseInt(map.hour, 10);
-        if (hour === 24) hour = 0;
-        const minute = parseInt(map.minute, 10);
-        const ymd = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-        const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-        const dayOfWeek = weekdayMap[map.weekday] ?? 0;
-        return { year, month, day, hour, minute, ymd, dayOfWeek };
-      }
-      /**
-       * Helper to format YYYY-MM-DD and HH:mm with IST timezone into ISO string.
-       */
-      combineYmdAndTime(ymd, timeStr, timeZone = "Asia/Kolkata") {
-        const [hStr, mStr] = (timeStr || "00:00").split(":");
-        const h = String(parseInt(hStr, 10) || 0).padStart(2, "0");
-        const m = String(parseInt(mStr, 10) || 0).padStart(2, "0");
-        return (/* @__PURE__ */ new Date(`${ymd}T${h}:${m}:00+05:30`)).toISOString();
-      }
-      /**
-       * Core Single Scheduling Engine:
-       * Supports both positional args: calculateOrderSchedule(orderTime, storeId, db)
-       * and object options: calculateOrderSchedule({ storeId, orderCreatedAt, dbInstance })
-       */
-      async calculateOrderSchedule(orderCreatedAtOrOpts, storeIdArg, dbInstanceArg) {
-        let storeId = 1;
-        let orderCreatedAt = /* @__PURE__ */ new Date();
-        let db2 = null;
-        if (orderCreatedAtOrOpts instanceof Date || typeof orderCreatedAtOrOpts === "string") {
-          orderCreatedAt = orderCreatedAtOrOpts;
-          if (typeof storeIdArg === "number") {
-            storeId = storeIdArg;
-          }
-          if (dbInstanceArg) {
-            db2 = dbInstanceArg;
-          }
-        } else if (orderCreatedAtOrOpts && typeof orderCreatedAtOrOpts === "object") {
-          if (orderCreatedAtOrOpts.storeId !== void 0) storeId = orderCreatedAtOrOpts.storeId;
-          if (orderCreatedAtOrOpts.orderCreatedAt !== void 0) orderCreatedAt = orderCreatedAtOrOpts.orderCreatedAt;
-          if (orderCreatedAtOrOpts.dbInstance !== void 0) db2 = orderCreatedAtOrOpts.dbInstance;
-        } else if (typeof storeIdArg === "number") {
-          storeId = storeIdArg;
-          if (dbInstanceArg) db2 = dbInstanceArg;
-        }
-        if (!db2) {
-          db2 = await dbManager.getConnection();
-        }
-        const config2 = await this.getTimingConfig(db2, storeId);
-        const now = orderCreatedAt ? new Date(orderCreatedAt) : /* @__PURE__ */ new Date();
-        const nowIso = now.toISOString();
-        let holidays = [];
-        try {
-          holidays = await db2.all(
-            `SELECT * FROM pharmacy_holidays 
-         WHERE (store_id = ? OR store_id = 1)
-         ORDER BY holiday_date ASC`,
-            [storeId]
-          );
-        } catch (_) {
-        }
-        const holidayMap = /* @__PURE__ */ new Map();
-        for (const h of holidays) {
-          holidayMap.set(h.holiday_date, h);
-        }
-        const currentTzParts = this.getTimezoneParts(now, config2.pharmacyTimezone);
-        const todayYmd = currentTzParts.ymd;
-        const isTodaySunday = currentTzParts.dayOfWeek === 0;
-        const todayHoliday = holidayMap.get(todayYmd);
-        const isTodayHoliday = Boolean(todayHoliday);
-        const [cutoffH, cutoffM] = config2.orderCutoffTime.split(":").map((x) => parseInt(x, 10));
-        const cutoffPassed = !config2.is24Hours && (currentTzParts.hour > cutoffH || currentTzParts.hour === cutoffH && currentTzParts.minute >= cutoffM);
-        const sundayAllowed = config2.operatesSunday || config2.sundayDelivery;
-        const isTodayHolidayClosed = Boolean(
-          todayHoliday && (Number(todayHoliday.is_closed) === 1 || todayHoliday.is_closed === true) && !config2.holidayDelivery
-        );
-        let isNextDayCutoff = false;
-        let isSundayShift = false;
-        let isHolidayShift = false;
-        let scheduleStatus = "standard";
-        let primaryShiftReason = null;
-        if (cutoffPassed) {
-          isNextDayCutoff = true;
-          scheduleStatus = "post_cutoff";
-          primaryShiftReason = `Order placed after ${this.formatTime12h(config2.orderCutoffTime)} cutoff (post-cutoff rollover)`;
-        } else if (isTodaySunday && !sundayAllowed) {
-          isSundayShift = true;
-          scheduleStatus = "sunday_shift";
-          primaryShiftReason = "Pharmacy closed on Sundays (Sunday rollover)";
-        } else if (isTodayHolidayClosed) {
-          isHolidayShift = true;
-          const hName = todayHoliday?.holiday_name || todayHoliday?.name || "Public Holiday";
-          scheduleStatus = "holiday_shift";
-          primaryShiftReason = `Pharmacy closed for ${hName}`;
-        }
-        let isSameDay = false;
-        let targetDate = new Date(now);
-        let daysAdvanced = 0;
-        if (!isNextDayCutoff && !isSundayShift && !isHolidayShift) {
-          isSameDay = true;
-          scheduleStatus = "standard";
-          primaryShiftReason = null;
-        } else {
-          while (daysAdvanced < 14) {
-            daysAdvanced++;
-            targetDate.setDate(targetDate.getDate() + 1);
-            const targetParts2 = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
-            const isSun = targetParts2.dayOfWeek === 0;
-            const holidayRec = holidayMap.get(targetParts2.ymd);
-            const isHolClosed = Boolean(
-              holidayRec && (Number(holidayRec.is_closed) === 1 || holidayRec.is_closed === true) && !config2.holidayDelivery
-            );
-            if (isSun && !sundayAllowed) {
-              continue;
-            }
-            if (isHolClosed) {
-              continue;
-            }
-            break;
-          }
-        }
-        const targetParts = this.getTimezoneParts(targetDate, config2.pharmacyTimezone);
-        const isTargetSunday = targetParts.dayOfWeek === 0;
-        const targetHoliday = holidayMap.get(targetParts.ymd);
-        let deliveryStartTime = config2.deliveryStartTime;
-        let deliveryEndTime = config2.deliveryEndTime;
-        if (isTargetSunday && sundayAllowed) {
-          deliveryStartTime = config2.sundayWindowStart || "10:00";
-          deliveryEndTime = config2.sundayWindowEnd || "14:00";
-        } else if (targetHoliday && (Number(targetHoliday.is_closed) === 0 || targetHoliday.is_closed === false)) {
-          if (targetHoliday.custom_window_start || targetHoliday.open_time) {
-            deliveryStartTime = targetHoliday.custom_window_start || targetHoliday.open_time || deliveryStartTime;
-          }
-          if (targetHoliday.custom_window_end || targetHoliday.close_time) {
-            deliveryEndTime = targetHoliday.custom_window_end || targetHoliday.close_time || deliveryEndTime;
-          }
-        }
-        const estimatedDeliveryStart = this.combineYmdAndTime(targetParts.ymd, deliveryStartTime, config2.pharmacyTimezone);
-        const estimatedDeliveryEnd = this.combineYmdAndTime(targetParts.ymd, deliveryEndTime, config2.pharmacyTimezone);
-        const scheduledProcessingAt = this.combineYmdAndTime(targetParts.ymd, "08:00", config2.pharmacyTimezone);
-        const cutoffAt = this.combineYmdAndTime(currentTzParts.ymd, config2.orderCutoffTime, config2.pharmacyTimezone);
-        const dayLabel = isSameDay ? "Today" : daysAdvanced === 1 ? "Tomorrow" : new Intl.DateTimeFormat("en-IN", { timeZone: config2.pharmacyTimezone, weekday: "short", month: "short", day: "numeric" }).format(targetDate);
-        const formattedWindow = `${dayLabel}, ${this.formatTime12h(deliveryStartTime)} \u2013 ${this.formatTime12h(deliveryEndTime)}`;
-        return {
-          // CamelCase
-          isNextDayCutoff,
-          isSundayShift,
-          isHolidayShift,
-          cutoffTime: config2.orderCutoffTime,
-          estimatedDeliveryWindowFormatted: formattedWindow,
-          scheduledProcessingAt,
-          estimatedDeliveryStart,
-          estimatedDeliveryEnd,
-          cutoffAt,
-          timezone: config2.pharmacyTimezone,
-          scheduleStatus,
-          scheduleReason: primaryShiftReason,
-          scheduleVersion: 1,
-          calculatedAt: nowIso,
-          // Snake_case
-          is_next_day_cutoff: isNextDayCutoff,
-          is_sunday_shift: isSundayShift,
-          is_holiday_shift: isHolidayShift,
-          is_same_day: isSameDay,
-          scheduled_processing_at: scheduledProcessingAt,
-          estimated_delivery_start: estimatedDeliveryStart,
-          estimated_delivery_end: estimatedDeliveryEnd,
-          cutoff_at: cutoffAt,
-          cutoff_passed: cutoffPassed,
-          is_holiday: isTodayHoliday,
-          is_sunday: isTodaySunday,
-          pharmacy_timezone: config2.pharmacyTimezone,
-          schedule_status: scheduleStatus,
-          schedule_reason: primaryShiftReason,
-          schedule_version: 1,
-          schedule_calculated_at: nowIso,
-          formatted_window: formattedWindow
-        };
-      }
-      /**
-       * Persists the calculated schedule directly into special_orders.
-       */
-      async persistOrderSchedule(orderId, schedule, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        await db2.run(
-          `UPDATE special_orders
-       SET scheduled_processing_at = ?,
-           estimated_delivery_start = ?,
-           estimated_delivery_end = ?,
-           cutoff_at = ?,
-           pharmacy_timezone = ?,
-           schedule_status = ?,
-           schedule_reason = ?,
-           schedule_version = ?,
-           schedule_calculated_at = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [
-            schedule.scheduled_processing_at,
-            schedule.estimated_delivery_start,
-            schedule.estimated_delivery_end,
-            schedule.cutoff_at,
-            schedule.pharmacy_timezone,
-            schedule.schedule_status,
-            schedule.schedule_reason,
-            schedule.schedule_version,
-            schedule.schedule_calculated_at,
-            orderId
-          ]
-        );
-        const reasonText = schedule.schedule_reason ? ` (Reason: ${schedule.schedule_reason})` : "";
-        try {
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'schedule_calculated', ?, 'system', CURRENT_TIMESTAMP)`,
-            [orderId, `Estimated delivery: ${schedule.formatted_window}${reasonText}`]
-          );
-        } catch (_) {
-        }
-      }
-      /**
-       * Staff manual override for delivery schedule.
-       */
-      async overrideOrderSchedule(orderId, opts, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const staff = (opts.overrideBy || opts.staffName || "Pharmacist Admin").trim();
-        const reason = (opts.reason || "Manual schedule adjustment").trim();
-        const start = opts.estimatedDeliveryStart || opts.newDeliveryStart;
-        const end = opts.estimatedDeliveryEnd || opts.newDeliveryEnd;
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          return null;
-        }
-        const currentVersion = (order.schedule_version || 1) + 1;
-        await db2.run(
-          `UPDATE special_orders
-       SET estimated_delivery_start = ?,
-           estimated_delivery_end = ?,
-           schedule_status = 'overridden',
-           schedule_reason = ?,
-           schedule_version = ?,
-           schedule_overridden_by = ?,
-           schedule_overridden_at = CURRENT_TIMESTAMP,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [
-            start,
-            end,
-            reason,
-            currentVersion,
-            staff,
-            orderId
-          ]
-        );
-        try {
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'schedule_overridden', ?, ?, CURRENT_TIMESTAMP)`,
-            [orderId, `Delivery ETA overridden by ${staff}. New window: ${start} to ${end}. Reason: ${reason}`, staff]
-          );
-        } catch (_) {
-        }
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "schedule_overridden" });
-        } catch (_) {
-        }
-        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        return updated;
-      }
-    };
-    orderScheduleService = new OrderScheduleService();
   }
 });
 

@@ -965,23 +965,71 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           } catch (e) {}
         }
 
+        const isFromMe = !!msg.fromMe;
+        const nowMs = Date.now();
+        const manualTimeoutMs = 45 * 60 * 1000;
+
+        // Fetch existing session state to evaluate Human Takeover
+        const existingChatRow = await db.get(
+          'SELECT session_mode, manual_active_until, last_pharmacist_message_at FROM whatsapp_chats WHERE id = ?',
+          [chatId]
+        );
+
+        let sessionMode = existingChatRow?.session_mode || 'auto';
+        let manualUntil = Number(existingChatRow?.manual_active_until || 0);
+        let sessionStatus = existingChatRow?.session_status || 'idle';
+
+        if (isFromMe) {
+          // Pharmacist sent a manual reply -> activate Human Takeover
+          sessionMode = 'manual';
+          manualUntil = nowMs + manualTimeoutMs;
+          sessionStatus = 'active';
+        } else {
+          // Inbound message from patient
+          if (sessionMode === 'manual') {
+            if (manualUntil > nowMs) {
+              sessionStatus = 'waiting'; // Patient replied, waiting for pharmacist review
+            } else {
+              // Inactivity timeout expired -> revert to auto
+              sessionMode = 'auto';
+              manualUntil = 0;
+              sessionStatus = 'idle';
+            }
+          }
+        }
+
         await db.run(
-          `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO whatsapp_chats (
+             id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+             session_mode, manual_active_until, last_patient_message_at, last_pharmacist_message_at, session_status
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              timestamp=excluded.timestamp,
              last_message=excluded.last_message,
              resolved_number=excluded.resolved_number,
-             unread_count = CASE WHEN ? = 0 THEN unread_count + 1 ELSE unread_count END`,
+             unread_count = CASE WHEN ? = 0 THEN unread_count + 1 ELSE unread_count END,
+             session_mode = excluded.session_mode,
+             manual_active_until = excluded.manual_active_until,
+             last_patient_message_at = CASE WHEN ? = 1 THEN excluded.last_patient_message_at ELSE last_patient_message_at END,
+             last_pharmacist_message_at = CASE WHEN ? = 1 THEN excluded.last_pharmacist_message_at ELSE last_pharmacist_message_at END,
+             session_status = excluded.session_status`,
           [
             chatId,
             chatName,
-            msg.fromMe ? 0 : 1,
+            isFromMe ? 0 : 1,
             msg.timestamp,
             msg.body || '',
             chatId.includes('g.us') ? 1 : 0,
             resolvedNumber,
-            msg.fromMe ? 1 : 0
+            sessionMode,
+            manualUntil,
+            isFromMe ? 0 : nowMs,
+            isFromMe ? nowMs : 0,
+            sessionStatus,
+            isFromMe ? 1 : 0,
+            isFromMe ? 0 : 1,
+            isFromMe ? 1 : 0
           ]
         );
 
@@ -997,6 +1045,16 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
             hasMedia: msg.hasMedia
           }
         });
+
+        if (isFromMe || sessionMode === 'manual') {
+          eventService.broadcast('wa_session_updated', {
+            chat_id: chatId,
+            resolved_number: resolvedNumber,
+            session_mode: sessionMode,
+            session_status: sessionStatus,
+            manual_active_until: manualUntil
+          });
+        }
 
         // Route inbound customer messages through the existing WhatsApp intent service
         if (!msg.fromMe) {
@@ -1465,14 +1523,23 @@ export async function sendMessage(
 
           const existingChatRow = await db.get('SELECT name FROM whatsapp_chats WHERE id = ?', [chatId]);
           const chatNameProv = existingChatRow?.name || cleanPhone;
+          const nowProv = Date.now();
           await db.run(
-            `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO whatsapp_chats (
+               id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+               session_mode, manual_active_until, last_pharmacist_message_at, session_status
+             )
+             VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
              ON CONFLICT(id) DO UPDATE SET
                timestamp = EXCLUDED.timestamp,
                last_message = EXCLUDED.last_message,
-               resolved_number = EXCLUDED.resolved_number`,
-            [chatId, chatNameProv, 0, provTimestamp, provisionalBody, 0, cleanPhone]
+               resolved_number = EXCLUDED.resolved_number,
+               session_mode = 'manual',
+               manual_active_until = EXCLUDED.manual_active_until,
+               last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
+               session_status = 'active',
+               unread_count = 0`,
+            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, nowProv + (45 * 60 * 1000), nowProv]
           );
 
           eventService.broadcast('wa_new_message', {
@@ -1486,6 +1553,14 @@ export async function sendMessage(
               type: file || mediaPath ? 'document' : 'text',
               hasMedia: !!provHasMedia
             }
+          });
+
+          eventService.broadcast('wa_session_updated', {
+            chat_id: chatId,
+            resolved_number: cleanPhone,
+            session_mode: 'manual',
+            session_status: 'active',
+            manual_active_until: nowProv + (45 * 60 * 1000)
           });
 
           import('./services/whatsappDeliveryRegister.js')
@@ -1553,15 +1628,24 @@ export async function sendMessage(
 
       const existingChat = await db.get('SELECT name FROM whatsapp_chats WHERE id = ?', [chatId]);
       const chatName = existingChat?.name || cleanPhone;
+      const nowFinal = Date.now();
 
       await db.run(
-        `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO whatsapp_chats (
+           id, name, unread_count, timestamp, last_message, is_group, resolved_number,
+           session_mode, manual_active_until, last_pharmacist_message_at, session_status
+         )
+         VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
          ON CONFLICT(id) DO UPDATE SET
            timestamp = EXCLUDED.timestamp,
            last_message = EXCLUDED.last_message,
-           resolved_number = EXCLUDED.resolved_number`,
-        [chatId, chatName, 0, timestamp, bodyText, 0, cleanPhone]
+           resolved_number = EXCLUDED.resolved_number,
+           session_mode = 'manual',
+           manual_active_until = EXCLUDED.manual_active_until,
+           last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
+           session_status = 'active',
+           unread_count = 0`,
+        [chatId, chatName, timestamp, bodyText, cleanPhone, nowFinal + (45 * 60 * 1000), nowFinal]
       );
 
       eventService.broadcast('wa_new_message', {
@@ -1574,6 +1658,14 @@ export async function sendMessage(
           type: file || mediaPath ? 'document' : 'text',
           hasMedia: !!hasMedia
         }
+      });
+
+      eventService.broadcast('wa_session_updated', {
+        chat_id: chatId,
+        resolved_number: cleanPhone,
+        session_mode: 'manual',
+        session_status: 'active',
+        manual_active_until: nowFinal + (45 * 60 * 1000)
       });
 
       import('./services/whatsappDeliveryRegister.js')
@@ -1595,17 +1687,46 @@ export async function getChats(): Promise<any[]> {
     markWhatsAppActivity(); // user is viewing the inbox — keep the browser awake
     const db = await dbManager.getConnection();
     const rows = await db.all(
-      `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber
+      `SELECT id, name, unread_count as unreadCount, timestamp, is_group as isGroup, last_message as lastMessage, resolved_number as resolvedNumber,
+              session_mode as sessionMode, manual_active_until as manualActiveUntil,
+              last_patient_message_at as lastPatientMessageAt, last_pharmacist_message_at as lastPharmacistMessageAt,
+              session_status as sessionStatus
        FROM whatsapp_chats
        ORDER BY timestamp DESC`
     );
 
     // Deduplicate chats that share the same last 10 digits (e.g. @lid vs @c.us)
+    const nowMs = Date.now();
     const dedupedMap = new Map<string, any>();
     for (const r of rows) {
       const rawNum = r.resolvedNumber || (r.id ? r.id.split('@')[0] : '');
       const digits = rawNum.replace(/\D/g, '');
       const key = digits.length >= 10 ? digits.slice(-10) : (r.id || rawNum);
+
+      // Check if 45m inactivity timeout expired
+      let mode = r.sessionMode || 'auto';
+      let status = r.sessionStatus || 'idle';
+      if (mode === 'manual' && r.manualActiveUntil && r.manualActiveUntil < nowMs) {
+        mode = 'auto';
+        status = 'idle';
+      }
+
+      // Check if waiting > 5 minutes without pharmacist reply
+      const lastPatientTime = Number(r.lastPatientMessageAt || (r.timestamp ? r.timestamp * 1000 : 0));
+      const lastPharmacistTime = Number(r.lastPharmacistMessageAt || 0);
+      const isWaitingForPharmacist = status === 'waiting' || (mode === 'manual' && lastPatientTime > lastPharmacistTime);
+      const isUnansweredOver5Min = Boolean(
+        isWaitingForPharmacist &&
+        lastPatientTime > 0 &&
+        (nowMs - lastPatientTime) > (5 * 60 * 1000)
+      );
+
+      const enrichedItem = {
+        ...r,
+        sessionMode: mode,
+        sessionStatus: status,
+        isUnansweredOver5Min
+      };
 
       if (dedupedMap.has(key)) {
         const existing = dedupedMap.get(key);
@@ -1613,9 +1734,12 @@ export async function getChats(): Promise<any[]> {
         if (r.timestamp && r.timestamp > (existing.timestamp || 0)) {
           existing.timestamp = r.timestamp;
           if (r.lastMessage) existing.lastMessage = r.lastMessage;
+          existing.sessionMode = enrichedItem.sessionMode;
+          existing.sessionStatus = enrichedItem.sessionStatus;
+          existing.isUnansweredOver5Min = enrichedItem.isUnansweredOver5Min;
         }
       } else {
-        dedupedMap.set(key, { ...r });
+        dedupedMap.set(key, enrichedItem);
       }
     }
     const resultRows = Array.from(dedupedMap.values());
@@ -1842,4 +1966,27 @@ export async function checkPhoneWhatsAppRegistered(cleanDigits10: string): Promi
   }
 }
 
-
+/**
+ * Manually resolve / end a chat session (Human-in-the-loop: pharmacist finishes attending to customer)
+ */
+export async function resolveChatSession(chatId: string): Promise<boolean> {
+  try {
+    const db = await dbManager.getConnection();
+    await db.run(
+      `UPDATE whatsapp_chats 
+       SET session_mode = 'auto', session_status = 'ended', manual_active_until = 0, unread_count = 0 
+       WHERE id = ?`,
+      [chatId]
+    );
+    eventService.broadcast('wa_session_updated', {
+      chat_id: chatId,
+      session_mode: 'auto',
+      session_status: 'ended',
+      manual_active_until: 0
+    });
+    return true;
+  } catch (err) {
+    console.error('[WhatsApp Client] Failed to resolve chat session:', err);
+    return false;
+  }
+}

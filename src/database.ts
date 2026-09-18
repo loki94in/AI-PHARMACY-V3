@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 65;
+const CURRENT_SCHEMA_VERSION = 66;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -1175,6 +1175,29 @@ export async function ensureSchema(dbPath: string) {
           }
         } catch (_) { }
         await db.run('CREATE INDEX IF NOT EXISTS idx_special_orders_medicine_id ON special_orders(medicine_id)');
+
+        // Schema v66: WhatsApp Chat Session & Human Takeover Columns
+        try {
+          const chatCols = await db.all('PRAGMA table_info(whatsapp_chats)');
+          const chatNames = new Set(chatCols.map((c: any) => c.name));
+          if (chatCols.length > 0) {
+            if (!chatNames.has('session_mode')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_mode TEXT DEFAULT 'auto'");
+            }
+            if (!chatNames.has('manual_active_until')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN manual_active_until INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has('last_patient_message_at')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_patient_message_at INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has('last_pharmacist_message_at')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_pharmacist_message_at INTEGER DEFAULT 0");
+            }
+            if (!chatNames.has('session_status')) {
+              await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+            }
+          }
+        } catch (_) { }
 
         await ensureOrderTimingSchema(db);
         await ensureMedicinesFts(db);
@@ -3107,7 +3130,12 @@ export async function ensureSchema(dbPath: string) {
       timestamp INTEGER,
       last_message TEXT,
       is_group INTEGER DEFAULT 0,
-      resolved_number TEXT
+      resolved_number TEXT,
+      session_mode TEXT DEFAULT 'auto',
+      manual_active_until INTEGER DEFAULT 0,
+      last_patient_message_at INTEGER DEFAULT 0,
+      last_pharmacist_message_at INTEGER DEFAULT 0,
+      session_status TEXT DEFAULT 'idle'
     );
 
     -- WhatsApp local messages cache
@@ -4141,6 +4169,29 @@ export async function ensureSchema(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_clinical_salt ON medicine_clinical_info(salt_composition);
       CREATE INDEX IF NOT EXISTS idx_clinical_subcategory ON medicine_clinical_info(sub_category);
     `);
+
+    // Schema v66: WhatsApp Chat Session & Human Takeover Columns
+    try {
+      const chatCols = await db.all('PRAGMA table_info(whatsapp_chats)');
+      const chatNames = new Set(chatCols.map((c: any) => c.name));
+      if (chatCols.length > 0) {
+        if (!chatNames.has('session_mode')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_mode TEXT DEFAULT 'auto'");
+        }
+        if (!chatNames.has('manual_active_until')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN manual_active_until INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has('last_patient_message_at')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_patient_message_at INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has('last_pharmacist_message_at')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN last_pharmacist_message_at INTEGER DEFAULT 0");
+        }
+        if (!chatNames.has('session_status')) {
+          await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
+        }
+      }
+    } catch (_) { }
 
     // Stamp schema version so subsequent boots skip all DDL
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);

@@ -310,7 +310,13 @@ router.get('/chats', async (req, res) => {
           timestamp: c.timestamp,
           isGroup: !!c.isGroup,
           lastMessage: c.lastMessage,
-          resolvedNumber: c.resolvedNumber || c.id.split('@')[0]
+          resolvedNumber: c.resolvedNumber || c.id.split('@')[0],
+          sessionMode: c.sessionMode || 'auto',
+          manualActiveUntil: c.manualActiveUntil || 0,
+          lastPatientMessageAt: c.lastPatientMessageAt || 0,
+          lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
+          sessionStatus: c.sessionStatus || 'idle',
+          isUnansweredOver5Min: !!c.isUnansweredOver5Min
         };
       }
       // Raw nested format from whatsapp-web.js client
@@ -321,7 +327,13 @@ router.get('/chats', async (req, res) => {
         timestamp: c.timestamp,
         isGroup: c.isGroup,
         lastMessage: c.lastMessage ? c.lastMessage.body : null,
-        resolvedNumber: c.id.user
+        resolvedNumber: c.id.user,
+        sessionMode: c.sessionMode || 'auto',
+        manualActiveUntil: c.manualActiveUntil || 0,
+        lastPatientMessageAt: c.lastPatientMessageAt || 0,
+        lastPharmacistMessageAt: c.lastPharmacistMessageAt || 0,
+        sessionStatus: c.sessionStatus || 'idle',
+        isUnansweredOver5Min: !!c.isUnansweredOver5Min
       };
     });
     res.json(sanitizedChats);
@@ -500,6 +512,22 @@ router.post('/toggle-ignore', async (req, res) => {
   } catch (err: any) {
     console.error('Error toggling ignore status:', err);
     res.status(500).json({ error: err.message || 'Failed to toggle ignore status' });
+  }
+});
+
+// POST manual resolve chat session (Human-in-the-loop: pharmacist finishes attending to customer)
+router.post('/chats/:id/resolve', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { resolveChatSession } = await import('../whatsappClient.js');
+    const success = await resolveChatSession(id);
+    if (success) {
+      return res.json({ success: true, message: 'Session marked as resolved' });
+    }
+    return res.status(400).json({ success: false, error: 'Failed to resolve session' });
+  } catch (err: any) {
+    console.error('Error resolving chat session:', err);
+    return res.status(500).json({ error: err.message || 'Failed to resolve chat session' });
   }
 });
 

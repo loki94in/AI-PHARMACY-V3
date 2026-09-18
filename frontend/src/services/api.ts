@@ -1348,6 +1348,7 @@ export const api = {
   toggleIgnore: (phone: string, ignore: boolean, reason?: string) => apiClient.post('/messaging/toggle-ignore', { phone, ignore, reason }).then(res => res.data),
   triggerManualScan: (chatId: string, messageId: string) => apiClient.post(`/messaging/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/scan`).then(res => res.data),
   deleteWhatsappMessage: (chatId: string, messageId: string) => apiClient.delete<{ success: boolean; message: string }>(`/messaging/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`).then(res => res.data),
+  resolveWhatsappSession: (chatId: string) => apiClient.post<{ success: boolean; message: string }>(`/messaging/chats/${encodeURIComponent(chatId)}/resolve`).then(res => res.data),
   getSettings: () => apiClient.get('/settings').then(res => res.data),
   saveSettings: (settings: AppSettings) => apiClient.post('/settings/save', settings).then(res => res.data),
   
