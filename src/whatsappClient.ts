@@ -272,7 +272,7 @@ async function getIdleSleepMinutes(): Promise<number> {
     const parsed = row?.value ? parseInt(row.value, 10) : NaN;
     if (!isNaN(parsed) && parsed >= 0) return parsed;
   } catch (_) {}
-  return 15;
+  return 0;
 }
 
 function armSleepEvaluator(delayMs: number = WA_SLEEP_EVALUATOR_MS): void {

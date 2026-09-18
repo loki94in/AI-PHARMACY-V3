@@ -625,6 +625,7 @@ export async function ensureSchema(dbPath: string) {
     // Ensure app_settings and schema_migrations tables exist for schema version tracking
     await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
     await db.run('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
 
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
@@ -3555,6 +3556,7 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
 
     // WhatsApp Admin Auto-Escalation defaults
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");

@@ -2313,7 +2313,7 @@ function IntegrationsCredentialsTab({ rawSettings, refetchSettings, isVisible }:
                       placeholder="0"
                     />
                     <p className="text-[10px] text-muted mt-1">
-                      Frees ~250–400 MB RAM while idle. Queued messages wake it automatically. 0 = never sleep.
+                      0 = Never sleep (stays awake 24/7 so customer incoming messages &amp; replies are never missed). &gt;0 frees ~250–400 MB RAM while idle.
                     </p>
                   </div>
                   {waStatus.qr && (
