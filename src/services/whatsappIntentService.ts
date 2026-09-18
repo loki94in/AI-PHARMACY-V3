@@ -701,14 +701,7 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
       eventService.broadcast('order_updated', { at: Date.now(), id: specialOrderId });
     } catch (_) {}
 
-    // 10. Send customer courtesy acknowledgment ONLY AFTER owner notification (skipped if handling a bundle)
-    if (!params.isBundle) {
-      const custAckMsg = `Thank you! Your request for *${cartItem.productName}* × ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
-      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-      await whatsappQueueWorker.enqueue(phone, custAckMsg, 'customer_inquiry_confirmed', customer?.name || 'Customer');
-    }
-
-    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
+    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer message staged for manual send.`);
   } catch (procErr) {
     console.error('[Intent Service] Error in executeConfirmedProcurementFlow:', procErr);
   }
@@ -1201,7 +1194,7 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
     } catch (_) {}
 
-    // Send final customer message (Spec §15)
+    // Stage final customer message (STRICTLY STAGED, NEVER AUTO-SENT - matches executeConfirmedProcurementFlow pattern)
     const custFinalMsg =
       `🎉 Your medicine request is confirmed!\n\n` +
       `🆔 Special Order ID: ${soCode}\n\n` +
@@ -1210,10 +1203,29 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       `💰 Booking Amount Paid: ₹50\n\n` +
       `🛒 Your medicine has been added to your Live Cart.`;
 
-    await whatsappQueueWorker.enqueue(order.phone, custFinalMsg, 'customer_inquiry_confirmed', order.requester || 'Customer');
+    await db.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+       VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+      ['whatsapp_order', order.requester || 'Customer', String(order.phone || '').replace(/\D/g, '').slice(-10), custFinalMsg, String(orderId)]
+    );
 
-    // Ack to owner
-    const ownerFinalAck = `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\nCustomer *${order.requester || 'Customer'}* has received final confirmation.`;
+    // Notify Store Owner on WhatsApp via waAdminEscalationService (automatic; customer message stays staged)
+    await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+      orderId: soCode,
+      customer: { name: order.requester, phone: order.phone },
+      phone: order.phone,
+      items: [{
+        name: order.medicine_name || order.product,
+        quantity: order.qty,
+        distributor: order.pharmarack_distributor || 'Standard Distributor',
+        rate: order.pharmarack_rate,
+        mrp: order.pharmarack_mrp
+      }],
+      success: true
+    });
+
+    // Ack to owner (owner-facing, allowed to stay automatic)
+    const ownerFinalAck = `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\nCustomer *${order.requester || 'Customer'}* message has been staged and is awaiting manual send in Quick Assist.`;
     await whatsappQueueWorker.enqueue(phone, ownerFinalAck, 'admin_escalation', 'Owner');
 
     console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode}). Added to Live Cart.`);

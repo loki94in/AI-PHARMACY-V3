@@ -99,13 +99,12 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
       expect(adminAlertPayload.error).toBe('Session expired or product unavailable');
     });
 
-    test('successful Live Cart addition creates Confirmed order, stages collection message, notifies owner, and sends customer courtesy acknowledgment', async () => {
+    test('successful Live Cart addition creates Confirmed order, stages collection message, and notifies owner — customer message is staged only, never auto-sent', async () => {
       const cartResult = { success: true, mode: 'Live' };
       let specialOrderStatus = '';
       let stagedNotification: any = null;
       let adminAlertPayload: any = null;
-      let customerAckEnqueued = false;
-      let customerAckText = '';
+      let customerDirectSendAttempted = false;
 
       if (cartResult.success) {
         specialOrderStatus = 'Confirmed';
@@ -119,19 +118,16 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
           orderId: 101,
           success: true
         };
-        // Sent ONLY after owner notification is complete:
-        if (adminAlertPayload.success) {
-          customerAckEnqueued = true;
-          customerAckText = 'Thank you! Your request for *Zifi 200mg* × 2 has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.';
-        }
+        // Per WhatsApp Confirmed Order.md: owner notification is automatic, but the
+        // customer-facing message must remain STAGED — no direct/auto send follows
+        // owner notification. customerDirectSendAttempted must stay false.
       }
 
       expect(specialOrderStatus).toBe('Confirmed');
       expect(stagedNotification.status).toBe('staged');
       expect(stagedNotification.needs_confirmation).toBe(1);
       expect(adminAlertPayload.success).toBe(true);
-      expect(customerAckEnqueued).toBe(true);
-      expect(customerAckText).toContain('forwarded to our pharmacy owner');
+      expect(customerDirectSendAttempted).toBe(false);
     });
 
     test('15-minute idempotency guard prevents duplicate Live Cart orders for same phone and medicine', () => {
@@ -186,14 +182,14 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
       }
     });
 
-    test('when Auto Add is OFF: Live Cart addition is bypassed, order is confirmed, admin is notified for manual review, and message is staged', async () => {
+    test('when Auto Add is OFF: Live Cart addition is bypassed, order is confirmed, admin is notified for manual review, and message is staged only', async () => {
       const autoAddToCart = false;
       let cartAdditionAttempted = false;
       let specialOrderCreated = false;
       let specialOrderStatus = '';
       let stagedMessageCreated = false;
       let adminAlertPayload: any = null;
-      let customerAckSent = false;
+      let customerDirectSendAttempted = false;
 
       // Simulate the decision gate in executeConfirmedProcurementFlow
       if (autoAddToCart) {
@@ -217,9 +213,8 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
         manualReview: !autoAddToCart
       };
 
-      if (adminAlertPayload.success) {
-        customerAckSent = true;
-      }
+      // Per WhatsApp Confirmed Order.md: customer message stays staged regardless of
+      // the Auto Add setting — no direct send should ever follow owner notification.
 
       // Assertions
       expect(cartAdditionAttempted).toBe(false);
@@ -228,7 +223,7 @@ describe('WhatsApp Confirmed Order & Live Cart Helpers', () => {
       expect(stagedMessageCreated).toBe(true);
       expect(adminAlertPayload.manualReview).toBe(true);
       expect(adminAlertPayload.success).toBe(true);
-      expect(customerAckSent).toBe(true);
+      expect(customerDirectSendAttempted).toBe(false);
     });
 
     test('when Auto Add is ON: Live Cart addition is attempted and treated as Live addition', async () => {
