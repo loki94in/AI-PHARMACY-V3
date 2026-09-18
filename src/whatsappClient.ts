@@ -974,16 +974,22 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           'SELECT session_mode, manual_active_until, last_pharmacist_message_at FROM whatsapp_chats WHERE id = ?',
           [chatId]
         );
-
         let sessionMode = existingChatRow?.session_mode || 'auto';
         let manualUntil = Number(existingChatRow?.manual_active_until || 0);
         let sessionStatus = existingChatRow?.session_status || 'idle';
 
         if (isFromMe) {
-          // Pharmacist sent a manual reply -> activate Human Takeover
-          sessionMode = 'manual';
-          manualUntil = nowMs + manualTimeoutMs;
-          sessionStatus = 'active';
+          const fullMsg = (msg.body || '').trim();
+          const msgHash = hashMessageBody(fullMsg);
+          const sendKey1 = `${resolvedNumber}:${msgHash}:${fullMsg.length}`;
+          const sendKey2 = `${chatId.split('@')[0]}:${msgHash}:${fullMsg.length}`;
+          const isAutomatedSend = recentSendsCache.has(sendKey1) || recentSendsCache.has(sendKey2);
+          if (!isAutomatedSend) {
+            // Pharmacist sent a manual reply from actual WhatsApp phone/web -> activate Human Takeover
+            sessionMode = 'manual';
+            manualUntil = nowMs + manualTimeoutMs;
+            sessionStatus = 'active';
+          }
         } else {
           // Inbound message from patient
           if (sessionMode === 'manual') {
@@ -1521,25 +1527,24 @@ export async function sendMessage(
             [messageId, chatId, provisionalBody, 1, provTimestamp, file || mediaPath ? 'document' : 'text', provHasMedia]
           );
 
-          const existingChatRow = await db.get('SELECT name FROM whatsapp_chats WHERE id = ?', [chatId]);
+          const existingChatRow = await db.get('SELECT name, session_mode, manual_active_until, session_status FROM whatsapp_chats WHERE id = ?', [chatId]);
           const chatNameProv = existingChatRow?.name || cleanPhone;
           const nowProv = Date.now();
+          const targetSessionMode = existingChatRow?.session_mode || 'auto';
+          const targetManualUntil = existingChatRow?.manual_active_until || 0;
+          const targetSessionStatus = existingChatRow?.session_status || 'idle';
           await db.run(
             `INSERT INTO whatsapp_chats (
                id, name, unread_count, timestamp, last_message, is_group, resolved_number,
                session_mode, manual_active_until, last_pharmacist_message_at, session_status
              )
-             VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
+             VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                timestamp = EXCLUDED.timestamp,
                last_message = EXCLUDED.last_message,
                resolved_number = EXCLUDED.resolved_number,
-               session_mode = 'manual',
-               manual_active_until = EXCLUDED.manual_active_until,
-               last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
-               session_status = 'active',
                unread_count = 0`,
-            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, nowProv + (45 * 60 * 1000), nowProv]
+            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, targetSessionMode, targetManualUntil, nowProv, targetSessionStatus]
           );
 
           eventService.broadcast('wa_new_message', {
@@ -1626,26 +1631,25 @@ export async function sendMessage(
         [messageId, chatId, bodyText, 1, timestamp, file || mediaPath ? 'document' : 'text', hasMedia]
       );
 
-      const existingChat = await db.get('SELECT name FROM whatsapp_chats WHERE id = ?', [chatId]);
+      const existingChat = await db.get('SELECT name, session_mode, manual_active_until, session_status FROM whatsapp_chats WHERE id = ?', [chatId]);
       const chatName = existingChat?.name || cleanPhone;
       const nowFinal = Date.now();
+      const finalSessionMode = existingChat?.session_mode || 'auto';
+      const finalManualUntil = existingChat?.manual_active_until || 0;
+      const finalSessionStatus = existingChat?.session_status || 'idle';
 
       await db.run(
         `INSERT INTO whatsapp_chats (
            id, name, unread_count, timestamp, last_message, is_group, resolved_number,
            session_mode, manual_active_until, last_pharmacist_message_at, session_status
          )
-         VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
+         VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            timestamp = EXCLUDED.timestamp,
            last_message = EXCLUDED.last_message,
            resolved_number = EXCLUDED.resolved_number,
-           session_mode = 'manual',
-           manual_active_until = EXCLUDED.manual_active_until,
-           last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
-           session_status = 'active',
            unread_count = 0`,
-        [chatId, chatName, timestamp, bodyText, cleanPhone, nowFinal + (45 * 60 * 1000), nowFinal]
+        [chatId, chatName, timestamp, bodyText, cleanPhone, finalSessionMode, finalManualUntil, nowFinal, finalSessionStatus]
       );
 
       eventService.broadcast('wa_new_message', {

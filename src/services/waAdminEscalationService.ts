@@ -804,6 +804,84 @@ Action required in application.`;
   }
 }
 
+export interface OwnerSpecialOrderResultsPayload {
+  specialOrderId: number;
+  soCode: string;
+  customerName: string;
+  customerPhone: string;
+  medicineName: string;
+  quantity: number;
+  unit: string;
+  pharmarackOptions: any[];
+}
+
+/**
+ * Notifies the pharmacy owner of available in-stock Pharmarack results for a confirmed Special Order.
+ * Follows the exact format in WhatsApp Medicine Request spec §9.
+ */
+export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerSpecialOrderResultsPayload): Promise<void> {
+  try {
+    const db = await dbManager.getConnection();
+    const guard = await escalateGuard(db, payload.customerPhone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+
+    await ensureOwnerPendingRequestsTable(db);
+    await db.run(
+      `INSERT INTO wa_owner_pending_requests (
+         req_code, customer_phone, customer_name, medicine_name, quantity, unit, options_json, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+       ON CONFLICT(req_code) DO UPDATE SET
+         customer_phone = excluded.customer_phone,
+         customer_name = excluded.customer_name,
+         medicine_name = excluded.medicine_name,
+         quantity = excluded.quantity,
+         unit = excluded.unit,
+         options_json = excluded.options_json,
+         status = 'pending',
+         created_at = CURRENT_TIMESTAMP`,
+      [
+        payload.soCode,
+        payload.customerPhone,
+        payload.customerName,
+        payload.medicineName,
+        payload.quantity,
+        payload.unit,
+        JSON.stringify(payload.pharmarackOptions)
+      ]
+    );
+
+    const formatNum = (n: number) => {
+      const symbols = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+      return symbols[n] || `${n + 1}️⃣`;
+    };
+
+    const resultsList = payload.pharmarackOptions.map((opt, i) => {
+      const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
+      const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? opt.mrp ?? 0;
+      const rateStr = rate > 0 ? `₹${Number(rate).toFixed(2)}` : 'Available';
+      return `${formatNum(i)} ${dist} | Available | ${rateStr}`;
+    }).join('\n');
+
+    const messageText =
+      `🔔 *New Special Order Request*\n\n` +
+      `🆔 *Special Order ID*: ${payload.soCode}\n\n` +
+      `👤 *Customer*: ${payload.customerName}\n` +
+      `📱 *WhatsApp*: ${payload.customerPhone}\n\n` +
+      `💊 *${payload.medicineName}*\n` +
+      `📦 *Quantity*: ${payload.quantity} ${payload.unit}\n\n` +
+      `🔎 *Pharmarack Search Results*\n\n` +
+      `${resultsList}\n\n` +
+      `Please reply with:\n` +
+      `${payload.soCode} 1`;
+
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation', 'Admin / Store Owner');
+    console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);
+  } catch (err) {
+    console.error('[Admin Escalation] Error in notifyOwnerOfSpecialOrderPharmarackResults:', err);
+  }
+}
+
 let ownerPendingTableEnsured = false;
 export async function ensureOwnerPendingRequestsTable(db: any): Promise<void> {
   if (ownerPendingTableEnsured) return;
@@ -833,5 +911,6 @@ export const waAdminEscalationService = {
   notifyAdminOfUnmatchedQuery,
   notifyAdminOfCustomerConfirmation,
   notifyAdminOfLiveCartAdd,
+  notifyOwnerOfSpecialOrderPharmarackResults,
   ensureOwnerPendingRequestsTable
 };

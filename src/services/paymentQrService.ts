@@ -6,6 +6,7 @@
  */
 
 import { dbManager } from '../database/connection.js';
+import QRCode from 'qrcode';
 
 export interface PaymentQrConfig {
   id: 'QR_1' | 'QR_2' | 'QR_3';
@@ -153,6 +154,13 @@ class PaymentQrService {
     const encodedName = encodeURIComponent(payeeName || 'AI Pharmacy');
     const note = encodeURIComponent(`Order #${orderId}`);
     return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
+  }
+
+  /**
+   * Generate PNG Buffer for a given UPI URI to send over WhatsApp
+   */
+  async generateQrBuffer(upiUri: string): Promise<Buffer> {
+    return QRCode.toBuffer(upiUri, { width: 300, margin: 2 });
   }
 
   /**
