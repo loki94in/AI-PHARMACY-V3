@@ -3871,6 +3871,7 @@ const SpecialOrdersSection: React.FC = () => {
   const [addingCartId, setAddingCartId] = useState<number | null>(null);
   const [convertingId, setConvertingId] = useState<number | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   interface CartAdjustmentNotice {
     productName: string;
@@ -3959,7 +3960,6 @@ const SpecialOrdersSection: React.FC = () => {
 
   // Edit Request Form State
   const [editingOrder, setEditingOrder] = useState<SpecialOrderItem | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
   const [editProduct, setEditProduct] = useState('');
   const [editSalutation, setEditSalutation] = useState('Mr.');
   const [editCustomSalutation, setEditCustomSalutation] = useState('');
