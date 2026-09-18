@@ -27,9 +27,9 @@ export function findChromePath(options?: { includeEdge?: boolean }): string | nu
 
   if (options?.includeEdge) {
     paths.push(
-      process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google\\Chrome\\Application\\chrome.exe') : null,
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Microsoft\\Edge\\Application\\msedge.exe') : null,
       process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft\\Edge\\Application\\msedge.exe') : null
     );
   }

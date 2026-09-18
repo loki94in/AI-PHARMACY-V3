@@ -419,8 +419,57 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     if (!colNames.has('step')) {
       await db.run("ALTER TABLE wa_pending_clarifications ADD COLUMN step TEXT DEFAULT 'awaiting_confirmation'");
     }
+    if (!colNames.has('raw_qty_given')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN raw_qty_given INTEGER DEFAULT 0');
+    }
   } catch (_) {}
   clarificationsTableEnsured = true;
+}
+
+export function selectFormDiverseMatches(matches: string[]): string[] {
+  if (!matches || matches.length <= 1) return matches || [];
+
+  const categories: Record<string, string[]> = {
+    syrup: [],
+    capsule_tablet: [],
+    drops: [],
+    injection: [],
+    other: []
+  };
+
+  for (const m of matches) {
+    const upper = m.toUpperCase();
+    if (/\b(SYP|SYRUP|SUSP|SUSPENSION|LIQUID|ELIXIR)\b/.test(upper)) {
+      categories.syrup.push(m);
+    } else if (/\b(CAP|CAPSULE|TAB|TABLET|DT|CAPLET|SOFGEL)\b/.test(upper)) {
+      categories.capsule_tablet.push(m);
+    } else if (/\b(DROP|DROPS)\b/.test(upper)) {
+      categories.drops.push(m);
+    } else if (/\b(INJ|INJECTION|VIAL|AMPOULE|INFUSION)\b/.test(upper)) {
+      categories.injection.push(m);
+    } else {
+      categories.other.push(m);
+    }
+  }
+
+  const result: string[] = [];
+  const order = ['syrup', 'capsule_tablet', 'drops', 'injection', 'other'];
+  for (const cat of order) {
+    if (categories[cat].length > 0) {
+      result.push(categories[cat][0]);
+    }
+  }
+
+  if (result.length < 4) {
+    for (const m of matches) {
+      if (!result.includes(m)) {
+        result.push(m);
+        if (result.length >= 4) break;
+      }
+    }
+  }
+
+  return result.slice(0, 4);
 }
 
 function extractQuantityFromText(text: string): { quantity: number; unit: string } | null {
@@ -832,6 +881,120 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
   return false;
 }
 
+async function checkIsOwnerPhone(phone: string, db: any): Promise<boolean> {
+  const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+  if (!cleanDigits) return false;
+  const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db) || '';
+  const cleanAdmin = (adminPhone || '').replace(/\D/g, '').slice(-10);
+  return Boolean(cleanAdmin && cleanAdmin === cleanDigits);
+}
+
+async function handleOwnerInteractiveReply(phone: string, body: string, db: any): Promise<boolean> {
+  const cleanBody = body.trim().toUpperCase();
+  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-4])$/i);
+  const singleNumMatch = cleanBody.match(/^([1-4])$/);
+
+  if (!reqCodeMatch && !singleNumMatch) return false;
+
+  await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
+
+  let targetRow: any = null;
+  let chosenOptionIdx = -1;
+
+  if (reqCodeMatch) {
+    const reqCode = reqCodeMatch[1].toUpperCase();
+    chosenOptionIdx = parseInt(reqCodeMatch[2], 10) - 1;
+    targetRow = await db.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? AND status = 'pending'`,
+      [reqCode]
+    );
+  } else if (singleNumMatch) {
+    chosenOptionIdx = parseInt(singleNumMatch[1], 10) - 1;
+    targetRow = await db.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
+    );
+  }
+
+  if (!targetRow || chosenOptionIdx < 0) return false;
+
+  let options: any[] = [];
+  try {
+    options = JSON.parse(targetRow.options_json || '[]');
+  } catch (_) {}
+
+  const selectedDist = options[chosenOptionIdx];
+  if (!selectedDist) {
+    const errGuide = `⚠️ Option ${chosenOptionIdx + 1} not found for Request #${targetRow.req_code}. Available options: 1 to ${options.length}.`;
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    await whatsappQueueWorker.enqueue(phone, errGuide, 'admin_escalation', 'Owner');
+    return true;
+  }
+
+  const cartItem = {
+    productName: targetRow.medicine_name,
+    product: targetRow.medicine_name,
+    productId: selectedDist.productId || selectedDist.product_id || 0,
+    productCode: selectedDist.productCode || selectedDist.product_code || '',
+    storeId: Number(selectedDist.store_id || selectedDist.storeId || 0),
+    storeName: selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || 'Standard Distributor',
+    company: selectedDist.manufacturer || selectedDist.company || '',
+    qty: targetRow.quantity > 0 ? targetRow.quantity : 1,
+    rate: selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0,
+    mrp: selectedDist.mrp ?? selectedDist.MRP ?? 0,
+    packaging: selectedDist.packaging || targetRow.unit || '1 strip'
+  };
+
+  const { addItemsToPharmarackCart } = await import('../routes/pharmarack.js');
+  const cartRes = await addItemsToPharmarackCart([cartItem]);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const orderRes = await db.run(
+    `INSERT INTO special_orders (
+      store_id, requester, phone, medicine_name, product, qty, priority, status,
+      date, notified, customer_order_source,
+      pharmarack_distributor, pharmarack_rate, pharmarack_mrp
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?)`,
+    [
+      1,
+      targetRow.customer_name || 'WhatsApp Customer',
+      targetRow.customer_phone,
+      cartItem.productName,
+      cartItem.productName,
+      cartItem.qty,
+      todayStr,
+      cartItem.storeName,
+      cartItem.rate,
+      cartItem.mrp
+    ]
+  );
+  const specialOrderId = orderRes.lastID;
+
+  await db.run(
+    `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE id = ?`,
+    [targetRow.id]
+  );
+
+  const ownerAck = `✅ *Special Order #${targetRow.req_code} Processed!*\n\nAdded *${cartItem.productName}* × ${cartItem.qty} ${targetRow.unit}\nDistributor: *${cartItem.storeName}* (PTR ₹${cartItem.rate.toFixed(2)})\ndirectly into your *Pharmarack Live Cart*.\n\nCreated Special Order #${specialOrderId} for customer *${targetRow.customer_name}*.`;
+  const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+  await whatsappQueueWorker.enqueue(phone, ownerAck, 'admin_escalation', 'Owner');
+
+  if (targetRow.customer_phone) {
+    const { getStoreMedicalName, getStorePhone } = await import('./storeSettingsService.js');
+    const storeLabel = await getStoreMedicalName(db);
+    const storePhone = await getStorePhone(db);
+    const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
+    const custAck = `Namaste ${targetRow.customer_name} ji! 🙏\n\nYour order for *${cartItem.productName}* × ${cartItem.qty} ${targetRow.unit} is confirmed and being arranged with our distributor at ${storeLabel}. We will message you as soon as it is ready for collection.${phoneSuffix}`;
+    await whatsappQueueWorker.enqueue(targetRow.customer_phone, custAck, 'customer_inquiry_confirmed', targetRow.customer_name || 'Customer');
+  }
+
+  try {
+    eventService.broadcast('order_updated', { at: Date.now(), id: specialOrderId });
+  } catch (_) {}
+
+  console.log(`[Intent Service] Owner fulfilled request #${targetRow.req_code} via WhatsApp reply. Cart addition & special order created.`);
+  return true;
+}
+
 /**
  * Main entry point: process an inbound WhatsApp message.
  * Called from whatsappClient.ts message_create handler.
@@ -871,7 +1034,14 @@ export async function handleInbound(msg: any): Promise<void> {
 
     const db = await dbManager.getConnection();
 
-    // 1a. DISTRIBUTOR & INTERNAL CHECK
+    // 1a. OWNER INTERACTIVE COMMAND CHECK
+    const isOwner = await checkIsOwnerPhone(phone || chatId, db);
+    if (isOwner) {
+      const handled = await handleOwnerInteractiveReply(phone || chatId, body, db);
+      if (handled) return;
+    }
+
+    // 1b. DISTRIBUTOR & INTERNAL CHECK
     if (await isDistributorOrInternal(phone || chatId, db)) {
       return;
     }

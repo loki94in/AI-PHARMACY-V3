@@ -346,11 +346,7 @@ ${phoneLine}
     const contextBlock = contextLines.length > 0 ? `\n\n${contextLines.join('\n')}` : '';
     const formLine = payload.dosageForm ? `\n🩹 *Form*: ${payload.dosageForm}` : '';
     const relatedBlock = buildRelatedBlock(payload.relatedMedicines);
-
     if (outcome === 'found_local') {
-      // Truthful stock reporting — a medicines-master match is NOT shelf
-      // presence. Show per-name active stock; when the master has the name but
-      // the shelf is empty, say so and surface distributor matches instead.
       const inStock = payload.availability !== 'REGISTERED_NO_STOCK';
       const fmtStock = (name: string) => {
         const units = payload.inventoryStock?.[String(name).toLowerCase()];
@@ -374,17 +370,31 @@ ${phoneLine}
         return ` | 🟢 In Stock (${stock})`;
       };
 
-      const mappedTop = (payload.catalogResults?.mapped || []).slice(0, 4);
-      const nonMappedTop = (payload.catalogResults?.nonMapped || []).slice(0, mappedTop.length > 0 ? 2 : 4);
-      const distLines = [...mappedTop, ...nonMappedTop]
-        .map((p: any, i: number) => {
-          const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
-          const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
-          const avail = formatStockBadge(p.availability ?? p.stock);
-          const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
-          return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || 'Unknown'}`;
-        })
-        .join('\n');
+      const isStockAvailable = (p: any): boolean => {
+        const stock = p.availability ?? p.stock;
+        if (stock === undefined || stock === null || stock === '') return false;
+        const s = String(stock).toLowerCase().trim();
+        if (s === '0' || s.includes('out') || s.includes('no') || s.includes('unavail')) return false;
+        const num = parseInt(s, 10);
+        if (!isNaN(num) && num <= 0) return false;
+        return true;
+      };
+
+      const mappedInStock = (payload.catalogResults?.mapped || []).filter(isStockAvailable);
+      const nonMappedInStock = (payload.catalogResults?.nonMapped || []).filter(isStockAvailable);
+      const allInStock = [...mappedInStock, ...nonMappedInStock].slice(0, 4);
+
+      const distLines = allInStock.length > 0
+        ? allInStock
+            .map((p: any, i: number) => {
+              const ptr = p.distributorPrice ?? p.ptr ?? p.PTR ?? p.rate;
+              const ptrStr = ptr ? ` | PTR ₹${ptr}` : '';
+              const avail = formatStockBadge(p.availability ?? p.stock);
+              const scheme = p.scheme ? ` | Scheme: ${p.scheme}` : '';
+              return `${i + 1}. ${p.name || p.productName || 'Unknown'} | MRP ₹${p.mrp ?? p.MRP ?? '-'}${ptrStr}${avail}${scheme} | ${p.distributor || p.supplier_name || p.storeName || 'Unknown'}`;
+            })
+            .join('\n')
+        : '🔴 All checked distributors currently Out of Stock';
 
       if (inStock) {
         messageText = `🔔 *Prescription Medicine Extracted*
@@ -397,16 +407,52 @@ ${customerBlock}
 ✅ *In Stock*: ${payload.localMatches.slice(0, 3).map(fmtStock).join(', ')}
 ${distLines ? `\n🚚 *Distributor Availability (Pharmarack)*:\n${distLines}\n` : ''}${relatedBlock}${contextBlock}`;
       } else {
-        messageText = `⚠️ *Medicine Registered in DB but NOT in Physical Stock*
+        // Generate short request code for owner 1-click WhatsApp reply
+        const reqNum = Math.floor(100 + Math.random() * 900);
+        const reqCode = `REQ-${reqNum}`;
+
+        try {
+          await ensureOwnerPendingRequestsTable(db);
+          await db.run(
+            `INSERT INTO wa_owner_pending_requests (req_code, customer_phone, customer_name, medicine_name, quantity, unit, options_json, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+             ON CONFLICT(req_code) DO UPDATE SET
+               customer_phone = excluded.customer_phone,
+               customer_name = excluded.customer_name,
+               medicine_name = excluded.medicine_name,
+               quantity = excluded.quantity,
+               unit = excluded.unit,
+               options_json = excluded.options_json,
+               status = 'pending',
+               created_at = CURRENT_TIMESTAMP`,
+            [
+              reqCode,
+              payload.phone || payload.customer?.phone || '',
+              payload.customer?.name || 'Customer',
+              payload.medicineName,
+              payload.quantity || 1,
+              payload.unit || 'strip',
+              JSON.stringify(allInStock)
+            ]
+          );
+        } catch (saveErr) {
+          console.warn('[Escalation] Failed to save owner pending request:', saveErr);
+        }
+
+        const replyGuide = allInStock.length > 0
+          ? `\n\n💬 *Reply with \`${reqCode}-1\` or \`1\` to add ${payload.quantity || 1} ${payload.unit || 'strip'} to Live Cart & create Special Order.*`
+          : '';
+
+        messageText = `⚠️ *Special Order Request #${reqCode} (0 on Physical Shelf)*
 
 ${customerBlock}
 
- 💊 *Extracted Medicine*: ${payload.medicineName}
+ 💊 *Confirmed Medicine*: ${payload.medicineName}
  📦 *Quantity*: ${payload.quantity} ${payload.unit}${formLine}
  ⭐ *Match Confidence*: ${Math.round(payload.confidence)}%
  🗄️ *DB match (0 on shelf)*: ${payload.localMatches.slice(0, 3).join(', ')}
-${distLines ? `\n🚚 *Distributor options*:\n${distLines}\n` : ''}${relatedBlock}
-👉 Needs a purchase order before confirming to the customer.${contextBlock}`;
+${distLines ? `\n🚚 *In-Stock Distributor Options*:\n${distLines}\n` : ''}${relatedBlock}
+👉 Needs a purchase order before confirming to the customer.${replyGuide}${contextBlock}`;
       }
     } else {
       // PharmaRack outcome — mapped distributors first, then non-mapped,
@@ -758,6 +804,27 @@ Action required in application.`;
   }
 }
 
+let ownerPendingTableEnsured = false;
+export async function ensureOwnerPendingRequestsTable(db: any): Promise<void> {
+  if (ownerPendingTableEnsured) return;
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS wa_owner_pending_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      req_code TEXT UNIQUE,
+      customer_phone TEXT,
+      customer_name TEXT,
+      medicine_name TEXT,
+      quantity INTEGER DEFAULT 1,
+      unit TEXT DEFAULT 'strip',
+      options_json TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_req_code ON wa_owner_pending_requests(req_code);
+  `);
+  ownerPendingTableEnsured = true;
+}
+
 export const waAdminEscalationService = {
   maybeEscalate,
   notifyAdminOfUnprocessedMedia,
@@ -765,5 +832,6 @@ export const waAdminEscalationService = {
   notifyAdminOfNonAllopathic,
   notifyAdminOfUnmatchedQuery,
   notifyAdminOfCustomerConfirmation,
-  notifyAdminOfLiveCartAdd
+  notifyAdminOfLiveCartAdd,
+  ensureOwnerPendingRequestsTable
 };

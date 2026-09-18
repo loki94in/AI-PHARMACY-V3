@@ -70946,6 +70946,7 @@ var init_dashboard = __esm({
 // src/services/masterMedicinesSeedService.ts
 var masterMedicinesSeedService_exports = {};
 __export(masterMedicinesSeedService_exports, {
+  enrichMasterMedicinesFromCsv: () => enrichMasterMedicinesFromCsv,
   seedMasterMedicines: () => seedMasterMedicines,
   syncInventoryToMaster: () => syncInventoryToMaster,
   upsertMasterMedicine: () => upsertMasterMedicine
@@ -70993,35 +70994,80 @@ function parseCsvLine2(line) {
 async function seedMasterMedicines(force = false) {
   const db2 = await dbManager.getConnection();
   try {
+    try {
+      const corruptRow = await db2.get(`
+        SELECT COUNT(*) as cnt 
+        FROM medicines 
+        WHERE source = 'master_reference' AND manufacturer = 'f'
+      `);
+      if (corruptRow && corruptRow.cnt > 0) {
+        console.log(`[MasterSeed] Detected ${corruptRow.cnt} legacy corrupted master_reference rows (manufacturer='f'). Auto-purging...`);
+        await db2.run(`
+          DELETE FROM medicines 
+          WHERE source = 'master_reference' 
+            AND manufacturer = 'f' 
+            AND (legacy_id IS NULL OR length(name) <= 8)
+        `);
+      }
+    } catch (_) {
+    }
     if (!force) {
-      const row = await db2.get("SELECT COUNT(*) as c FROM medicines");
+      const row = await db2.get("SELECT COUNT(*) as c FROM medicines WHERE (packaging IS NOT NULL AND packaging != '') OR source != 'master_reference'");
       if (row && row.c > 50) {
         return { loaded: 0 };
       }
     }
     const candidateCsvPaths = [
+      import_path56.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
+      import_path56.default.join(getAppDataDir(), "medicines.csv"),
       import_path56.default.join(process.cwd(), "data", "reference_medicines.csv"),
       import_path56.default.join(process.cwd(), "medicines.csv"),
       import_path56.default.join(process.cwd(), "data", "medicines.csv"),
       import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "reference_medicines.csv"),
-      import_path56.default.join(import_path56.default.dirname(process.execPath), "medicines.csv")
+      import_path56.default.join(import_path56.default.dirname(process.execPath), "medicines.csv"),
+      import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
+      import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "medicines.csv")
     ];
     const csvPath = candidateCsvPaths.find((p) => import_fs52.default.existsSync(p));
     if (!csvPath) {
       const templateCandidates = [
         import_path56.default.join(process.cwd(), "data", "app.db"),
-        import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "app.db")
+        import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "app.db"),
+        import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "data", "app.db")
       ];
       for (const tPath of templateCandidates) {
         if (import_fs52.default.existsSync(tPath) && import_path56.default.resolve(tPath) !== import_path56.default.resolve(config.dbPath)) {
           try {
             const normalized = tPath.replace(/\\/g, "/");
             await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
-            const res = await db2.run(`INSERT OR IGNORE INTO medicines SELECT * FROM templateDb.medicines`);
+            const res = await db2.run(`
+              INSERT OR IGNORE INTO medicines (
+                name, canonical_name, normalized_name, product_code, status,
+                dosage_form, pack_size, barcode, api_reference, mrp,
+                hsn_code, schedule_type, manufacturer, category, marketed_by,
+                legacy_id, packaging, item_type, cgst_per, sgst_per,
+                igst_per, rack, therapeutic, sub_therapeutic, short_code,
+                ucode, source, sell_price, allow_loose_sale
+              )
+              SELECT 
+                name, canonical_name, normalized_name, product_code, status,
+                dosage_form, pack_size, barcode, api_reference, mrp,
+                hsn_code, schedule_type, manufacturer, category, marketed_by,
+                legacy_id, packaging, item_type, cgst_per, sgst_per,
+                igst_per, rack, therapeutic, sub_therapeutic, short_code,
+                ucode, source, sell_price, allow_loose_sale
+              FROM templateDb.medicines
+              WHERE (packaging IS NOT NULL AND packaging != '') OR source != 'master_reference'
+            `);
             await db2.run(`DETACH DATABASE templateDb`);
             const loaded2 = res?.changes || 0;
             if (loaded2 > 0) {
               console.log(`[MasterSeed] Successfully synced ${loaded2} master medicines from template DB (${tPath}).`);
+              try {
+                const { ensureMedicinesFts: ensureMedicinesFts2 } = await Promise.resolve().then(() => (init_database(), database_exports));
+                await ensureMedicinesFts2(db2);
+              } catch (_) {
+              }
               return { loaded: loaded2 };
             }
           } catch (e) {
@@ -71090,6 +71136,7 @@ async function seedMasterMedicines(force = false) {
         const subTherapeutic = clean(fields[col["subtherapeutic"]]);
         const shortCode = clean(fields[col["medicine_short_code"]]);
         const ucode = clean(fields[col["ucode"]]);
+        const parsedPackSize = pkg2 ? parseInt(pkg2) || null : null;
         csvBatch.push([
           name,
           name,
@@ -71097,7 +71144,7 @@ async function seedMasterMedicines(force = false) {
           mfg,
           mkt,
           pkg2,
-          pkg2,
+          parsedPackSize,
           itemType,
           hsn,
           cgst,
@@ -71141,6 +71188,13 @@ async function seedMasterMedicines(force = false) {
     if (simpleBatch.length > 0) {
       await insertSimpleBatch(db2, simpleBatch);
       loaded += simpleBatch.length;
+    }
+    if (loaded > 0) {
+      try {
+        const { ensureMedicinesFts: ensureMedicinesFts2 } = await Promise.resolve().then(() => (init_database(), database_exports));
+        await ensureMedicinesFts2(db2);
+      } catch (_) {
+      }
     }
     console.log(`[MasterSeed] Successfully seeded ${loaded} master medicines into database.`);
     return { loaded };
@@ -71225,6 +71279,230 @@ async function syncInventoryToMaster() {
   } catch (err) {
     console.error("[MasterSeed] Error syncing inventory to master:", err.message);
     throw err;
+  }
+}
+async function enrichMasterMedicinesFromCsv() {
+  const db2 = await dbManager.getConnection();
+  try {
+    const corruptRow = await db2.get(`
+      SELECT COUNT(*) as cnt 
+      FROM medicines 
+      WHERE source = 'master_reference' AND manufacturer = 'f'
+    `);
+    if (corruptRow && corruptRow.cnt > 0) {
+      console.log(`[MasterEnrich] Purging ${corruptRow.cnt} legacy corrupted rows (manufacturer='f')...`);
+      await db2.run(`
+        DELETE FROM medicines 
+        WHERE source = 'master_reference' 
+          AND manufacturer = 'f' 
+          AND (legacy_id IS NULL OR length(name) <= 8)
+      `);
+    }
+  } catch (_) {
+  }
+  const candidateCsvPaths = [
+    import_path56.default.join(getAppDataDir(), "data", "reference_medicines.csv"),
+    import_path56.default.join(getAppDataDir(), "medicines.csv"),
+    import_path56.default.join(process.cwd(), "medicines.csv"),
+    import_path56.default.join(process.cwd(), "data", "reference_medicines.csv"),
+    import_path56.default.join(process.cwd(), "data", "medicines.csv"),
+    import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "reference_medicines.csv"),
+    import_path56.default.join(import_path56.default.dirname(process.execPath), "medicines.csv"),
+    import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "data", "reference_medicines.csv"),
+    import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "medicines.csv")
+  ];
+  const csvPath = candidateCsvPaths.find((p) => import_fs52.default.existsSync(p));
+  if (!csvPath) {
+    const templateCandidates = [
+      import_path56.default.join(process.cwd(), "data", "app.db"),
+      import_path56.default.join(import_path56.default.dirname(process.execPath), "data", "app.db"),
+      import_path56.default.join(import_path56.default.dirname(process.execPath), "..", "data", "app.db")
+    ];
+    for (const tPath of templateCandidates) {
+      if (import_fs52.default.existsSync(tPath) && import_path56.default.resolve(tPath) !== import_path56.default.resolve(config.dbPath)) {
+        try {
+          const normalized = tPath.replace(/\\/g, "/");
+          await db2.run(`ATTACH DATABASE '${normalized}' AS templateDb`);
+          const res = await db2.run(`
+            INSERT OR IGNORE INTO medicines (
+              name, canonical_name, normalized_name, product_code, status,
+              dosage_form, pack_size, barcode, api_reference, mrp,
+              hsn_code, schedule_type, manufacturer, category, marketed_by,
+              legacy_id, packaging, item_type, cgst_per, sgst_per,
+              igst_per, rack, therapeutic, sub_therapeutic, short_code,
+              ucode, source, sell_price, allow_loose_sale
+            )
+            SELECT 
+              name, canonical_name, normalized_name, product_code, status,
+              dosage_form, pack_size, barcode, api_reference, mrp,
+              hsn_code, schedule_type, manufacturer, category, marketed_by,
+              legacy_id, packaging, item_type, cgst_per, sgst_per,
+              igst_per, rack, therapeutic, sub_therapeutic, short_code,
+              ucode, source, sell_price, allow_loose_sale
+            FROM templateDb.medicines
+            WHERE (packaging IS NOT NULL AND packaging != '') OR source != 'master_reference'
+          `);
+          await db2.run(`DETACH DATABASE templateDb`);
+          const enrichedCount = res?.changes || 0;
+          if (enrichedCount > 0) {
+            console.log(`[MasterEnrich] Successfully enriched ${enrichedCount} medicines from template DB (${tPath}).`);
+            try {
+              const { ensureMedicinesFts: ensureMedicinesFts2 } = await Promise.resolve().then(() => (init_database(), database_exports));
+              await ensureMedicinesFts2(db2);
+            } catch (_) {
+            }
+            return { enriched: enrichedCount };
+          }
+        } catch (e) {
+          console.warn("[MasterEnrich] Template DB enrichment failed:", e.message);
+          try {
+            await db2.run(`DETACH DATABASE templateDb`);
+          } catch {
+          }
+        }
+      }
+    }
+    console.warn("[MasterEnrich] medicines.csv not found in any candidate path \u2014 skipping enrichment.");
+    return { enriched: 0 };
+  }
+  try {
+    await db2.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id
+      ON medicines(legacy_id)
+      WHERE legacy_id IS NOT NULL
+    `);
+  } catch (_) {
+  }
+  const fileStream = import_fs52.default.createReadStream(csvPath, { encoding: "utf8" });
+  const rl = import_readline3.default.createInterface({ input: fileStream, crlfDelay: Infinity });
+  let enriched = 0;
+  let headerParsed = false;
+  let isFullMedicinesCsv = false;
+  const col = {};
+  const batchSize = 500;
+  let batch = [];
+  const flushBatch = async (rows) => {
+    if (rows.length === 0) return;
+    await db2.run("BEGIN TRANSACTION");
+    try {
+      const stmt = await db2.prepare(`
+        INSERT INTO medicines (
+          name, canonical_name, normalized_name, manufacturer, marketed_by,
+          packaging, pack_size, item_type, hsn_code, cgst_per,
+          sgst_per, igst_per, sell_price, barcode, rack,
+          therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
+          source, status
+        ) VALUES (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          'master_reference', 'ACTIVE'
+        )
+        ON CONFLICT(legacy_id) DO UPDATE SET
+          packaging      = CASE WHEN COALESCE(medicines.packaging,   '') = '' THEN excluded.packaging      ELSE medicines.packaging      END,
+          manufacturer   = CASE WHEN COALESCE(medicines.manufacturer,'') = '' THEN excluded.manufacturer   ELSE medicines.manufacturer   END,
+          marketed_by    = CASE WHEN COALESCE(medicines.marketed_by, '') = '' THEN excluded.marketed_by    ELSE medicines.marketed_by    END,
+          item_type      = CASE WHEN COALESCE(medicines.item_type,   '') = '' THEN excluded.item_type      ELSE medicines.item_type      END,
+          hsn_code       = CASE WHEN COALESCE(medicines.hsn_code,    '') = '' THEN excluded.hsn_code       ELSE medicines.hsn_code       END,
+          therapeutic    = CASE WHEN COALESCE(medicines.therapeutic, '') = '' THEN excluded.therapeutic    ELSE medicines.therapeutic    END,
+          sub_therapeutic= CASE WHEN COALESCE(medicines.sub_therapeutic,'') = '' THEN excluded.sub_therapeutic ELSE medicines.sub_therapeutic END,
+          short_code     = CASE WHEN COALESCE(medicines.short_code,  '') = '' THEN excluded.short_code     ELSE medicines.short_code     END,
+          ucode          = CASE WHEN COALESCE(medicines.ucode,       '') = '' THEN excluded.ucode          ELSE medicines.ucode          END,
+          barcode        = CASE WHEN COALESCE(medicines.barcode,     '') = '' THEN excluded.barcode        ELSE medicines.barcode        END,
+          rack           = CASE WHEN COALESCE(medicines.rack,        '') = '' THEN excluded.rack           ELSE medicines.rack           END,
+          cgst_per       = CASE WHEN (medicines.cgst_per IS NULL OR medicines.cgst_per = 0) THEN excluded.cgst_per ELSE medicines.cgst_per END,
+          sgst_per       = CASE WHEN (medicines.sgst_per IS NULL OR medicines.sgst_per = 0) THEN excluded.sgst_per ELSE medicines.sgst_per END,
+          sell_price     = CASE WHEN (medicines.sell_price IS NULL OR medicines.sell_price = 0) THEN excluded.sell_price ELSE medicines.sell_price END
+        WHERE medicines.source = 'master_reference'
+      `);
+      for (const row of rows) {
+        await stmt.run(...row);
+      }
+      await stmt.finalize();
+      await db2.run("COMMIT");
+      enriched += rows.length;
+    } catch (err) {
+      await db2.run("ROLLBACK");
+      throw err;
+    }
+  };
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      if (!headerParsed) {
+        headerParsed = true;
+        const headerCols = parseCsvLine2(line).map((h) => h.trim().replace(/^"|"$/g, ""));
+        headerCols.forEach((c, idx) => {
+          col[c] = idx;
+        });
+        isFullMedicinesCsv = col["medicine_name"] !== void 0;
+        continue;
+      }
+      if (!isFullMedicinesCsv) continue;
+      const fields = parseCsvLine2(line);
+      const name = clean(fields[col["medicine_name"]]);
+      if (!name) continue;
+      const legacyId = clean(fields[col["medicine_id"]]);
+      if (!legacyId) continue;
+      const mfg = clean(fields[col["manufacturer_name"]]);
+      const mkt = clean(fields[col["marketer_name"]]);
+      const pkg2 = clean(fields[col["medicine_packaging"]]);
+      const itemType = clean(fields[col["itemtype"]]);
+      const hsn = clean(fields[col["hsn_code"]]);
+      const cgst = cleanNum(fields[col["cgst"]]);
+      const sgst = cleanNum(fields[col["sgst"]]);
+      const igst = cleanNum(fields[col["igst"]]);
+      const sellPrice = cleanPrice(fields[col["selling_price"]]);
+      const barcode = clean(fields[col["barcode"]]);
+      const rack = clean(fields[col["rack"]]);
+      const therapeutic = clean(fields[col["therapeutic"]]);
+      const subTherapeutic = clean(fields[col["subtherapeutic"]]);
+      const shortCode = clean(fields[col["medicine_short_code"]]);
+      const ucode = clean(fields[col["ucode"]]);
+      const parsedPackSize = pkg2 ? parseInt(pkg2) || null : null;
+      batch.push([
+        name,
+        name,
+        name.toLowerCase(),
+        mfg,
+        mkt,
+        pkg2,
+        parsedPackSize,
+        itemType,
+        hsn,
+        cgst,
+        sgst,
+        igst,
+        sellPrice,
+        barcode,
+        rack,
+        therapeutic,
+        subTherapeutic,
+        shortCode,
+        ucode,
+        legacyId
+      ]);
+      if (batch.length >= batchSize) {
+        await flushBatch(batch);
+        batch = [];
+      }
+    }
+    if (batch.length > 0) {
+      await flushBatch(batch);
+    }
+    if (enriched > 0) {
+      try {
+        const { ensureMedicinesFts: ensureMedicinesFts2 } = await Promise.resolve().then(() => (init_database(), database_exports));
+        await ensureMedicinesFts2(db2);
+      } catch (_) {
+      }
+    }
+    console.log(`[MasterEnrich] Enriched/upserted ${enriched} master medicines from CSV (${csvPath}).`);
+    return { enriched };
+  } catch (err) {
+    console.error("[MasterEnrich] Error enriching master medicines from CSV:", err.message);
+    return { enriched };
   }
 }
 async function upsertMasterMedicine(item) {
@@ -84256,6 +84534,13 @@ var init_server = __esm({
         Promise.resolve().then(() => (init_compositionEnricher(), compositionEnricher_exports)).then((m) => m.seedBundledReference()).then((res) => {
           if (res.loaded > 0) console.log(`[Boot:Phase2] Seeded ${res.loaded} reference APIs into dictionary.`);
         }).catch((seedErr) => console.warn("[Boot:Phase2] Bundled reference seed failed:", seedErr));
+        Promise.resolve().then(() => (init_masterMedicinesSeedService(), masterMedicinesSeedService_exports)).then((m) => m.enrichMasterMedicinesFromCsv()).then((res) => {
+          if (res.enriched > 0) {
+            console.log(`[Boot:Phase2] Master medicines enriched: ${res.enriched} rows updated from CSV.`);
+          } else {
+            console.log("[Boot:Phase2] Master medicines enrichment: no rows needed update (already enriched or CSV absent).");
+          }
+        }).catch((err) => console.warn("[Boot:Phase2] Master medicines CSV enrichment failed (non-fatal):", err?.message || err));
         console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${Math.round(performance.now() - phase2T0)}ms.`);
         Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
         Promise.resolve().then(() => (init_autoUpdateService(), autoUpdateService_exports)).then(async (m) => {

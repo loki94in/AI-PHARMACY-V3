@@ -33,6 +33,7 @@
 #define MyAppURL       ""
 #define MyAppExeName   "PharmacyOS.exe"
 #define MyAppPort      "5175"
+#define MyAppIcon      "packaging\app.ico"
 
 [Setup]
 AppId={{E3A1F2B4-7C8D-4E5F-9A0B-1C2D3E4F5A6B}
@@ -40,6 +41,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion} (Portable)
 AppPublisher={#MyAppPublisher}
+SetupIconFile={#MyAppIcon}
 
 ; Writable per-user location — avoids Program Files permission / VirtualStore issues
 DefaultDirName={localappdata}\{#MyAppName}
@@ -63,7 +65,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 UsedUserAreasWarning=no
 
 LicenseFile=license.txt
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\app.ico
 UninstallDisplayName={#MyAppName} (Portable)
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
@@ -104,6 +106,9 @@ Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignorevers
 ; Optional Tesseract OCR data
 Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
+; Application Blue Cross Icon
+Source: "packaging\app.ico"; DestDir: "{app}"; Flags: ignoreversion
+
 ; Launcher helper + license
 Source: "packaging\RUN-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\RUN-PharmacyOS-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
@@ -116,12 +121,13 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntex
 Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{group}\Open in Browser"; Filename: "http://localhost:{#MyAppPort}"
-Name: "{group}\Run (with browser)"; Filename: "{app}\RUN-PharmacyOS.bat"; WorkingDir: "{app}"
+Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{group}\AI Pharmacy OS (Debug Console)"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{group}\Open in Browser"; Filename: "http://localhost:{#MyAppPort}"; IconFilename: "{app}\app.ico"
+Name: "{group}\Run (with browser)"; Filename: "{app}\RUN-PharmacyOS.bat"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
 Name: "{group}\Stop AI Pharmacy OS"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 Name: "{autodesktop}\Stop {#MyAppName}"; Filename: "{app}\STOP-PharmacyOS.bat"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
@@ -139,8 +145,7 @@ Type: files; Name: "{commonstartup}\PharmacyOS.lnk"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/quiet /norestart"; StatusMsg: "Installing Visual C++ Redistributable (if needed)..."; Check: VCRedistNeedsInstall and VCRedistFilePresent; Flags: waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Description: "Launch {#MyAppName} server"; Flags: nowait postinstall skipifsilent unchecked
-Filename: "http://localhost:{#MyAppPort}"; Description: "Open in browser (http://localhost:{#MyAppPort})"; Flags: shellexec postinstall skipifsilent unchecked
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\RUN-PharmacyOS-Silent.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "StopPharmacyServer"
