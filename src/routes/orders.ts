@@ -399,7 +399,8 @@ router.post('/', async (req, res) => {
 
 // Shared helper: queue the localized "order ready / medicine arrived" WhatsApp for a special order.
 // Used by notify-arrival (explicit button) and status transitions to 'Ready' (Mark Ready / Resend click).
-async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedupe?: boolean; forceResend?: boolean }): Promise<boolean> {
+async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedupe?: boolean; forceResend?: boolean; skipWhatsApp?: boolean }): Promise<boolean> {
+  if (options?.skipWhatsApp) return false;
   const cleanPhone = String(order.phone || '').replace(/\D/g, '');
   if (!cleanPhone) return false;
 
@@ -947,7 +948,7 @@ router.put('/:id', async (req, res) => {
   const {
     status, priority, qty, product, requester, phone,
     pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped,
-    advance_payment, cart_add_error, resend
+    advance_payment, cart_add_error, resend, sendPaymentQr, skipWhatsApp, sendWhatsApp
   } = req.body;
   try {
     const db = await dbManager.getConnection();
@@ -978,15 +979,16 @@ router.put('/:id', async (req, res) => {
     const newCartAddError = cart_add_error !== undefined ? cart_add_error : existing.cart_add_error;
 
     // Manual-only messaging contract: a status transition to 'Ready' (or manual resend with resend===true)
-    // dispatches the arrival WhatsApp and increments notification_count.
+    // dispatches the arrival WhatsApp and increments notification_count unless skipWhatsApp is explicitly requested.
     let whatsappQueued = false;
     const isResend = Boolean(resend);
-    if (newStatus === 'Ready' && (Number(existing.notified) !== 1 || isResend)) {
+    const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+    if (newStatus === 'Ready' && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
       try {
         whatsappQueued = await enqueueArrivalWhatsApp(
           db,
           { ...existing, phone: newPhone, requester: newRequester, product: newProduct, qty: newQty },
-          { skipDedupe: isResend || Number(existing.notified) === 1 }
+          { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
         );
       } catch (waErr: any) {
         console.error('Failed to queue arrival WhatsApp on order update:', waErr?.message || waErr);
@@ -1007,6 +1009,62 @@ router.put('/:id', async (req, res) => {
        WHERE id = ?`,
       [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, id]
     );
+
+    // Auto-send payment QR when distributor is newly assigned via the CRM UI
+    // Condition: distributor was not set before AND is now set (first-time assignment)
+    // OR caller explicitly requests it via sendPaymentQr=true
+    let paymentQrSent = false;
+    const distributorNewlyAssigned = !existing.pharmarack_distributor && newDistributor;
+    const shouldSendQr = Boolean(distributorNewlyAssigned || sendPaymentQr);
+    const cleanPhoneForQr = String(newPhone || existing.phone || '').replace(/\D/g, '');
+    if (shouldSendQr && cleanPhoneForQr.length >= 10) {
+      try {
+        const advanceAmount = Number(newAdvancePayment || existing.advance_payment || 50);
+        const qrAmount = advanceAmount > 0 ? advanceAmount : 50;
+        const soCode = `SO-${id}`;
+        const activeQr = await paymentQrService.allocateNextQr();
+        const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, qrAmount, soCode);
+        const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+
+        await db.run(
+          `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
+          [activeQr.id, qrAmount, id]
+        );
+
+        const formattedQrPhone = cleanPhoneForQr.length === 10 ? `91${cleanPhoneForQr}` : cleanPhoneForQr;
+        const custQrMsg =
+          `✅ Medicine & supplier confirmed\n\n` +
+          `🆔 *Special Order*: ${soCode}\n\n` +
+          `💊 *Medicine*: ${newProduct || existing.product || 'Medicine'}\n` +
+          `📦 *Quantity*: ${newQty || existing.qty || 1}\n\n` +
+          `🏢 *Supplier*: ${newDistributor}\n\n` +
+          `🔐 *Booking Advance Amount*: ₹${qrAmount.toFixed(2)}\n\n` +
+          `Please pay the ₹${qrAmount.toFixed(2)} booking amount using the QR code below.\n\n` +
+          `UPI ID: ${activeQr.upi_id}\n` +
+          `Payee: ${activeQr.payee_name}\n\n` +
+          `After payment, please send the payment screenshot in this chat.`;
+
+        await whatsappQueueWorker.enqueue(
+          formattedQrPhone,
+          custQrMsg,
+          'customer_payment_qr',
+          newRequester || existing.requester || 'Customer',
+          undefined,
+          undefined,
+          {
+            mimetype: 'image/png',
+            data: qrBuffer.toString('base64'),
+            filename: `payment_qr_${soCode}.png`
+          }
+        );
+
+        paymentQrSent = true;
+        void whatsappQueueWorker.forceNext().catch(() => {});
+        console.log(`[Orders] Auto-sent payment QR to ${formattedQrPhone} for ${soCode} after distributor assigned: ${newDistributor}`);
+      } catch (qrErr: any) {
+        console.error('[Orders] Failed to auto-send payment QR on distributor assignment:', qrErr?.message || qrErr);
+      }
+    }
 
     if (newStatus === 'Cancelled') {
       await cancelPendingWhatsAppForOrder(db, {
@@ -1089,7 +1147,7 @@ router.put('/:id', async (req, res) => {
     }
 
     broadcastOrdersChanged();
-    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
+    res.json({ success: true, message: 'Order updated successfully', whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, payment_qr_sent: paymentQrSent });
   } catch (err) {
     console.error('Update order error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -1118,15 +1176,16 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
     }
 
     // Manual-only messaging contract: the arrival WhatsApp is dispatched inside this
-    // user-clicked request. Idempotent via notified===0 or explicit resend===true.
+    // user-clicked request. Idempotent via notified===0 or explicit resend===true unless skipWhatsApp requested.
     let whatsappQueued = false;
     const isResend = Boolean(resend);
-    if (status === 'Ready' && (Number(existing.notified) !== 1 || isResend)) {
+    const shouldSkipWa = req.body?.skipWhatsApp === true || req.body?.sendWhatsApp === false;
+    if (status === 'Ready' && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
       try {
         whatsappQueued = await enqueueArrivalWhatsApp(
           db,
           existing,
-          { skipDedupe: isResend || Number(existing.notified) === 1 }
+          { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
         );
       } catch (waErr: any) {
         console.error('Failed to queue arrival WhatsApp on status Ready:', waErr?.message || waErr);

@@ -3984,6 +3984,7 @@ const SpecialOrdersSection: React.FC = () => {
   const [editCustomSalutation, setEditCustomSalutation] = useState('');
   const [editRequester, setEditRequester] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const { isNotOnWa: editNotOnWa } = useWaPhoneStatus(editPhone.replace(/\D/g, '').slice(-10));
   const [shakePhone, setShakePhone] = useState(false);
   const [, setShakeEditPhone] = useState(false);
   const [editQty, setEditQty] = useState<number | ''>(1);
@@ -4114,7 +4115,9 @@ const SpecialOrdersSection: React.FC = () => {
   }, [loadOrders]);
 
   const handleNotifyArrival = async (order: SpecialOrderItem) => {
-    // If customer has multiple active requests, open consolidated arrival preview modal
+    // If customer has multiple active requests, group them together.
+    // Regardless of single or multiple items, ALWAYS open the Arrival Preview Modal
+    // so the pharmacist gets human-in-the-loop preview, live WA check, language selection, and "Mark Ready in Store" fallback!
     const cleanPhone = (order.phone || '').trim();
     const cleanName = (order.requester || '').trim();
     const relatedActive = orders.filter(o => {
@@ -4124,37 +4127,18 @@ const SpecialOrdersSection: React.FC = () => {
       return (cleanPhone && oPhone === cleanPhone) || (cleanName && oName === cleanName);
     });
 
-    if (relatedActive.length > 1) {
-      setArrivalModalData({
-        customerName: order.requester || 'Customer',
-        customerPhone: order.phone || '',
-        orders: relatedActive.map(o => ({
-          id: o.id,
-          product: o.product,
-          qty: o.qty,
-          status: o.status
-        }))
-      });
-      return;
-    }
+    const targetOrders = relatedActive.length > 0 ? relatedActive : [order];
 
-    if (notifyingId === order.id) return;
-    setNotifyingId(order.id);
-    try {
-      messageSendEvent.triggerSendProgress(order.requester || order.phone || 'Customer', `Arrival alert for ${order.product}`, 10);
-      const notifyRes = await api.notifySpecialOrderArrival(order.id);
-      if (notifyRes && notifyRes.whatsapp_queued === false) {
-        toastEvent.trigger(`Notice already queued in last 60 min for ${order.requester}.`, 'info', '/crm');
-      } else {
-        toastEvent.trigger(`Arrival WhatsApp sent to ${order.requester}!`, 'success', '/crm');
-      }
-      whatsappQueueEvent.triggerUpdated();
-      await loadOrders();
-    } catch (err) {
-      toastEvent.trigger((err as LocalApiError).response?.data?.error || (err as LocalApiError).message || 'Failed to send arrival notification', 'error', '/crm');
-    } finally {
-      setNotifyingId(null);
-    }
+    setArrivalModalData({
+      customerName: order.requester || 'Customer',
+      customerPhone: order.phone || '',
+      orders: targetOrders.map(o => ({
+        id: o.id,
+        product: o.product,
+        qty: o.qty,
+        status: o.status
+      }))
+    });
   };
 
   const handleResendBooking = async (order: SpecialOrderItem) => {
@@ -4529,7 +4513,8 @@ const SpecialOrdersSection: React.FC = () => {
         pharmarack_rate: editRate !== '' ? Number(editRate) : undefined,
         pharmarack_mrp: editMrp !== '' ? Number(editMrp) : undefined,
         pharmarack_scheme: editScheme || undefined,
-        advance_payment: editAdvancePayment !== '' ? Number(editAdvancePayment) : 0
+        advance_payment: editAdvancePayment !== '' ? Number(editAdvancePayment) : 0,
+        skipWhatsApp: editNotOnWa
       });
 
       // Truthful toast contract: only claim the arrival WhatsApp was queued when the
@@ -4539,14 +4524,21 @@ const SpecialOrdersSection: React.FC = () => {
           messageSendEvent.triggerSendProgress(customerName || customerPhone || 'Customer', `Arrival alert for ${editProduct.trim()}`, 10);
         }
         toastEvent.trigger(
-          res?.whatsapp_queued
+          editNotOnWa
+            ? `Order marked Ready in store (WhatsApp skipped — customer not on WhatsApp).`
+            : res?.whatsapp_queued
             ? `Request updated & arrival WhatsApp queued for ${customerName}!`
             : `Request updated — no arrival WhatsApp queued (no phone stored or already sent).`,
           'success',
           '/crm'
         );
       } else {
-        toastEvent.trigger(`Special request for "${editProduct.trim()}" updated successfully!`, 'success', '/crm');
+        if (res?.payment_qr_sent) {
+          toastEvent.trigger(`Special request updated & ₹50 payment QR sent to ${customerName} on WhatsApp!`, 'success', '/crm');
+          whatsappQueueEvent.triggerUpdated();
+        } else {
+          toastEvent.trigger(`Special request for "${editProduct.trim()}" updated successfully!`, 'success', '/crm');
+        }
       }
       if (editStatus === 'Cancelled') {
         handleCartAdjustmentFeedback(res?.cartAdjustment, editProduct.trim());
@@ -5464,14 +5456,12 @@ const SpecialOrdersSection: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-text mb-1">Phone (WhatsApp) *</label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="10-digit mobile"
+                  <PhoneInputWithBadge
+                    label="Phone (WhatsApp) *"
                     value={editPhone}
-                    onChange={e => setEditPhone(e.target.value)}
-                    className="w-full px-3 py-2 bg-bg border border-border rounded-xl font-medium focus:outline-none focus:border-primary"
+                    onChange={val => setEditPhone(val)}
+                    required={true}
+                    allowEmpty={false}
                   />
                 </div>
               </div>
@@ -5531,6 +5521,11 @@ const SpecialOrdersSection: React.FC = () => {
                     <option value="Fulfilled">Fulfilled</option>
                     <option value="Cancelled">Cancelled</option>
                   </select>
+                  {editStatus === 'Ready' && editNotOnWa && (
+                    <p className="text-[10px] text-rose-400 font-medium mt-1 flex items-center gap-1">
+                      <span>🔴</span> Phone not on WhatsApp: Order will be marked Ready in store without sending WhatsApp.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block font-semibold text-text mb-1">Pharmarack Distributor</label>

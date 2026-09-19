@@ -18,7 +18,8 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   shouldRouteToBusiness: jest.fn(() => false),
   hashMessageBody: jest.fn(() => 'mock-hash'),
   normalizeWhatsAppPhone: jest.fn((p: string) => p ? String(p).replace(/\D/g, '') : ''),
-  isWhatsAppExplicitlyDisabled: jest.fn(() => Promise.resolve(false))
+  isWhatsAppExplicitlyDisabled: jest.fn(() => Promise.resolve(false)),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true))
 }));
 
 import request from 'supertest';
@@ -148,6 +149,25 @@ describe('Special Order arrival flow (Mark Ready WhatsApp + scoped matching)', (
 
     const res = await request(app).post(`/api/orders/${id}/status`).send({ status: 'Ready' });
     expect(res.status).toBe(200);
+    expect(res.body.whatsapp_queued).toBe(false);
+
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', id);
+    expect(order.status).toBe('Ready');
+    expect(mockEnqueue).not.toHaveBeenCalled();
+
+    const waRow = await db.get(
+      `SELECT * FROM automation_notifications WHERE reference_id = ? AND type = 'special_order_arrived'`,
+      String(id)
+    );
+    expect(waRow).toBeUndefined();
+  });
+
+  test('Mark Ready with skipWhatsApp=true updates status to Ready but skips WhatsApp messaging', async () => {
+    const id = await seedOrder('Crocin 650 Tablet', '9876500099');
+
+    const res = await request(app).post(`/api/orders/${id}/status`).send({ status: 'Ready', skipWhatsApp: true });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
     expect(res.body.whatsapp_queued).toBe(false);
 
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', id);

@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P2-11 — Block WhatsApp Arrival Sends to Unregistered Numbers & Add "Mark Ready in Store" Fallback
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. In CRM and Quick Assist, clicking "Ready" or "Notify Arrival" for customers without WhatsApp accounts queued messages that immediately failed in the queue worker with `skipped_not_on_whatsapp`, without giving the pharmacist prior warning or a way to mark the medicine ready in store without attempting WhatsApp.<br>2. In `SpecialOrderArrivalModal`, there was no real-time WhatsApp check on the customer's phone number, the send button remained enabled even for invalid numbers, and there was no option to update shop status without sending a WhatsApp notification.<br>3. In CRM table rows, clicking `📱 Ready` for a single-item order bypassed the preview modal entirely, preventing human-in-the-loop review. |
+| **Root cause** | 1. `SpecialOrderArrivalModal.tsx` did not invoke `useWaPhoneStatus` to verify if `customerPhone` has an active WhatsApp account, and its footer only offered `Confirm & Send`.<br>2. `handleNotifyArrival` in `CRM/index.tsx` conditionally bypassed `SpecialOrderArrivalModal` whenever `relatedActive.length === 1`, directly dispatching `notifySpecialOrderArrival`.<br>3. `PUT /api/orders/:id` and `POST|PUT /:id/status` in `src/routes/orders.ts` did not honor `skipWhatsApp` / `sendWhatsApp: false` parameters when transitioning an order to `Ready`. |
+| **How it was fixed** | 1. **Live WA Capability & Block in Modal:** In `SpecialOrderArrivalModal.tsx`, integrated `useWaPhoneStatus(customerPhone)`: renders a live status pill (`🟢 On WA` / `🔴 Not on WA` / `Checking WA...`), an informative warning banner when the number is unregistered, and disables `Confirm & Send WhatsApp` when `isNotOnWa` is true.<br>2. **Mark Ready in Store Fallback:** Added a prominent `Mark Ready in Store (No WA)` button in `SpecialOrderArrivalModal.tsx` that updates order status to `Ready` with `skipWhatsApp: true` via `api.updateOrderStatus`, providing 100% human-in-the-loop control.<br>3. **Backend `skipWhatsApp` Honor:** In `src/routes/orders.ts`, updated `PUT /:id`, `handleStatusUpdate` (`POST|PUT /:id/status`), and `enqueueArrivalWhatsApp` to respect `skipWhatsApp === true || sendWhatsApp === false`, cleanly updating order status without queueing dead WhatsApp messages.<br>4. **Universal Preview & Verification in CRM:** Updated `handleNotifyArrival` in `CRM/index.tsx` to always open `SpecialOrderArrivalModal` for both single and batch requests so the pharmacist can always preview, review, and choose delivery mode; upgraded `editPhone` in `EditOrderModal` to `PhoneInputWithBadge` with inline not-on-WhatsApp notice. |
+| **Priority** | P2 |
+| **What not to touch** | WhatsApp queue pacing delays; anti-spam 60-minute duplicate guard (`recentNotif`); multi-item batch arrival consolidation. |
+| **Verified by** | `tests/specialOrderArrival.test.ts` (10/10 PASS including new `skipWhatsApp` test); `npm run guardrails` (PASS, 0 violations); `npm --prefix frontend run build` (PASS, 0 errors); `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P2-10 — Payment QR Link Not Sent to Customer After Distributor Selected in CRM UI
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When the pharmacy owner selected a distributor for a special order via the CRM edit modal (UI), the customer received no payment QR/link in WhatsApp chat. The payment link was only dispatched when the owner selected a distributor via WhatsApp reply (e.g., `SO-10452 2`), but the UI path silently skipped this step. |
+| **Root cause** | `PUT /api/orders/:id` in `src/routes/orders.ts` updated `pharmarack_distributor` correctly, but had no code to allocate a payment QR or send it to the customer. The WhatsApp-reply path (`handleOwnerInteractiveReply` in `whatsappIntentService.ts` lines 1868–1908) correctly calls `paymentQrService.allocateNextQr()` + `enqueue(customer_phone, custQrMsg)`. The CRM UI path had no equivalent logic — the two paths diverged. |
+| **How it was fixed** | In `PUT /api/orders/:id` (`src/routes/orders.ts`): after the DB write, detect if `pharmarack_distributor` was **newly assigned** (`!existing.pharmarack_distributor && newDistributor`). If so, automatically: (1) allocate a QR via `paymentQrService.allocateNextQr()`, (2) update `payment_status = 'AWAITING_PAYMENT'` and `payment_qr_id`, (3) enqueue the payment QR WhatsApp message to the customer with the QR image attachment. Also accepts explicit `sendPaymentQr=true` in the request body. Returns `payment_qr_sent: boolean` in the response. In `frontend/src/pages/CRM/index.tsx`, added a toast showing `"₹50 payment QR sent to [customer] on WhatsApp!"` when `res.payment_qr_sent` is true. In `frontend/src/services/api.ts`, added `payment_qr_sent?: boolean` to the `updateOrder` return type. |
+| **Priority** | P2 |
+| **What not to touch** | WhatsApp-reply distributor selection path in `whatsappIntentService.ts`; `POST /:id/send-payment-qr` manual send route (still works as before). |
+| **Verified by** | `npm run guardrails` (PASS, 0 violations, TypeScript clean); `node scripts/quick-update.mjs` (PASS). |
+
 ### [Fixed] P2-09 — WhatsApp Contact Pre-Warm Desync & False "Invalid Phone Format" UI Error
 
 | Field | Content |

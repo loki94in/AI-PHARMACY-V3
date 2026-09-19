@@ -893,7 +893,8 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
         priceLine = `Rate: Available`;
       }
 
-      return `${formatNum(i)} ${dist}${tag} | ${stockIndicator} |\n${priceLine}`;
+      const medLine = (opt.name || opt.shortName || '').trim();
+      return `${formatNum(i)} ${dist}${tag} | ${stockIndicator} |\n${medLine ? medLine + '\n' : ''}${priceLine}`;
     }).join('\n');
 
     const messageText =

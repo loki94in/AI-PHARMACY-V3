@@ -8,6 +8,7 @@ import {
 import { api } from '../services/api';
 import { toastEvent, messageSendEvent, whatsappQueueEvent, specialOrdersEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
+import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
 
 export interface ArrivalModalOrderItem {
   id: number;
@@ -49,8 +50,12 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
   const [isEditingMessage, setIsEditingMessage] = useState(false);
   const [customMessage, setCustomMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isMarkingReadyOnly, setIsMarkingReadyOnly] = useState(false);
   const [copied, setCopied] = useState(false);
   const [recentNotif, setRecentNotif] = useState<{ recentlyNotified: boolean; minutesAgo?: number } | null>(null);
+
+  // Real-time WhatsApp capability verification for customer phone
+  const { waStatus, isNotOnWa } = useWaPhoneStatus(customerPhone || '');
 
   // Proactive early readiness: pre-warm WhatsApp client when Special Order arrival modal is opened
   useEffect(() => {
@@ -234,6 +239,29 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
     }
   };
 
+  const handleMarkReadyInStoreOnly = async () => {
+    if (orders.length === 0) return;
+    setIsMarkingReadyOnly(true);
+    try {
+      await Promise.all(
+        orders.map(o => api.updateOrderStatus(o.id, 'Ready', { skipWhatsApp: true }))
+      );
+      toastEvent.trigger(
+        `Marked ${orders.length} ${orders.length === 1 ? 'item' : 'items'} Ready in Store (WhatsApp skipped)!`,
+        'success'
+      );
+      specialOrdersEvent.triggerUpdated();
+      window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      console.error('Failed to mark ready in store:', err);
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to update order status', 'error');
+    } finally {
+      setIsMarkingReadyOnly(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const arrivedCount = orders.filter(o => itemStatuses[o.id] !== 'delayed').length;
@@ -267,8 +295,31 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
               <div className="flex items-center gap-2.5 text-xs text-muted mt-0.5 flex-wrap">
                 <span className="font-semibold text-text truncate">{customerName || 'Customer'}</span>
                 {customerPhone && (
-                  <span className="flex items-center gap-1 text-emerald-400 font-mono font-bold bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                    <Phone size={10} /> {customerPhone}
+                  <span className={`flex items-center gap-1 font-mono font-bold px-2 py-0.5 rounded-md border text-xs ${
+                    isNotOnWa
+                      ? 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+                      : waStatus === 'AVAILABLE'
+                      ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                      : 'text-text bg-bg3/60 border-border'
+                  }`}>
+                    <Phone size={10} />
+                    <span>{customerPhone}</span>
+                    {waStatus === 'checking' && (
+                      <span className="flex items-center gap-1 text-[10px] text-muted font-sans font-normal ml-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                        Checking WA...
+                      </span>
+                    )}
+                    {isNotOnWa && (
+                      <span className="text-[10px] text-rose-400 font-sans font-bold ml-1">
+                        🔴 Not on WA
+                      </span>
+                    )}
+                    {waStatus === 'AVAILABLE' && (
+                      <span className="text-[10px] text-emerald-400 font-sans font-bold ml-1">
+                        🟢 On WA
+                      </span>
+                    )}
                   </span>
                 )}
               </div>
@@ -301,6 +352,24 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 </div>
                 <p className="text-text text-[11px] leading-relaxed">
                   A WhatsApp arrival message was recently queued for this customer. If you need to send another update right now, click <strong className="text-amber-300">"Resend Anyway"</strong> below.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* WhatsApp Not Registered Warning Banner */}
+          {isNotOnWa && (
+            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs animate-in fade-in">
+              <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <div className="font-extrabold text-rose-200 flex items-center gap-1.5 flex-wrap">
+                  <span>Customer Phone Not on WhatsApp</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">
+                    WhatsApp Delivery Blocked
+                  </span>
+                </div>
+                <p className="text-rose-200/90 text-[11px] leading-relaxed">
+                  This phone number ({customerPhone}) is not registered on WhatsApp. Use <strong>"Mark Ready in Store (No WA)"</strong> below to update the order status for your pharmacy staff, or contact the customer directly by voice call.
                 </p>
               </div>
             </div>
@@ -582,7 +651,13 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
         {/* Footer */}
         <div className="p-4 sm:p-5 border-t border-glass-border flex flex-col sm:flex-row items-center justify-between bg-bg3/30 shrink-0 gap-3">
           <div className="text-[11px] text-muted font-medium text-center sm:text-left">
-            <span>Sends <strong>1 consolidated WhatsApp message</strong> to {customerPhone || 'customer'}.</span>
+            {isNotOnWa ? (
+              <span className="text-rose-400 font-semibold flex items-center gap-1">
+                <span>🔴</span> Number not registered on WhatsApp — messaging blocked
+              </span>
+            ) : (
+              <span>Sends <strong>1 consolidated WhatsApp message</strong> to {customerPhone || 'customer'}.</span>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto">
@@ -593,12 +668,39 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
             >
               Cancel
             </button>
+
+            {/* Mark Ready in Store Only (Human-in-the-loop: available always, highlighted when not on WA) */}
             <button
               type="button"
-              onClick={handleSend}
-              disabled={isSubmitting || orders.length === 0}
+              onClick={handleMarkReadyInStoreOnly}
+              disabled={isSubmitting || isMarkingReadyOnly || orders.length === 0}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 border ${
+                isNotOnWa
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20 border-blue-500'
+                  : 'bg-bg2 hover:bg-bg3 text-text border-border'
+              }`}
+              title="Update shop status to Ready without sending WhatsApp message"
+            >
+              {isMarkingReadyOnly ? (
+                <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+              ) : (
+                <Check size={13} />
+              )}
+              <span>
+                {isMarkingReadyOnly ? 'Updating...' : isNotOnWa ? 'Mark Ready in Store (No WA)' : 'Ready in Store Only'}
+              </span>
+            </button>
+
+            {/* Confirm & Send WhatsApp button (disabled when isNotOnWa) */}
+            <button
+              type="button"
+              onClick={isNotOnWa ? undefined : handleSend}
+              disabled={isSubmitting || isMarkingReadyOnly || orders.length === 0 || isNotOnWa}
+              title={isNotOnWa ? 'Customer phone number is not registered on WhatsApp' : undefined}
               className={
-                recentNotif?.recentlyNotified
+                isNotOnWa
+                  ? 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-not-allowed bg-rose-500/10 text-rose-400 border border-rose-500/30 opacity-70'
+                  : recentNotif?.recentlyNotified
                   ? 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-amber-600 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-500/25'
                   : 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-emerald-600 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25'
               }
@@ -609,7 +711,9 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 <Send size={13} />
               )}
               <span>
-                {isSubmitting
+                {isNotOnWa
+                  ? 'Not on WhatsApp'
+                  : isSubmitting
                   ? (recentNotif?.recentlyNotified ? 'Resending WhatsApp...' : 'Queueing WhatsApp...')
                   : (recentNotif?.recentlyNotified
                       ? `Resend Anyway (${orders.length} ${orders.length === 1 ? 'Item' : 'Items'})`
