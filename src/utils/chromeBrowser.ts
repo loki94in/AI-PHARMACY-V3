@@ -118,7 +118,7 @@ export function launchAppBrowser(url: string, customProfileDir?: string, onExit?
       const args = [
         `--app=${url}`,
         `--user-data-dir=${profileDir}`,
-        '--start-fullscreen',
+        '--start-maximized',
         '--disable-extensions',
         '--disable-background-networking',
         '--disable-sync',
@@ -192,14 +192,17 @@ export function closeAppBrowser(): void {
     activeBrowserPid = null;
   }
 
-  // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile
+  // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile or matching our app port
   if (process.platform === 'win32') {
     try {
-      execSync(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy OS*"`, { stdio: 'ignore' });
+      execSync(`taskkill /f /fi "WINDOWTITLE eq AI PHARMACY*"`, { stdio: 'ignore' });
     } catch (_) {}
     try {
-      const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      execSync(killCmd, { stdio: 'ignore', timeout: 2500 });
+      execSync(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy*"`, { stdio: 'ignore' });
+    } catch (_) {}
+    try {
+      const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' -or $_.CommandLine -like '*localhost:5175*' -or $_.CommandLine -like '*localhost:5173*' -or $_.CommandLine -like '*127.0.0.1:5175*' -or $_.CommandLine -like '*127.0.0.1:5173*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
+      execSync(killCmd, { stdio: 'ignore', timeout: 3000 });
     } catch (_) {}
   }
 }

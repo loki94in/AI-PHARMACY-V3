@@ -1449,6 +1449,24 @@ export const api = {
     apiClient.post(`/orders/${id}/fulfill`, data || {}).then(res => res.data),
   convertToRefill: (orderId: number, refillIntervalDays: number) =>
     apiClient.post('/orders/convert-to-refill', { orderId, refillIntervalDays }).then(res => res.data),
+  getSpecialOrderPaymentQr: (id: number) =>
+    apiClient.get<{
+      success: boolean;
+      order_id: number;
+      so_code: string;
+      customer_name: string;
+      customer_phone: string;
+      medicine_name: string;
+      amount: number;
+      upi_id: string;
+      payee_name: string;
+      upi_uri: string;
+      payment_status: string;
+    }>(`/orders/${id}/payment-qr`).then(res => res.data),
+  sendSpecialOrderPaymentQr: (id: number) =>
+    apiClient.post<{ success: boolean; queue_id?: number; message: string }>(`/orders/${id}/send-payment-qr`).then(res => res.data),
+  markSpecialOrderAdvancePaid: (id: number) =>
+    apiClient.post<{ success: boolean; message: string }>(`/orders/${id}/mark-advance-paid`).then(res => res.data),
 
   // Expiry Monitor
   getExpiryList: (paramsOrDays?: number | { days?: number; date_from?: string; date_to?: string }) => {

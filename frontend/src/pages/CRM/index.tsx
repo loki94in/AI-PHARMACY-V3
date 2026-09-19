@@ -5,7 +5,7 @@ import { apiClient, api, type CompactInventoryItem } from '../../services/api';
 import {
   RefreshCw, Send, Users, MessageSquare, Phone, Calendar,
   CheckCircle2, AlertCircle, Clock, Search, Repeat2, Bell,
-  MessageCircle, Check, Package, Mail, ExternalLink, LogOut, Zap, Copy, FileText, X, Plus, Trash2, Sliders, ChevronDown, ChevronUp, ClipboardList, ShoppingCart, AlertTriangle, Pencil, Edit2, RotateCcw, Globe, Pill
+  MessageCircle, Check, Package, Mail, ExternalLink, LogOut, Zap, Copy, FileText, X, Plus, Trash2, Sliders, ChevronDown, ChevronUp, ClipboardList, ShoppingCart, AlertTriangle, Pencil, Edit2, RotateCcw, Globe, Pill, QrCode
 } from 'lucide-react';
 import { toastEvent, specialOrdersEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automationHubEvent } from '../../services/events';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
@@ -16,6 +16,7 @@ import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName }
 import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalModal';
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -3840,6 +3841,8 @@ interface SpecialOrderItem {
   pharmarack_scheme?: string | null;
   pharmarack_mapped?: number | null;
   advance_payment?: number | null;
+  payment_status?: string | null;
+  payment_qr_id?: string | number | null;
   language?: string;
   notification_count?: number;
 }
@@ -3870,6 +3873,20 @@ const SpecialOrdersSection: React.FC = () => {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [addingCartId, setAddingCartId] = useState<number | null>(null);
   const [convertingId, setConvertingId] = useState<number | null>(null);
+  const [loadingPaymentQrId, setLoadingPaymentQrId] = useState<number | null>(null);
+  const [sendingPaymentQrId, setSendingPaymentQrId] = useState<number | null>(null);
+  const [paymentQrModalData, setPaymentQrModalData] = useState<{
+    order_id: number;
+    so_code: string;
+    customer_name: string;
+    customer_phone: string;
+    medicine_name: string;
+    amount: number;
+    upi_id: string;
+    payee_name: string;
+    upi_uri: string;
+    payment_status: string;
+  } | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
 
@@ -3955,6 +3972,8 @@ const SpecialOrdersSection: React.FC = () => {
       return true;
     }
   });
+  // WA registration check — disables booking alert toggle when number confirmed not on WA
+  const { isNotOnWa: bookingNotOnWa } = useWaPhoneStatus(phone.replace(/\D/g, '').slice(-10));
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [showDelayModal, setShowDelayModal] = useState(false);
 
@@ -4009,6 +4028,7 @@ const SpecialOrdersSection: React.FC = () => {
     setShowEditModal(false);
     setEditingOrder(null);
   });
+  useModalEscape(!!paymentQrModalData, () => setPaymentQrModalData(null));
 
   useEffect(() => {
     if (!manualToDate) {
@@ -4272,6 +4292,60 @@ const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Failed to convert order to recurring refill.', 'error', '/crm');
     } finally {
       setConvertingId(null);
+    }
+  };
+
+  const handleOpenPaymentQr = async (order: SpecialOrderItem) => {
+    setLoadingPaymentQrId(order.id);
+    try {
+      const res = await api.getSpecialOrderPaymentQr(order.id);
+      if (res && res.success) {
+        setPaymentQrModalData(res);
+      } else {
+        toastEvent.trigger('Failed to fetch payment QR details', 'error', '/crm');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to fetch payment QR', 'error', '/crm');
+    } finally {
+      setLoadingPaymentQrId(null);
+    }
+  };
+
+  const handleSendPaymentQrWa = async (orderId: number) => {
+    setSendingPaymentQrId(orderId);
+    try {
+      const res = await api.sendSpecialOrderPaymentQr(orderId);
+      if (res && res.success) {
+        toastEvent.trigger(res.message || '₹50 Payment QR sent to customer on WhatsApp!', 'success', '/crm');
+        whatsappQueueEvent.triggerUpdated();
+        await loadOrders();
+        if (paymentQrModalData && paymentQrModalData.order_id === orderId) {
+          setPaymentQrModalData(prev => prev ? { ...prev, payment_status: 'AWAITING_PAYMENT' } : null);
+        }
+      } else {
+        toastEvent.trigger(res?.message || 'Failed to send payment QR', 'error', '/crm');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to send payment QR', 'error', '/crm');
+    } finally {
+      setSendingPaymentQrId(null);
+    }
+  };
+
+  const handleMarkPaymentQrPaid = async (orderId: number) => {
+    try {
+      const res = await api.markSpecialOrderAdvancePaid(orderId);
+      if (res && res.success) {
+        toastEvent.trigger('Advance payment marked as CONFIRMED!', 'success', '/crm');
+        await loadOrders();
+        if (paymentQrModalData && paymentQrModalData.order_id === orderId) {
+          setPaymentQrModalData(prev => prev ? { ...prev, payment_status: 'PAYMENT_CONFIRMED' } : null);
+        }
+      } else {
+        toastEvent.trigger(res?.message || 'Failed to update payment status', 'error', '/crm');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to update payment status', 'error', '/crm');
     }
   };
 
@@ -4623,6 +4697,15 @@ const SpecialOrdersSection: React.FC = () => {
                   ✨ Advance: ₹{Number(order.advance_payment).toFixed(2)}
                 </span>
               )}
+              {order.payment_status === 'PAYMENT_CONFIRMED' ? (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-extrabold flex items-center gap-1">
+                  ✅ Advance Paid
+                </span>
+              ) : order.payment_status === 'AWAITING_PAYMENT' ? (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-extrabold flex items-center gap-1">
+                  ⏳ Awaiting ₹50
+                </span>
+              ) : null}
               {order.priority && (
                 <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold ${
                   order.priority === 'High' ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'bg-bg3 text-muted border border-border'
@@ -4673,6 +4756,17 @@ const SpecialOrdersSection: React.FC = () => {
             >
               <ShoppingCart size={13} />
               <span>⚡ Sell</span>
+            </button>
+
+            {/* View / Send ₹50 Payment QR */}
+            <button
+              onClick={() => handleOpenPaymentQr(order)}
+              disabled={loadingPaymentQrId === order.id}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-sm shadow-purple-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
+              title="Generate, view, or dispatch ₹50 booking advance payment QR via WhatsApp"
+            >
+              <QrCode size={13} className={loadingPaymentQrId === order.id ? 'animate-spin' : ''} />
+              <span>{loadingPaymentQrId === order.id ? '...' : '💳 ₹50 QR'}</span>
             </button>
 
             {/* WA Notification Button */}
@@ -5257,30 +5351,42 @@ const SpecialOrdersSection: React.FC = () => {
                 </div>
               </div>
 
+              {/* WhatsApp Booking Alert toggle — dims when number confirmed NOT on WA */}
               <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-text text-[11px] flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <MessageCircle size={15} className={sendWhatsApp ? "text-emerald-400" : "text-muted"} />
+                  <MessageCircle size={15} className={bookingNotOnWa ? 'text-rose-400' : sendWhatsApp ? 'text-emerald-400' : 'text-muted'} />
                   <span>
-                    <strong>WhatsApp Booking Alert:</strong> {sendWhatsApp ? 'Will automatically send booking confirmation to customer.' : 'Confirmation message disabled.'}
+                    <strong>WhatsApp Booking Alert:</strong>{' '}
+                    {bookingNotOnWa
+                      ? 'Number not registered on WhatsApp.'
+                      : sendWhatsApp
+                      ? 'Will automatically send booking confirmation to customer.'
+                      : 'Confirmation message disabled.'}
                   </span>
+                  {bookingNotOnWa && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold shrink-0">Not on WA</span>
+                  )}
                 </div>
                 <button
                   type="button"
+                  disabled={bookingNotOnWa}
                   onClick={() => {
+                    if (bookingNotOnWa) return;
                     const next = !sendWhatsApp;
                     setSendWhatsApp(next);
-                    try {
-                      localStorage.setItem('crm_order_send_whatsapp', String(next));
-                    } catch {}
+                    try { localStorage.setItem('crm_order_send_whatsapp', String(next)); } catch {}
                   }}
-                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 ${
-                    sendWhatsApp 
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm' 
-                      : 'bg-bg3 text-muted border border-border'
+                  title={bookingNotOnWa ? 'This number is not registered on WhatsApp' : sendWhatsApp ? 'Disable WA alert' : 'Enable WA alert'}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 ${
+                    bookingNotOnWa
+                      ? 'bg-rose-500/10 text-rose-400/60 border border-rose-500/20 cursor-not-allowed opacity-60'
+                      : sendWhatsApp
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm cursor-pointer'
+                      : 'bg-bg3 text-muted border border-border cursor-pointer'
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
-                  {sendWhatsApp ? 'ON' : 'OFF'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${bookingNotOnWa ? 'bg-rose-400' : sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+                  {bookingNotOnWa ? 'OFF' : sendWhatsApp ? 'ON' : 'OFF'}
                 </button>
               </div>
 
@@ -5556,6 +5662,125 @@ const SpecialOrdersSection: React.FC = () => {
           onDispatched={loadOrders}
         />
       )}
+
+      {/* ₹50 Advance Payment QR Modal */}
+      {paymentQrModalData && createPortal(
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                  <QrCode size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-text">Special Order Payment QR</h3>
+                  <p className="text-[11px] text-muted">Scan to pay booking advance via UPI</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPaymentQrModalData(null)}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Order Details Card */}
+            <div className="bg-bg border border-border rounded-xl p-3.5 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted font-medium">Order Code:</span>
+                <span className="font-extrabold text-text px-1.5 py-0.5 rounded bg-bg3 border border-border">{paymentQrModalData.so_code}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted font-medium">Customer:</span>
+                <span className="font-semibold text-text">{paymentQrModalData.customer_name} ({paymentQrModalData.customer_phone})</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted font-medium">Medicine:</span>
+                <span className="font-bold text-text truncate max-w-[200px]">{paymentQrModalData.medicine_name}</span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-border">
+                <span className="text-muted font-medium">Booking Advance:</span>
+                <span className="text-base font-extrabold text-emerald-400">₹{Number(paymentQrModalData.amount).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted font-medium">Payment Status:</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                  paymentQrModalData.payment_status === 'PAYMENT_CONFIRMED'
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : paymentQrModalData.payment_status === 'AWAITING_PAYMENT'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                    : 'bg-zinc-500/15 text-muted border border-border'
+                }`}>
+                  {paymentQrModalData.payment_status || 'UNPAID'}
+                </span>
+              </div>
+            </div>
+
+            {/* QR Code Display */}
+            <div className="flex flex-col items-center justify-center p-4 bg-bg3 border border-border rounded-2xl shadow-inner">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(paymentQrModalData.upi_uri)}`}
+                alt="UPI Payment QR"
+                className="w-48 h-48 rounded-lg shadow-sm"
+              />
+              <div className="mt-2 text-center">
+                <p className="text-xs font-bold text-text">{paymentQrModalData.payee_name}</p>
+                <p className="text-[11px] font-mono text-muted">{paymentQrModalData.upi_id}</p>
+              </div>
+            </div>
+
+            {/* Action Buttons (Human-in-the-Loop approval and quick share) */}
+            <div className="flex flex-col gap-2 pt-1">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSendPaymentQrWa(paymentQrModalData.order_id)}
+                  disabled={sendingPaymentQrId === paymentQrModalData.order_id}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50"
+                  title="Send ₹50 QR image and UPI instructions directly to customer WhatsApp"
+                >
+                  <Send size={14} className={sendingPaymentQrId === paymentQrModalData.order_id ? 'animate-spin' : ''} />
+                  <span>{sendingPaymentQrId === paymentQrModalData.order_id ? 'Sending WA...' : '📲 Send QR via WhatsApp'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(paymentQrModalData.upi_uri);
+                    toastEvent.trigger('UPI Payment link copied to clipboard!', 'success', '/crm');
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-text text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Copy UPI Deep Link to clipboard"
+                >
+                  <Copy size={13} />
+                  <span>Copy Link</span>
+                </button>
+              </div>
+
+              {/* Human Approval / Mark as Paid */}
+              {paymentQrModalData.payment_status === 'PAYMENT_CONFIRMED' ? (
+                <div className="w-full py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold text-center flex items-center justify-center gap-1.5">
+                  <CheckCircle2 size={14} />
+                  <span>Advance Payment Confirmed (₹{Number(paymentQrModalData.amount).toFixed(2)})</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleMarkPaymentQrPaid(paymentQrModalData.order_id)}
+                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/40 text-blue-400 text-xs font-bold transition-all cursor-pointer"
+                  title="Manually mark ₹50 advance payment as received and confirmed"
+                >
+                  <Check size={14} />
+                  <span>Confirm / Mark Paid (₹{Number(paymentQrModalData.amount).toFixed(2)})</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
@@ -5599,6 +5824,9 @@ const CustomerCreditSection: React.FC = () => {
   const [payAmount, setPayAmount] = useState('');
   const [collectingPayment, setCollectingPayment] = useState(false);
   const [sendingId, setSendingId] = useState<number | null>(null);
+  // WA registration check — disables credit WA reminder button when number confirmed not on WA
+  const creditPhone = (selectedCustomer?.phone || '').replace(/\D/g, '').slice(-10);
+  const { isNotOnWa: creditNotOnWa } = useWaPhoneStatus(creditPhone);
   const [viewInvoice, setViewInvoice] = useState<SalesHistoryInvoice | null>(null);
 
   const loadCustomerInvoices = useCallback(async (customerId: number) => {
@@ -5894,15 +6122,19 @@ const CustomerCreditSection: React.FC = () => {
                     <span>{payingId === selectedCustomer.id ? 'Cancel Payment' : 'Collect Payment'}</span>
                   </button>
 
-                  {/* WhatsApp Reminder Button */}
+                  {/* WhatsApp Reminder Button — disabled when number confirmed NOT on WA */}
                   <button
-                    onClick={() => handleSendManualReminder(selectedCustomer)}
-                    disabled={sendingId === selectedCustomer.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all disabled:opacity-50"
-                    title="Send instant manual credit reminder on WhatsApp"
+                    onClick={() => !creditNotOnWa && handleSendManualReminder(selectedCustomer)}
+                    disabled={sendingId === selectedCustomer.id || creditNotOnWa}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      creditNotOnWa
+                        ? 'bg-rose-500/10 text-rose-400/60 border border-rose-500/20 cursor-not-allowed opacity-60'
+                        : 'bg-primary hover:bg-primary/90 text-white disabled:opacity-50 cursor-pointer'
+                    }`}
+                    title={creditNotOnWa ? 'This number is not registered on WhatsApp' : 'Send instant manual credit reminder on WhatsApp'}
                   >
                     <Send size={12} className={sendingId === selectedCustomer.id ? 'animate-pulse' : ''} />
-                    <span>Send WhatsApp Message</span>
+                    <span>{creditNotOnWa ? 'Not on WhatsApp' : 'Send WhatsApp Message'}</span>
                   </button>
 
                   {/* Clear Credit Entry Button */}

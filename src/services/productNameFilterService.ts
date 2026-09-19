@@ -359,12 +359,18 @@ export function detectDosageFormFromText(text: string): string | null {
   }
 
   // Others
-  if (/\b(?:powders?|dusting\s*powders?)\b/i.test(t)) return 'POWDER';
+  if (/\b(?:powders?|dusting\s*powders?|protein\s+(?:for|powder|supplement)|lactation\s+supplement|nourishment\s+for)\b/i.test(t)) return 'POWDER';
   if (/\b(?:sprays?|nasal\s*sprays?)\b/i.test(t)) return 'SPRAY';
   if (/\b(?:sachets?|granules?)\b/i.test(t)) return 'SACHET';
   if (/\b(?:hair\s*oils?|massage\s*oils?|taila?)\b/i.test(t)) return 'OIL';
 
   return null;
+}
+
+export function detectFlavourFromText(text: string): string | null {
+  if (!text) return null;
+  const m = text.match(/\b(chocolate|choco|vanilla|cardamom|elaichi|strawberry|mango|orange|banana|kesar|pista|badam|butterscotch|pineapple|lemon|mint)(?:\s+(?:flavour|flavor|taste))?\b/i);
+  return m ? m[1].toLowerCase() : null;
 }
 
 export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: string): boolean {
@@ -383,6 +389,7 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   const isShampoo = df === 'SHAMPOO';
   const isSoap = df === 'SOAP' || df === 'BAR';
   const isFaceWash = df === 'FACE WASH' || df === 'FACEWASH';
+  const isPowder = df === 'POWDER';
 
   const itIsTablet = /\b(TAB|TABLET|TABLETS|DT)\b/.test(it);
   const itIsCapsule = /\b(CAP|CAPSULE|CAPSULES|SOFGEL|SOFTGEL)\b/.test(it);
@@ -395,6 +402,7 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   const itIsDrops = /\b(DROPS?|EYE DROP|EAR DROP|OPHTHALMIC)\b/.test(it);
   const itIsShampoo = /\b(SHAMPOO|HAIR WASH)\b/.test(it);
   const itIsSoap = /\b(SOAP|BAR|BATHING BAR|SYNDET BAR)\b/.test(it);
+  const itIsPowder = /\b(POWDER|POWDERS|GRANULES|SACHET)\b/.test(it);
 
   // Allow Face Wash Gel / Foaming Face Wash to match Face Wash
   if (isFaceWash && itIsFaceWash) return false;
@@ -407,6 +415,10 @@ export function isItemTypeConflicting(dosageForm?: string, itemTypeOrName?: stri
   if ((df === 'GEL' || df === 'SYRUP') && /\b(ML|BOTTLE|SUSP|SUSPENSION|ANTACID)\b/.test(it) && !/\b(TUBE)\b/.test(it)) {
     return false;
   }
+
+  // Powder strictly conflicts with liquids, tablets, capsules, injectables, topicals, drops
+  if (isPowder && (itIsLiquidOral || itIsSolidOral || itIsInjectable || itIsDrops || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash)) return true;
+  if ((isSolidOral || isLiquidOral || isInjectable || isDrops || isTopical || isInhaler || isShampoo || isSoap || isFaceWash) && itIsPowder) return true;
 
   if (isSolidOral && (itIsLiquidOral || itIsInjectable || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;
   if (isLiquidOral && (itIsSolidOral || itIsInjectable || itIsTopical || itIsInhaler || itIsShampoo || itIsSoap || itIsFaceWash || itIsDrops)) return true;

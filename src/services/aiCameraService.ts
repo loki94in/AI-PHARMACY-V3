@@ -10,6 +10,7 @@ import {
   extractFormulationModifiers,
   hasFormulationModifierConflict,
   detectDosageFormFromText,
+  detectFlavourFromText,
   isItemTypeConflicting
 } from './productNameFilterService.js';
 import { isPlausibleMedicineName } from './intentKeywords.js';
@@ -280,7 +281,8 @@ class AICameraService {
       .split(/[\s,;:|()\[\]{}\/\\]+/)
       .map(w => w.trim().toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, ''))
       .filter(w => {
-        if (w.length < 3) return false;
+        if (w.length < 2) return false;
+        if (w.length === 2 && !/^(pl|sr|xl|dt|od|cr|er|tr|mr|ds|ls|cv|az|am|lc|oz|tz|tg|ct|d3|k2|b6|b12)$/i.test(w)) return false;
         if (this.STOP_WORDS.has(w)) return false;
         if (this.KNOWN_COMPANIES.has(w)) return false; // company name is not a product name
         if (this.KNOWN_APIS.has(w)) return false;     // active pharmaceutical ingredient (chemical salt) is NOT a brand name!
@@ -389,6 +391,26 @@ class AICameraService {
   }
 
   /**
+   * Detect medicinal or nutritional flavour from text (Chocolate/Vanilla/Cardamom/etc.)
+   */
+  detectFlavour(text: string): string | null {
+    if (!text) return null;
+    return detectFlavourFromText(text);
+  }
+
+  /**
+   * Detect if text appears to be a doctor's prescription slip rather than packaging
+   */
+  detectIsPrescription(text: string): boolean {
+    if (!text) return false;
+    const t = text.toLowerCase();
+    const rxSigns = [/\brx\b/i, /\bdiagnosis\b/i, /\b(?:bp|pulse)\b/i, /\b(?:dr\.|doctor)\b/i, /\b(?:clinic|hospital)\b/i, /\btiming\b/i, /\bfreq\b/i, /\bduration\b/i, /\bpatient\b/i];
+    const matchCount = rxSigns.filter(re => re.test(t)).length;
+    const medLineCount = (text.match(/\b(?:tab(?:let)?s?|cap(?:sule)?s?|syp|inj)\b/gi) || []).length;
+    return (matchCount >= 2 && medLineCount >= 2) || (matchCount >= 3);
+  }
+
+  /**
    * Detect company name from OCR text using the 10k+ known manufacturers.
    * Returns the full company name (e.g. "Cipla Ltd") if its core token
    * (e.g. "cipla") appears in the text. Uses word boundaries so
@@ -472,28 +494,52 @@ class AICameraService {
     try {
       const base64Data = buffer.toString('base64');
       const prompt = `You are an expert Indian Pharmacy and Medical Vision AI.
-Analyze this packaging/strip/bottle/container image of a pharmaceutical, medicinal, or health/maternal nutrition product.
+Determine whether this image is:
+1. "PACKAGING": A single medicine/supplement container, box, bottle, or blister strip (e.g. "Amoxyclav 625", "PRO-PL", "Dolo 650").
+2. "PRESCRIPTION": A doctor's prescription slip, clinical consultation paper, or hospital slip containing prescribed medicines.
 
-Extract the following details accurately:
-- brandName: The primary trade/brand name of the product (e.g. "PRO-PL", "Dolo 650", "Augmentin 625", "Shelcal 500").
-- flavour: Specific flavour if mentioned (e.g. "Chocolate", "Vanilla", "Cardamom", "Orange").
-- genericName: The salt, active ingredients, or scientific composition (e.g. "Protein with DHA for Pregnancy & Lactation", "Paracetamol", "Amoxicillin and Potassium Clavulanate").
-- dosageForm: Form of the product (e.g. "Powder", "Tablet", "Capsule", "Syrup", "Gel").
-- strength: Strength or weight (e.g. "200g", "400g", "650mg", "500mg").
-- packaging: Container or pack info (e.g. "200 GM", "400 GM", "Strip of 15 Tablets", "Bottle").
-- manufacturer: Manufacturing or marketing pharmaceutical company (e.g. "British Biologicals", "Micro Labs", "Cipla").
-- mrp: Maximum retail price as a number if visible.
-- allReadableText: All text legible on the container.
-
-Return ONLY a valid JSON object matching these keys with no markdown codeblocks or quotes:
+If PRESCRIPTION, return ONLY valid JSON matching:
 {
-  "brandName": "PRO-PL",
-  "flavour": "Chocolate",
-  "genericName": "Protein for Pregnancy & Lactation",
-  "dosageForm": "Powder",
-  "strength": "200g",
-  "packaging": "200 GM",
-  "manufacturer": "British Biologicals",
+  "isPrescription": true,
+  "doctorName": "Doctor's name or null",
+  "clinicName": "Clinic or hospital name or null",
+  "patientName": "Patient name or null",
+  "patientPhone": "Patient phone number if written or null",
+  "patientAge": "Patient age/gender or null",
+  "prescriptionDate": "Prescription date or null",
+  "items": [
+    {
+      "brandName": "ROZAGOLD 20",
+      "dosageForm": "CAPSULE",
+      "strength": "20mg",
+      "composition": "Aspirin 75 mg + Clopidogrel 75 mg + Rosuvastatin 20 mg",
+      "handwrittenNotes": null,
+      "prescribedQuantity": 10,
+      "timing": "0 - 0 - 1"
+    },
+    {
+      "brandName": "TELMA 40MG",
+      "dosageForm": "TABLET",
+      "strength": "40mg",
+      "composition": "Telmisartan 40 MG",
+      "handwrittenNotes": "Telmival",
+      "prescribedQuantity": 10,
+      "timing": "0 - 0 - 1"
+    }
+  ],
+  "allReadableText": "..."
+}
+
+If PACKAGING, return ONLY valid JSON matching:
+{
+  "isPrescription": false,
+  "brandName": "Primary trade/brand name (e.g. Amoxyclav 625, PRO-PL)",
+  "flavour": "Specific flavour if mentioned or null",
+  "genericName": "Salt, active ingredients, or scientific composition",
+  "dosageForm": "Form of product (e.g. Tablet, Capsule, Powder, Syrup)",
+  "strength": "Strength or weight (e.g. 500mg+125mg, 625mg, 200g)",
+  "packaging": "Container or pack info (e.g. 3 x 10 Tablets, 200 GM)",
+  "manufacturer": "Manufacturing company (e.g. Abbott, British Biologicals)",
   "mrp": null,
   "allReadableText": "..."
 }`;
@@ -572,7 +618,28 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       try {
         console.log('[AiCamera] Attempting high-precision Gemini 2.0 Flash Vision extraction...');
         geminiVisionData = await this.extractWithGeminiVision(buffer, geminiKey);
-        if (geminiVisionData?.brandName) {
+        if (geminiVisionData?.isPrescription && Array.isArray(geminiVisionData.items) && geminiVisionData.items.length > 0) {
+          const medText = geminiVisionData.items
+            .map((it: any) => `${it.brandName || ''} ${it.strength || ''} ${it.dosageForm || ''} ${it.handwrittenNotes ? `(${it.handwrittenNotes})` : ''}`.trim())
+            .filter(Boolean)
+            .join('\n');
+
+          const readableText = [
+            geminiVisionData.patientName ? `Patient: ${geminiVisionData.patientName}` : '',
+            geminiVisionData.patientPhone ? `Phone: ${geminiVisionData.patientPhone}` : '',
+            geminiVisionData.doctorName ? `Doctor: ${geminiVisionData.doctorName}` : '',
+            medText,
+            geminiVisionData.allReadableText || ''
+          ].filter(Boolean).join('\n');
+
+          localOcrResult = {
+            text: readableText,
+            confidence: 95,
+            words: []
+          };
+          fallbackUsed = false;
+          console.log(`[AiCamera] Gemini Vision detected PRESCRIPTION with ${geminiVisionData.items.length} prescribed items (Patient: ${geminiVisionData.patientName || 'N/A'})`);
+        } else if (geminiVisionData?.brandName) {
           const readableText = [
             geminiVisionData.brandName,
             geminiVisionData.flavour,
@@ -596,7 +663,7 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       }
     }
 
-    if (!geminiVisionData?.brandName) {
+    if (!geminiVisionData?.brandName && !geminiVisionData?.isPrescription) {
       const isONNXAvailable = await onnxOcrService.checkAvailability();
       if (isONNXAvailable) {
         try {
@@ -679,6 +746,7 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
 
     // --- Step 2: Fuzzy match — only on brand candidate tokens, NOT chemical salts or packaging noise ---
     // Split text into lines, strip stop words, composition text & packaging noise from each line, then try against DB.
+    const localFlavour = geminiVisionData?.flavour || this.detectFlavour(localOcrResult.text);
     try {
       await this.loadDatabaseIgnoreList();
       
@@ -722,21 +790,27 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       }
 
       for (const item of candidateLines) {
-        if (bestLineScore >= 0.85) break;
+        if (bestLineScore >= 0.88) break;
         const cleanedLine = item.tokens.join(' ');
-        // Try the full cleaned line first (best for multi-word names)
-        const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
-          minConfidenceThreshold: 0.65,
-          dosageForm: detectedDosageForm || undefined,
-          rawOcrText: localOcrResult.text
-        });
+        const lineQueries = [
+          localFlavour ? `${cleanedLine} ${localFlavour}` : null,
+          cleanedLine
+        ].filter(Boolean) as string[];
 
-        const lineScore = filterResult.topScore ?? 0;
-        if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
-          bestLineScore = lineScore;
-          bestLineMatches = filterResult.matches;
-          if (bestLineScore >= 0.88) {
-            break;
+        for (const queryToTry of lineQueries) {
+          const filterResult = await productNameFilterService.filterProductNames(queryToTry, {
+            minConfidenceThreshold: 0.65,
+            dosageForm: geminiVisionData?.dosageForm || detectedDosageForm || undefined,
+            rawOcrText: localOcrResult.text
+          });
+
+          const lineScore = filterResult.topScore ?? 0;
+          if (filterResult.matches.length > 0 && lineScore > bestLineScore) {
+            bestLineScore = lineScore;
+            bestLineMatches = filterResult.matches;
+            if (bestLineScore >= 0.88) {
+              break;
+            }
           }
         }
       }
@@ -926,6 +1000,10 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       if (geminiVisionData.mrp && !finalInfo.mrp) finalInfo.mrp = geminiVisionData.mrp;
     }
 
+    if (localFlavour && !finalInfo.flavour) {
+      finalInfo.flavour = localFlavour;
+    }
+
     if (detectedDrugStrength.strength) {
       finalInfo.strength = detectedDrugStrength.strength;
     } else {
@@ -1000,6 +1078,31 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       }
     }
 
+    const isPrescription = !!(geminiVisionData?.isPrescription || this.detectIsPrescription(localOcrResult.text));
+    let prescriptionData: any = null;
+    if (isPrescription) {
+      if (geminiVisionData?.isPrescription) {
+        prescriptionData = geminiVisionData;
+      } else {
+        try {
+          const { prescriptionScannerService } = await import('./prescriptionScannerService.js');
+          prescriptionData = await prescriptionScannerService.parsePrescriptionText(localOcrResult.text);
+        } catch (presErr) {
+          console.warn('[AiCamera] Failed to parse offline prescription text:', presErr);
+        }
+      }
+      if (prescriptionData) {
+        finalInfo.isPrescription = true;
+        finalInfo.prescriptionData = prescriptionData;
+        if (Array.isArray(prescriptionData.items) && prescriptionData.items.length > 0) {
+          for (const it of prescriptionData.items) {
+            const bName = it.brandName || it.name;
+            if (bName && !matches.includes(bName)) matches.push(bName);
+          }
+        }
+      }
+    }
+
     const ocrResult = {
       text: localOcrResult.text,
       confidence: localOcrResult.confidence,
@@ -1007,7 +1110,9 @@ Return ONLY a valid JSON object matching these keys with no markdown codeblocks 
       medicineInfo: finalInfo,
       matches,
       fallbackUsed: fallbackUsed,
-      auditLogged: matches.length === 0
+      auditLogged: matches.length === 0,
+      isPrescription: isPrescription,
+      prescriptionData: prescriptionData
     };
 
     if (skipEnrichment) {

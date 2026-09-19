@@ -22,6 +22,7 @@ import { useDraftStore } from '../../lib/cache/useDraftStore';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
 import { combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { useModalEscape } from '../../services/keyboardShortcuts';
+import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -29,6 +30,54 @@ const getLocalDateString = (d: Date = new Date()) => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 };
+
+/** Compact WA ON/OFF toggle for POS toolbar — disables when number confirmed NOT on WhatsApp */
+function POSWaToggleButton({
+  phone,
+  sendWhatsApp,
+  setSendWhatsApp,
+}: {
+  phone: string;
+  sendWhatsApp: boolean;
+  setSendWhatsApp: (v: boolean) => void;
+}) {
+  const { isNotOnWa } = useWaPhoneStatus(phone);
+
+  // Auto-turn off when confirmed not on WA
+  useEffect(() => {
+    if (isNotOnWa && sendWhatsApp) setSendWhatsApp(false);
+  }, [isNotOnWa, sendWhatsApp, setSendWhatsApp]);
+
+  if (isNotOnWa) {
+    return (
+      <button
+        type="button"
+        disabled
+        title="This number is not registered on WhatsApp"
+        className="h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 select-none shrink-0 bg-rose-500/10 border-rose-500/20 text-rose-400/70 cursor-not-allowed opacity-70"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+        <span>Not on WA</span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setSendWhatsApp(!sendWhatsApp)}
+      className={`h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-all select-none shrink-0 cursor-pointer ${
+        sendWhatsApp
+          ? 'bg-green/15 border-green/30 text-green hover:bg-green/25'
+          : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
+      }`}
+      title={sendWhatsApp ? 'WhatsApp Notifications Active' : 'WhatsApp Notifications Inactive'}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${sendWhatsApp ? 'bg-green animate-pulse' : 'bg-muted/40'}`} />
+      <span>WA:{sendWhatsApp ? 'ON' : 'OFF'}</span>
+    </button>
+  );
+}
 
 const parsePackSizeFromPackaging = (packaging: string | null | undefined): number | null => {
   if (!packaging) return null;
@@ -4136,18 +4185,11 @@ const POS = () => {
                     }}
                     aria-label="Phone Number"
                   />
-                  <button
-                    onClick={() => setSendWhatsApp(!sendWhatsApp)}
-                    className={`h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-all select-none shrink-0 cursor-pointer ${
-                      sendWhatsApp
-                        ? 'bg-green/15 border-green/30 text-green hover:bg-green/25'
-                        : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
-                    }`}
-                    title={sendWhatsApp ? "WhatsApp Notifications Active" : "WhatsApp Notifications Inactive"}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${sendWhatsApp ? 'bg-green animate-pulse' : 'bg-muted/40'}`} />
-                    <span>WA:{sendWhatsApp ? 'ON' : 'OFF'}</span>
-                  </button>
+                  <POSWaToggleButton
+                    phone={patientPhone}
+                    sendWhatsApp={sendWhatsApp}
+                    setSendWhatsApp={setSendWhatsApp}
+                  />
                 </div>
               </div>
 

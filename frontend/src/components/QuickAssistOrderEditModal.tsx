@@ -20,6 +20,7 @@ import {
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { api, apiClient } from '../services/api';
 import { toastEvent, specialOrdersEvent, refillEvent } from '../services/events';
+import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
 
 export interface EditOrderItem {
   id: number;
@@ -69,6 +70,8 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
   const [phone, setPhone] = useState('');
   const [items, setItems] = useState<EditOrderItem[]>([]);
   const [saving, setSaving] = useState(false);
+  // WA registration check — disables arrival WA button when number confirmed not on WA
+  const { isNotOnWa: arrivalNotOnWa } = useWaPhoneStatus(phone.replace(/\D/g, '').slice(-10));
 
   // Proactive early readiness: pre-warm WhatsApp client when Special Order action is entered
   useEffect(() => {
@@ -477,12 +480,17 @@ export const QuickAssistOrderEditModal: React.FC<QuickAssistOrderEditModalProps>
             {(editGroup.type === 'special_request' || editGroup.type === 'website_order') && onOpenArrivalModal && (
               <button
                 type="button"
-                onClick={handleOpenArrivalWhatsApp}
-                className="py-1.5 px-2.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                title="Open Arrival Preview to mark some arrived, some delayed & send 1 WhatsApp message"
+                onClick={arrivalNotOnWa ? undefined : handleOpenArrivalWhatsApp}
+                disabled={arrivalNotOnWa}
+                className={`py-1.5 px-2.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1 ${
+                  arrivalNotOnWa
+                    ? 'bg-rose-500/10 border-rose-500/20 text-rose-400/60 cursor-not-allowed opacity-60'
+                    : 'bg-sky-500/15 hover:bg-sky-500/25 border-sky-500/30 text-sky-300 cursor-pointer'
+                }`}
+                title={arrivalNotOnWa ? 'This number is not registered on WhatsApp' : 'Open Arrival Preview to mark some arrived, some delayed & send 1 WhatsApp message'}
               >
                 <MessageCircle size={13} />
-                <span>Arrival & Delay WhatsApp</span>
+                <span>{arrivalNotOnWa ? 'Not on WhatsApp' : 'Arrival & Delay WhatsApp'}</span>
               </button>
             )}
 

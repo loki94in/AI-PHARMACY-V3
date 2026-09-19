@@ -30,6 +30,7 @@ import { toastEvent, specialOrdersEvent } from '../services/events';
 import { SalutationNameInput, combineSalutationAndName } from './SalutationNameInput';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import {} from '../hooks/useApiQuery';
+import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
 
 interface SuggestionMedicine {
   inventory_id?: number;
@@ -117,7 +118,73 @@ const getEffectiveRate = (rate: number, schemeStr: string | undefined, qty: numb
   return (qty * rate) / totalItems;
 };
 
+/** WA toggle row — dims and disables when number confirmed NOT on WhatsApp */
+function WaToggleRow({
+  phone,
+  sendWhatsApp,
+  setSendWhatsApp,
+  storageKey,
+}: {
+  phone: string;
+  sendWhatsApp: boolean;
+  setSendWhatsApp: (v: boolean) => void;
+  storageKey: string;
+}) {
+  const { isNotOnWa, waStatus } = useWaPhoneStatus(phone);
+
+  // Auto-turn off toggle when confirmed not on WA
+  useEffect(() => {
+    if (isNotOnWa && sendWhatsApp) {
+      setSendWhatsApp(false);
+      try { localStorage.setItem(storageKey, 'false'); } catch {}
+    }
+  }, [isNotOnWa, sendWhatsApp, setSendWhatsApp, storageKey]);
+
+  const isDisabled = isNotOnWa;
+  const label = isNotOnWa
+    ? 'Not on WhatsApp'
+    : waStatus === 'checking'
+    ? 'Checking...'
+    : sendWhatsApp ? 'ON' : 'OFF';
+
+  return (
+    <div className="flex items-center justify-between p-2 rounded-2xl bg-bg3/30 border border-glass-border">
+      <div className="flex items-center gap-2">
+        <MessageCircle size={13} className={isNotOnWa ? 'text-rose-400' : sendWhatsApp ? 'text-emerald-400' : 'text-muted'} />
+        <span className="text-[11px] font-semibold text-text">WhatsApp Alert</span>
+        {isNotOnWa && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold">
+            Not on WhatsApp
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        disabled={isDisabled}
+        onClick={() => {
+          if (isDisabled) return;
+          const next = !sendWhatsApp;
+          setSendWhatsApp(next);
+          try { localStorage.setItem(storageKey, String(next)); } catch {}
+        }}
+        title={isNotOnWa ? 'This number is not registered on WhatsApp' : sendWhatsApp ? 'WhatsApp alert enabled' : 'WhatsApp alert disabled'}
+        className={`px-2.5 py-0.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${
+          isDisabled
+            ? 'bg-rose-500/10 text-rose-400/60 border border-rose-500/20 cursor-not-allowed opacity-60'
+            : sendWhatsApp
+            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm cursor-pointer'
+            : 'bg-bg3 text-muted border border-border cursor-pointer'
+        }`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${isNotOnWa ? 'bg-rose-400' : sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+        {label}
+      </button>
+    </div>
+  );
+}
+
 export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+
   const [isOpen, setIsOpen] = useState(true);
   
   const handleClose = useCallback(() => {
@@ -1180,30 +1247,12 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
                   </div>
 
                   {/* WhatsApp Notification Toggle */}
-                  <div className="flex items-center justify-between p-2 rounded-2xl bg-bg3/30 border border-glass-border">
-                    <div className="flex items-center gap-2">
-                      <MessageCircle size={13} className={sendWhatsApp ? "text-emerald-400" : "text-muted"} />
-                      <span className="text-[11px] font-semibold text-text">WhatsApp Alert</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !sendWhatsApp;
-                        setSendWhatsApp(next);
-                        try {
-                          localStorage.setItem('quick_order_send_whatsapp', String(next));
-                        } catch {}
-                      }}
-                      className={`px-2.5 py-0.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                        sendWhatsApp 
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm' 
-                          : 'bg-bg3 text-muted border border-border'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
-                      {sendWhatsApp ? 'ON' : 'OFF'}
-                    </button>
-                  </div>
+                  <WaToggleRow
+                    phone={phone}
+                    sendWhatsApp={sendWhatsApp}
+                    setSendWhatsApp={setSendWhatsApp}
+                    storageKey="quick_order_send_whatsapp"
+                  />
                 </div>
               </div>
 

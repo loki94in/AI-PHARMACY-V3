@@ -320,6 +320,24 @@ class TriggerSchedulerService {
     }
 
     // ----------------------------------------------------
+    // Trigger 6b: Special Order Advance Payment Reminder Scanner (Every 15 min)
+    // ----------------------------------------------------
+    try {
+      const paymentReminderTask = cron.schedule('*/15 * * * *', async () => {
+        try {
+          const { checkAndSendAdvancePaymentReminders } = await import('./whatsappIntentService.js');
+          await checkAndSendAdvancePaymentReminders(database);
+        } catch (err) {
+          console.error('[TriggerScheduler] Special Order payment reminder scan failed:', err);
+        }
+      });
+      this.scheduledTasks.set('payment_advance_reminders', paymentReminderTask);
+      console.log("[TriggerScheduler] Registered 'Special Order Payment Advance Reminder' -> Cron: */15 * * * *");
+    } catch (err) {
+      console.error('[TriggerScheduler] Failed to schedule Special Order Payment Advance Reminder:', err);
+    }
+
+    // ----------------------------------------------------
     // Trigger 7: Distributor Dispatch Reminder Worker
     // ----------------------------------------------------
     if (cfg.trigger_dispatch_reminder_enabled === 'true') {

@@ -451,6 +451,9 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     if (!colNames.has('customer_name')) {
       await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN customer_name TEXT DEFAULT NULL');
     }
+    if (!colNames.has('payment_reminder_sent')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN payment_reminder_sent INTEGER DEFAULT 0');
+    }
   } catch (_) {}
   clarificationsTableEnsured = true;
 }
@@ -752,7 +755,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
-           (step IN ('awaiting_owner_selection', 'awaiting_payment', 'awaiting_owner_payment_confirmation') AND created_at > datetime('now', '-24 hours'))
+           (step IN ('awaiting_owner_selection', 'awaiting_payment', 'awaiting_owner_payment_confirmation') AND created_at > datetime('now', '-72 hours'))
            OR created_at > datetime('now', '-45 minutes')
          )
        ORDER BY created_at DESC LIMIT 1`,
@@ -777,10 +780,109 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     }
 
     if (pending.step === 'awaiting_payment') {
-      const waitMsg = `Please pay the ₹50 booking amount using the QR code sent earlier, and reply with the payment screenshot to proceed with your order (Ref: ${pending.so_code || 'SO'}).`;
-      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-      await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_inquiry_confirmed', activeCustomerName || customer?.name || 'Customer');
-      return true;
+      const cleanLower = lower.replace(/[^\w\s]/g, ' ').trim();
+      const isQrKeyword =
+        /^(qr|send\s*qr|qr\s*code|payment\s*link|qr\s*link|pay|payment|link|qr\s*bhejo|bhejo\s*qr|qr\s*send|send\s*code|qr\s*de do|payment\s*qr|upi\s*qr|qr\s*please|qr\s*bhej|bhej\s*do\s*qr)$/i.test(cleanLower) ||
+        /\b(send\s*qr|qr\s*code|payment\s*link|qr\s*bhejo|qr\s*link|upi\s*link|qr\s*image)\b/i.test(cleanLower);
+
+      if (isQrKeyword) {
+        // Customer requested payment QR / link again
+        const { paymentQrService } = await import('./paymentQrService.js');
+        const activeQr = await paymentQrService.allocateNextQr();
+        const amount = 50;
+        const soCode = pending.so_code || (pending.special_order_id ? `SO-${pending.special_order_id}` : 'SO');
+        const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+        const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+
+        // Reset timer in pending clarifications so customer has a fresh window
+        await db.run(
+          `UPDATE wa_pending_clarifications SET created_at = CURRENT_TIMESTAMP, payment_reminder_sent = 0 WHERE phone = ?`,
+          [pending.phone]
+        );
+
+        const qrResendMsg =
+          `💳 *Special Order Booking Advance Payment*\n\n` +
+          `🆔 *Order*: ${soCode}\n` +
+          `💊 *Medicine*: ${pending.suggested_name || 'Special Order'}\n` +
+          `📦 *Quantity*: ${pending.quantity || 1} ${pending.unit || 'strip'}\n` +
+          `🔐 *Booking Advance*: ₹${amount.toFixed(2)}\n\n` +
+          `Please scan the QR code below using Google Pay, PhonePe, or Paytm to pay ₹${amount.toFixed(2)}.\n\n` +
+          `UPI ID: ${activeQr.upi_id}\n` +
+          `Payee: ${activeQr.payee_name}\n\n` +
+          `After paying, please reply with the payment screenshot in this chat.`;
+
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          qrResendMsg,
+          'customer_payment_qr',
+          activeCustomerName || customer?.name || 'Customer',
+          undefined,
+          undefined,
+          {
+            mimetype: 'image/png',
+            data: qrBuffer.toString('base64'),
+            filename: `payment_qr_${soCode}.png`
+          }
+        );
+        return true;
+      }
+
+      // Check if customer wants to cancel or change medicine
+      const isCancellation = /^(cancel|cancel\s*order|dusra|dusri\s*dawa|dusri\s*medicine|change|stop|nako|nahi\s*chahiye|reject)$/i.test(cleanLower);
+      if (isCancellation) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'cancelled' WHERE phone = ?`,
+          [pending.phone]
+        );
+        if (pending.special_order_id) {
+          await db.run(
+            `UPDATE special_orders SET status = 'Cancelled', updated_at = datetime('now') WHERE id = ?`,
+            [pending.special_order_id]
+          );
+        }
+        const cancelMsg =
+          `Your booking request for *${pending.suggested_name}* has been cancelled.\n\n` +
+          `Whenever you need any other medicine, just reply with the medicine name here!`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, cancelMsg, 'customer_inquiry_confirmed', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      // Check if user is typing a new medicine name to order something else
+      const isWaitingFiller = /^(ok|okay|theek\s*hai|accha|haa|haan|wait|ruk|ruko|kal|baad\s*me|shaam|done|karta\s*hu|karti\s*hu)$/i.test(cleanLower);
+      if (!isWaitingFiller && body.trim().length >= 3) {
+        // Check if query matches catalog
+        const testMed = await db.get(
+          `SELECT name FROM medicines WHERE name LIKE ? LIMIT 1`,
+          [`${body.trim()}%`]
+        );
+        if (testMed) {
+          // Customer is requesting a new medicine! Supersede the old order and fall through to process new inquiry
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'superseded' WHERE phone = ?`,
+            [pending.phone]
+          );
+          // Fall through to regular message processing below!
+        } else {
+          // Regular prompt while awaiting payment with clear options
+          const waitMsg =
+            `Please pay the ₹50 booking amount using the QR code sent earlier, and reply with the payment screenshot to proceed with your order (Ref: ${pending.so_code || 'SO'}).\n\n` +
+            `• Reply *QR* to receive a fresh payment QR code.\n` +
+            `• Or reply with a *new medicine name* if you would like to order something else.`;
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_inquiry_confirmed', activeCustomerName || customer?.name || 'Customer');
+          return true;
+        }
+      } else {
+        const waitMsg =
+          `Please pay the ₹50 booking amount using the QR code sent earlier, and reply with the payment screenshot to proceed with your order (Ref: ${pending.so_code || 'SO'}).\n\n` +
+          `• Reply *QR* to receive a fresh payment QR code.\n` +
+          `• Or reply with a *new medicine name* if you would like to order something else.`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_inquiry_confirmed', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
     }
 
     if (pending.step === 'awaiting_owner_payment_confirmation') {
@@ -1421,6 +1523,120 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
   for (const [emoji, num] of Object.entries(emojiDigits)) {
     if (normalizedBody.includes(emoji)) {
       normalizedBody = normalizedBody.replaceAll(emoji, num);
+    }
+  }
+
+  // 0. Check for owner prescription review approval / rejection (Human-in-the-Loop)
+  const rxActionMatch =
+    cleanBody.match(/^(CONFIRM|APPROVE|APPROVED|ACCEPT|ACCEPTED|REJECT|DECLINE)[\s\-:]*(?:RX-)?(\d+)$/i) ||
+    cleanBody.match(/^(?:RX-)?(\d+)\s+(CONFIRM|APPROVE|APPROVED|ACCEPT|ACCEPTED|REJECT|DECLINE)$/i) ||
+    cleanBody.match(/^(CONFIRM|APPROVE|REJECT)[\s\-:]*(RX-[A-Z0-9]+)$/i);
+
+  if (rxActionMatch) {
+    const isActionFirst = isNaN(Number(rxActionMatch[1])) && !rxActionMatch[1].startsWith('RX-');
+    const rawAction = isActionFirst ? rxActionMatch[1] : rxActionMatch[2];
+    const rawCode = isActionFirst ? rxActionMatch[2] : rxActionMatch[1];
+    const isReject = /REJECT|DECLINE/i.test(rawAction);
+    const rxDigits = rawCode.replace(/\D/g, '');
+    const rxCodeFormatted = rawCode.toUpperCase().startsWith('RX-') ? rawCode.toUpperCase() : `RX-${rxDigits}`;
+
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
+    const targetRow = await db.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE (req_code = ? OR req_code = ?) AND status = 'pending'`,
+      [rxCodeFormatted, `RX-${rxDigits}`]
+    );
+
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+
+    if (!targetRow) {
+      await whatsappQueueWorker.enqueue(
+        phone,
+        `⚠️ Prescription *${rxCodeFormatted}* not found or already processed.`,
+        'admin_escalation',
+        'Owner'
+      );
+      return true;
+    }
+
+    let payloadData: any = {};
+    try {
+      payloadData = JSON.parse(targetRow.options_json || '{}');
+    } catch (_) {}
+
+    const patientName = targetRow.customer_name || 'Patient';
+    const customerPhone = targetRow.customer_phone;
+
+    if (isReject) {
+      await db.run(
+        `UPDATE wa_owner_pending_requests SET status = 'rejected' WHERE id = ?`,
+        [targetRow.id]
+      );
+
+      const custRejectMsg =
+        `📋 *Prescription Update (#${targetRow.req_code})*\n\n` +
+        `Hello *${patientName}*, our registered pharmacist reviewed the prescription photo you shared.\n\n` +
+        `⚠️ Unfortunately, some medicine names or dosages were unclear from the photo.\n\n` +
+        `👉 *Please reply with a clearer, well-lit photo* of the doctor's prescription slip, or type the medicine names so we can prepare your order!`;
+
+      if (customerPhone) {
+        await whatsappQueueWorker.enqueue(
+          customerPhone,
+          custRejectMsg,
+          'customer_prescription_rejected',
+          patientName
+        );
+      }
+
+      await whatsappQueueWorker.enqueue(
+        phone,
+        `ℹ️ Prescription *#${targetRow.req_code}* rejected. Patient *${patientName}* has been asked for a clearer photo.`,
+        'admin_escalation',
+        'Owner'
+      );
+      return true;
+    } else {
+      // Confirmed / Approved by Pharmacist
+      await db.run(
+        `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE id = ?`,
+        [targetRow.id]
+      );
+
+      const items: any[] = Array.isArray(payloadData.items) ? payloadData.items : [];
+      const symbols = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+      const itemsList = items.map((it, idx) => {
+        const numIcon = symbols[idx] || `${idx + 1}️⃣`;
+        let line = `${numIcon} *${it.medicineName}*`;
+        if (it.strength && !it.medicineName.toLowerCase().includes(it.strength.toLowerCase())) {
+          line += ` ${it.strength}`;
+        }
+        const dosageDetails = [it.dosage, it.frequency].filter(Boolean).join(' ');
+        if (dosageDetails) line += ` (${dosageDetails})`;
+        return line;
+      }).join('\n');
+
+      const custConfirmMsg =
+        `✅ *Prescription Verified & Approved!* 🩺\n\n` +
+        `Hello *${patientName}*, our registered pharmacist has reviewed and verified your doctor's prescription (#${targetRow.req_code}).\n\n` +
+        (itemsList ? `💊 *Verified Medicines:*\n${itemsList}\n\n` : '') +
+        `📦 We are preparing your order. Our pharmacy team will message you shortly with the final bill and delivery time! 🛵\n\n` +
+        `Thank you for trusting our pharmacy!`;
+
+      if (customerPhone) {
+        await whatsappQueueWorker.enqueue(
+          customerPhone,
+          custConfirmMsg,
+          'customer_prescription_approved',
+          patientName
+        );
+      }
+
+      await whatsappQueueWorker.enqueue(
+        phone,
+        `✅ *Prescription #${targetRow.req_code} Confirmed!*\n\nPatient *${patientName}* has been notified on WhatsApp that their prescription is approved and being packed.`,
+        'admin_escalation',
+        'Owner'
+      );
+      return true;
     }
   }
 
@@ -2773,8 +2989,10 @@ async function searchAndBroadcast(opts: {
   }
 
   // Customer clarification / confirmation prompt:
-  // When medicine inquiry comes from text and we matched a product, clarify options or ask customer to confirm
-  if (source === 'text' && phone && !opts.isStale && !opts.suppressClarification) {
+  // When medicine inquiry comes from text or high-confidence recognized image and we matched a product, clarify options or ask customer to confirm
+  const shouldClarifyCustomer = (source === 'text' || (confidence >= 75 && hasConfirmedMatch)) &&
+    phone && !opts.isStale && !opts.suppressClarification;
+  if (shouldClarifyCustomer) {
     try {
       const db = await dbManager.getConnection();
       const toggle = await db.get('SELECT value FROM app_settings WHERE key = ?', ['wa_customer_clarification_enabled']);
@@ -2979,6 +3197,92 @@ export async function handleOcrComplete(data: any): Promise<void> {
     }
   } catch (paymentCheckErr) {
     console.warn('[Intent Service] Payment screenshot check error:', paymentCheckErr);
+  }
+
+  // ─── 0.5 Doctor Prescription Detection & Human-in-the-Loop Workflow ──────────
+  // If the scanned image is identified as a doctor prescription slip (multi-medicine),
+  // do NOT force it into the single-medicine packaging pipeline. Extract all items,
+  // query local shelf inventory, alert pharmacist with an interactive review card,
+  // and send an acknowledgment receipt to the customer.
+  if (ocrResult.isPrescription) {
+    try {
+      const rxData = ocrResult.prescriptionData || {};
+      const rxItems = Array.isArray(rxData.items) ? rxData.items : [];
+
+      if (rxItems.length > 0) {
+        console.log(`[Intent Service] Doctor prescription detected with ${rxItems.length} items for ${phone || chatId}. Initiating Human-in-the-Loop review.`);
+        const db = await dbManager.getConnection();
+        const customer = await lookupCustomer(phone);
+
+        // Resolve inventory stock for each prescribed item
+        const enrichedItems: any[] = [];
+        for (const item of rxItems) {
+          let stockQty = 0;
+          let inStock = false;
+          try {
+            const fr = await productNameFilterService.filterProductNames(item.medicineName, { minConfidenceThreshold: 0.6 });
+            const matches: string[] = Array.isArray(fr.matches) ? fr.matches : [];
+            if (matches.length > 0) {
+              const stockMap = await resolveInventoryStock([matches[0]], db);
+              stockQty = stockMap[matches[0].toLowerCase()] ?? 0;
+              inStock = stockQty > 0;
+            }
+          } catch (_) {}
+
+          enrichedItems.push({
+            medicineName: item.medicineName,
+            strength: item.strength,
+            dosage: item.dosage,
+            frequency: item.frequency,
+            duration: item.duration,
+            quantity: item.quantity,
+            instructions: item.instructions,
+            handwrittenNotes: item.handwrittenNotes,
+            stockQty,
+            inStock
+          });
+        }
+
+        const rxCode = await waAdminEscalationService.notifyAdminOfPrescription(db, {
+          customerPhone: phone || '',
+          customerName: customer?.name,
+          chatId,
+          patientName: rxData.patientName,
+          doctorName: rxData.doctorName,
+          clinicHospital: rxData.clinicHospital,
+          date: rxData.date,
+          items: enrichedItems,
+          notes: rxData.notes,
+          imagePath
+        });
+
+        // Send patient acknowledgment on WhatsApp
+        if (phone) {
+          const patientGreeting = rxData.patientName ? ` for *${rxData.patientName}*` : '';
+          const doctorMention = rxData.doctorName ? ` (Dr. ${rxData.doctorName.replace(/^dr\.?\s*/i, '')})` : '';
+          const itemsCount = enrichedItems.length;
+          const custMsg =
+            `📋 *Prescription Received!* 🩺\n\n` +
+            `Hello${patientGreeting}, we have received your doctor's prescription${doctorMention} with *${itemsCount} medicine${itemsCount > 1 ? 's' : ''}*.\n\n` +
+            `👨‍⚕️ *Our registered pharmacist is reviewing your prescription now.*\n` +
+            `We will check available batches, verify doctor notes, and update you shortly with confirmation and dispatch details.\n\n` +
+            `Prescription ID: *${rxCode || 'Pending Review'}*`;
+
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(
+            phone,
+            custMsg,
+            'customer_prescription_ack',
+            rxData.patientName || customer?.name || 'Customer'
+          );
+        }
+
+        // Return early so prescription is NOT processed as a single packaging OCR flow
+        return;
+      }
+    } catch (rxErr) {
+      console.error('[Intent Service] Error processing doctor prescription scan:', rxErr);
+    }
   }
 
   let medicineName = ocrResult.medicineInfo?.potentialName;
@@ -3253,5 +3557,69 @@ async function resolveRelatedMedicinesLocal(names: string[]): Promise<RelatedMed
   return results;
 }
 
-export const whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast };
+/**
+ * Scans pending special orders in 'awaiting_payment' where customer has not paid or sent screenshot
+ * within the grace window (>= 2 hours after QR sent, and reminder has not yet been sent).
+ * Sends a polite follow-up offering the QR code again or option to change medicine.
+ */
+export async function checkAndSendAdvancePaymentReminders(db?: any): Promise<number> {
+  try {
+    if (!db) {
+      const { dbManager } = await import('../database/connection.js');
+      db = await dbManager.getConnection();
+    }
+    await ensureClarificationsTable(db);
+
+    const pendingList = await db.all(`
+      SELECT p.phone, p.suggested_name, p.quantity, p.unit, p.so_code, p.customer_name, p.special_order_id, p.created_at
+      FROM wa_pending_clarifications p
+      LEFT JOIN special_orders so ON p.special_order_id = so.id
+      WHERE p.step = 'awaiting_payment'
+        AND (p.payment_reminder_sent IS NULL OR p.payment_reminder_sent = 0)
+        AND p.created_at <= datetime('now', '-2 hours')
+        AND p.created_at >= datetime('now', '-24 hours')
+        AND (so.payment_status IS NULL OR so.payment_status NOT IN ('PAYMENT_CONFIRMED', 'Fulfilled', 'Cancelled'))
+        AND (so.status IS NULL OR so.status NOT IN ('Fulfilled', 'Cancelled'))
+      LIMIT 10
+    `).catch(() => []);
+
+    if (!pendingList || pendingList.length === 0) return 0;
+
+    const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+    let sentCount = 0;
+
+    for (const item of pendingList) {
+      const medName = item.suggested_name || 'your medicine';
+      const custName = (item.customer_name && isKnownCustomerName(item.customer_name)) ? item.customer_name.trim() : 'Customer';
+      const soCode = item.so_code || (item.special_order_id ? `SO-${item.special_order_id}` : 'SO');
+
+      const reminderMsg =
+        `Hello ${custName},\n\n` +
+        `We noticed we haven't received your ₹50 booking advance payment for *${medName}* yet (Order Ref: ${soCode}).\n\n` +
+        `• Reply *QR* to receive the payment QR code again.\n` +
+        `• Or reply with a *new medicine name* if you need something else.`;
+
+      await whatsappQueueWorker.enqueue(
+        item.phone,
+        reminderMsg,
+        'customer_inquiry_confirmed',
+        custName
+      );
+
+      await db.run(
+        `UPDATE wa_pending_clarifications SET payment_reminder_sent = 1 WHERE phone = ?`,
+        [item.phone]
+      );
+      sentCount++;
+      console.log(`[PaymentReminder] Dispatched advance payment reminder for ${soCode} to ${item.phone}`);
+    }
+
+    return sentCount;
+  } catch (err) {
+    console.error('[PaymentReminder] Error in checkAndSendAdvancePaymentReminders:', err);
+    return 0;
+  }
+}
+
+export const whatsappIntentService = { handleInbound, handleOcrComplete, searchAndBroadcast, checkAndSendAdvancePaymentReminders };
 export default whatsappIntentService;

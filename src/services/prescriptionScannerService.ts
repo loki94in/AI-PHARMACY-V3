@@ -244,7 +244,7 @@ class PrescriptionScannerService {
    * Parse extracted raw text to detect header metadata and medicine lines,
    * then match each medicine against the 286,210 items in local SQLite.
    */
-  private async parsePrescriptionText(text: string): Promise<{
+  public async parsePrescriptionText(text: string): Promise<{
     doctorName?: string;
     clinicName?: string;
     patientName?: string;

@@ -13,6 +13,7 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 import { resolveStoreId } from '../services/storeContextService.js';
 import { returnWindowService } from '../services/returnWindowService.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
+import { paymentQrService } from '../services/paymentQrService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -739,6 +740,133 @@ router.post('/:id/resend-booking', async (req, res) => {
   } catch (err: any) {
     console.error('Resend booking notification error:', err);
     res.status(500).json({ error: 'Failed to queue WhatsApp message: ' + (err.message || 'Unknown error') });
+  }
+});
+
+// Fetch ₹50 Payment QR details for Special Order
+router.get('/:id/payment-qr', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const configs = await paymentQrService.getQrConfigs();
+    const assignedId = order.payment_qr_id || 'QR_1';
+    const config = configs.find(c => c.id === assignedId && c.is_active) || configs.find(c => c.is_active) || configs[0];
+    const amount = Number(order.advance_payment || order.total_amount || 50);
+    const soCode = `SO-${order.id}`;
+    const upiUri = paymentQrService.buildUpiUri(config.upi_id, config.payee_name, amount, soCode);
+
+    return res.json({
+      success: true,
+      order_id: order.id,
+      so_code: soCode,
+      customer_name: order.requester || 'Customer',
+      customer_phone: order.phone || '',
+      medicine_name: order.product || order.medicine_name || 'Medicine',
+      amount,
+      upi_id: config.upi_id,
+      payee_name: config.payee_name,
+      upi_uri: upiUri,
+      payment_status: order.payment_status || 'UNPAID'
+    });
+  } catch (err: any) {
+    console.error('[Orders] Get payment QR error:', err);
+    res.status(500).json({ error: 'Failed to generate payment QR: ' + err.message });
+  }
+});
+
+// Send ₹50 Payment QR directly to customer WhatsApp
+router.post('/:id/send-payment-qr', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const cleanPhone = String(order.phone || '').replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      return res.status(400).json({ error: 'Order has no valid customer phone number' });
+    }
+
+    const activeQr = await paymentQrService.allocateNextQr();
+    const amount = Number(order.advance_payment || order.total_amount || 50);
+    const soCode = `SO-${order.id}`;
+    const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
+    const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+
+    await db.run(
+      `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
+      [activeQr.id, amount, id]
+    );
+
+    const custQrMsg =
+      `✅ Medicine request confirmed\n\n` +
+      `🆔 *Special Order*: ${soCode}\n\n` +
+      `💊 *Medicine*: ${order.product || order.medicine_name || 'Medicine'}\n` +
+      `📦 *Quantity*: ${order.qty || 1}\n\n` +
+      `🔐 *Booking Advance Amount*: ₹${amount.toFixed(2)}\n\n` +
+      `Please pay the ₹${amount.toFixed(2)} booking amount using the QR code below.\n\n` +
+      `UPI ID: ${activeQr.upi_id}\n` +
+      `Payee: ${activeQr.payee_name}\n\n` +
+      `After payment, please send the payment screenshot in this chat.`;
+
+    const queueId = await whatsappQueueWorker.enqueue(
+      cleanPhone,
+      custQrMsg,
+      'customer_payment_qr',
+      order.requester || 'Customer',
+      undefined,
+      undefined,
+      {
+        mimetype: 'image/png',
+        data: qrBuffer.toString('base64'),
+        filename: `payment_qr_${soCode}.png`
+      }
+    );
+
+    broadcastOrdersChanged();
+
+    return res.json({
+      success: true,
+      queue_id: queueId,
+      message: `₹${amount.toFixed(2)} payment QR code dispatched to customer on WhatsApp!`
+    });
+  } catch (err: any) {
+    console.error('[Orders] Send payment QR error:', err);
+    res.status(500).json({ error: 'Failed to send payment QR: ' + err.message });
+  }
+});
+
+// Mark special order advance payment as paid
+router.post('/:id/mark-advance-paid', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid order ID' });
+
+    const db = await dbManager.getConnection();
+    const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    await db.run(
+      `UPDATE special_orders SET payment_status = 'PAYMENT_CONFIRMED', advance_payment = CASE WHEN advance_payment > 0 THEN advance_payment ELSE 50 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [id]
+    );
+
+    broadcastOrdersChanged();
+
+    return res.json({
+      success: true,
+      message: 'Advance payment marked as CONFIRMED'
+    });
+  } catch (err: any) {
+    console.error('[Orders] Mark advance paid error:', err);
+    res.status(500).json({ error: 'Failed to mark advance paid: ' + err.message });
   }
 });
 

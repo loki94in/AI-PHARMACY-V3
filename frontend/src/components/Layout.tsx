@@ -232,7 +232,7 @@ const ExitAppButton = () => {
           </h2>
           <p className="text-xs text-muted max-w-sm leading-relaxed">
             {shutdownSettled
-              ? 'The backend server process has terminated cleanly and port 5175 is free. You can safely close this window.'
+              ? 'The backend server process has terminated cleanly and port 5175 is free. You can safely close this tab or window (Ctrl+W or Alt+F4).'
               : 'Creating database shutdown backup and stopping background services...'}
           </p>
           {!shutdownSettled ? (
@@ -250,7 +250,7 @@ const ExitAppButton = () => {
               }}
               className="mt-5 px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all cursor-pointer shadow-md"
             >
-              Close Window
+              Close Window (Ctrl+W)
             </button>
           )}
         </div>,

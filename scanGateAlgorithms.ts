@@ -32,7 +32,7 @@ const DOC_SIGNS = [
   'bank', 'payment', 'receipt', 'statement', 'aadhaar', 'aadhar', 'pan card',
   'gst', 'tax invoice', 'salary', 'payslip', 'order id', 'tracking', 'courier',
   'transaction', 'upi', 'neft', 'imps', 'shipment', 'waybill', 'consignment',
-  'biscuit', 'chocolate', 'snack', 'shampoo', 'soap', 'detergent',
+  'biscuit', 'snack', 'shampoo', 'soap', 'detergent',
   'namkeen', 'chips', 'restaurant', 'menu', 'hotel', 'wb.', 'wb ', 'pnr no',
 ];
 
@@ -51,6 +51,11 @@ const DOSE_FORMS = [
   'lotion', 'powder', 'spray', 'inhaler', 'sachet', 'tonic', 'elixir',
 ];
 
+const NUTRITION_SIGNS = [
+  'protein', 'lactation', 'pregnancy', 'nourishment', 'nutritional', 'supplement',
+  'infant', 'pediatric', 'maternal', 'granules', 'energy drink', 'powder',
+];
+
 const STRENGTH_RE = /\b\d+(?:\.\d+)?\s?(?:mg|mcg|g|ml|iu|%|w\/v|wv|gm)(?:\s*\/\s*(?:ml|g|gm))?\b/i;
 
 function countDocSigns(t: string): number {
@@ -63,6 +68,9 @@ function hasStrongDoc(t: string): boolean {
 }
 function hasDoseForm(t: string): boolean {
   return DOSE_FORMS.some(f => t.includes(f));
+}
+function hasNutritionSignal(t: string): boolean {
+  return NUTRITION_SIGNS.some(s => t.includes(s));
 }
 function hasStrength(t: string): boolean {
   return STRENGTH_RE.test(t);
@@ -94,7 +102,7 @@ export const GATE_VARIANTS: GateVariant[] = [
   {
     id: 'V2',
     name: 'Signal-Required',
-    description: 'Adds: only when OCR shows a dose-form OR strength OR known API. Skips: plausible name without any medicine signal (aggressive skip).',
+    description: 'Adds: only when OCR shows a dose-form OR strength OR known API OR nutrition/maternal signal. Skips: plausible name without any medicine/health signal (aggressive skip).',
     decide(ocrText, potentialName, ctx) {
       const name = (potentialName || '').trim();
       if (!name || !isPlausibleMedicineName(name)) return 'skip';
@@ -102,7 +110,7 @@ export const GATE_VARIANTS: GateVariant[] = [
       if (hasStrongDoc(t)) return 'skip';
       const nameLower = name.toLowerCase();
       const isKnownName = Boolean(ctx?.knownApis && (ctx.knownApis.has(nameLower) || hasKnownApi(nameLower, ctx)));
-      const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName;
+      const hasSignal = hasDoseForm(t) || hasStrength(t) || hasKnownApi(t, ctx) || isKnownName || hasNutritionSignal(t);
       return hasSignal ? 'identify' : 'skip';
     },
   },

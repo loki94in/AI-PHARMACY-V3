@@ -91,7 +91,7 @@ async function resolvePhone(
 // bouncedAlertService/shortageReminderService read 'admin_whatsapp_number';
 // only 'admin_whatsapp' was ever checked here, so a number saved through the
 // normal Settings UI was silently ignored and escalations never sent.
-const ADMIN_PHONE_SETTING_KEYS = ['admin_whatsapp', 'owner_whatsapp_number', 'admin_whatsapp_number', 'shop_phone', 'store_phone'];
+const ADMIN_PHONE_SETTING_KEYS = ['owner_whatsapp_number', 'admin_whatsapp_number', 'admin_whatsapp', 'shop_phone', 'store_phone'];
 
 /**
  * Resolve the pharmacy's admin WhatsApp number from whichever settings key
@@ -858,11 +858,42 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
 
     const resultsList = payload.pharmarackOptions.map((opt, i) => {
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
-      const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? opt.mrp ?? 0;
-      const rateStr = rate > 0 ? `₹${Number(rate).toFixed(2)}` : 'Available';
+      const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? 0;
+      const mrp = opt.mrp ?? 0;
       const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === '0' || String(opt.Ismapped) === '0';
       const tag = isUnmapped ? ' [Unmapped]' : '';
-      return `${formatNum(i)} ${dist}${tag} | Available | ${rateStr}`;
+
+      // Stock indicator: 🟢 (QTY) / 🟢 High, 🟡 (QTY) / 🟡 Low, 🔴 (0)
+      let stockIndicator = '🟢 High';
+      const s = String(opt.stock ?? '').trim().toLowerCase();
+      const num = parseInt(s, 10);
+      if (!isNaN(num)) {
+        if (num >= 15) stockIndicator = `🟢 (${num})`;
+        else if (num > 0) stockIndicator = `🟡 (${num})`;
+        else stockIndicator = `🔴 (0)`;
+      } else if (s === 'low') {
+        stockIndicator = '🟡 Low';
+      } else if (s === '0' || s === 'oos' || s === 'out of stock' || s === 'nil') {
+        stockIndicator = '🔴 (0)';
+      } else if (s === 'high' || s === 'available') {
+        stockIndicator = '🟢 High';
+      } else if (opt.stock) {
+        stockIndicator = `🟢 (${opt.stock})`;
+      }
+
+      // Price line: Rate: ₹{rate} (MRP: ₹{mrp})
+      let priceLine = '';
+      if (rate > 0 && mrp > 0) {
+        priceLine = `Rate: ₹${Number(rate).toFixed(2)} (MRP: ₹${Number(mrp).toFixed(2)})`;
+      } else if (rate > 0) {
+        priceLine = `Rate: ₹${Number(rate).toFixed(2)}`;
+      } else if (mrp > 0) {
+        priceLine = `Rate: Available (MRP: ₹${Number(mrp).toFixed(2)})`;
+      } else {
+        priceLine = `Rate: Available`;
+      }
+
+      return `${formatNum(i)} ${dist}${tag} | ${stockIndicator} |\n${priceLine}`;
     }).join('\n');
 
     const messageText =
@@ -881,6 +912,133 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
     console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);
   } catch (err) {
     console.error('[Admin Escalation] Error in notifyOwnerOfSpecialOrderPharmarackResults:', err);
+  }
+}
+
+export interface PrescriptionEscalationPayload {
+  rxCode?: string;
+  customerPhone: string;
+  customerName?: string;
+  chatId?: string;
+  patientName?: string;
+  doctorName?: string;
+  clinicHospital?: string;
+  date?: string;
+  items: Array<{
+    medicineName: string;
+    strength?: string;
+    dosage?: string;
+    frequency?: string;
+    duration?: string;
+    quantity?: number;
+    instructions?: string;
+    handwrittenNotes?: string;
+    inStock?: boolean;
+    stockQty?: number;
+  }>;
+  notes?: string;
+  imagePath?: string;
+}
+
+/**
+ * Notifies the pharmacy owner/pharmacist of a multi-medicine doctor prescription
+ * detected by AI Camera. Registers request as #RX-xxx in wa_owner_pending_requests
+ * so the pharmacist can confirm or reject via WhatsApp.
+ */
+export async function notifyAdminOfPrescription(
+  db: any,
+  payload: PrescriptionEscalationPayload
+): Promise<string | null> {
+  try {
+    const guard = await escalateGuard(db, payload.customerPhone);
+    if (!guard) return null;
+    const adminWhatsapp = guard.adminWhatsapp;
+
+    await ensureOwnerPendingRequestsTable(db);
+
+    let rxCode = payload.rxCode;
+    if (!rxCode) {
+      const countRow = await db.get("SELECT count(*) as c FROM wa_owner_pending_requests WHERE req_code LIKE 'RX-%'");
+      const rxNum = 1000 + (countRow?.c || 0) + 1;
+      rxCode = `RX-${rxNum}`;
+    }
+
+    const summaryMedNames = payload.items.map(it => it.medicineName).filter(Boolean).join(', ');
+    await db.run(
+      `INSERT INTO wa_owner_pending_requests (
+         req_code, customer_phone, customer_name, medicine_name, quantity, unit, options_json, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, 'items', ?, 'pending', CURRENT_TIMESTAMP)
+       ON CONFLICT(req_code) DO UPDATE SET
+         customer_phone = excluded.customer_phone,
+         customer_name = excluded.customer_name,
+         medicine_name = excluded.medicine_name,
+         quantity = excluded.quantity,
+         unit = excluded.unit,
+         options_json = excluded.options_json,
+         status = 'pending',
+         created_at = CURRENT_TIMESTAMP`,
+      [
+        rxCode,
+        payload.customerPhone,
+        payload.patientName || payload.customerName || 'WhatsApp Patient',
+        summaryMedNames || 'Doctor Prescription',
+        payload.items.length,
+        JSON.stringify(payload)
+      ]
+    );
+
+    const { display: displayPhone, waDigits } = await resolvePhone(db, payload.customerPhone, payload.chatId, payload.customerPhone);
+
+    const symbols = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+    const itemsList = payload.items.map((it, idx) => {
+      const numIcon = symbols[idx] || `${idx + 1}️⃣`;
+      let line = `${numIcon} *${it.medicineName}*`;
+      if (it.strength && !it.medicineName.toLowerCase().includes(it.strength.toLowerCase())) {
+        line += ` ${it.strength}`;
+      }
+      const dosageDetails = [it.dosage, it.frequency, it.duration ? `(${it.duration})` : ''].filter(Boolean).join(' ');
+      if (dosageDetails) line += ` — ${dosageDetails}`;
+
+      let stockTag = '';
+      if (typeof it.stockQty === 'number') {
+        stockTag = it.stockQty > 0 ? `\n   📦 Shelf Stock: *${it.stockQty} in stock* ✅` : `\n   📦 Shelf Stock: *0 on shelf (Out of stock ⚠️)*`;
+      } else if (it.inStock !== undefined) {
+        stockTag = it.inStock ? `\n   📦 Shelf Stock: *Available in stock* ✅` : `\n   📦 Shelf Stock: *Out of stock ⚠️*`;
+      }
+
+      let noteTag = '';
+      if (it.handwrittenNotes) {
+        noteTag = `\n   📝 *Doctor Note / Sub:* _${it.handwrittenNotes}_`;
+      }
+      return `${line}${stockTag}${noteTag}`;
+    }).join('\n');
+
+    let msg = `📋 *New Doctor Prescription Received*\n\n`;
+    msg += `🆔 *Prescription ID*: *${rxCode}*\n`;
+    if (payload.patientName) msg += `👤 *Patient*: ${payload.patientName}\n`;
+    if (payload.doctorName) msg += `🩺 *Doctor*: ${payload.doctorName}${payload.clinicHospital ? ` (${payload.clinicHospital})` : ''}\n`;
+    msg += `📱 *Customer*: ${displayPhone}\n`;
+    if (waDigits) msg += `🔗 *Quick Chat*: https://wa.me/${waDigits}\n`;
+    msg += `\n💊 *Prescribed Medicines (${payload.items.length} items)*:\n`;
+    msg += `${itemsList}\n\n`;
+    msg += `---------------------------------\n`;
+    msg += `*Pharmacist Action (Human-in-the-Loop)*:\n`;
+    msg += `Reply *CONFIRM ${rxCode}* to approve & message patient with invoice/bill.\n`;
+    msg += `Reply *REJECT ${rxCode}* to reject or request a clear photo.`;
+
+    await whatsappQueueWorker.enqueue(
+      adminWhatsapp,
+      msg,
+      'admin_escalation',
+      'Admin / Store Owner',
+      undefined,
+      payload.imagePath
+    );
+    console.log(`[Admin Escalation] Prescription ${rxCode} alert sent to pharmacist/admin with ${payload.items.length} items.`);
+    return rxCode;
+  } catch (err) {
+    console.error('[Admin Escalation] Error in notifyAdminOfPrescription:', err);
+    return null;
   }
 }
 
@@ -914,5 +1072,6 @@ export const waAdminEscalationService = {
   notifyAdminOfCustomerConfirmation,
   notifyAdminOfLiveCartAdd,
   notifyOwnerOfSpecialOrderPharmarackResults,
+  notifyAdminOfPrescription,
   ensureOwnerPendingRequestsTable
 };

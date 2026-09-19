@@ -50,7 +50,7 @@ class OnnxOcrService {
         },
         recognition: {
           modelBuffer: recBuffer,
-          charactersDictionary: dict
+          charactersDictionary: dict[0] === '' ? dict : ['', ...dict]
         }
       };
 

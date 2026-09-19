@@ -192,6 +192,13 @@ router.post('/save-single', async (req, res) => {
       await db.run('UPDATE stores SET phone = ? WHERE id = 1 AND (phone IS NULL OR phone = "" OR phone = "918080888041")', [saveValue]).catch(() => {});
     }
 
+    if (key === 'owner_whatsapp_number' && saveValue) {
+      const cleanOwner = String(saveValue).replace(/\D/g, '');
+      const formattedOwner = cleanOwner.length === 10 ? `91${cleanOwner}` : cleanOwner;
+      await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', ['admin_whatsapp', formattedOwner]);
+      await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', ['admin_whatsapp_number', formattedOwner]);
+    }
+
     const licenceKeys = ['drug_license', 'shop_licence', 'license_number', 'dl_number', 'drug_licence_no'];
     if (licenceKeys.includes(key) && saveValue) {
       for (const lk of licenceKeys) {
@@ -398,6 +405,12 @@ router.post('/save', async (req, res) => {
             `INSERT INTO contacts (name, type, phone, email, address, gstin) VALUES (?, ?, ?, ?, ?, ?)`,
             [ownerName, 'owner', ownerCleanPhone, ownerEmail, ownerAddress, ownerGstin]
           );
+        }
+
+        if (ownerCleanPhone) {
+          const formattedOwner = ownerCleanPhone.length === 10 ? `91${ownerCleanPhone}` : ownerCleanPhone;
+          await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', ['admin_whatsapp', formattedOwner]);
+          await db.run('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', ['admin_whatsapp_number', formattedOwner]);
         }
       }
     });
