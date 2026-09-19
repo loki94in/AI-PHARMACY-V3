@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Loader2, PackageCheck, PackageX, Globe, User, Image as ImageIcon, MessagesSquare, Check } from 'lucide-react';
+import { Search, Loader2, PackageCheck, PackageX, Globe, User, Image as ImageIcon, MessagesSquare, Check, ChevronDown, ChevronUp, ShoppingCart } from 'lucide-react';
 import { api } from '../../services/api';
-import { toastEvent } from '../../services/events';
+import { toastEvent, liveCartAddEvent } from '../../services/events';
 
 // ─── Payload shape of the backend SSE event `wa_medicine_match` ──────────────
 // Broadcast by src/services/whatsappIntentService.ts after its pipeline:
@@ -97,7 +97,7 @@ const recordIncomingMatch = (frame: unknown): void => {
     ? `${String(qtyRaw).trim()}${str(f.unit) ? ` ${str(f.unit)}` : ''}`.trim()
     : '';
   const pharmaHits = Array.isArray(f.livePharmarackResults)
-    ? f.livePharmarackResults.slice(0, 6).map(normalizeHit)
+    ? f.livePharmarackResults.slice(0, 20).map(normalizeHit)
     : [];
   const relatedRaw = Array.isArray(f.relatedMedicines) ? f.relatedMedicines : [];
   const relatedMedicines: RelatedMedicine[] = relatedRaw
@@ -163,6 +163,26 @@ const timeAgo = (ts: number): string => {
   return `${Math.floor(s / 3600)}h ago`;
 };
 
+// Balance the Pharmarack result list: at least 5 mapped hits (your existing
+// distributor catalog) and 2-3 non-mapped ones (raw distributor stock not yet
+// linked to your catalog), so one side never crowds out the other.
+const MIN_MAPPED = 5;
+const MIN_NON_MAPPED = 2;
+const MAX_NON_MAPPED = 3;
+const balancePharmaHits = (hits: PrHit[]): PrHit[] => {
+  const mapped = hits.filter(h => h.mapped);
+  const nonMapped = hits.filter(h => !h.mapped);
+  const takenMapped = mapped.slice(0, Math.max(MIN_MAPPED, mapped.length && mapped.length < MIN_MAPPED ? mapped.length : MIN_MAPPED));
+  const takenNonMapped = nonMapped.slice(0, MAX_NON_MAPPED);
+  const result = [...takenMapped, ...takenNonMapped];
+  // Backfill from whichever side has spare hits if the other ran short of its minimum
+  if (takenNonMapped.length < MIN_NON_MAPPED && mapped.length > takenMapped.length) {
+    const extra = mapped.slice(takenMapped.length, takenMapped.length + (MIN_NON_MAPPED - takenNonMapped.length));
+    result.push(...extra);
+  }
+  return result;
+};
+
 // Module-level thumbnail cache: one network fetch per shared photo, ever.
 const waMediaCache = new Map<string, string>();
 const getCachedWaMedia = (id: string): string | null => waMediaCache.get(id) || null;
@@ -202,18 +222,35 @@ const WaMatchCard: React.FC<{
   session?: ChatSessionInfo;
   onResolveSession?: (chatId: string) => void;
   resolving?: boolean;
-}> = ({ row, session, onResolveSession, resolving }) => {
+  expanded: boolean;
+  onToggleExpanded: () => void;
+}> = ({ row, session, onResolveSession, resolving, expanded, onToggleExpanded }) => {
   const avail = availabilityBadge(row);
   const isManual = session?.sessionMode === 'manual';
   const isWaiting5m = !!session?.isUnansweredOver5Min;
+  const balancedHits = balancePharmaHits(row.pharmaHits);
+
+  const parseQty = (q: string): number => {
+    const m = q.match(/\d+/);
+    return m ? parseInt(m[0], 10) : 1;
+  };
+
+  const handleAddToLiveCart = () => {
+    liveCartAddEvent.triggerOpen(row.medicineName, parseQty(row.quantity));
+  };
 
   return (
     <div className="bg-bg2 border border-glass-border rounded-2xl p-4 space-y-3">
       {/* Patient + request */}
       <div className="flex items-start gap-3 flex-wrap">
-        <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="p-2 rounded-xl bg-primary/10 text-primary shrink-0 hover:bg-primary/20 transition-colors cursor-pointer"
+          title={expanded ? 'Collapse details' : 'Expand details'}
+        >
           <User size={16} />
-        </div>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-bold text-text">{row.customerName || 'Unknown sender'}</span>
@@ -259,21 +296,41 @@ const WaMatchCard: React.FC<{
         <span className={`px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wide border ${avail.cls}`}>
           {avail.label}
         </span>
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="p-1.5 rounded-lg bg-bg3 text-muted hover:text-text hover:bg-bg border border-glass-border transition-colors cursor-pointer"
+          title={expanded ? 'Collapse details' : 'Expand details'}
+        >
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
 
-      {/* Shared photo (when the request came with an image) */}
-      <WaThumb mediaId={row.mediaId} />
-
-      {/* Medicine asked */}
+      {/* Medicine asked — always visible, even when collapsed */}
       <div className="flex items-center gap-2 flex-wrap">
         <PackageCheck size={16} className="text-emerald-400 shrink-0" />
         <span className="text-base font-bold text-text">{row.medicineName || '—'}</span>
         {row.quantity && <span className="text-sm font-bold text-primary">× {row.quantity}</span>}
         {row.dosageForm && <span className="text-xs px-2 py-0.5 rounded-full bg-bg3 text-muted border border-glass-border uppercase">{row.dosageForm}</span>}
         {row.confidence > 0 && (
-          <span className="ml-auto text-xs font-mono text-muted">match {row.confidence}%</span>
+          <span className="text-xs font-mono text-muted">match {row.confidence}%</span>
         )}
+        <button
+          type="button"
+          onClick={handleAddToLiveCart}
+          disabled={!row.medicineName}
+          className="ml-auto px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+          title="Add this medicine to the Live Cart"
+        >
+          <ShoppingCart size={12} />
+          Add to Live Cart
+        </button>
       </div>
+
+      {expanded && (
+      <>
+      {/* Shared photo (when the request came with an image) */}
+      <WaThumb mediaId={row.mediaId} />
 
       {/* Extra medicines seen on the same strip / caption — resolved
           LOCAL-ONLY by the pipeline, never re-searched from here */}
@@ -326,18 +383,22 @@ const WaMatchCard: React.FC<{
         </div>
       )}
 
-      {/* Pharmarack comparison — already fetched once by the intent pipeline */}
-      {row.pharmaHits.length > 0 && (
+      {/* Pharmarack comparison — already fetched once by the intent pipeline.
+          Balanced to show your mapped catalog matches first, plus a few
+          non-mapped distributor hits, instead of a single unsorted top-N. */}
+      {balancedHits.length > 0 && (
         <div className="rounded-xl border border-glass-border overflow-hidden">
           <div className="px-3 py-2 bg-bg3/60 flex items-center gap-1.5 text-[10px] font-bold text-muted uppercase tracking-wider">
             <Globe size={11} className="text-violet-400" /> Pharmarack availability
           </div>
           <ul className="divide-y divide-glass-border">
-            {row.pharmaHits.map((h, i) => (
+            {balancedHits.map((h, i) => (
               <li key={`${h.name}-${i}`} className="px-3 py-2 flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-semibold text-text min-w-0 truncate flex-1">{h.name || h.productName}</span>
-                {h.mapped && (
+                {h.mapped ? (
                   <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[9px] font-black uppercase">Mapped</span>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded bg-bg3 text-muted text-[9px] font-black uppercase border border-glass-border">Not Mapped</span>
                 )}
                 {h.rate != null && h.rate > 0 && <span className="text-[10px] text-muted">PTR ₹{h.rate.toFixed(2)}</span>}
                 {h.mrp != null && h.mrp > 0 && <span className="text-[10px] font-bold text-text">MRP ₹{h.mrp.toFixed(2)}</span>}
@@ -349,6 +410,8 @@ const WaMatchCard: React.FC<{
       )}
 
       <p className="text-[9px] text-muted/70">{timeAgo(row.ts)}</p>
+      </>
+      )}
     </div>
   );
 };
@@ -357,6 +420,16 @@ const WaRequestsPanel: React.FC = () => {
   const [rows, setRows] = useState<WaMatchRow[]>(feedCache);
   const [sessionsByPhone, setSessionsByPhone] = useState<Record<string, ChatSessionInfo>>({});
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // Collapsed by default (row key = `${ts}-${medicineName}`) so a long feed of
+  // processed requests doesn't force scrolling through every detail at once.
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = useCallback((key: string) => {
+    setCollapsedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // One-shot manual lookup: exactly ONE searchPharmarack call per explicit click.
   const [lookupQ, setLookupQ] = useState('');
@@ -584,13 +657,16 @@ const WaRequestsPanel: React.FC = () => {
           {rows.map((row) => {
             const key = getPhoneKey(row.customerPhone);
             const session = sessionsByPhone[key] || sessionsByPhone[row.customerPhone];
+            const rowKey = `${row.ts}-${row.medicineName}`;
             return (
               <WaMatchCard
-                key={`${row.ts}-${row.medicineName}`}
+                key={rowKey}
                 row={row}
                 session={session}
                 onResolveSession={handleResolveSession}
                 resolving={resolvingId === session?.id}
+                expanded={!collapsedKeys.has(rowKey)}
+                onToggleExpanded={() => toggleExpanded(rowKey)}
               />
             );
           })}

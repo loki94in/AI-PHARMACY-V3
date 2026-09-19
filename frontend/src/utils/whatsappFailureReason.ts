@@ -19,5 +19,8 @@ export function getFormattedFailureReason(errorMsg?: string, status?: string): s
   if (msg.includes('not registered') || msg.includes('not on whatsapp')) {
     return 'Recipient phone number is not registered on WhatsApp';
   }
+  if (msg.includes('memoize') || msg.includes('id property') || msg.includes('getter') || msg.includes('static.whatsapp.net') || msg.includes('contact sync')) {
+    return 'WhatsApp Web contact sync delay (retry available)';
+  }
   return errorMsg;
 }

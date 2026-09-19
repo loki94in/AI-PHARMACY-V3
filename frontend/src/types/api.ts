@@ -97,6 +97,16 @@ export interface SpecialOrder {
   advance_payment?: number;
   cart_add_error?: string | null;
   sendWhatsApp?: boolean;
+  customer_order_source?: string;
+  source?: string;
+  prescription_url?: string;
+  payment_status?: string;
+  delivery_status?: string;
+  return_status?: string;
+  pharmacy_verification_status?: string;
+  payment_qr_id?: number | string;
+  order_type?: string;
+  total_amount?: number;
 }
 
 export interface Refill {

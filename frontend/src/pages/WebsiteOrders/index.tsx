@@ -33,6 +33,7 @@ import { api, apiClient } from '../../services/api';
 import { useStore } from '../../context/StoreContext';
 import { StoreSelector } from '../../components/StoreSelector';
 import { toastEvent } from '../../services/events';
+import { isOnlineOrder } from '../../utils/onlineOrders';
 
 // Module-level state cache for instant SPA re-hydration
 let cachedOrders: any[] = [];
@@ -87,13 +88,11 @@ export default function WebsiteOrders() {
         params: { store_id: activeStoreId }
       }).then(res => res.data);
 
-      // Filter for website orders or items with prescription/website origin
-      const websiteOnly = (data || []).filter(
-        o => o.customer_order_source === 'website' || o.source === 'website' || o.prescription_url
-      );
+      // Online orders: website (incl. refills/prescriptions) and WhatsApp
+      const onlineOnly = (data || []).filter(isOnlineOrder);
 
-      cachedOrders = websiteOnly;
-      setOrders(websiteOnly);
+      cachedOrders = onlineOnly;
+      setOrders(onlineOnly);
     } catch (err) {
       console.warn('[WebsiteOrders] Failed to load orders:', err);
     } finally {
@@ -330,13 +329,13 @@ export default function WebsiteOrders() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-black tracking-tight text-text">Online & Website Orders</h1>
+              <h1 className="text-lg font-black tracking-tight text-text">Online Orders</h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
                 Live Store Channel
               </span>
             </div>
             <p className="text-xs text-muted">
-              Prescriptions, website customer orders, 15-day return windows, and fulfillment dispatch.
+              Website and WhatsApp customer orders, prescriptions, 15-day return windows, and fulfillment dispatch.
             </p>
           </div>
         </div>
@@ -362,7 +361,7 @@ export default function WebsiteOrders() {
           className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${statusFilter === 'all' ? 'bg-primary/10 border-primary/40 shadow-sm' : 'bg-bg border-border hover:bg-bg2'}`}
         >
           <div className="flex items-center justify-between text-muted">
-            <span className="text-[10px] font-bold uppercase tracking-wider">All Website Orders</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">All Online Orders</span>
             <ShoppingBag size={14} className="text-primary" />
           </div>
           <div className="text-xl font-black text-text mt-1">{metrics.total}</div>
@@ -521,9 +520,14 @@ export default function WebsiteOrders() {
                           <Clock size={9} /> Paid (Verify)
                         </span>
                       )}
-                      {(order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED') && (
+                      {(order.payment_status === 'CONFIRMED' || order.payment_status === 'PAYMENT_CONFIRMED' || order.payment_status === 'VERIFIED') && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
                           Paid ✓
+                        </span>
+                      )}
+                      {order.customer_order_source === 'whatsapp' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-green-600/15 text-green-600 border border-green-600/30 flex items-center gap-0.5">
+                          <MessageSquare size={9} /> WhatsApp
                         </span>
                       )}
                       {order.delivery_status && (
@@ -761,8 +765,10 @@ export default function WebsiteOrders() {
 
                   {/* Actions Row */}
                   <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-1.5 flex-wrap">
-                    {/* Confirm Payment — for unpaid website orders or pending verification */}
-                    {order.customer_order_source === 'website' && order.payment_status !== 'CONFIRMED' && order.payment_status !== 'PAYMENT_CONFIRMED' && order.status !== 'Cancelled' && (
+                    {/* Confirm Payment — for unpaid online orders or pending verification.
+                        WhatsApp orders can also reach 'VERIFIED' via the owner's WhatsApp
+                        text-command flow; treat that as already-confirmed too. */}
+                    {order.payment_status !== 'CONFIRMED' && order.payment_status !== 'PAYMENT_CONFIRMED' && order.payment_status !== 'VERIFIED' && order.status !== 'Cancelled' && (
                       <button
                         type="button"
                         disabled={actionInProgress === order.id}

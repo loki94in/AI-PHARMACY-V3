@@ -1462,6 +1462,28 @@ export async function sendMessage(
             }
           }
 
+          // Pre-hydrate chat and contact model in WhatsApp Web store to prevent memoizer 'id undefined' crash
+          if (targetClient.pupPage && !targetClient.pupPage.isClosed()) {
+            try {
+              await targetClient.pupPage.evaluate(async (jid) => {
+                try {
+                  const widFactory = (window as any).require?.('WAWebWidFactory');
+                  const findChatAction = (window as any).require?.('WAWebFindChatAction');
+                  const collections = (window as any).require?.('WAWebCollections');
+                  if (widFactory && jid) {
+                    const wid = widFactory.createWid(jid);
+                    if (findChatAction?.findOrCreateLatestChat) {
+                      await findChatAction.findOrCreateLatestChat(wid);
+                    }
+                    if (collections?.Contact?.find) {
+                      await collections.Contact.find(wid).catch(() => {});
+                    }
+                  }
+                } catch (_) {}
+              }, targetChatId);
+            } catch (_) {}
+          }
+
           let sentMsg: any = null;
           if (file && file.mimetype && file.data) {
             const media = new MessageMedia(file.mimetype, file.data, file.filename || 'file');
@@ -1501,6 +1523,27 @@ export async function sendMessage(
             } catch (retryErr: any) {
               console.error('[WhatsApp] Send retry after client auto-reconnect failed:', retryErr);
               throw new Error('WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.');
+            }
+          } else if (errMsg.includes('Data passed to getter must include an id property') || errMsg.includes("it's how we memoize")) {
+            console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
+            try {
+              if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
+                await clientInstance.pupPage.evaluate(async (jid) => {
+                  try {
+                    const wid = (window as any).require?.('WAWebWidFactory')?.createWid(jid);
+                    if (wid) {
+                      await (window as any).require?.('WAWebFindChatAction')?.findOrCreateLatestChat(wid);
+                      await (window as any).require?.('WAWebCollections')?.Contact?.find(wid).catch(() => {});
+                    }
+                  } catch (_) {}
+                }, `${cleanPhone}@c.us`);
+              }
+              await new Promise(r => setTimeout(r, 600));
+              await doSend(clientInstance!);
+              console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
+            } catch (retryErr: any) {
+              console.error(`[WhatsApp] Self-healing retry for ${cleanPhone} failed:`, retryErr?.message || retryErr);
+              throw new Error(`WhatsApp Web temporary contact sync delay for ${cleanPhone}. Message queued for review.`);
             }
           } else {
             if (errMsg.includes('No LID for user')) {
@@ -1920,6 +1963,108 @@ export async function downloadMessageMediaById(serializedId: string): Promise<{ 
   const fresh: any = await clientInstance.getMessageById(serializedId);
   if (!fresh) return undefined;
   return await fresh.downloadMedia();
+}
+
+/**
+ * Resiliently download media for an inbound message:
+ * 1. If mediaStage is 'FETCHING' (common on high-res camera photos), actively poll
+ *    until 'RESOLVED' rather than aborting prematurely with undefined.
+ * 2. Hydrate @lid chat in store before decryption to prevent minified Error("r").
+ * 3. Fallback gracefully to getMessageById fresh copy.
+ */
+export async function downloadMessageMediaReliably(
+  serializedId: string,
+  options?: { maxWaitMs?: number; chatId?: string }
+): Promise<{ data?: string; mimetype?: string; filename?: string } | undefined> {
+  if (!clientInstance || !isReady || !serializedId) return undefined;
+  const maxWaitMs = options?.maxWaitMs ?? 12000;
+  const chatId = options?.chatId;
+
+  if ((clientInstance as any).pupPage) {
+    try {
+      const downloaded = await (clientInstance as any).pupPage.evaluate(async (msgId: string, waitLimit: number, targetChatId?: string) => {
+        try {
+          const wCollections = (window as any).require ? (window as any).require('WAWebCollections') : null;
+          const store = (window as any).Store;
+
+          if (targetChatId && store?.Chat) {
+            try {
+              const chat = store.Chat.get(targetChatId) || (await store.Chat.find(targetChatId));
+              if (chat && chat.loadEarlierMsgs) await chat.loadEarlierMsgs();
+            } catch (_) {}
+          }
+
+          let msg = wCollections?.Msg?.get(msgId) || store?.Msg?.get(msgId);
+          if (!msg && wCollections?.Msg?.getMessagesById) {
+            const res = await wCollections.Msg.getMessagesById([msgId]);
+            msg = res?.messages?.[0];
+          }
+
+          if (!msg) return { error: 'msg_not_found' };
+          if (!msg.mediaData) return { error: 'no_media_data' };
+
+          if (msg.mediaData.mediaStage !== 'RESOLVED') {
+            if (typeof msg.downloadMedia === 'function') {
+              try {
+                await msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+              } catch (_) {}
+            }
+          }
+
+          const start = Date.now();
+          while (Date.now() - start < waitLimit) {
+            if (msg.mediaData.mediaStage === 'RESOLVED') break;
+            if (msg.mediaData.mediaStage && msg.mediaData.mediaStage.includes('ERROR')) break;
+            await new Promise(r => setTimeout(r, 400));
+          }
+
+          if (msg.mediaData.mediaStage !== 'RESOLVED') {
+            return { error: `media_stage_${msg.mediaData.mediaStage || 'unknown'}` };
+          }
+
+          const mockQpl = { addAnnotations: () => {}, addPoint: () => {} };
+          const downloadManager = (window as any).require('WAWebDownloadManager')?.downloadManager;
+          if (!downloadManager) return { error: 'no_download_manager' };
+
+          const decryptedMedia = await downloadManager.downloadAndMaybeDecrypt({
+            directPath: msg.directPath,
+            encFilehash: msg.encFilehash,
+            filehash: msg.filehash,
+            mediaKey: msg.mediaKey,
+            mediaKeyTimestamp: msg.mediaKeyTimestamp,
+            type: msg.type,
+            signal: new AbortController().signal,
+            downloadQpl: mockQpl,
+          });
+
+          const data = await (window as any).WWebJS.arrayBufferToBase64Async(decryptedMedia);
+          return {
+            data,
+            mimetype: msg.mimetype,
+            filename: msg.filename
+          };
+        } catch (innerErr: any) {
+          return { error: innerErr?.message || String(innerErr) };
+        }
+      }, serializedId, maxWaitMs, chatId);
+
+      if (downloaded && downloaded.data) {
+        return {
+          data: downloaded.data,
+          mimetype: downloaded.mimetype,
+          filename: downloaded.filename
+        };
+      }
+      if (downloaded?.error) {
+        console.warn(`[WhatsApp Client] Reliable browser media download returned: ${downloaded.error}`);
+      }
+    } catch (evalErr) {
+      console.warn('[WhatsApp Client] Reliable browser media evaluate failed, falling back to getMessageById:', evalErr);
+    }
+  }
+
+  // Fallback to fresh getMessageById
+  return await downloadMessageMediaById(serializedId);
 }
 
 // In-memory cache for WhatsApp registration status (24 hours for verified, 12 hours for not registered)

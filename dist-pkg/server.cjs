@@ -10689,6 +10689,7 @@ __export(waAdminEscalationService_exports, {
   notifyAdminOfNonAllopathic: () => notifyAdminOfNonAllopathic,
   notifyAdminOfUnmatchedQuery: () => notifyAdminOfUnmatchedQuery,
   notifyAdminOfUnprocessedMedia: () => notifyAdminOfUnprocessedMedia,
+  notifyOwnerOfSpecialOrderPharmarackResults: () => notifyOwnerOfSpecialOrderPharmarackResults,
   resolveAdminWhatsappNumber: () => resolveAdminWhatsappNumber,
   waAdminEscalationService: () => waAdminEscalationService
 });
@@ -11262,6 +11263,68 @@ Action required in application.`;
     console.error("[Admin Escalation] Error in notifyAdminOfLiveCartAdd:", err);
   }
 }
+async function notifyOwnerOfSpecialOrderPharmarackResults(payload) {
+  try {
+    const db2 = await dbManager.getConnection();
+    const guard = await escalateGuard(db2, payload.customerPhone);
+    if (!guard) return;
+    const adminWhatsapp = guard.adminWhatsapp;
+    await ensureOwnerPendingRequestsTable(db2);
+    await db2.run(
+      `INSERT INTO wa_owner_pending_requests (
+         req_code, customer_phone, customer_name, medicine_name, quantity, unit, options_json, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+       ON CONFLICT(req_code) DO UPDATE SET
+         customer_phone = excluded.customer_phone,
+         customer_name = excluded.customer_name,
+         medicine_name = excluded.medicine_name,
+         quantity = excluded.quantity,
+         unit = excluded.unit,
+         options_json = excluded.options_json,
+         status = 'pending',
+         created_at = CURRENT_TIMESTAMP`,
+      [
+        payload.soCode,
+        payload.customerPhone,
+        payload.customerName,
+        payload.medicineName,
+        payload.quantity,
+        payload.unit,
+        JSON.stringify(payload.pharmarackOptions)
+      ]
+    );
+    const formatNum = (n) => {
+      const symbols = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3"];
+      return symbols[n] || `${n + 1}\uFE0F\u20E3`;
+    };
+    const resultsList = payload.pharmarackOptions.map((opt, i) => {
+      const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || "Distributor";
+      const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? opt.mrp ?? 0;
+      const rateStr = rate > 0 ? `\u20B9${Number(rate).toFixed(2)}` : "Available";
+      return `${formatNum(i)} ${dist} | Available | ${rateStr}`;
+    }).join("\n");
+    const messageText = `\u{1F514} *New Special Order Request*
+
+\u{1F194} *Special Order ID*: ${payload.soCode}
+
+\u{1F464} *Customer*: ${payload.customerName}
+\u{1F4F1} *WhatsApp*: ${payload.customerPhone}
+
+\u{1F48A} *${payload.medicineName}*
+\u{1F4E6} *Quantity*: ${payload.quantity} ${payload.unit}
+
+\u{1F50E} *Pharmarack Search Results*
+
+${resultsList}
+
+Please reply with:
+${payload.soCode} 1`;
+    await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, "admin_escalation", "Admin / Store Owner");
+    console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);
+  } catch (err) {
+    console.error("[Admin Escalation] Error in notifyOwnerOfSpecialOrderPharmarackResults:", err);
+  }
+}
 async function ensureOwnerPendingRequestsTable(db2) {
   if (ownerPendingTableEnsured) return;
   await db2.exec(`
@@ -11297,6 +11360,7 @@ var init_waAdminEscalationService = __esm({
       notifyAdminOfUnmatchedQuery,
       notifyAdminOfCustomerConfirmation,
       notifyAdminOfLiveCartAdd,
+      notifyOwnerOfSpecialOrderPharmarackResults,
       ensureOwnerPendingRequestsTable
     };
   }
@@ -13655,6 +13719,7 @@ async function ensureSchema(dbPath) {
     const db2 = await dbManager.getConnection();
     await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
     await db2.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
     try {
       const versionRow = await db2.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
       const migrationRow = await db2.get("SELECT MAX(version) as version FROM schema_migrations");
@@ -16506,6 +16571,7 @@ async function ensureSchema(dbPath) {
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_access_token', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_waba_id', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_business_webhook_verify_token', '')");
+    await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wa_auto_share_admin', 'true')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_whatsapp', '')");
     await db2.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('pharmarack_batch_cycle_start', '')");
@@ -28218,6 +28284,170 @@ var init_pharmarack = __esm({
   }
 });
 
+// src/services/paymentQrService.ts
+var import_qrcode, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
+var init_paymentQrService = __esm({
+  "src/services/paymentQrService.ts"() {
+    "use strict";
+    init_connection();
+    import_qrcode = __toESM(require("qrcode"), 1);
+    DEFAULT_QR_CONFIGS = [
+      {
+        id: "QR_1",
+        label: "Pharmacy Counter UPI (QR 1)",
+        payee_name: "AI Pharmacy Counter 1",
+        upi_id: "aipharmacy1@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_2",
+        label: "Pharmacy Merchant UPI (QR 2)",
+        payee_name: "AI Pharmacy Merchant",
+        upi_id: "aipharmacy2@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_3",
+        label: "Pharmacy Direct UPI (QR 3)",
+        payee_name: "AI Pharmacy Store 3",
+        upi_id: "aipharmacy3@upi",
+        qr_image_url: "",
+        is_active: true
+      }
+    ];
+    PaymentQrService = class {
+      /**
+       * Load the 3 QR configurations from app_settings with fallback defaults
+       */
+      async getQrConfigs() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          "SELECT key, value FROM app_settings WHERE key LIKE 'payment_qr_%'"
+        ).catch(() => []);
+        const settingsMap = /* @__PURE__ */ new Map();
+        for (const r of rows) {
+          settingsMap.set(r.key, r.value);
+        }
+        const configs = [];
+        const qrIds = ["QR_1", "QR_2", "QR_3"];
+        for (const id of qrIds) {
+          const lower = id.toLowerCase();
+          const defaultConf = DEFAULT_QR_CONFIGS.find((d) => d.id === id);
+          configs.push({
+            id,
+            label: settingsMap.get(`payment_${lower}_label`) || defaultConf.label,
+            payee_name: settingsMap.get(`payment_${lower}_payee_name`) || defaultConf.payee_name,
+            upi_id: settingsMap.get(`payment_${lower}_upi_id`) || defaultConf.upi_id,
+            qr_image_url: settingsMap.get(`payment_${lower}_image_url`) || defaultConf.qr_image_url || "",
+            is_active: settingsMap.get(`payment_${lower}_active`) !== "false"
+          });
+        }
+        return configs;
+      }
+      /**
+       * Save QR configurations
+       */
+      async saveQrConfigs(configs) {
+        const db2 = await dbManager.getConnection();
+        for (const conf of configs) {
+          const lower = conf.id.toLowerCase();
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_label`, conf.label]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_payee_name`, conf.payee_name]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_upi_id`, conf.upi_id]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_image_url`, conf.qr_image_url || ""]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_active`, conf.is_active ? "true" : "false"]
+          );
+        }
+      }
+      /**
+       * Allocate the next alternating QR code for a new order.
+       * Rule (§13): selected_qr != previous_order_qr
+       */
+      async allocateNextQr() {
+        const db2 = await dbManager.getConnection();
+        const configs = await this.getQrConfigs();
+        const activeConfigs = configs.filter((c) => c.is_active && c.upi_id);
+        if (activeConfigs.length === 0) {
+          return DEFAULT_QR_CONFIGS[0];
+        }
+        if (activeConfigs.length === 1) {
+          return activeConfigs[0];
+        }
+        const lastRow = await db2.get(
+          "SELECT value FROM app_settings WHERE key = 'last_selected_payment_qr'"
+        ).catch(() => null);
+        const lastQrId = lastRow?.value || "";
+        const eligibleConfigs = activeConfigs.filter((c) => c.id !== lastQrId);
+        const pool = eligibleConfigs.length > 0 ? eligibleConfigs : activeConfigs;
+        const selected = pool[Math.floor(Math.random() * pool.length)];
+        await db2.run(
+          "INSERT INTO app_settings (key, value) VALUES ('last_selected_payment_qr', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          [selected.id]
+        ).catch(() => {
+        });
+        return selected;
+      }
+      /**
+       * Generate standard UPI payment URI
+       */
+      buildUpiUri(upiId, payeeName, amount, orderId) {
+        const cleanAmount = Number(amount || 0).toFixed(2);
+        const encodedName = encodeURIComponent(payeeName || "AI Pharmacy");
+        const note = encodeURIComponent(`Order #${orderId}`);
+        return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
+      }
+      /**
+       * Generate PNG Buffer for a given UPI URI to send over WhatsApp
+       */
+      async generateQrBuffer(upiUri) {
+        return import_qrcode.default.toBuffer(upiUri, { width: 300, margin: 2 });
+      }
+      /**
+       * Fetch QR details locked to a specific order
+       */
+      async getOrderQrDetails(orderId) {
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get(
+          "SELECT id, payment_qr_id, total_amount, advance_payment, payment_status FROM special_orders WHERE id = ?",
+          [orderId]
+        );
+        if (!order) return null;
+        const configs = await this.getQrConfigs();
+        const assignedId = order.payment_qr_id || "QR_1";
+        const config2 = configs.find((c) => c.id === assignedId) || configs[0] || DEFAULT_QR_CONFIGS[0];
+        const amount = Number(order.total_amount || order.advance_payment || 0);
+        return {
+          qr_id: config2.id,
+          label: config2.label,
+          payee_name: config2.payee_name,
+          upi_id: config2.upi_id,
+          upi_uri: this.buildUpiUri(config2.upi_id, config2.payee_name, amount, order.id),
+          qr_image_url: config2.qr_image_url || "",
+          amount,
+          payment_status: order.payment_status || "UNPAID"
+        };
+      }
+    };
+    paymentQrService = new PaymentQrService();
+  }
+});
+
 // scanGateAlgorithms.ts
 function countDocSigns(t) {
   let n = 0;
@@ -29289,6 +29519,12 @@ async function ensureClarificationsTable(db2) {
     if (!colNames.has("raw_qty_given")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN raw_qty_given INTEGER DEFAULT 0");
     }
+    if (!colNames.has("special_order_id")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN special_order_id INTEGER DEFAULT NULL");
+    }
+    if (!colNames.has("so_code")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN so_code TEXT DEFAULT NULL");
+    }
   } catch (_) {
   }
   clarificationsTableEnsured = true;
@@ -29513,38 +29749,133 @@ async function executeConfirmedProcurementFlow(params) {
       eventService.broadcast("order_updated", { at: Date.now(), id: specialOrderId });
     } catch (_) {
     }
-    if (!params.isBundle) {
-      const custAckMsg = `Thank you! Your request for *${cartItem.productName}* \xD7 ${cartItem.qty} has been received and forwarded to our pharmacy owner. We are arranging it with our distributor and will message you as soon as it is ready for collection.${phoneSuffix}`;
-      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
-    }
-    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer acknowledged, collection message staged.`);
+    console.log(`[Intent Service] Confirmed procurement flow complete for order #${specialOrderId} (${cartItem.productName} x ${cartItem.qty}). Owner notified, customer message staged for manual send.`);
   } catch (procErr) {
     console.error("[Intent Service] Error in executeConfirmedProcurementFlow:", procErr);
   }
 }
 async function checkMedicineClarificationResponse(phone, body, customer, chatId) {
-  const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
-  if (!cleanDigits) return false;
+  let cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   try {
     const db2 = await dbManager.getConnection();
     await ensureClarificationsTable(db2);
+    if ((!cleanDigits || cleanDigits.length < 10) && chatId) {
+      const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [chatId]);
+      if (chatRow?.resolved_number) {
+        cleanDigits = chatRow.resolved_number.replace(/\D/g, "").slice(-10);
+      }
+    }
+    if (!cleanDigits) return false;
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json 
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code 
        FROM wa_pending_clarifications 
-       WHERE (phone LIKE ? OR phone LIKE ?) AND created_at > datetime('now', '-30 minutes')`,
-      [`%${cleanDigits}`, `%${cleanDigits}%`]
+       WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
+         AND (
+           (step IN ('awaiting_owner_selection', 'awaiting_payment', 'awaiting_owner_payment_confirmation') AND created_at > datetime('now', '-24 hours'))
+           OR created_at > datetime('now', '-45 minutes')
+         )
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (!pending2) return false;
     const lower = body.toLowerCase().trim();
     const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm)$/i.test(lower);
     const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
-    if (isNegative) {
-      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
-      const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
+    if (pending2.step === "awaiting_owner_selection") {
+      const waitMsg = `Your request for *${pending2.suggested_name}* \xD7 ${pending2.quantity || 1} has been forwarded to our pharmacy owner for distributor confirmation.
+
+We will send you payment details shortly.`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", customer?.name || "Customer");
-      console.log(`[Intent Service] Customer ${cleanDigits} cancelled suggested medicine "${pending2.suggested_name}".`);
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      return true;
+    }
+    if (pending2.step === "awaiting_payment") {
+      const waitMsg = `Please pay the \u20B950 booking amount using the QR code sent earlier, and reply with the payment screenshot to proceed with your order (Ref: ${pending2.so_code || "SO"}).`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      return true;
+    }
+    if (pending2.step === "awaiting_owner_payment_confirmation") {
+      const waitMsg = `Your payment screenshot is being verified by our pharmacy team. You will receive final confirmation shortly!`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      return true;
+    }
+    if (pending2.step === "awaiting_medicine") {
+      const medQuery = body.trim();
+      if (medQuery.length < 2) {
+        const msg = `Please enter the medicine name you need.`;
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(phone, msg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      let localMatches = [];
+      try {
+        const filterResult = await productNameFilterService.filterProductNames(medQuery, { minConfidenceThreshold: 0.5 });
+        localMatches = filterResult?.matches || [];
+      } catch (_) {
+      }
+      let catalogMatches = [];
+      try {
+        const pharmaQuery = sanitizePharmarackQuery(medQuery);
+        const cat = await searchCatalog(pharmaQuery || medQuery);
+        catalogMatches = [
+          ...(cat.mapped || []).map((m) => m.name || m.productName),
+          ...(cat.nonMapped || []).map((m) => m.name || m.productName)
+        ].filter(Boolean);
+      } catch (_) {
+      }
+      const combined = [...localMatches, ...catalogMatches];
+      const seenNorm = /* @__PURE__ */ new Set();
+      const options = [];
+      for (const rawName of combined) {
+        const norm = rawName.toUpperCase().replace(/\s+/g, " ").trim();
+        const simpleKey = norm.replace(/[^A-Z0-9]/g, "");
+        if (!seenNorm.has(simpleKey) && simpleKey.length > 2) {
+          seenNorm.add(simpleKey);
+          options.push(norm);
+          if (options.length >= 5) break;
+        }
+      }
+      if (options.length === 0) {
+        const notFoundMsg = `I could not find a medicine matching "${medQuery}". Please check the spelling or send a clear photo of your prescription / medicine strip.`;
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(phone, notFoundMsg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      if (options.length === 1) {
+        const singleMedicine = options[0];
+        await db2.run(
+          `UPDATE wa_pending_clarifications
+           SET suggested_name = ?, selected_option = ?, original_query = ?, options_json = NULL, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
+           WHERE phone = ?`,
+          [singleMedicine, singleMedicine, medQuery, pending2.phone]
+        );
+        const confirmPrompt = `\u{1F48A} Medicine selected:
+*${singleMedicine}*
+
+Is this the medicine you need?
+
+Reply *YES* to confirm or *NO* to search again.`;
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      const formatNum = (n) => ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3"][n] || `${n + 1}\uFE0F\u20E3`;
+      const optionsList = options.map((opt, i) => `${formatNum(i)} ${opt}`).join("\n");
+      const promptMsg = `\u{1F50E} I found these medicine options for *${medQuery}*:
+
+${optionsList}
+
+Please reply with the number of the medicine you need.`;
+      await db2.run(
+        `UPDATE wa_pending_clarifications
+         SET suggested_name = ?, original_query = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
+         WHERE phone = ?`,
+        [options[0], medQuery, JSON.stringify(options), pending2.phone]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
       return true;
     }
     if (pending2.step === "awaiting_selection" && pending2.options_json) {
@@ -29555,7 +29886,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
         options = [];
       }
       let chosenIndex = -1;
-      const numMatch = lower.match(/^([1-9])\b/) || lower.match(/^(?:option\s*)?([1-9])/);
+      const numMatch = lower.match(/^([1-5])\b/) || lower.match(/^(?:option\s*)?([1-5])/);
       if (numMatch) {
         const n = parseInt(numMatch[1], 10) - 1;
         if (n >= 0 && n < options.length) {
@@ -29569,114 +29900,213 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
       }
       if (chosenIndex !== -1 && options[chosenIndex]) {
         const chosenMedicine = options[chosenIndex];
-        const pendingQty = Number(pending2.quantity || 0);
-        if (pendingQty > 0) {
-          await db2.run(
-            `UPDATE wa_pending_clarifications 
-             SET suggested_name = ?, selected_option = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
-             WHERE phone = ?`,
-            [chosenMedicine, chosenMedicine, pending2.phone]
-          );
-          const confirmPrompt = `Selected: *${chosenMedicine}* \xD7 ${pendingQty} ${pending2.unit || "strip"}.
-
-Please reply *YES* to confirm your order, or reply with a different quantity.`;
-          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
-        } else {
-          await db2.run(
-            `UPDATE wa_pending_clarifications 
-             SET suggested_name = ?, selected_option = ?, step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP 
-             WHERE phone = ?`,
-            [chosenMedicine, chosenMedicine, pending2.phone]
-          );
-          const qtyPrompt = `*${chosenMedicine}* selected.
-How many strips or units do you need?`;
-          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(phone, qtyPrompt, "customer_medicine_clarification", customer?.name || "Customer");
-        }
-        return true;
-      }
-    }
-    if (pending2.step === "awaiting_qty") {
-      const parsedQty = extractQuantityFromText(body);
-      if (parsedQty && parsedQty.quantity > 0) {
         await db2.run(
           `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET suggested_name = ?, selected_option = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [parsedQty.quantity, parsedQty.unit, pending2.phone]
+          [chosenMedicine, chosenMedicine, pending2.phone]
         );
-        const confirmPrompt = `Please confirm: *${pending2.suggested_name}* \xD7 ${parsedQty.quantity} ${parsedQty.unit}.
+        const confirmPrompt = `\u{1F48A} Medicine selected:
+*${chosenMedicine}*
 
-Reply *YES* to confirm or *NO* to cancel.`;
+Is this the medicine you need?
+
+Reply *YES* to confirm or *NO* to search again.`;
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
         return true;
       }
     }
-    const adjustedQty = extractQuantityFromText(body);
-    if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
-      await db2.run(
-        `UPDATE wa_pending_clarifications 
-         SET quantity = ?, unit = ?, step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP 
-         WHERE phone = ?`,
-        [adjustedQty.quantity, adjustedQty.unit, pending2.phone]
-      );
-      const confirmPrompt = `Updated: *${pending2.suggested_name}* \xD7 ${adjustedQty.quantity} ${adjustedQty.unit}.
+    if (pending2.step === "awaiting_medicine_confirmation") {
+      if (isNegative) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        const restartMsg = `Understood! Please enter the medicine name you need.`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, restartMsg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      if (isAffirmative) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        const qtyPrompt = `\u2705 Medicine confirmed: *${pending2.suggested_name}*
+
+\u{1F4E6} Please enter the quantity you need.`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, qtyPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+    }
+    if (pending2.step === "awaiting_qty") {
+      const parsedQty = extractQuantityFromText(body);
+      const rawNumMatch = body.match(/\b(\d+)\b/);
+      const finalQty = parsedQty && parsedQty.quantity > 0 ? parsedQty.quantity : rawNumMatch ? parseInt(rawNumMatch[1], 10) : 0;
+      const finalUnit = parsedQty && parsedQty.unit ? parsedQty.unit : "strip";
+      if (finalQty > 0) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications 
+           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           WHERE phone = ?`,
+          [finalQty, finalUnit, pending2.phone]
+        );
+        const confirmPrompt = `Please confirm your request:
+
+\u{1F48A} Medicine: *${pending2.suggested_name}*
+\u{1F4E6} Quantity: ${finalQty} ${finalUnit}
 
 Reply *YES* to confirm.`;
-      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
-      return true;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      } else {
+        const retryMsg = `Please enter a valid quantity number (e.g. 1, 2, 5).`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, retryMsg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
     }
-    if (isAffirmative) {
-      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
-      let bundle = [];
-      if (pending2.items_json) {
+    if (pending2.step === "awaiting_qty_confirmation" || pending2.step === "awaiting_confirmation") {
+      if (isNegative) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending2.phone]
+        );
+        const retryQtyMsg = `Understood! How many strips or units do you need?`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, retryQtyMsg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      const adjustedQty = extractQuantityFromText(body);
+      if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
+        await db2.run(
+          `UPDATE wa_pending_clarifications 
+           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           WHERE phone = ?`,
+          [adjustedQty.quantity, adjustedQty.unit || "strip", pending2.phone]
+        );
+        const confirmPrompt = `Updated:
+\u{1F48A} Medicine: *${pending2.suggested_name}*
+\u{1F4E6} Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || "strip"}
+
+Reply *YES* to confirm.`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
+      if (isAffirmative) {
+        let bundle = [];
+        if (pending2.items_json) {
+          try {
+            bundle = JSON.parse(pending2.items_json);
+          } catch (_) {
+          }
+        }
+        if (bundle && bundle.length > 1) {
+          await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+          for (const item of bundle) {
+            await executeConfirmedProcurementFlow({
+              phone,
+              chatId,
+              confirmedMedicine: item.matchedName,
+              quantity: item.quantity || 1,
+              unit: item.unit || "strip",
+              customer,
+              isBundle: true
+            });
+          }
+          return true;
+        }
+        const medName = pending2.suggested_name;
+        const medQty = pending2.quantity || 1;
+        const medUnit = pending2.unit || "strip";
+        const pharmaQuery = sanitizePharmarackQuery(medName);
+        let rawPharmarackItems = [];
         try {
-          bundle = JSON.parse(pending2.items_json);
+          const { performPharmarackSearch: performPharmarackSearch2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          const searchRes = await performPharmarackSearch2(pharmaQuery || medName, null, true);
+          if (searchRes && searchRes.status === "ok" && Array.isArray(searchRes.items)) {
+            rawPharmarackItems = searchRes.items;
+          }
         } catch (_) {
         }
-      }
-      if (bundle && bundle.length > 0) {
-        console.log(`[Intent Service] Customer ${cleanDigits} confirmed multi-medicine bundle of ${bundle.length} items. Initiating procurement...`);
-        for (const item of bundle) {
-          await executeConfirmedProcurementFlow({
-            phone,
-            chatId,
-            confirmedMedicine: item.matchedName,
-            quantity: item.quantity || 1,
-            unit: item.unit || "strip",
-            customer,
-            isBundle: true
+        if (rawPharmarackItems.length === 0) {
+          try {
+            const cat = await searchCatalog(pharmaQuery || medName);
+            rawPharmarackItems = [...cat.mapped || [], ...cat.nonMapped || []];
+          } catch (_) {
+          }
+        }
+        const inStockCandidates = rawPharmarackItems.filter((p) => isItemInStock(p.availability ?? p.stock));
+        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const orderRes = await db2.run(
+          `INSERT INTO special_orders (
+             store_id, requester, phone, medicine_name, product, qty, priority, status,
+             date, notified, customer_order_source, total_amount, advance_payment, payment_status
+           ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID')`,
+          [
+            1,
+            customer?.name || "WhatsApp Customer",
+            cleanDigits,
+            medName,
+            medName,
+            medQty,
+            todayStr2
+          ]
+        );
+        const specialOrderId = Number(orderRes.lastID) || 0;
+        const soCode = `SO-${specialOrderId}`;
+        await db2.run(
+          `UPDATE wa_pending_clarifications
+           SET step = 'awaiting_owner_selection', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+           WHERE phone = ?`,
+          [specialOrderId, soCode, pending2.phone]
+        );
+        if (inStockCandidates.length > 0) {
+          await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
+            specialOrderId,
+            soCode,
+            customerName: customer?.name || "Customer",
+            customerPhone: cleanDigits,
+            medicineName: medName,
+            quantity: medQty,
+            unit: medUnit,
+            pharmarackOptions: inStockCandidates.slice(0, 6)
           });
-        }
-        try {
-          const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-          const storeLabel = await getStoreMedicalName4(db2);
-          const storePhone = await getStorePhone3(db2);
-          const phoneSuffix = storePhone ? `
-\u{1F4DE} ${storePhone}` : "";
-          const medListText = bundle.map((b, i) => `${i + 1}. *${b.matchedName}* \xD7 ${b.quantity} ${b.unit}`).join("\n");
-          const custAckMsg = `Thank you! Your request for:
-${medListText}
-has been received and forwarded to our pharmacy team at ${storeLabel}. We are arranging your medicines with our distributors and will message you as soon as they are ready for collection.${phoneSuffix}`;
+          const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.
+
+We will send you payment details shortly.`;
           const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(phone, custAckMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
-        } catch (bundleAckErr) {
-          console.warn("[Intent Service] Multi-item confirmation acknowledgment error:", bundleAckErr);
+          await whatsappQueueWorker2.enqueue(phone, custWaitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+        } else {
+          const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.
+
+Our pharmacy owner has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, noStockMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+          const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+          if (adminWhatsapp) {
+            const ownerOosMsg = `\u26A0\uFE0F *Special Order ${soCode} (All Distributors OOS)*
+
+Customer: ${customer?.name || "Customer"} (+91 ${cleanDigits})
+Medicine: *${medName}* \xD7 ${medQty}
+All checked Pharmarack distributors are currently out of stock.`;
+            await whatsappQueueWorker2.enqueue(adminWhatsapp, ownerOosMsg, "admin_escalation", "Owner");
+          }
         }
-      } else {
-        console.log(`[Intent Service] Customer ${cleanDigits} confirmed medicine "${pending2.suggested_name}" x ${pending2.quantity || 1}. Initiating procurement...`);
-        await executeConfirmedProcurementFlow({
-          phone,
-          chatId,
-          confirmedMedicine: pending2.suggested_name,
-          quantity: pending2.quantity || 1,
-          unit: pending2.unit || "strip",
-          customer
-        });
+        console.log(`[Intent Service] Customer confirmed request for ${medName} x ${medQty}. Created order #${specialOrderId} (${soCode}). Owner notified.`);
+        return true;
       }
+    }
+    if (isNegative) {
+      await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
+      const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", customer?.name || "Customer");
+      console.log(`[Intent Service] Customer ${cleanDigits} cancelled pending clarification.`);
       return true;
     }
   } catch (err) {
@@ -29693,104 +30123,298 @@ async function checkIsOwnerPhone(phone, db2) {
 }
 async function handleOwnerInteractiveReply(phone, body, db2) {
   const cleanBody = body.trim().toUpperCase();
-  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-4])$/i);
-  const singleNumMatch = cleanBody.match(/^([1-4])$/);
-  if (!reqCodeMatch && !singleNumMatch) return false;
-  await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
-  let targetRow = null;
+  const confirmPaymentMatch = cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?\s+(SO-\d+)$/i) || cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?\s+(SO-\d+)$/i);
+  if (confirmPaymentMatch) {
+    const soCode2 = confirmPaymentMatch[1].toUpperCase();
+    const orderId = parseInt(soCode2.replace(/\D/g, ""), 10);
+    const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    if (!order) {
+      await whatsappQueueWorker2.enqueue(phone, `\u26A0\uFE0F Special Order #${soCode2} not found.`, "admin_escalation", "Owner");
+      return true;
+    }
+    if (order.payment_status !== "SCREENSHOT_RECEIVED") {
+      await whatsappQueueWorker2.enqueue(
+        phone,
+        `\u26A0\uFE0F Special Order #${soCode2} is not awaiting payment verification (Current status: ${order.payment_status || "UNPAID"}).`,
+        "admin_escalation",
+        "Owner"
+      );
+      return true;
+    }
+    await db2.run(
+      `UPDATE special_orders SET
+         payment_status = 'VERIFIED',
+         status = 'Confirmed',
+         pharmacy_verification_status = 'PENDING',
+         updated_at = datetime('now')
+       WHERE id = ?`,
+      [orderId]
+    );
+    try {
+      await db2.run(
+        `INSERT INTO online_order_items (
+           order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+        [
+          orderId,
+          order.medicine_name || order.product,
+          order.medicine_name || order.product,
+          order.qty || 1,
+          order.qty || 1,
+          order.pharmarack_mrp || 0,
+          order.pharmarack_rate || 0,
+          (order.qty || 1) * (order.pharmarack_rate || 0)
+        ]
+      );
+    } catch (ooiErr) {
+      console.warn("[Intent Service] Non-fatal online_order_items insert note:", ooiErr);
+    }
+    const cartItem = {
+      productName: order.medicine_name || order.product,
+      product: order.medicine_name || order.product,
+      productId: 0,
+      productCode: "",
+      storeId: 0,
+      storeName: order.pharmarack_distributor || "Standard Distributor",
+      company: "",
+      qty: order.qty > 0 ? order.qty : 1,
+      rate: order.pharmarack_rate || 0,
+      mrp: order.pharmarack_mrp || 0,
+      packaging: "1 strip"
+    };
+    try {
+      const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+      await addItemsToPharmarackCart2([cartItem]);
+    } catch (cartErr) {
+      console.warn("[Intent Service] Live Cart add attempt warning:", cartErr);
+    }
+    await db2.run(
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ?`,
+      [soCode2]
+    );
+    await db2.run(
+      `UPDATE wa_pending_clarifications SET step = 'completed' WHERE special_order_id = ? OR so_code = ?`,
+      [orderId, soCode2]
+    );
+    try {
+      eventService.broadcast("order_updated", { at: Date.now(), id: orderId });
+      eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
+    } catch (_) {
+    }
+    const custFinalMsg = `\u{1F389} Your medicine request is confirmed!
+
+\u{1F194} Special Order ID: ${soCode2}
+
+\u{1F48A} ${order.medicine_name || order.product}
+\u{1F4E6} Quantity: ${order.qty}
+
+\u{1F4B0} Booking Amount Paid: \u20B950
+
+\u{1F6D2} Your medicine has been added to your Live Cart.`;
+    await db2.run(
+      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
+       VALUES (?, ?, ?, ?, 'staged', 1, ?)`,
+      ["whatsapp_order", order.requester || "Customer", String(order.phone || "").replace(/\D/g, "").slice(-10), custFinalMsg, String(orderId)]
+    );
+    await waAdminEscalationService.notifyAdminOfLiveCartAdd({
+      orderId: soCode2,
+      customer: { name: order.requester, phone: order.phone },
+      phone: order.phone,
+      items: [{
+        name: order.medicine_name || order.product,
+        quantity: order.qty,
+        distributor: order.pharmarack_distributor || "Standard Distributor",
+        rate: order.pharmarack_rate,
+        mrp: order.pharmarack_mrp
+      }],
+      success: true
+    });
+    const ownerFinalAck = `\u2705 Payment verified for Special Order #${soCode2}!
+
+Added *${order.medicine_name || order.product}* \xD7 ${order.qty} to Live Cart.
+Customer *${order.requester || "Customer"}* message has been staged and is awaiting manual send in Quick Assist.`;
+    await whatsappQueueWorker2.enqueue(phone, ownerFinalAck, "admin_escalation", "Owner");
+    console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode2}). Added to Live Cart.`);
+    return true;
+  }
+  const soSupplierMatch = cleanBody.match(/^(SO-\d+)(?:\s+|-)([1-6])$/i);
+  const singleDigitMatch = cleanBody.match(/^([1-6])$/);
+  let soCode = null;
   let chosenOptionIdx = -1;
-  if (reqCodeMatch) {
-    const reqCode = reqCodeMatch[1].toUpperCase();
-    chosenOptionIdx = parseInt(reqCodeMatch[2], 10) - 1;
+  let targetRow = null;
+  if (soSupplierMatch) {
+    soCode = soSupplierMatch[1].toUpperCase();
+    chosenOptionIdx = parseInt(soSupplierMatch[2], 10) - 1;
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
     targetRow = await db2.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? AND status = 'pending'`,
+      [soCode]
+    );
+  } else if (singleDigitMatch) {
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
+    const latest = await db2.get(
+      `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
+    );
+    if (latest && String(latest.req_code).startsWith("SO-")) {
+      soCode = latest.req_code;
+      chosenOptionIdx = parseInt(singleDigitMatch[1], 10) - 1;
+      targetRow = latest;
+    }
+  }
+  if (targetRow && soCode && chosenOptionIdx >= 0) {
+    const orderId = parseInt(soCode.replace(/\D/g, ""), 10);
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    let options = [];
+    try {
+      options = JSON.parse(targetRow.options_json || "[]");
+    } catch (_) {
+    }
+    const selectedDist = options[chosenOptionIdx];
+    if (!selectedDist) {
+      await whatsappQueueWorker2.enqueue(
+        phone,
+        `\u26A0\uFE0F Option ${chosenOptionIdx + 1} not found for Special Order #${soCode}. Available options: 1 to ${options.length}.`,
+        "admin_escalation",
+        "Owner"
+      );
+      return true;
+    }
+    const distName = selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || selectedDist.distributor_name || "Standard Distributor";
+    const distRate = Number(selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0);
+    const distMrp = Number(selectedDist.mrp ?? selectedDist.MRP ?? 0);
+    await db2.run(
+      `UPDATE special_orders SET
+         pharmarack_distributor = ?,
+         pharmarack_rate = ?,
+         pharmarack_mrp = ?,
+         payment_status = 'AWAITING_PAYMENT',
+         advance_payment = 50,
+         total_amount = 50,
+         updated_at = datetime('now')
+       WHERE id = ?`,
+      [distName, distRate, distMrp, orderId]
+    );
+    const activeQr = await paymentQrService.allocateNextQr();
+    const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, 50, soCode);
+    const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+    await db2.run(
+      `UPDATE special_orders SET payment_qr_id = ? WHERE id = ?`,
+      [activeQr.id, orderId]
+    );
+    await db2.run(
+      `UPDATE wa_pending_clarifications
+       SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+       WHERE phone = ? OR phone LIKE ?`,
+      [orderId, soCode, targetRow.customer_phone, `%${targetRow.customer_phone.slice(-10)}`]
+    );
+    const custQrMsg = `\u2705 Medicine & supplier confirmed
+
+\u{1F194} *Special Order*: ${soCode}
+
+\u{1F48A} *Medicine*: ${targetRow.medicine_name}
+\u{1F4E6} *Quantity*: ${targetRow.quantity}
+
+\u{1F510} *Booking Amount*: \u20B950
+
+Please pay the \u20B950 booking amount using the QR code below.
+
+After payment, please send the payment screenshot in this chat.`;
+    await whatsappQueueWorker2.enqueue(
+      targetRow.customer_phone,
+      custQrMsg,
+      "customer_payment_qr",
+      targetRow.customer_name || "Customer",
+      void 0,
+      void 0,
+      {
+        mimetype: "image/png",
+        data: qrBuffer.toString("base64"),
+        filename: "booking_qr.png"
+      }
+    );
+    const ownerAck = `\u2705 *Supplier Confirmed for ${soCode}*
+
+Selected: *${distName}* (PTR \u20B9${distRate.toFixed(2)})
+\u20B950 booking payment QR code sent to customer *${targetRow.customer_name}* (+91 ${targetRow.customer_phone.slice(-10)}).
+Awaiting customer payment screenshot.`;
+    await whatsappQueueWorker2.enqueue(phone, ownerAck, "admin_escalation", "Owner");
+    console.log(`[Intent Service] Owner selected supplier #${chosenOptionIdx + 1} (${distName}) for ${soCode}. Sent \u20B950 QR to customer.`);
+    return true;
+  }
+  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-6])$/i);
+  if (reqCodeMatch) {
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
+    let targetRow2 = null;
+    let chosenOptionIdx2 = -1;
+    const reqCode = reqCodeMatch[1].toUpperCase();
+    chosenOptionIdx2 = parseInt(reqCodeMatch[2], 10) - 1;
+    targetRow2 = await db2.get(
       `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? AND status = 'pending'`,
       [reqCode]
     );
-  } else if (singleNumMatch) {
-    chosenOptionIdx = parseInt(singleNumMatch[1], 10) - 1;
-    targetRow = await db2.get(
-      `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
-    );
-  }
-  if (!targetRow || chosenOptionIdx < 0) return false;
-  let options = [];
-  try {
-    options = JSON.parse(targetRow.options_json || "[]");
-  } catch (_) {
-  }
-  const selectedDist = options[chosenOptionIdx];
-  if (!selectedDist) {
-    const errGuide = `\u26A0\uFE0F Option ${chosenOptionIdx + 1} not found for Request #${targetRow.req_code}. Available options: 1 to ${options.length}.`;
-    const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-    await whatsappQueueWorker3.enqueue(phone, errGuide, "admin_escalation", "Owner");
-    return true;
-  }
-  const cartItem = {
-    productName: targetRow.medicine_name,
-    product: targetRow.medicine_name,
-    productId: selectedDist.productId || selectedDist.product_id || 0,
-    productCode: selectedDist.productCode || selectedDist.product_code || "",
-    storeId: Number(selectedDist.store_id || selectedDist.storeId || 0),
-    storeName: selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || "Standard Distributor",
-    company: selectedDist.manufacturer || selectedDist.company || "",
-    qty: targetRow.quantity > 0 ? targetRow.quantity : 1,
-    rate: selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0,
-    mrp: selectedDist.mrp ?? selectedDist.MRP ?? 0,
-    packaging: selectedDist.packaging || targetRow.unit || "1 strip"
-  };
-  const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-  const cartRes = await addItemsToPharmarackCart2([cartItem]);
-  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const orderRes = await db2.run(
-    `INSERT INTO special_orders (
-      store_id, requester, phone, medicine_name, product, qty, priority, status,
-      date, notified, customer_order_source,
-      pharmarack_distributor, pharmarack_rate, pharmarack_mrp
-    ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?)`,
-    [
-      1,
-      targetRow.customer_name || "WhatsApp Customer",
-      targetRow.customer_phone,
-      cartItem.productName,
-      cartItem.productName,
-      cartItem.qty,
-      todayStr2,
-      cartItem.storeName,
-      cartItem.rate,
-      cartItem.mrp
-    ]
-  );
-  const specialOrderId = orderRes.lastID;
-  await db2.run(
-    `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE id = ?`,
-    [targetRow.id]
-  );
-  const ownerAck = `\u2705 *Special Order #${targetRow.req_code} Processed!*
+    if (targetRow2 && chosenOptionIdx2 >= 0) {
+      let options = [];
+      try {
+        options = JSON.parse(targetRow2.options_json || "[]");
+      } catch (_) {
+      }
+      const selectedDist = options[chosenOptionIdx2];
+      if (selectedDist) {
+        const cartItem = {
+          productName: targetRow2.medicine_name,
+          product: targetRow2.medicine_name,
+          productId: selectedDist.productId || selectedDist.product_id || 0,
+          productCode: selectedDist.productCode || selectedDist.product_code || "",
+          storeId: Number(selectedDist.store_id || selectedDist.storeId || 0),
+          storeName: selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || "Standard Distributor",
+          company: selectedDist.manufacturer || selectedDist.company || "",
+          qty: targetRow2.quantity > 0 ? targetRow2.quantity : 1,
+          rate: selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0,
+          mrp: selectedDist.mrp ?? selectedDist.MRP ?? 0,
+          packaging: selectedDist.packaging || targetRow2.unit || "1 strip"
+        };
+        const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+        await addItemsToPharmarackCart2([cartItem]);
+        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const orderRes = await db2.run(
+          `INSERT INTO special_orders (
+            store_id, requester, phone, medicine_name, product, qty, priority, status,
+            date, notified, customer_order_source,
+            pharmarack_distributor, pharmarack_rate, pharmarack_mrp
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?)`,
+          [
+            1,
+            targetRow2.customer_name || "WhatsApp Customer",
+            targetRow2.customer_phone,
+            cartItem.productName,
+            cartItem.productName,
+            cartItem.qty,
+            todayStr2,
+            cartItem.storeName,
+            cartItem.rate,
+            cartItem.mrp
+          ]
+        );
+        const specialOrderId = orderRes.lastID;
+        await db2.run(
+          `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE id = ?`,
+          [targetRow2.id]
+        );
+        const ownerAck = `\u2705 *Special Order #${targetRow2.req_code} Processed!*
 
-Added *${cartItem.productName}* \xD7 ${cartItem.qty} ${targetRow.unit}
+Added *${cartItem.productName}* \xD7 ${cartItem.qty} ${targetRow2.unit}
 Distributor: *${cartItem.storeName}* (PTR \u20B9${cartItem.rate.toFixed(2)})
 directly into your *Pharmarack Live Cart*.
 
-Created Special Order #${specialOrderId} for customer *${targetRow.customer_name}*.`;
-  const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-  await whatsappQueueWorker2.enqueue(phone, ownerAck, "admin_escalation", "Owner");
-  if (targetRow.customer_phone) {
-    const { getStoreMedicalName: getStoreMedicalName4, getStorePhone: getStorePhone3 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
-    const storeLabel = await getStoreMedicalName4(db2);
-    const storePhone = await getStorePhone3(db2);
-    const phoneSuffix = storePhone ? `
-\u{1F4DE} ${storePhone}` : "";
-    const custAck = `Namaste ${targetRow.customer_name} ji! \u{1F64F}
-
-Your order for *${cartItem.productName}* \xD7 ${cartItem.qty} ${targetRow.unit} is confirmed and being arranged with our distributor at ${storeLabel}. We will message you as soon as it is ready for collection.${phoneSuffix}`;
-    await whatsappQueueWorker2.enqueue(targetRow.customer_phone, custAck, "customer_inquiry_confirmed", targetRow.customer_name || "Customer");
+Created Special Order #${specialOrderId} for customer *${targetRow2.customer_name}*.`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, ownerAck, "admin_escalation", "Owner");
+        return true;
+      }
+    }
   }
-  try {
-    eventService.broadcast("order_updated", { at: Date.now(), id: specialOrderId });
-  } catch (_) {
-  }
-  console.log(`[Intent Service] Owner fulfilled request #${targetRow.req_code} via WhatsApp reply. Cart addition & special order created.`);
-  return true;
+  return false;
 }
 async function handleInbound(msg) {
   try {
@@ -29920,7 +30544,53 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         }
       }
     }
-    if (!isManualSession && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    const cleanGreeting = body.trim().toLowerCase().replace(/[^\w\s]/g, "").trim();
+    const isGreeting = /^(hi|hello|hey|hola|namaste|namaskar|pranam|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order)$/i.test(cleanGreeting);
+    if (isGreeting && !hasMedia) {
+      await ensureClarificationsTable(db2);
+      let cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
+      if ((!cleanDigits || cleanDigits.length < 10) && chatId) {
+        const chatRow = await db2.get("SELECT resolved_number FROM whatsapp_chats WHERE id = ?", [chatId]);
+        if (chatRow?.resolved_number) {
+          cleanDigits = chatRow.resolved_number.replace(/\D/g, "").slice(-10);
+        }
+      }
+      await db2.run(
+        `UPDATE whatsapp_chats SET session_mode = 'auto', session_status = 'idle', manual_active_until = 0 WHERE id = ? OR (resolved_number IS NOT NULL AND resolved_number LIKE ?)`,
+        [chatId, `%${cleanDigits}%`]
+      );
+      await db2.run(
+        `DELETE FROM wa_pending_clarifications WHERE phone LIKE ? OR phone LIKE ?`,
+        [`%${cleanDigits}`, `%${cleanDigits}%`]
+      );
+      const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+      const greetingText = `\u{1F44B} Hello! Welcome to ${storeName}.
+
+I can help you place a medicine request through WhatsApp.
+
+How it works:
+1\uFE0F\u20E3 Send the medicine name
+2\uFE0F\u20E3 Confirm the medicine
+3\uFE0F\u20E3 Enter the quantity
+4\uFE0F\u20E3 Confirm your request
+5\uFE0F\u20E3 Pay the \u20B950 booking amount
+6\uFE0F\u20E3 Send the payment screenshot
+
+After payment verification, your medicine will be added to your Live Cart.
+
+Please enter the medicine name you need.`;
+      await db2.run(
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, created_at)
+         VALUES (?, '', ?, 'awaiting_medicine', CURRENT_TIMESTAMP)`,
+        [cleanDigits, body]
+      );
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, greetingText, "customer_greeting", customer?.name || "Customer");
+      console.log(`[Intent Service] Fresh greeting & 6-step workflow sent to ${cleanDigits}.`);
+      return;
+    }
+    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
     }
     const parsed = parseMessage(body);
@@ -30018,6 +30688,68 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
             imagePath = await saveInboundMedia(msgId, buffer);
           } catch (saveErr) {
             console.error("[Intent Service] Failed to persist inbound media to disk:", saveErr);
+          }
+          const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
+          await ensureClarificationsTable(db2);
+          const pendingPayment = await db2.get(
+            `SELECT * FROM wa_pending_clarifications
+             WHERE (phone LIKE ? OR phone LIKE ?) AND step = 'awaiting_payment'
+             ORDER BY created_at DESC LIMIT 1`,
+            [`%${cleanPhone}`, `%${cleanPhone}%`]
+          );
+          if (pendingPayment && pendingPayment.special_order_id && imagePath) {
+            const soId = pendingPayment.special_order_id;
+            const soCode = pendingPayment.so_code || `SO-${soId}`;
+            await db2.run(
+              `UPDATE special_orders
+               SET payment_screenshot_path = ?, screenshot_amount = 50, payment_status = 'SCREENSHOT_RECEIVED', updated_at = datetime('now')
+               WHERE id = ?`,
+              [imagePath, soId]
+            );
+            await db2.run(
+              `UPDATE wa_pending_clarifications
+               SET step = 'awaiting_owner_payment_confirmation', created_at = CURRENT_TIMESTAMP
+               WHERE phone = ?`,
+              [pendingPayment.phone]
+            );
+            const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+            if (adminWhatsapp) {
+              const forwardCaption = `\u{1F4B0} *Payment Verification Required*
+
+\u{1F194} *Special Order*: ${soCode}
+
+\u{1F464} *Customer*: ${customer?.name || "Customer"}
+\u{1F4F1} +91 ${cleanPhone}
+
+\u{1F48A} *${pendingPayment.suggested_name}*
+\u{1F4E6} *Quantity*: ${pendingPayment.quantity || 1}
+
+\u{1F4B5} *Booking Amount*: \u20B950
+
+\u{1F4F8} *Customer Payment Screenshot Attached*
+
+Please reply:
+CONFIRM ${soCode}`;
+              const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+              await whatsappQueueWorker3.enqueue(
+                adminWhatsapp,
+                forwardCaption,
+                "admin_escalation_image",
+                "Admin / Store Owner",
+                void 0,
+                imagePath
+              );
+            }
+            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker2.enqueue(
+              phone,
+              `\u{1F4F8} Payment screenshot received! Our pharmacy team is verifying the payment.
+You will receive final confirmation shortly.`,
+              "customer_payment_ack",
+              customer?.name || "Customer"
+            );
+            console.log(`[Intent Service] Customer ${cleanPhone} uploaded payment screenshot for Special Order ${soCode}. Forwarded to owner.`);
+            return;
           }
           ocrScanQueue.enqueue(msgId, buffer, { phone, chatId, messageBody: body, imagePath });
         }
@@ -30402,45 +31134,58 @@ async function searchAndBroadcast(opts) {
   } catch (saveErr) {
     console.warn("[Intent Service] Failed to persist wa_medicine_request:", saveErr);
   }
-  waAdminEscalationService.maybeEscalate({
-    customer,
-    isNewCustomer,
-    medicineName,
-    quantity,
-    unit,
-    dosageForm,
-    localMatches: filterResult.matches,
-    inventoryStock,
-    availability,
-    catalogResults,
-    confidence,
-    isRepeat: false,
-    source,
-    messageBody,
-    history,
-    msgId,
-    phone,
-    chatId,
-    context,
-    relatedMedicines: opts.relatedMedicines,
-    imagePath
-  }).catch((err) => console.error("[Intent Service] Admin escalation failed:", err));
+  if (source !== "text") {
+    waAdminEscalationService.maybeEscalate({
+      customer,
+      isNewCustomer,
+      medicineName,
+      quantity,
+      unit,
+      dosageForm,
+      localMatches: filterResult.matches,
+      inventoryStock,
+      availability,
+      catalogResults,
+      confidence,
+      isRepeat: false,
+      source,
+      messageBody,
+      history,
+      msgId,
+      phone,
+      chatId,
+      context,
+      relatedMedicines: opts.relatedMedicines,
+      imagePath
+    }).catch((err) => console.error("[Intent Service] Admin escalation failed:", err));
+  }
   if (source === "text" && phone && !opts.isStale && !opts.suppressClarification) {
     try {
       const db2 = await dbManager.getConnection();
       const toggle = await db2.get("SELECT value FROM app_settings WHERE key = ?", ["wa_customer_clarification_enabled"]);
       if (!toggle || toggle.value !== "false") {
-        const matches = filterResult.matches && filterResult.matches.length > 0 ? filterResult.matches : (catalogResults?.mapped || []).map((m) => m.productName || m.name).filter(Boolean);
+        const rawMatches = filterResult.matches && filterResult.matches.length > 0 ? filterResult.matches : (catalogResults?.mapped || []).map((m) => m.productName || m.name).filter(Boolean);
+        const seenNorm = /* @__PURE__ */ new Set();
+        const deduplicated = [];
+        for (const m of rawMatches) {
+          const norm = String(m).toUpperCase().replace(/\s+/g, " ").trim();
+          const key = norm.replace(/[^A-Z0-9]/g, "");
+          if (!seenNorm.has(key) && key.length > 2) {
+            seenNorm.add(key);
+            deduplicated.push(norm);
+            if (deduplicated.length >= 5) break;
+          }
+        }
         const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
         await ensureClarificationsTable(db2);
-        if (matches.length > 1) {
-          const topOptions = matches.slice(0, 3);
-          const optionsList = topOptions.map((opt, i) => `${i + 1}. *${opt}*`).join("\n");
-          const promptMsg = `I found multiple options for *${medicineName}*:
+        if (deduplicated.length > 1) {
+          const formatNum = (n) => ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3"][n] || `${n + 1}\uFE0F\u20E3`;
+          const optionsList = deduplicated.map((opt, i) => `${formatNum(i)} *${opt}*`).join("\n");
+          const promptMsg = `\u{1F50E} I found these medicine options for *${medicineName}*:
 
 ${optionsList}
 
-Please reply with *1*, *2*, or *3* to choose, or specify the exact strength/form.`;
+Please reply with the number of the medicine you need.`;
           await db2.run(
             `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
              VALUES (?, ?, ?, ?, ?, ?, 'awaiting_selection', CURRENT_TIMESTAMP)
@@ -30448,59 +31193,39 @@ Please reply with *1*, *2*, or *3* to choose, or specify the exact strength/form
                suggested_name = excluded.suggested_name,
                original_query = excluded.original_query,
                options_json = excluded.options_json,
+               selected_option = NULL,
                quantity = excluded.quantity,
                unit = excluded.unit,
                step = 'awaiting_selection',
                created_at = CURRENT_TIMESTAMP`,
-            [cleanPhone, topOptions[0], medicineName, JSON.stringify(topOptions), quantity || 1, unit || "strip"]
+            [cleanPhone, deduplicated[0], medicineName, JSON.stringify(deduplicated), quantity || 1, unit || "strip"]
           );
           const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
           await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
-          console.log(`[Intent Service] Sent medicine options prompt (1..${topOptions.length}) for "${medicineName}" to ${cleanPhone}.`);
-        } else if (matches.length === 1 || filterResult.matches[0]) {
-          const topMatched = matches[0] || filterResult.matches[0];
-          const hasQty = Boolean(quantity && quantity > 0);
-          if (hasQty) {
-            const promptMsg = `Please confirm your order:
-*${topMatched}* \xD7 ${quantity} ${unit || "strip"}
+          console.log(`[Intent Service] Sent medicine options prompt (1..${deduplicated.length}) for "${medicineName}" to ${cleanPhone}.`);
+        } else if (deduplicated.length === 1 || filterResult.matches[0]) {
+          const topMatched = deduplicated[0] || filterResult.matches[0];
+          const promptMsg = `\u{1F48A} I found *${topMatched}*.
+Is this the medicine you want?
 
 Reply *YES* to confirm or *NO* to cancel.`;
-            await db2.run(
-              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'awaiting_confirmation', CURRENT_TIMESTAMP)
-               ON CONFLICT(phone) DO UPDATE SET
-                 suggested_name = excluded.suggested_name,
-                 original_query = excluded.original_query,
-                 options_json = NULL,
-                 quantity = excluded.quantity,
-                 unit = excluded.unit,
-                 step = 'awaiting_confirmation',
-                 created_at = CURRENT_TIMESTAMP`,
-              [cleanPhone, topMatched, medicineName, null, quantity, unit || "strip"]
-            );
-            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-            await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
-            console.log(`[Intent Service] Sent confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
-          } else {
-            const promptMsg = `I found *${topMatched}*.
-How many strips or units do you need?`;
-            await db2.run(
-              `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'awaiting_qty', CURRENT_TIMESTAMP)
-               ON CONFLICT(phone) DO UPDATE SET
-                 suggested_name = excluded.suggested_name,
-                 original_query = excluded.original_query,
-                 options_json = NULL,
-                 quantity = 1,
-                 unit = excluded.unit,
-                 step = 'awaiting_qty',
-                 created_at = CURRENT_TIMESTAMP`,
-              [cleanPhone, topMatched, medicineName, null, 1, unit || "strip"]
-            );
-            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-            await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
-            console.log(`[Intent Service] Sent quantity prompt for "${topMatched}" to ${cleanPhone}.`);
-          }
+          await db2.run(
+            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'awaiting_medicine_confirmation', CURRENT_TIMESTAMP)
+             ON CONFLICT(phone) DO UPDATE SET
+               suggested_name = excluded.suggested_name,
+               original_query = excluded.original_query,
+               options_json = NULL,
+               selected_option = excluded.suggested_name,
+               quantity = excluded.quantity,
+               unit = excluded.unit,
+               step = 'awaiting_medicine_confirmation',
+               created_at = CURRENT_TIMESTAMP`,
+            [cleanPhone, topMatched, medicineName, null, quantity || 1, unit || "strip"]
+          );
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+          console.log(`[Intent Service] Sent medicine confirmation prompt for "${topMatched}" to ${cleanPhone}.`);
         }
       }
     } catch (clarifyErr) {
@@ -30814,6 +31539,7 @@ var init_whatsappIntentService = __esm({
     init_pharmarackCatalogCache();
     init_waAdminEscalationService();
     init_pharmarack();
+    init_paymentQrService();
     init_startupSyncCoordinator();
     init_visualIndexService();
     init_scanGateAlgorithms();
@@ -31184,7 +31910,7 @@ async function getIdleSleepMinutes() {
     if (!isNaN(parsed) && parsed >= 0) return parsed;
   } catch (_) {
   }
-  return 15;
+  return 0;
 }
 function armSleepEvaluator(delayMs = WA_SLEEP_EVALUATOR_MS) {
   if (waSleepTimer) clearTimeout(waSleepTimer);
@@ -31774,9 +32500,16 @@ function launchClientInstance(forceQr) {
         let manualUntil = Number(existingChatRow?.manual_active_until || 0);
         let sessionStatus = existingChatRow?.session_status || "idle";
         if (isFromMe) {
-          sessionMode = "manual";
-          manualUntil = nowMs + manualTimeoutMs;
-          sessionStatus = "active";
+          const fullMsg = (msg.body || "").trim();
+          const msgHash = hashMessageBody(fullMsg);
+          const sendKey1 = `${resolvedNumber}:${msgHash}:${fullMsg.length}`;
+          const sendKey2 = `${chatId.split("@")[0]}:${msgHash}:${fullMsg.length}`;
+          const isAutomatedSend = recentSendsCache.has(sendKey1) || recentSendsCache.has(sendKey2);
+          if (!isAutomatedSend) {
+            sessionMode = "manual";
+            manualUntil = nowMs + manualTimeoutMs;
+            sessionStatus = "active";
+          }
         } else {
           if (sessionMode === "manual") {
             if (manualUntil > nowMs) {
@@ -32187,25 +32920,24 @@ async function sendMessage(to, mediaPath, caption, file) {
              ON CONFLICT(id) DO NOTHING`,
             [messageId, chatId, provisionalBody, 1, provTimestamp, file || mediaPath ? "document" : "text", provHasMedia]
           );
-          const existingChatRow = await db2.get("SELECT name FROM whatsapp_chats WHERE id = ?", [chatId]);
+          const existingChatRow = await db2.get("SELECT name, session_mode, manual_active_until, session_status FROM whatsapp_chats WHERE id = ?", [chatId]);
           const chatNameProv = existingChatRow?.name || cleanPhone;
           const nowProv = Date.now();
+          const targetSessionMode = existingChatRow?.session_mode || "auto";
+          const targetManualUntil = existingChatRow?.manual_active_until || 0;
+          const targetSessionStatus = existingChatRow?.session_status || "idle";
           await db2.run(
             `INSERT INTO whatsapp_chats (
                id, name, unread_count, timestamp, last_message, is_group, resolved_number,
                session_mode, manual_active_until, last_pharmacist_message_at, session_status
              )
-             VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
+             VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                timestamp = EXCLUDED.timestamp,
                last_message = EXCLUDED.last_message,
                resolved_number = EXCLUDED.resolved_number,
-               session_mode = 'manual',
-               manual_active_until = EXCLUDED.manual_active_until,
-               last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
-               session_status = 'active',
                unread_count = 0`,
-            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, nowProv + 45 * 60 * 1e3, nowProv]
+            [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, targetSessionMode, targetManualUntil, nowProv, targetSessionStatus]
           );
           eventService.broadcast("wa_new_message", {
             chat_id: chatId,
@@ -32278,25 +33010,24 @@ async function sendMessage(to, mediaPath, caption, file) {
          ON CONFLICT(id) DO NOTHING`,
         [messageId, chatId, bodyText, 1, timestamp, file || mediaPath ? "document" : "text", hasMedia]
       );
-      const existingChat = await db2.get("SELECT name FROM whatsapp_chats WHERE id = ?", [chatId]);
+      const existingChat = await db2.get("SELECT name, session_mode, manual_active_until, session_status FROM whatsapp_chats WHERE id = ?", [chatId]);
       const chatName = existingChat?.name || cleanPhone;
       const nowFinal = Date.now();
+      const finalSessionMode = existingChat?.session_mode || "auto";
+      const finalManualUntil = existingChat?.manual_active_until || 0;
+      const finalSessionStatus = existingChat?.session_status || "idle";
       await db2.run(
         `INSERT INTO whatsapp_chats (
            id, name, unread_count, timestamp, last_message, is_group, resolved_number,
            session_mode, manual_active_until, last_pharmacist_message_at, session_status
          )
-         VALUES (?, ?, 0, ?, ?, 0, ?, 'manual', ?, ?, 'active')
+         VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            timestamp = EXCLUDED.timestamp,
            last_message = EXCLUDED.last_message,
            resolved_number = EXCLUDED.resolved_number,
-           session_mode = 'manual',
-           manual_active_until = EXCLUDED.manual_active_until,
-           last_pharmacist_message_at = EXCLUDED.last_pharmacist_message_at,
-           session_status = 'active',
            unread_count = 0`,
-        [chatId, chatName, timestamp, bodyText, cleanPhone, nowFinal + 45 * 60 * 1e3, nowFinal]
+        [chatId, chatName, timestamp, bodyText, cleanPhone, finalSessionMode, finalManualUntil, nowFinal, finalSessionStatus]
       );
       eventService.broadcast("wa_new_message", {
         chat_id: chatId,
@@ -35921,7 +36652,7 @@ __export(inventory_exports, {
 function invalidateInventoryCountCache() {
   inventoryCountCache.clear();
 }
-var import_express2, import_path24, import_url18, import_qrcode, router2, __filename17, __dirname17, DB_PATH7, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
+var import_express2, import_path24, import_url18, import_qrcode2, router2, __filename17, __dirname17, DB_PATH7, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
 var init_inventory = __esm({
   "src/routes/inventory.ts"() {
     "use strict";
@@ -35936,7 +36667,7 @@ var init_inventory = __esm({
     init_auditLoggerService();
     import_path24 = __toESM(require("path"), 1);
     import_url18 = require("url");
-    import_qrcode = __toESM(require("qrcode"), 1);
+    import_qrcode2 = __toESM(require("qrcode"), 1);
     router2 = import_express2.default.Router();
     __filename17 = (0, import_url18.fileURLToPath)(import_meta_url);
     __dirname17 = import_path24.default.dirname(__filename17);
@@ -36703,7 +37434,7 @@ var init_inventory = __esm({
           exp: item.expiry_date,
           mrp: item.mrp
         });
-        const qrImage = await import_qrcode.default.toDataURL(qrData, { width: 150, margin: 1 });
+        const qrImage = await import_qrcode2.default.toDataURL(qrData, { width: 150, margin: 1 });
         res.json({
           success: true,
           qrCodeUrl: qrImage,
@@ -42563,7 +43294,7 @@ async function generateInvoiceBarcodeData(invoiceNo, dateStr) {
   const cleanInvoiceNo = invoiceNo.trim();
   const cleanDate = dateStr ? dateStr.split("T")[0] : (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
   const barcodeText = `${cleanInvoiceNo}|${cleanDate}`;
-  const qrBuffer = await import_qrcode2.default.toBuffer(barcodeText, { width: 160, margin: 1 });
+  const qrBuffer = await import_qrcode3.default.toBuffer(barcodeText, { width: 160, margin: 1 });
   const qrDataUrl = `data:image/png;base64,${qrBuffer.toString("base64")}`;
   const canvas = (0, import_canvas.createCanvas)(320, 90);
   (0, import_jsbarcode.default)(canvas, cleanInvoiceNo, {
@@ -42590,7 +43321,7 @@ async function generateProductBarcodeData(name, batch) {
   const cleanName = (name || "Unknown").trim();
   const cleanBatch = (batch || "N/A").trim();
   const codeText = `${cleanName}|${cleanBatch}`;
-  const qrBuffer = await import_qrcode2.default.toBuffer(codeText, { width: 160, margin: 1 });
+  const qrBuffer = await import_qrcode3.default.toBuffer(codeText, { width: 160, margin: 1 });
   const canvas = (0, import_canvas.createCanvas)(360, 70);
   (0, import_jsbarcode.default)(canvas, codeText, {
     format: "CODE128",
@@ -42604,13 +43335,13 @@ async function generateProductBarcodeData(name, batch) {
   const code128Buffer = canvas.toBuffer("image/png");
   return { qrText: codeText, code128Text: codeText, qrBuffer, code128Buffer };
 }
-var import_jsbarcode, import_canvas, import_qrcode2;
+var import_jsbarcode, import_canvas, import_qrcode3;
 var init_barcodeService = __esm({
   "src/services/barcodeService.ts"() {
     "use strict";
     import_jsbarcode = __toESM(require("jsbarcode"), 1);
     import_canvas = require("canvas");
-    import_qrcode2 = __toESM(require("qrcode"), 1);
+    import_qrcode3 = __toESM(require("qrcode"), 1);
   }
 });
 
@@ -51770,7 +52501,7 @@ var utilities_exports = {};
 __export(utilities_exports, {
   default: () => utilities_default
 });
-var import_express8, import_path38, import_url30, import_fs35, import_pdfkit4, import_qrcode3, import_better_sqlite34, import_adm_zip3, __filename28, __dirname28, getDbPath4, router8, utilities_default;
+var import_express8, import_path38, import_url30, import_fs35, import_pdfkit4, import_qrcode4, import_better_sqlite34, import_adm_zip3, __filename28, __dirname28, getDbPath4, router8, utilities_default;
 var init_utilities = __esm({
   "src/routes/utilities.ts"() {
     "use strict";
@@ -51781,7 +52512,7 @@ var init_utilities = __esm({
     init_config();
     import_fs35 = __toESM(require("fs"), 1);
     import_pdfkit4 = __toESM(require("pdfkit"), 1);
-    import_qrcode3 = __toESM(require("qrcode"), 1);
+    import_qrcode4 = __toESM(require("qrcode"), 1);
     init_barcodeService();
     init_backupService();
     init_backupRecoveryService();
@@ -51910,7 +52641,7 @@ var init_utilities = __esm({
         const pdfPath = import_path38.default.join(uploadsDir, `barcode_${code}_${Date.now()}.pdf`);
         const stream = import_fs35.default.createWriteStream(pdfPath);
         doc.pipe(stream);
-        const qrBuffer = await import_qrcode3.default.toBuffer(code, { width: 200, margin: 1 });
+        const qrBuffer = await import_qrcode4.default.toBuffer(code, { width: 200, margin: 1 });
         doc.fontSize(20).text("Invoice / Bill Barcode Label", { align: "center", underline: true });
         doc.moveDown();
         doc.fontSize(14).text(`Bill Reference: ${code}`, { align: "center" });
@@ -54707,163 +55438,6 @@ var init_triggerSchedulerService = __esm({
   }
 });
 
-// src/services/paymentQrService.ts
-var DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
-var init_paymentQrService = __esm({
-  "src/services/paymentQrService.ts"() {
-    "use strict";
-    init_connection();
-    DEFAULT_QR_CONFIGS = [
-      {
-        id: "QR_1",
-        label: "Pharmacy Counter UPI (QR 1)",
-        payee_name: "AI Pharmacy Counter 1",
-        upi_id: "aipharmacy1@upi",
-        qr_image_url: "",
-        is_active: true
-      },
-      {
-        id: "QR_2",
-        label: "Pharmacy Merchant UPI (QR 2)",
-        payee_name: "AI Pharmacy Merchant",
-        upi_id: "aipharmacy2@upi",
-        qr_image_url: "",
-        is_active: true
-      },
-      {
-        id: "QR_3",
-        label: "Pharmacy Direct UPI (QR 3)",
-        payee_name: "AI Pharmacy Store 3",
-        upi_id: "aipharmacy3@upi",
-        qr_image_url: "",
-        is_active: true
-      }
-    ];
-    PaymentQrService = class {
-      /**
-       * Load the 3 QR configurations from app_settings with fallback defaults
-       */
-      async getQrConfigs() {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          "SELECT key, value FROM app_settings WHERE key LIKE 'payment_qr_%'"
-        ).catch(() => []);
-        const settingsMap = /* @__PURE__ */ new Map();
-        for (const r of rows) {
-          settingsMap.set(r.key, r.value);
-        }
-        const configs = [];
-        const qrIds = ["QR_1", "QR_2", "QR_3"];
-        for (const id of qrIds) {
-          const lower = id.toLowerCase();
-          const defaultConf = DEFAULT_QR_CONFIGS.find((d) => d.id === id);
-          configs.push({
-            id,
-            label: settingsMap.get(`payment_${lower}_label`) || defaultConf.label,
-            payee_name: settingsMap.get(`payment_${lower}_payee_name`) || defaultConf.payee_name,
-            upi_id: settingsMap.get(`payment_${lower}_upi_id`) || defaultConf.upi_id,
-            qr_image_url: settingsMap.get(`payment_${lower}_image_url`) || defaultConf.qr_image_url || "",
-            is_active: settingsMap.get(`payment_${lower}_active`) !== "false"
-          });
-        }
-        return configs;
-      }
-      /**
-       * Save QR configurations
-       */
-      async saveQrConfigs(configs) {
-        const db2 = await dbManager.getConnection();
-        for (const conf of configs) {
-          const lower = conf.id.toLowerCase();
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_label`, conf.label]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_payee_name`, conf.payee_name]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_upi_id`, conf.upi_id]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_image_url`, conf.qr_image_url || ""]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_active`, conf.is_active ? "true" : "false"]
-          );
-        }
-      }
-      /**
-       * Allocate the next alternating QR code for a new order.
-       * Rule (§13): selected_qr != previous_order_qr
-       */
-      async allocateNextQr() {
-        const db2 = await dbManager.getConnection();
-        const configs = await this.getQrConfigs();
-        const activeConfigs = configs.filter((c) => c.is_active && c.upi_id);
-        if (activeConfigs.length === 0) {
-          return DEFAULT_QR_CONFIGS[0];
-        }
-        if (activeConfigs.length === 1) {
-          return activeConfigs[0];
-        }
-        const lastRow = await db2.get(
-          "SELECT value FROM app_settings WHERE key = 'last_selected_payment_qr'"
-        ).catch(() => null);
-        const lastQrId = lastRow?.value || "";
-        const eligibleConfigs = activeConfigs.filter((c) => c.id !== lastQrId);
-        const pool = eligibleConfigs.length > 0 ? eligibleConfigs : activeConfigs;
-        const selected = pool[Math.floor(Math.random() * pool.length)];
-        await db2.run(
-          "INSERT INTO app_settings (key, value) VALUES ('last_selected_payment_qr', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-          [selected.id]
-        ).catch(() => {
-        });
-        return selected;
-      }
-      /**
-       * Generate standard UPI payment URI
-       */
-      buildUpiUri(upiId, payeeName, amount, orderId) {
-        const cleanAmount = Number(amount || 0).toFixed(2);
-        const encodedName = encodeURIComponent(payeeName || "AI Pharmacy");
-        const note = encodeURIComponent(`Order #${orderId}`);
-        return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
-      }
-      /**
-       * Fetch QR details locked to a specific order
-       */
-      async getOrderQrDetails(orderId) {
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get(
-          "SELECT id, payment_qr_id, total_amount, advance_payment, payment_status FROM special_orders WHERE id = ?",
-          [orderId]
-        );
-        if (!order) return null;
-        const configs = await this.getQrConfigs();
-        const assignedId = order.payment_qr_id || "QR_1";
-        const config2 = configs.find((c) => c.id === assignedId) || configs[0] || DEFAULT_QR_CONFIGS[0];
-        const amount = Number(order.total_amount || order.advance_payment || 0);
-        return {
-          qr_id: config2.id,
-          label: config2.label,
-          payee_name: config2.payee_name,
-          upi_id: config2.upi_id,
-          upi_uri: this.buildUpiUri(config2.upi_id, config2.payee_name, amount, order.id),
-          qr_image_url: config2.qr_image_url || "",
-          amount,
-          payment_status: order.payment_status || "UNPAID"
-        };
-      }
-    };
-    paymentQrService = new PaymentQrService();
-  }
-});
-
 // src/routes/settings.ts
 var settings_exports = {};
 __export(settings_exports, {
@@ -57036,13 +57610,13 @@ function findChromePath3() {
   }
   return null;
 }
-var import_express16, import_qrcode4, import_fs40, import_path44, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
+var import_express16, import_qrcode5, import_fs40, import_path44, router16, phoneCapabilityCache, PHONE_CACHE_TTL_MS, messaging_default;
 var init_messaging = __esm({
   "src/routes/messaging.ts"() {
     "use strict";
     import_express16 = __toESM(require("express"), 1);
     init_whatsappClient();
-    import_qrcode4 = __toESM(require("qrcode"), 1);
+    import_qrcode5 = __toESM(require("qrcode"), 1);
     init_connection();
     init_whatsappQueueWorker();
     import_fs40 = __toESM(require("fs"), 1);
@@ -57098,7 +57672,7 @@ var init_messaging = __esm({
           });
         }
         if (currentQr) {
-          const qrUrl = await import_qrcode4.default.toDataURL(currentQr);
+          const qrUrl = await import_qrcode5.default.toDataURL(currentQr);
           return res.json({ isReady: false, qrUrl, initializing: false, status: "SCAN_QR" });
         }
         const isAutoAllowed = await isWhatsAppAutoConnectAllowed();
@@ -82077,14 +82651,14 @@ async function checkDeviceConnections() {
     console.error("Error during periodic device monitoring:", err);
   }
 }
-var import_express53, import_qrcode5, import_os3, router53, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
+var import_express53, import_qrcode6, import_os3, router53, deviceOnlineStateCache, blockedNoticeAt, deviceUuidColumnReady, notifications_default;
 var init_notifications2 = __esm({
   "src/routes/notifications.ts"() {
     "use strict";
     import_express53 = __toESM(require("express"), 1);
     init_eventService();
     init_connection();
-    import_qrcode5 = __toESM(require("qrcode"), 1);
+    import_qrcode6 = __toESM(require("qrcode"), 1);
     import_os3 = __toESM(require("os"), 1);
     init_config();
     router53 = import_express53.default.Router();
@@ -82108,7 +82682,7 @@ var init_notifications2 = __esm({
           serverUrls.push(`http://localhost:${port}`);
         }
         const qrData = JSON.stringify({ serverUrls });
-        const qrCodeUrl = await import_qrcode5.default.toDataURL(qrData, { width: 250, margin: 1 });
+        const qrCodeUrl = await import_qrcode6.default.toDataURL(qrData, { width: 250, margin: 1 });
         res.json({
           success: true,
           ips,

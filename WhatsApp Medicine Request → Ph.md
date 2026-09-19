@@ -137,14 +137,23 @@ MEDICINE + CUSTOMER REQUESTED QUANTITY ADDED TO EXISTING LIVE CART
 CUSTOMER RECEIVES FINAL CONFIRMATION
 
 ==================================================
-3. FIRST CUSTOMER MESSAGE
+3. FIRST CUSTOMER MESSAGE & NAME ONBOARDING
 ==================================================
 
 Use the EXISTING WhatsApp message/reply mechanism.
 
-When a new customer sends "Hi" or another initial message, the bot should respond with:
+Case A — Unsaved / Unknown Customer sends "Hi" or initial greeting:
+The bot welcomes them and asks for their name before starting:
 
 "👋 Hello! Welcome to [Pharmacy Name].
+
+Before we begin, *may I please know your name?*"
+
+Customer replies with their name (e.g. "Rahul Sharma"):
+1. The app sanitizes, capitalizes, and saves the customer in the `customers` database and local chat cache.
+2. The bot replies with personal welcome + 6-step workflow:
+
+"🙏 Namaste *Rahul Sharma* ji! Welcome to [Pharmacy Name].
 
 I can help you place a medicine request through WhatsApp.
 
@@ -160,7 +169,29 @@ After payment verification, your medicine will be added to your Live Cart.
 
 Please enter the medicine name you need."
 
-Do not create a new WhatsApp messaging system.
+Case B — Known Customer (name already in DB) sends "Hi":
+The bot directly greets them by name without asking again:
+
+"👋 Hello *[Customer Name]*! Welcome back to [Pharmacy Name].
+
+I can help you place a medicine request through WhatsApp.
+
+How it works:
+1️⃣ Send the medicine name
+2️⃣ Confirm the medicine
+3️⃣ Enter the quantity
+4️⃣ Confirm your request
+5️⃣ Pay the ₹50 booking amount
+6️⃣ Send the payment screenshot
+
+After payment verification, your medicine will be added to your Live Cart.
+
+Please enter the medicine name you need."
+
+Case C — Unsaved Customer direct-orders a medicine without greeting:
+Medicine search, selection, and quantity proceed seamlessly. At step 4 (Order Confirmation), the bot prompts for their name before creating the Special Order and forwarding to the owner:
+"Before we confirm your request for *[Medicine]* × [Qty], *may I please know your name?*"
+Once provided, the Special Order, owner notification, payment screenshot forwarding, and Live Cart staged message all reflect their real name.
 
 ==================================================
 4. MEDICINE SEARCH
@@ -216,9 +247,11 @@ Customer should see one logical medicine option:
 The underlying Pharmarack references must remain available internally.
 
 Maximum customer-facing options:
-5.
+15 per page.
 
-If more than 5 relevant results exist, use the existing search/matching behavior to rank the closest matches and show the top 5 only.
+If more than 15 relevant results exist, the bot presents the first 15 options followed by:
+"👉 Reply *MORE* to see more options."
+Replying "MORE" displays the next batch of 15 options, allowing customers to easily select higher numbers (e.g. 16 to 30) or any number on the list.
 
 ==================================================
 5. MEDICINE CONFIRMATION

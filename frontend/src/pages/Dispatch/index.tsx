@@ -47,6 +47,7 @@ import {
 import { broadcastContactDataChanged } from '../../utils/settingsSync';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { sanitizePhoneInput } from '../../utils/phone';
+import { isOnlineOrder } from '../../utils/onlineOrders';
 import { toDateInputValue } from '../../utils/date';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { DispatchWhatsAppProgressCard } from '../../components/DispatchWhatsAppProgressCard';
@@ -288,9 +289,7 @@ const Dispatch = () => {
       const ordersArr = Array.isArray(ordersData) ? ordersData : [];
       const rawBoys = Array.isArray(boysData) ? boysData : [];
       const activeBoysArr = rawBoys.filter((b: DeliveryBoy) => b.is_active);
-      const webOrders = (Array.isArray(specialOrdersData) ? specialOrdersData : []).filter(
-        (o: any) => o.customer_order_source === 'website' || o.source === 'website' || o.prescription_url
-      );
+      const webOrders = (Array.isArray(specialOrdersData) ? specialOrdersData : []).filter(isOnlineOrder);
 
       setDispatchOrdersCache(ordersArr);
       setDispatchDeliveryBoysCache(activeBoysArr as CachedDeliveryBoy[]);

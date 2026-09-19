@@ -454,6 +454,98 @@ class AICameraService {
     }
   }
 
+  private async getGeminiKey(): Promise<string | null> {
+    let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!key || key.trim() === '') {
+      try {
+        const db = await dbManager.getConnection();
+        const row = await db.get<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_api_key'");
+        if (row?.value) {
+          key = row.value.trim();
+        }
+      } catch (_) {}
+    }
+    return key && key.trim().length > 10 ? key.trim() : null;
+  }
+
+  private async extractWithGeminiVision(buffer: Buffer, apiKey: string): Promise<any | null> {
+    try {
+      const base64Data = buffer.toString('base64');
+      const prompt = `You are an expert Indian Pharmacy and Medical Vision AI.
+Analyze this packaging/strip/bottle/container image of a pharmaceutical, medicinal, or health/maternal nutrition product.
+
+Extract the following details accurately:
+- brandName: The primary trade/brand name of the product (e.g. "PRO-PL", "Dolo 650", "Augmentin 625", "Shelcal 500").
+- flavour: Specific flavour if mentioned (e.g. "Chocolate", "Vanilla", "Cardamom", "Orange").
+- genericName: The salt, active ingredients, or scientific composition (e.g. "Protein with DHA for Pregnancy & Lactation", "Paracetamol", "Amoxicillin and Potassium Clavulanate").
+- dosageForm: Form of the product (e.g. "Powder", "Tablet", "Capsule", "Syrup", "Gel").
+- strength: Strength or weight (e.g. "200g", "400g", "650mg", "500mg").
+- packaging: Container or pack info (e.g. "200 GM", "400 GM", "Strip of 15 Tablets", "Bottle").
+- manufacturer: Manufacturing or marketing pharmaceutical company (e.g. "British Biologicals", "Micro Labs", "Cipla").
+- mrp: Maximum retail price as a number if visible.
+- allReadableText: All text legible on the container.
+
+Return ONLY a valid JSON object matching these keys with no markdown codeblocks or quotes:
+{
+  "brandName": "PRO-PL",
+  "flavour": "Chocolate",
+  "genericName": "Protein for Pregnancy & Lactation",
+  "dosageForm": "Powder",
+  "strength": "200g",
+  "packaging": "200 GM",
+  "manufacturer": "British Biologicals",
+  "mrp": null,
+  "allReadableText": "..."
+}`;
+
+      const modelName = 'gemini-2.0-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inline_data: {
+                    mime_type: 'image/jpeg',
+                    data: base64Data
+                  }
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            response_mime_type: 'application/json'
+          }
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        console.warn(`[AiCamera] Gemini Vision responded with HTTP ${res.status}`);
+        return null;
+      }
+
+      const json: any = await res.json();
+      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) return null;
+      const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch (err: any) {
+      console.warn('[AiCamera] Gemini Vision extraction bypassed (offline fallback will run):', err?.message || err);
+      return null;
+    }
+  }
+
   async processImage(imageData: string | Buffer, skipEnrichment: boolean = false): Promise<any> {
     let buffer: Buffer;
     if (typeof imageData === 'string') {
@@ -472,28 +564,61 @@ class AICameraService {
 
     let localOcrResult: OCRResult = { text: '', confidence: 0, words: [] };
     let fallbackUsed = false;
+    let geminiVisionData: any = null;
 
-    const isONNXAvailable = await onnxOcrService.checkAvailability();
-    if (isONNXAvailable) {
+    // 0. High-Precision Gemini 2.0 Flash Vision (if key configured)
+    const geminiKey = await this.getGeminiKey();
+    if (geminiKey) {
       try {
-        const ocrResult = await onnxOcrService.scanImage(processedBuffer);
-        if (ocrResult && ocrResult.success && ocrResult.text && ocrResult.text.trim().length > 0) {
+        console.log('[AiCamera] Attempting high-precision Gemini 2.0 Flash Vision extraction...');
+        geminiVisionData = await this.extractWithGeminiVision(buffer, geminiKey);
+        if (geminiVisionData?.brandName) {
+          const readableText = [
+            geminiVisionData.brandName,
+            geminiVisionData.flavour,
+            geminiVisionData.genericName,
+            geminiVisionData.manufacturer,
+            geminiVisionData.dosageForm,
+            geminiVisionData.packaging,
+            geminiVisionData.allReadableText
+          ].filter(Boolean).join('\n');
+
           localOcrResult = {
-            text: ocrResult.text || '',
-            confidence: ocrResult.confidence || 0,
-            words: ocrResult.words || []
+            text: readableText,
+            confidence: 95,
+            words: []
           };
           fallbackUsed = false;
-        } else {
-          console.warn('ONNX OCR returned empty or failed result:', ocrResult?.error);
+          console.log(`[AiCamera] Gemini Vision successfully extracted: "${geminiVisionData.brandName}" (${geminiVisionData.flavour ? 'Flavour: ' + geminiVisionData.flavour + ', ' : ''}${geminiVisionData.manufacturer || ''})`);
+        }
+      } catch (geminiErr: any) {
+        console.warn('[AiCamera] Gemini Vision call failed, falling back to local OCR:', geminiErr?.message || geminiErr);
+      }
+    }
+
+    if (!geminiVisionData?.brandName) {
+      const isONNXAvailable = await onnxOcrService.checkAvailability();
+      if (isONNXAvailable) {
+        try {
+          const ocrResult = await onnxOcrService.scanImage(processedBuffer);
+          if (ocrResult && ocrResult.success && ocrResult.text && ocrResult.text.trim().length > 0) {
+            localOcrResult = {
+              text: ocrResult.text || '',
+              confidence: ocrResult.confidence || 0,
+              words: ocrResult.words || []
+            };
+            fallbackUsed = false;
+          } else {
+            console.warn('ONNX OCR returned empty or failed result:', ocrResult?.error);
+            fallbackUsed = true;
+          }
+        } catch (err) {
+          console.error('Error executing ONNX OCR:', err);
           fallbackUsed = true;
         }
-      } catch (err) {
-        console.error('Error executing ONNX OCR:', err);
+      } else {
         fallbackUsed = true;
       }
-    } else {
-      fallbackUsed = true;
     }
 
     if (fallbackUsed) {
@@ -574,7 +699,30 @@ class AICameraService {
       let bestLineMatches: string[] = [];
       let bestLineScore = 0;
 
+      // Prioritize Gemini Vision candidates (brand + flavour / brand name) if available
+      if (geminiVisionData?.brandName) {
+        const geminiQueries = [
+          geminiVisionData.flavour ? `${geminiVisionData.brandName} ${geminiVisionData.flavour}` : null,
+          geminiVisionData.brandName,
+          geminiVisionData.dosageForm ? `${geminiVisionData.brandName} ${geminiVisionData.dosageForm}` : null
+        ].filter(Boolean) as string[];
+
+        for (const gQuery of geminiQueries) {
+          const gFilter = await productNameFilterService.filterProductNames(gQuery, {
+            minConfidenceThreshold: 0.65,
+            dosageForm: geminiVisionData.dosageForm || detectedDosageForm || undefined,
+            rawOcrText: localOcrResult.text
+          });
+          if (gFilter.matches.length > 0 && (gFilter.topScore ?? 0) > bestLineScore) {
+            bestLineScore = gFilter.topScore ?? 0;
+            bestLineMatches = gFilter.matches;
+            if (bestLineScore >= 0.80) break;
+          }
+        }
+      }
+
       for (const item of candidateLines) {
+        if (bestLineScore >= 0.85) break;
         const cleanedLine = item.tokens.join(' ');
         // Try the full cleaned line first (best for multi-word names)
         const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
@@ -759,6 +907,24 @@ class AICameraService {
     finalInfo.brandName = rawName;
     // potentialName MUST BE THE UNIQUE BRAND NAME for Pharmarack and Inventory search!
     finalInfo.potentialName = rawName;
+
+    if (geminiVisionData) {
+      finalInfo.cloudDetails = geminiVisionData;
+      if (geminiVisionData.flavour) finalInfo.flavour = geminiVisionData.flavour;
+      if (geminiVisionData.genericName) {
+        finalInfo.genericName = geminiVisionData.genericName;
+        finalInfo.composition = geminiVisionData.genericName;
+        finalInfo.apiName = geminiVisionData.genericName;
+      }
+      if (geminiVisionData.manufacturer && !finalInfo.manufacturer) {
+        finalInfo.manufacturer = geminiVisionData.manufacturer;
+        finalInfo.companyDetected = geminiVisionData.manufacturer;
+      }
+      if (geminiVisionData.dosageForm && !finalInfo.dosageForm) finalInfo.dosageForm = geminiVisionData.dosageForm;
+      if (geminiVisionData.strength && !finalInfo.strength) finalInfo.strength = geminiVisionData.strength;
+      if (geminiVisionData.packaging && !finalInfo.packaging) finalInfo.packaging = geminiVisionData.packaging;
+      if (geminiVisionData.mrp && !finalInfo.mrp) finalInfo.mrp = geminiVisionData.mrp;
+    }
 
     if (detectedDrugStrength.strength) {
       finalInfo.strength = detectedDrugStrength.strength;

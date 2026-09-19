@@ -85,6 +85,8 @@ import { useApiQuery } from '../hooks/useApiQuery';
 import { pageImports } from '../lib/pageImports';
 import { useFetchMode } from '../hooks/useFetchMode';
 import { useGlobalSseInvalidation } from '../hooks/useGlobalSseInvalidation';
+import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
+import { isOnlineOrder } from '../utils/onlineOrders';
 
 export interface AppNotification {
   id: number | string;
@@ -289,7 +291,7 @@ const Sidebar = memo(({
     { path: '/ai-engineering', label: 'Pharma Intelligence', icon: <BrainCircuit size={18} /> },
     { path: '/learning', label: 'AI Learning', icon: <Brain size={18} /> },
     { path: '/dispatch', label: 'Dispatch', icon: <Truck size={18} /> },
-    { path: '/website-orders', label: 'Website Orders', icon: <Globe size={18} /> },
+    { path: '/website-orders', label: 'Online Orders', icon: <Globe size={18} /> },
     { path: '/online-catalog', label: 'Online Store Catalog', icon: <StoreIcon size={18} /> },
     { path: '/live-cart', label: 'Pharmacy Live Cart', icon: <ShoppingCart size={18} /> },
     { path: '/portal', label: 'Customer Portal', icon: <Globe size={18} /> },
@@ -1582,7 +1584,8 @@ const Topbar = memo(({
             if ((item.status === 'failed_perm' || (item.status === 'failed_offline' && item.retry_count >= 3)) && isRecent && !notifiedFailedQueueIdsRef.current.has(item.id)) {
               notifiedFailedQueueIdsRef.current.add(item.id);
               const target = item.target_name || (item.number ? `+${item.number}` : 'Recipient');
-              toastEvent.trigger(`❌ WhatsApp message to ${target} failed: ${item.error_message || 'Permanent send failure'}`, 'error');
+              const failureReason = getFormattedFailureReason(item.error_message, item.status);
+              toastEvent.trigger(`❌ WhatsApp message to ${target} failed: ${failureReason}`, 'error');
             }
           });
         }
@@ -3031,12 +3034,8 @@ const QuickAssistSidebar = memo(({
     }
   };
 
-  // Distinguish Online Website Orders from Local In-Store Special Requests
-  const isWebsiteOrder = (o: SpecialOrder) => {
-    const src = (o as any).customer_order_source || '';
-    const notes = o.notes || '';
-    return src === 'website' || src === 'website_refill' || notes.startsWith('[Website Order]') || notes.startsWith('[Refill Collection');
-  };
+  // Distinguish Online Orders (website + WhatsApp) from Local In-Store Special Requests
+  const isWebsiteOrder = isOnlineOrder;
 
   // Group active special orders by requester
   const activeSpecialOrders = useMemo(() => {
@@ -3086,7 +3085,7 @@ const QuickAssistSidebar = memo(({
         const addrMatch = notes.match(/Delivery Address:\s*([^.]+)/i) || notes.match(/Address:\s*([^.]+)/i);
         existing = {
           key,
-          requester: order.requester || 'Website Customer',
+          requester: order.requester || ((order as any).customer_order_source === 'whatsapp' ? 'WhatsApp Customer' : 'Website Customer'),
           phone: order.phone || '',
           overallStatus: order.status || 'Pending',
           deliveryMode: isDeliv ? 'Home Delivery' : 'In-Store Pickup',
@@ -3265,11 +3264,11 @@ const QuickAssistSidebar = memo(({
             </div>
           )}
 
-          {/* 2. Online Website Orders (Cyan) */}
+          {/* 2. Online Orders — website + WhatsApp (Cyan) */}
           {activeWebsiteOrdersCount > 0 && (
             <div
               className="flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30 shadow-sm animate-pulse"
-              title={`Online Website Orders: ${activeWebsiteOrdersCount} customer(s)`}
+              title={`Online Orders: ${activeWebsiteOrdersCount} customer(s)`}
             >
               {activeWebsiteOrdersCount}
             </div>
@@ -3578,22 +3577,22 @@ const QuickAssistSidebar = memo(({
           )}
         </div>
 
-        {/* Online Website Orders */}
+        {/* Online Orders — website + WhatsApp */}
         <div>
           <div className="flex items-center justify-between mb-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
             <div className="flex items-center gap-1.5">
               <Globe size={14} className="text-cyan-400" />
-              <span>Online Website Orders ({groupedWebsiteOrders.length})</span>
+              <span>Online Orders ({groupedWebsiteOrders.length})</span>
             </div>
             <button
               onClick={() => navigate('/website-orders')}
               className="text-[9px] font-black text-cyan-300 hover:underline uppercase tracking-widest cursor-pointer"
             >
-              Website Orders
+              Online Orders
             </button>
           </div>
           {groupedWebsiteOrders.length === 0 ? (
-            <p className="text-xs text-muted/60 italic pl-2 py-1">No pending website orders</p>
+            <p className="text-xs text-muted/60 italic pl-2 py-1">No pending online orders</p>
           ) : (
             <div className="flex flex-col gap-2.5">
               {groupedWebsiteOrders.map(group => {

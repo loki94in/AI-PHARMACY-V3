@@ -45,6 +45,7 @@ data/search-cache.json
 uploads/
 **/uploads/
 uploads/temp/
+data/inbound_media/
 
 # ─── Build Outputs & Cache ───────────────────────────────────────────────────
 dist/

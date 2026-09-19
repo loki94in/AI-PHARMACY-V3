@@ -29,12 +29,15 @@ const skipBuild  = args.includes('--skip-build');
 const bumpMajor  = args.includes('--major');
 const bumpMinor  = args.includes('--minor');
 
+// Check for remote publish (owner preference 2026-09-18: local by default unless BOTH "git" and "vercel" are specified)
+const isRemote   = (args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
+
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
 const vercelServer = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
 const adminSecret  = process.env.ADMIN_SECRET;
-if (!adminSecret) {
+if ((isPromote || isRemote) && !adminSecret) {
   console.error('\n❌ STOP RELEASE: Missing required ADMIN_SECRET environment variable.');
-  console.error('   Please set ADMIN_SECRET in your environment before running release.');
+  console.error('   Please set ADMIN_SECRET in your environment before running remote release.');
   process.exit(1);
 }
 const ghRepo       = 'loki94in/AI-PHARMACY-V3';
@@ -119,24 +122,32 @@ if (isPromote) {
 // NORMAL RELEASE FLOW
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Auto-bump version (patch by default) ────────────────────────────────────
-const [major, minor, patch] = (pkg.version || '0.1.0').split('.').map(Number);
-let newVersion;
-if (bumpMajor)      newVersion = `${major + 1}.0.0`;
-else if (bumpMinor) newVersion = `${major}.${minor + 1}.0`;
-else                newVersion = `${major}.${minor}.${patch + 1}`;
+let version;
+if (isRemote) {
+  // ── Auto-bump version (patch by default) ────────────────────────────────────
+  const [major, minor, patch] = (pkg.version || '0.1.0').split('.').map(Number);
+  let newVersion;
+  if (bumpMajor)      newVersion = `${major + 1}.0.0`;
+  else if (bumpMinor) newVersion = `${major}.${minor + 1}.0`;
+  else                newVersion = `${major}.${minor}.${patch + 1}`;
 
-pkg.version = newVersion;
-fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-console.log(`\n📝 Version bumped: ${major}.${minor}.${patch} → ${newVersion}`);
+  pkg.version = newVersion;
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  console.log(`\n📝 Version bumped: ${major}.${minor}.${patch} → ${newVersion}`);
+  version = newVersion;
+} else {
+  version = pkg.version || '0.1.0';
+  console.log(`\n📦 Local Release Mode (Owner preference: skipping version bump & remote publish)`);
+  console.log(`📌 Using current version: v${version}`);
+}
 
-const version   = newVersion;
 const tagName   = `v${version}`;
 const rollout   = isPilot ? 'PILOT' : 'ALL';
 
 console.log('\n=============================================================');
-console.log(`🚀  AI Pharmacy OS — Release Publisher (${tagName})`);
+console.log(`🚀  AI Pharmacy OS — Release ${isRemote ? 'Publisher' : 'Builder'} (${tagName})`);
 console.log(`🎯  Rollout Target: ${isPilot ? 'PILOT ONLY (Only test/pilot licensed PCs)' : 'ALL (Production — all customers)'}`);
+console.log(`🌐  Mode: ${isRemote ? 'REMOTE (GitHub + Vercel)' : 'LOCAL ONLY (Installer & Update Package)'}`);
 console.log('=============================================================\n');
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -187,6 +198,21 @@ if (!fs.existsSync(updateZipPath)) {
 }
 console.log(`✓ Update ZIP: ${expectedZipName}`);
 console.log(`✓ SHA-256: ${sha256}`);
+
+// ── Local Mode Exit ──────────────────────────────────────────────────────────
+if (!isRemote) {
+  console.log('\n=============================================================');
+  console.log('🎉  LOCAL RELEASE BUILD COMPLETED & VERIFIED!');
+  console.log(`    Version  : ${version}`);
+  console.log(`    Rollout  : ${rollout}`);
+  console.log(`    Installer: ${installerExe}`);
+  console.log(`    Update   : ${updateZipPath}`);
+  console.log(`    SHA-256  : ${sha256}`);
+  console.log('\n💡  To publish to GitHub & Vercel, include both "git" and "vercel":');
+  console.log('    npm release git vercel');
+  console.log('=============================================================\n');
+  process.exit(0);
+}
 
 // ── Step 4: Upload to GitHub Releases ───────────────────────────────────────
 console.log('\n📤 Step 4: Uploading assets to GitHub Releases...');

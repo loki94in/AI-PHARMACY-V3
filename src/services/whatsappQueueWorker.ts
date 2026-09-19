@@ -1154,12 +1154,19 @@ class WhatsAppQueueWorker {
                                        errMsg.includes('Execution context was destroyed') ||
                                        errMsg.includes('Session closed') ||
                                        errMsg.includes('Target closed') ||
-                                       errMsg.includes('could not be sent');
-              // SPEC SECTION 13: Temporary availability failure must remain recoverable.
+                                       errMsg.includes('could not be sent') ||
+                                       errMsg.includes('Data passed to getter') ||
+                                       errMsg.includes("it's how we memoize") ||
+                                       errMsg.includes('contact sync');
+              const isStoreDesync = errMsg.includes('Data passed to getter') || errMsg.includes("it's how we memoize") || errMsg.includes('contact sync');
+              // SPEC SECTION 13 & Human-in-the-loop: Temporary availability failure must remain recoverable.
               // Do NOT permanently fail a scheduled distributor reminder after 3 temporary connection errors.
+              // If store desync persists, hold in 'review_required' for human review rather than dropping permanently.
               const newStatus = (isDistributorReminder && isTemporaryError) 
                 ? 'failed_offline' 
-                : (newRetryCount >= 3 ? 'failed_perm' : 'failed_offline');
+                : (isStoreDesync && newRetryCount >= 3)
+                  ? 'review_required'
+                  : (newRetryCount >= 3 ? 'failed_perm' : 'failed_offline');
 
               console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? ' [retryable availability]' : '/3'}): ${errMsg}`);
               await db.run(
@@ -1188,7 +1195,7 @@ class WhatsAppQueueWorker {
               } catch (_) {}
 
               // Log failure notification into automation_notifications if permanently failed
-              if (newStatus === 'failed_perm') {
+              if (newStatus === 'failed_perm' || newStatus === 'review_required') {
                 try {
                   await db.run(
                     `INSERT INTO automation_notifications 
@@ -1200,9 +1207,12 @@ class WhatsAppQueueWorker {
 
                 // Broadcast toast alert to frontend toaster popup
                 const targetDesc = item.target_name ? `${item.target_name} (${item.number})` : item.number;
-                const cleanReason = errMsg.includes('No LID for user')
-                  ? 'Number not registered on WhatsApp'
-                  : errMsg;
+                let cleanReason = errMsg;
+                if (errMsg.includes('No LID for user')) {
+                  cleanReason = 'Number not registered on WhatsApp';
+                } else if (errMsg.includes('Data passed to getter') || errMsg.includes("it's how we memoize") || errMsg.includes('contact sync')) {
+                  cleanReason = 'WhatsApp Web contact sync delay (held for review)';
+                }
                 eventService.broadcast('toast_alert', {
                   type: 'error',
                   message: `❌ WhatsApp to ${targetDesc} failed: ${cleanReason}`
