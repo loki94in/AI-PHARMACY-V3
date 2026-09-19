@@ -9,7 +9,7 @@ import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
 import { waAdminEscalationService } from './waAdminEscalationService.js';
-import { isItemInStock, resolveCommonOrFrequentDistributor, addItemsToPharmarackCart } from '../routes/pharmarack.js';
+import { isItemInStock, resolveCommonOrFrequentDistributor, rankSpecialOrderDistributorCandidates, addItemsToPharmarackCart } from '../routes/pharmarack.js';
 import { paymentQrService } from './paymentQrService.js';
 import { startupSyncCoordinator } from './startupSyncCoordinator.js';
 import { visualIndexService } from './visualIndexService.js';
@@ -1315,6 +1315,10 @@ async function proceedWithConfirmedProcurement(
   );
 
   if (inStockCandidates.length > 0) {
+    // Rank distributor options: Tier 1 Frequent/Cart mapped, Tier 2 Other mapped, Tier 3 Unmapped (up to 10 options)
+    const rankedOptions = await rankSpecialOrderDistributorCandidates(db, inStockCandidates, 10, 2);
+    const finalOptions = rankedOptions.length > 0 ? rankedOptions : inStockCandidates.slice(0, 10);
+
     // Notify owner with in-stock results
     await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
       specialOrderId,
@@ -1324,7 +1328,7 @@ async function proceedWithConfirmedProcurement(
       medicineName: medName,
       quantity: medQty,
       unit: medUnit,
-      pharmarackOptions: inStockCandidates.slice(0, 6)
+      pharmarackOptions: finalOptions
     });
 
     // Courtesy message to customer
@@ -1358,6 +1362,18 @@ async function checkIsOwnerPhone(phone: string, db: any): Promise<boolean> {
 
 async function handleOwnerInteractiveReply(phone: string, body: string, db: any): Promise<boolean> {
   const cleanBody = body.trim().toUpperCase();
+
+  // Normalize emoji digits 1️⃣ - 🔟 to plain numbers
+  let normalizedBody = cleanBody;
+  const emojiDigits: Record<string, string> = {
+    '1️⃣': '1', '2️⃣': '2', '3️⃣': '3', '4️⃣': '4', '5️⃣': '5',
+    '6️⃣': '6', '7️⃣': '7', '8️⃣': '8', '9️⃣': '9', '🔟': '10'
+  };
+  for (const [emoji, num] of Object.entries(emojiDigits)) {
+    if (normalizedBody.includes(emoji)) {
+      normalizedBody = normalizedBody.replaceAll(emoji, num);
+    }
+  }
 
   // 1. Check for owner payment verification. Accepts "CONFIRM SO-10452" and common variants:
   // "CONFIRM PAYMENT SO-10452", "PAYMENT CONFIRMED SO-10452", "CONFIRMED SO-10452".
@@ -1496,9 +1512,9 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     return true;
   }
 
-  // 2. Check for owner selecting distributor for special order: "SO-10452 2", "SO-10452-2", or single digit "1".."6"
-  const soSupplierMatch = cleanBody.match(/^(SO-\d+)(?:\s+|-)([1-6])$/i);
-  const singleDigitMatch = cleanBody.match(/^([1-6])$/);
+  // 2. Check for owner selecting distributor for special order: "SO-10452 2", "SO-10452-2", or digit 1..10
+  const soSupplierMatch = normalizedBody.match(/^(SO-\d+)(?:\s+|-)(10|[1-9])$/i);
+  const singleDigitMatch = normalizedBody.match(/^(10|[1-9])$/);
 
   let soCode: string | null = null;
   let chosenOptionIdx = -1;
@@ -1617,7 +1633,7 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
   }
 
   // 3. Backward compatibility for legacy REQ-XXX-X format
-  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-6])$/i);
+  const reqCodeMatch = normalizedBody.match(/^(REQ-\d+)-(10|[1-9])$/i);
 
   if (reqCodeMatch) {
     await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);

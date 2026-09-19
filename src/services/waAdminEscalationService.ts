@@ -852,7 +852,7 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
     );
 
     const formatNum = (n: number) => {
-      const symbols = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+      const symbols = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
       return symbols[n] || `${n + 1}️⃣`;
     };
 
@@ -860,7 +860,9 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
       const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? opt.mrp ?? 0;
       const rateStr = rate > 0 ? `₹${Number(rate).toFixed(2)}` : 'Available';
-      return `${formatNum(i)} ${dist} | Available | ${rateStr}`;
+      const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === '0' || String(opt.Ismapped) === '0';
+      const tag = isUnmapped ? ' [Unmapped]' : '';
+      return `${formatNum(i)} ${dist}${tag} | Available | ${rateStr}`;
     }).join('\n');
 
     const messageText =

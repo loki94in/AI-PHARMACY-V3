@@ -1045,6 +1045,168 @@ export async function resolveCommonOrFrequentDistributor(
 }
 
 /**
+ * Ranks in-stock distributor candidates for a confirmed Special Order into 3 tiers:
+ * Tier 1: Frequently purchased mapped distributors (prioritizing active cart and high purchase history)
+ * Tier 2: Other mapped distributors (in stock)
+ * Tier 3: Unmapped / alternative distributors (up to maxUnmapped, tagged [Unmapped])
+ *
+ * Deduplicates candidates by unique distributor store and returns up to maxTotal (default 10) options.
+ */
+export async function rankSpecialOrderDistributorCandidates(
+  db: any,
+  candidates: any[],
+  maxTotal: number = 10,
+  maxUnmapped: number = 2
+): Promise<any[]> {
+  if (!Array.isArray(candidates) || candidates.length === 0) return [];
+
+  // Filter in-stock items
+  const inStock = candidates.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+  if (inStock.length === 0) return [];
+
+  // Deduplicate by distributor name / storeId so owner doesn't see repetitive rows
+  const dedupedMap = new Map<string, any>();
+  for (const item of inStock) {
+    const rawDist = item.distributor || item.supplier_name || item.storeName || item.distributor_name || '';
+    const key = (rawDist || String(item.storeId || '')).trim().toLowerCase();
+    if (!key) continue;
+
+    const existing = dedupedMap.get(key);
+    if (!existing) {
+      dedupedMap.set(key, item);
+    } else {
+      // Pick the item with a valid positive rate or higher stock
+      const exRate = Number(existing.rate ?? existing.distributorPrice ?? existing.ptr ?? 0);
+      const curRate = Number(item.rate ?? item.distributorPrice ?? item.ptr ?? 0);
+      if (exRate <= 0 && curRate > 0) {
+        dedupedMap.set(key, item);
+      } else if (curRate > 0 && curRate < exRate) {
+        dedupedMap.set(key, item);
+      }
+    }
+  }
+
+  const allUnique = Array.from(dedupedMap.values());
+  const isMappedCandidate = (c: any): boolean => {
+    return Boolean(
+      c.mapped === true ||
+      c.isMapped === true ||
+      c.is_mapped === 1 ||
+      String(c.IsMapped) === '1' ||
+      String(c.Ismapped) === '1'
+    );
+  };
+
+  const mappedCandidates = allUnique.filter(c => isMappedCandidate(c));
+  const unmappedCandidates = allUnique.filter(c => !isMappedCandidate(c));
+
+  // Query purchase frequency from local DB to identify commonly ordered distributors
+  let purchaseRows: { name: string; cnt: number }[] = [];
+  try {
+    if (db) {
+      const rows = await db.all(`
+        SELECT d.name, COUNT(p.id) as cnt 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY cnt DESC
+      `).catch(() => []);
+      purchaseRows = (rows || []).map((r: any) => ({ name: String(r.name || ''), cnt: Number(r.cnt || 0) }));
+    }
+  } catch (_) {}
+
+  // Check active Live Cart distributor for top affinity boost
+  const activeCartDistributorNames = new Set<string>();
+  try {
+    const liveCartPromise = loadLiveCartCore();
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000));
+    const liveCart = await Promise.race([liveCartPromise, timeoutPromise]).catch(() => null);
+    if (liveCart && Array.isArray(liveCart.distributors)) {
+      for (const cd of liveCart.distributors) {
+        if (cd.storeName && cd.items && cd.items.length > 0) {
+          activeCartDistributorNames.add(cd.storeName.trim().toLowerCase());
+        }
+      }
+    }
+  } catch (_) {}
+
+  const cleanNameForMatch = (str: string): string => {
+    return (str || '')
+      .toLowerCase()
+      .replace(/\b(pvt|ltd|private|limited|distributor|distributors|pharma|pharmaceuticals|agency|enterprises|counter|delivery|narhe|pune)\b/gi, '')
+      .replace(/[^a-z0-9]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const getScore = (distName: string): number => {
+    const rawLower = (distName || '').trim().toLowerCase();
+    let score = 0;
+    if (activeCartDistributorNames.has(rawLower)) {
+      score += 10000;
+    }
+    const cDist = cleanNameForMatch(distName);
+    if (!cDist || cDist.length < 3) return score;
+
+    for (const pRow of purchaseRows) {
+      const cRow = cleanNameForMatch(pRow.name);
+      if (!cRow || cRow.length < 3) continue;
+      if (cDist.includes(cRow) || cRow.includes(cDist)) {
+        score += pRow.cnt;
+        break;
+      }
+      const tokens = cRow.split(' ').filter((t: string) => t.length >= 3);
+      if (tokens.length > 0 && tokens.every((t: string) => cDist.includes(t))) {
+        score += pRow.cnt;
+        break;
+      }
+    }
+    return score;
+  };
+
+  // Sort mapped distributors: Tier 1 (frequent/cart score DESC) -> Tier 2 (other mapped, lowest rate ASC)
+  mappedCandidates.sort((a, b) => {
+    const scoreA = getScore(a.distributor || a.supplier_name || a.storeName || '');
+    const scoreB = getScore(b.distributor || b.supplier_name || b.storeName || '');
+    if (scoreA !== scoreB) return scoreB - scoreA;
+
+    const rateA = Number(a.rate ?? a.distributorPrice ?? a.ptr ?? 0);
+    const rateB = Number(b.rate ?? b.distributorPrice ?? b.ptr ?? 0);
+    if (rateA > 0 && rateB > 0 && rateA !== rateB) return rateA - rateB;
+    if (rateA > 0 && rateB <= 0) return -1;
+    if (rateA <= 0 && rateB > 0) return 1;
+
+    const nameA = String(a.distributor || a.supplier_name || a.storeName || '');
+    const nameB = String(b.distributor || b.supplier_name || b.storeName || '');
+    return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  // Sort unmapped distributors: lowest rate ASC, then alphabetical
+  unmappedCandidates.sort((a, b) => {
+    const rateA = Number(a.rate ?? a.distributorPrice ?? a.ptr ?? 0);
+    const rateB = Number(b.rate ?? b.distributorPrice ?? b.ptr ?? 0);
+    if (rateA > 0 && rateB > 0 && rateA !== rateB) return rateA - rateB;
+    if (rateA > 0 && rateB <= 0) return -1;
+    if (rateA <= 0 && rateB > 0) return 1;
+
+    const nameA = String(a.distributor || a.supplier_name || a.storeName || '');
+    const nameB = String(b.distributor || b.supplier_name || b.storeName || '');
+    return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  // Pick Tier 3 unmapped (up to maxUnmapped, default 2)
+  const allowedUnmapped = Math.min(unmappedCandidates.length, maxUnmapped);
+  // Pick Tier 1 & 2 mapped (fill remaining slots up to maxTotal)
+  const allowedMapped = Math.min(mappedCandidates.length, maxTotal - allowedUnmapped);
+
+  const selectedMapped = mappedCandidates.slice(0, allowedMapped);
+  const remainingSlots = Math.max(0, maxTotal - selectedMapped.length);
+  const selectedUnmapped = unmappedCandidates.slice(0, Math.min(unmappedCandidates.length, Math.max(allowedUnmapped, remainingSlots)));
+
+  return [...selectedMapped, ...selectedUnmapped];
+}
+
+/**
  * Add items to Pharmarack cart (callable both from internal services and HTTP endpoint).
  */
 export async function addItemsToPharmarackCart(items: any[]): Promise<{

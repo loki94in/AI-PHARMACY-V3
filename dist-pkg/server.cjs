@@ -10151,6 +10151,92 @@ var init_aiCameraService = __esm({
           return "";
         }
       }
+      async getGeminiKey() {
+        let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        if (!key || key.trim() === "") {
+          try {
+            const db2 = await dbManager.getConnection();
+            const row = await db2.get("SELECT value FROM app_settings WHERE key = 'gemini_api_key'");
+            if (row?.value) {
+              key = row.value.trim();
+            }
+          } catch (_) {
+          }
+        }
+        return key && key.trim().length > 10 ? key.trim() : null;
+      }
+      async extractWithGeminiVision(buffer, apiKey) {
+        try {
+          const base64Data = buffer.toString("base64");
+          const prompt = `You are an expert Indian Pharmacy and Medical Vision AI.
+Analyze this packaging/strip/bottle/container image of a pharmaceutical, medicinal, or health/maternal nutrition product.
+
+Extract the following details accurately:
+- brandName: The primary trade/brand name of the product (e.g. "PRO-PL", "Dolo 650", "Augmentin 625", "Shelcal 500").
+- flavour: Specific flavour if mentioned (e.g. "Chocolate", "Vanilla", "Cardamom", "Orange").
+- genericName: The salt, active ingredients, or scientific composition (e.g. "Protein with DHA for Pregnancy & Lactation", "Paracetamol", "Amoxicillin and Potassium Clavulanate").
+- dosageForm: Form of the product (e.g. "Powder", "Tablet", "Capsule", "Syrup", "Gel").
+- strength: Strength or weight (e.g. "200g", "400g", "650mg", "500mg").
+- packaging: Container or pack info (e.g. "200 GM", "400 GM", "Strip of 15 Tablets", "Bottle").
+- manufacturer: Manufacturing or marketing pharmaceutical company (e.g. "British Biologicals", "Micro Labs", "Cipla").
+- mrp: Maximum retail price as a number if visible.
+- allReadableText: All text legible on the container.
+
+Return ONLY a valid JSON object matching these keys with no markdown codeblocks or quotes:
+{
+  "brandName": "PRO-PL",
+  "flavour": "Chocolate",
+  "genericName": "Protein for Pregnancy & Lactation",
+  "dosageForm": "Powder",
+  "strength": "200g",
+  "packaging": "200 GM",
+  "manufacturer": "British Biologicals",
+  "mrp": null,
+  "allReadableText": "..."
+}`;
+          const modelName = "gemini-2.0-flash";
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15e3);
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { text: prompt },
+                    {
+                      inline_data: {
+                        mime_type: "image/jpeg",
+                        data: base64Data
+                      }
+                    }
+                  ]
+                }
+              ],
+              generationConfig: {
+                temperature: 0.1,
+                response_mime_type: "application/json"
+              }
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeout);
+          if (!res.ok) {
+            console.warn(`[AiCamera] Gemini Vision responded with HTTP ${res.status}`);
+            return null;
+          }
+          const json = await res.json();
+          const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!text) return null;
+          const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+          return JSON.parse(cleaned);
+        } catch (err) {
+          console.warn("[AiCamera] Gemini Vision extraction bypassed (offline fallback will run):", err?.message || err);
+          return null;
+        }
+      }
       async processImage(imageData, skipEnrichment = false) {
         let buffer;
         if (typeof imageData === "string") {
@@ -10166,27 +10252,57 @@ var init_aiCameraService = __esm({
         const processedBuffer = await this.preprocess(buffer);
         let localOcrResult = { text: "", confidence: 0, words: [] };
         let fallbackUsed = false;
-        const isONNXAvailable = await onnxOcrService.checkAvailability();
-        if (isONNXAvailable) {
+        let geminiVisionData = null;
+        const geminiKey = await this.getGeminiKey();
+        if (geminiKey) {
           try {
-            const ocrResult2 = await onnxOcrService.scanImage(processedBuffer);
-            if (ocrResult2 && ocrResult2.success && ocrResult2.text && ocrResult2.text.trim().length > 0) {
+            console.log("[AiCamera] Attempting high-precision Gemini 2.0 Flash Vision extraction...");
+            geminiVisionData = await this.extractWithGeminiVision(buffer, geminiKey);
+            if (geminiVisionData?.brandName) {
+              const readableText = [
+                geminiVisionData.brandName,
+                geminiVisionData.flavour,
+                geminiVisionData.genericName,
+                geminiVisionData.manufacturer,
+                geminiVisionData.dosageForm,
+                geminiVisionData.packaging,
+                geminiVisionData.allReadableText
+              ].filter(Boolean).join("\n");
               localOcrResult = {
-                text: ocrResult2.text || "",
-                confidence: ocrResult2.confidence || 0,
-                words: ocrResult2.words || []
+                text: readableText,
+                confidence: 95,
+                words: []
               };
               fallbackUsed = false;
-            } else {
-              console.warn("ONNX OCR returned empty or failed result:", ocrResult2?.error);
+              console.log(`[AiCamera] Gemini Vision successfully extracted: "${geminiVisionData.brandName}" (${geminiVisionData.flavour ? "Flavour: " + geminiVisionData.flavour + ", " : ""}${geminiVisionData.manufacturer || ""})`);
+            }
+          } catch (geminiErr) {
+            console.warn("[AiCamera] Gemini Vision call failed, falling back to local OCR:", geminiErr?.message || geminiErr);
+          }
+        }
+        if (!geminiVisionData?.brandName) {
+          const isONNXAvailable = await onnxOcrService.checkAvailability();
+          if (isONNXAvailable) {
+            try {
+              const ocrResult2 = await onnxOcrService.scanImage(processedBuffer);
+              if (ocrResult2 && ocrResult2.success && ocrResult2.text && ocrResult2.text.trim().length > 0) {
+                localOcrResult = {
+                  text: ocrResult2.text || "",
+                  confidence: ocrResult2.confidence || 0,
+                  words: ocrResult2.words || []
+                };
+                fallbackUsed = false;
+              } else {
+                console.warn("ONNX OCR returned empty or failed result:", ocrResult2?.error);
+                fallbackUsed = true;
+              }
+            } catch (err) {
+              console.error("Error executing ONNX OCR:", err);
               fallbackUsed = true;
             }
-          } catch (err) {
-            console.error("Error executing ONNX OCR:", err);
+          } else {
             fallbackUsed = true;
           }
-        } else {
-          fallbackUsed = true;
         }
         if (fallbackUsed) {
           if (!this.initialized) {
@@ -10241,7 +10357,27 @@ var init_aiCameraService = __esm({
           const detectedDosageForm2 = this.detectDosageForm(localOcrResult.text);
           let bestLineMatches = [];
           let bestLineScore = 0;
+          if (geminiVisionData?.brandName) {
+            const geminiQueries = [
+              geminiVisionData.flavour ? `${geminiVisionData.brandName} ${geminiVisionData.flavour}` : null,
+              geminiVisionData.brandName,
+              geminiVisionData.dosageForm ? `${geminiVisionData.brandName} ${geminiVisionData.dosageForm}` : null
+            ].filter(Boolean);
+            for (const gQuery of geminiQueries) {
+              const gFilter = await productNameFilterService.filterProductNames(gQuery, {
+                minConfidenceThreshold: 0.65,
+                dosageForm: geminiVisionData.dosageForm || detectedDosageForm2 || void 0,
+                rawOcrText: localOcrResult.text
+              });
+              if (gFilter.matches.length > 0 && (gFilter.topScore ?? 0) > bestLineScore) {
+                bestLineScore = gFilter.topScore ?? 0;
+                bestLineMatches = gFilter.matches;
+                if (bestLineScore >= 0.8) break;
+              }
+            }
+          }
           for (const item of candidateLines) {
+            if (bestLineScore >= 0.85) break;
             const cleanedLine = item.tokens.join(" ");
             const filterResult = await productNameFilterService.filterProductNames(cleanedLine, {
               minConfidenceThreshold: 0.65,
@@ -10387,6 +10523,23 @@ var init_aiCameraService = __esm({
         finalInfo.genericName = resolvedGeneric || detectedApiText || void 0;
         finalInfo.brandName = rawName;
         finalInfo.potentialName = rawName;
+        if (geminiVisionData) {
+          finalInfo.cloudDetails = geminiVisionData;
+          if (geminiVisionData.flavour) finalInfo.flavour = geminiVisionData.flavour;
+          if (geminiVisionData.genericName) {
+            finalInfo.genericName = geminiVisionData.genericName;
+            finalInfo.composition = geminiVisionData.genericName;
+            finalInfo.apiName = geminiVisionData.genericName;
+          }
+          if (geminiVisionData.manufacturer && !finalInfo.manufacturer) {
+            finalInfo.manufacturer = geminiVisionData.manufacturer;
+            finalInfo.companyDetected = geminiVisionData.manufacturer;
+          }
+          if (geminiVisionData.dosageForm && !finalInfo.dosageForm) finalInfo.dosageForm = geminiVisionData.dosageForm;
+          if (geminiVisionData.strength && !finalInfo.strength) finalInfo.strength = geminiVisionData.strength;
+          if (geminiVisionData.packaging && !finalInfo.packaging) finalInfo.packaging = geminiVisionData.packaging;
+          if (geminiVisionData.mrp && !finalInfo.mrp) finalInfo.mrp = geminiVisionData.mrp;
+        }
         if (detectedDrugStrength.strength) {
           finalInfo.strength = detectedDrugStrength.strength;
         } else {
@@ -29233,6 +29386,7 @@ __export(whatsappIntentService_exports, {
   executeConfirmedProcurementFlow: () => executeConfirmedProcurementFlow,
   handleInbound: () => handleInbound,
   handleOcrComplete: () => handleOcrComplete,
+  isKnownCustomerName: () => isKnownCustomerName,
   passesGate: () => passesGate,
   resolveInventoryStock: () => resolveInventoryStock,
   resolveOcrGateDecision: () => resolveOcrGateDecision,
@@ -29379,7 +29533,7 @@ function sanitizePharmarackQuery(rawName) {
   }
   return coreWords.slice(0, 3).join(" ");
 }
-async function maybeSendGuidancePrompt(phone, customerName, db2) {
+async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
   try {
@@ -29396,7 +29550,11 @@ async function maybeSendGuidancePrompt(phone, customerName, db2) {
     }
     const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
     const storeName = await getStoreMedicalName4(db2);
-    const guidanceMsg = `Namaste! Welcome to *${storeName}* \u{1F3E5}
+    const trimmedOriginal = (originalMessage || "").trim();
+    const echoLine = trimmedOriginal ? `We received your message: "${trimmedOriginal.slice(0, 200)}"
+
+` : "";
+    const guidanceMsg = echoLine + `Namaste! Welcome to *${storeName}* \u{1F3E5}
 
 To check medicine availability or place an order, please send:
 
@@ -29421,6 +29579,15 @@ To repeat your regular prescription, simply reply with *Refill* or *Same*.
   } catch (err) {
     console.warn("[Intent Service] Failed to send guidance prompt:", err);
   }
+}
+function isKnownCustomerName(name) {
+  if (!name) return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return false;
+  if (/^(\+?\d+|whatsapp customer|customer|walk-in.*|unknown|guest)$/i.test(trimmed)) {
+    return false;
+  }
+  return true;
 }
 async function lookupCustomer(phone) {
   const db2 = await dbManager.getConnection();
@@ -29493,6 +29660,7 @@ async function ensureClarificationsTable(db2) {
     quantity INTEGER DEFAULT 1,
     unit TEXT DEFAULT 'strip',
     step TEXT DEFAULT 'awaiting_confirmation',
+    customer_name TEXT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   try {
@@ -29524,6 +29692,9 @@ async function ensureClarificationsTable(db2) {
     }
     if (!colNames.has("so_code")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN so_code TEXT DEFAULT NULL");
+    }
+    if (!colNames.has("customer_name")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN customer_name TEXT DEFAULT NULL");
     }
   } catch (_) {
   }
@@ -29767,7 +29938,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     }
     if (!cleanDigits) return false;
     const pending2 = await db2.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code 
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -29778,6 +29949,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
     );
     if (!pending2) return false;
+    let activeCustomerName = customer?.name && isKnownCustomerName(customer.name) ? customer.name.trim() : pending2.customer_name && isKnownCustomerName(pending2.customer_name) ? pending2.customer_name.trim() : "";
     const lower = body.toLowerCase().trim();
     const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm)$/i.test(lower);
     const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
@@ -29786,20 +29958,112 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
 
 We will send you payment details shortly.`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", activeCustomerName || customer?.name || "Customer");
       return true;
     }
     if (pending2.step === "awaiting_payment") {
       const waitMsg = `Please pay the \u20B950 booking amount using the QR code sent earlier, and reply with the payment screenshot to proceed with your order (Ref: ${pending2.so_code || "SO"}).`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", activeCustomerName || customer?.name || "Customer");
       return true;
     }
     if (pending2.step === "awaiting_owner_payment_confirmation") {
       const waitMsg = `Your payment screenshot is being verified by our pharmacy team. You will receive final confirmation shortly!`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
+      await whatsappQueueWorker2.enqueue(phone, waitMsg, "customer_inquiry_confirmed", activeCustomerName || customer?.name || "Customer");
       return true;
+    }
+    if (pending2.step === "awaiting_customer_name") {
+      const rawName = body.trim();
+      let cleaned = rawName.replace(/^(my\s+name\s+is|i\s+am|i'm|this\s+is|mera\s+naam|naam\s+hai|call\s+me|myself)\s+/i, "").replace(/^[^\w\s.\u0900-\u097F']+/g, "").trim();
+      const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
+        cleaned.toLowerCase().replace(/[^\w\s]/g, "").trim()
+      );
+      const isValidName = !isGreetingAgain && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
+      if (!isValidName) {
+        const retryNameMsg = `Could you please share your name so we can assist you?`;
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(phone, retryNameMsg, "customer_greeting", "Customer");
+        return true;
+      }
+      const formattedName = cleaned.split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+      const existingCust = await db2.get(
+        `SELECT id FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits.slice(-10)}`]
+      );
+      if (existingCust?.id) {
+        await db2.run(`UPDATE customers SET name = ? WHERE id = ?`, [formattedName, existingCust.id]);
+      } else {
+        await db2.run(
+          `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [formattedName, cleanDigits]
+        );
+      }
+      if (chatId) {
+        await db2.run(`UPDATE whatsapp_chats SET name = ? WHERE id = ?`, [formattedName, chatId]);
+      }
+      await db2.run(
+        `UPDATE wa_pending_clarifications 
+         SET step = 'awaiting_medicine', customer_name = ?, created_at = CURRENT_TIMESTAMP 
+         WHERE phone = ?`,
+        [formattedName, pending2.phone]
+      );
+      const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+      const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+      const welcomeMsg = `\u{1F64F} Namaste *${formattedName}* ji! Welcome to ${storeName}.
+
+I can help you place a medicine request through WhatsApp.
+
+How it works:
+1\uFE0F\u20E3 Send the medicine name
+2\uFE0F\u20E3 Confirm the medicine
+3\uFE0F\u20E3 Enter the quantity
+4\uFE0F\u20E3 Confirm your request
+5\uFE0F\u20E3 Pay the \u20B950 booking amount
+6\uFE0F\u20E3 Send the payment screenshot
+
+After payment verification, your medicine will be added to your Live Cart.
+
+Please enter the medicine name you need.`;
+      const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+      await whatsappQueueWorker2.enqueue(phone, welcomeMsg, "customer_greeting", formattedName);
+      console.log(`[Intent Service] Registered customer name "${formattedName}" for ${cleanDigits}. Advanced to awaiting_medicine.`);
+      return true;
+    }
+    if (pending2.step === "awaiting_order_customer_name") {
+      const rawName = body.trim();
+      let cleaned = rawName.replace(/^(my\s+name\s+is|i\s+am|i'm|this\s+is|mera\s+naam|naam\s+hai|call\s+me|myself)\s+/i, "").replace(/^[^\w\s.\u0900-\u097F']+/g, "").trim();
+      const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
+        cleaned.toLowerCase().replace(/[^\w\s]/g, "").trim()
+      );
+      const isValidName = !isGreetingAgain && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
+      if (!isValidName) {
+        const retryMsg = `Please enter your name to complete the order confirmation:`;
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, retryMsg, "customer_medicine_clarification", "Customer");
+        return true;
+      }
+      const formattedName = cleaned.split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+      const existingCust = await db2.get(
+        `SELECT id FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1`,
+        [`%${cleanDigits}`, `%${cleanDigits.slice(-10)}`]
+      );
+      if (existingCust?.id) {
+        await db2.run(`UPDATE customers SET name = ? WHERE id = ?`, [formattedName, existingCust.id]);
+      } else {
+        await db2.run(
+          `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [formattedName, cleanDigits]
+        );
+      }
+      if (chatId) {
+        await db2.run(`UPDATE whatsapp_chats SET name = ? WHERE id = ?`, [formattedName, chatId]);
+      }
+      await db2.run(
+        `UPDATE wa_pending_clarifications SET customer_name = ? WHERE phone = ?`,
+        [formattedName, pending2.phone]
+      );
+      return await proceedWithConfirmedProcurement(phone, cleanDigits, pending2, formattedName, db2, chatId);
     }
     if (pending2.step === "awaiting_medicine") {
       const medQuery = body.trim();
@@ -29811,8 +30075,31 @@ We will send you payment details shortly.`;
       }
       let localMatches = [];
       try {
+        const brandClean = medQuery.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
+        const parts = brandClean.split(/\s+/).filter(Boolean);
+        const brandWord = parts[0] || "";
+        const strengthWord = parts.find((p, i) => i > 0 && /\d/.test(p)) || "";
+        if (brandWord.length >= 3) {
+          const prefixRows = await db2.all(
+            `SELECT name FROM medicines 
+             WHERE name LIKE ? 
+             ORDER BY 
+               CASE WHEN ? != '' AND name LIKE ? THEN 1 ELSE 2 END,
+               name ASC 
+             LIMIT 45`,
+            [`${brandWord}%`, strengthWord, `%${strengthWord}%`]
+          );
+          if (prefixRows && prefixRows.length > 0) {
+            localMatches = prefixRows.map((r) => r.name);
+          }
+        }
         const filterResult = await productNameFilterService.filterProductNames(medQuery, { minConfidenceThreshold: 0.5 });
-        localMatches = filterResult?.matches || [];
+        const ftsMatches = filterResult?.matches || [];
+        for (const m of ftsMatches) {
+          if (!localMatches.includes(m)) {
+            localMatches.push(m);
+          }
+        }
       } catch (_) {
       }
       let catalogMatches = [];
@@ -29827,24 +30114,24 @@ We will send you payment details shortly.`;
       }
       const combined = [...localMatches, ...catalogMatches];
       const seenNorm = /* @__PURE__ */ new Set();
-      const options = [];
+      const allOptions = [];
       for (const rawName of combined) {
         const norm = rawName.toUpperCase().replace(/\s+/g, " ").trim();
         const simpleKey = norm.replace(/[^A-Z0-9]/g, "");
         if (!seenNorm.has(simpleKey) && simpleKey.length > 2) {
           seenNorm.add(simpleKey);
-          options.push(norm);
-          if (options.length >= 5) break;
+          allOptions.push(norm);
+          if (allOptions.length >= 45) break;
         }
       }
-      if (options.length === 0) {
+      if (allOptions.length === 0) {
         const notFoundMsg = `I could not find a medicine matching "${medQuery}". Please check the spelling or send a clear photo of your prescription / medicine strip.`;
         const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
         await whatsappQueueWorker3.enqueue(phone, notFoundMsg, "customer_medicine_clarification", customer?.name || "Customer");
         return true;
       }
-      if (options.length === 1) {
-        const singleMedicine = options[0];
+      if (allOptions.length === 1) {
+        const singleMedicine = allOptions[0];
         await db2.run(
           `UPDATE wa_pending_clarifications
            SET suggested_name = ?, selected_option = ?, original_query = ?, options_json = NULL, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
@@ -29861,18 +30148,26 @@ Reply *YES* to confirm or *NO* to search again.`;
         await whatsappQueueWorker3.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
         return true;
       }
-      const formatNum = (n) => ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3"][n] || `${n + 1}\uFE0F\u20E3`;
-      const optionsList = options.map((opt, i) => `${formatNum(i)} ${opt}`).join("\n");
+      const PAGE_SIZE = 15;
+      const initialSlice = allOptions.slice(0, PAGE_SIZE);
+      const formatNum = (idx) => {
+        const emojiNums = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3", "9\uFE0F\u20E3", "\u{1F51F}"];
+        return idx < 10 ? emojiNums[idx] : `${idx + 1}.`;
+      };
+      const optionsList = initialSlice.map((opt, i) => `${formatNum(i)} ${opt}`).join("\n");
+      const moreHint = allOptions.length > PAGE_SIZE ? `
+
+\u{1F449} Reply *MORE* to see more options.` : "";
       const promptMsg = `\u{1F50E} I found these medicine options for *${medQuery}*:
 
-${optionsList}
+${optionsList}${moreHint}
 
 Please reply with the number of the medicine you need.`;
       await db2.run(
         `UPDATE wa_pending_clarifications
          SET suggested_name = ?, original_query = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
          WHERE phone = ?`,
-        [options[0], medQuery, JSON.stringify(options), pending2.phone]
+        [allOptions[0], medQuery, JSON.stringify({ allOptions, page: 0 }), pending2.phone]
       );
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
       await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
@@ -29880,22 +30175,71 @@ Please reply with the number of the medicine you need.`;
     }
     if (pending2.step === "awaiting_selection" && pending2.options_json) {
       let options = [];
+      let currentPage = 0;
+      const PAGE_SIZE = 15;
       try {
-        options = JSON.parse(pending2.options_json);
+        const parsed = JSON.parse(pending2.options_json);
+        if (Array.isArray(parsed)) {
+          options = parsed;
+          currentPage = 0;
+        } else if (parsed && Array.isArray(parsed.allOptions)) {
+          options = parsed.allOptions;
+          currentPage = Number(parsed.page || 0);
+        }
       } catch (_) {
         options = [];
       }
+      const isMore = /^(more|next|aage|aur|show more)$/i.test(lower);
+      if (isMore && options.length > PAGE_SIZE) {
+        const totalPages = Math.ceil(options.length / PAGE_SIZE);
+        const nextPage = (currentPage + 1) % totalPages;
+        const startIdx = nextPage * PAGE_SIZE;
+        const currentSlice = options.slice(startIdx, startIdx + PAGE_SIZE);
+        const formatNum = (idx) => {
+          const displayNum = startIdx + idx + 1;
+          const emojiNums = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3", "9\uFE0F\u20E3", "\u{1F51F}"];
+          return displayNum <= 10 ? emojiNums[displayNum - 1] : `${displayNum}.`;
+        };
+        const optionsList = currentSlice.map((opt, i) => `${formatNum(i)} ${opt}`).join("\n");
+        const hasMoreAfter = options.length > startIdx + PAGE_SIZE || nextPage < totalPages - 1;
+        const moreHint = hasMoreAfter ? `
+
+\u{1F449} Reply *MORE* to see more options.` : "";
+        const promptMsg = `\u{1F50E} Options (${startIdx + 1}\u2013${startIdx + currentSlice.length} of ${options.length}) for *${pending2.original_query || "medicine"}*:
+
+${optionsList}${moreHint}
+
+Please reply with the number of the medicine you need.`;
+        await db2.run(
+          `UPDATE wa_pending_clarifications
+           SET options_json = ?, created_at = CURRENT_TIMESTAMP
+           WHERE phone = ?`,
+          [JSON.stringify({ allOptions: options, page: nextPage }), pending2.phone]
+        );
+        const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
+        return true;
+      }
       let chosenIndex = -1;
-      const numMatch = lower.match(/^([1-5])\b/) || lower.match(/^(?:option\s*)?([1-5])/);
+      const numMatch = lower.match(/^(?:option\s*)?(\d{1,2})$/i);
       if (numMatch) {
-        const n = parseInt(numMatch[1], 10) - 1;
+        const enteredNum = parseInt(numMatch[1], 10);
+        const n = enteredNum - 1;
         if (n >= 0 && n < options.length) {
           chosenIndex = n;
+        } else {
+          const maxVisible = Math.min(options.length, (currentPage + 1) * PAGE_SIZE);
+          const outOfRangeMsg = `\u26A0\uFE0F Option ${enteredNum} is not on the list. Please reply with a number between 1 and ${maxVisible}${options.length > PAGE_SIZE ? ", or reply *MORE* to see more options" : ""}.`;
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(phone, outOfRangeMsg, "customer_medicine_clarification", customer?.name || "Customer");
+          return true;
         }
       } else {
-        const idx = options.findIndex((opt) => opt.toLowerCase().includes(lower) || lower.includes(opt.toLowerCase()));
-        if (idx !== -1) {
-          chosenIndex = idx;
+        if (lower.length >= 3 && !/^\d+$/.test(lower)) {
+          const idx = options.findIndex((opt) => opt.toLowerCase().includes(lower) || lower.includes(opt.toLowerCase()));
+          if (idx !== -1) {
+            chosenIndex = idx;
+          }
         }
       }
       if (chosenIndex !== -1 && options[chosenIndex]) {
@@ -30020,92 +30364,31 @@ Reply *YES* to confirm.`;
           }
           return true;
         }
-        const medName = pending2.suggested_name;
-        const medQty = pending2.quantity || 1;
-        const medUnit = pending2.unit || "strip";
-        const pharmaQuery = sanitizePharmarackQuery(medName);
-        let rawPharmarackItems = [];
-        try {
-          const { performPharmarackSearch: performPharmarackSearch2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-          const searchRes = await performPharmarackSearch2(pharmaQuery || medName, null, true);
-          if (searchRes && searchRes.status === "ok" && Array.isArray(searchRes.items)) {
-            rawPharmarackItems = searchRes.items;
-          }
-        } catch (_) {
-        }
-        if (rawPharmarackItems.length === 0) {
-          try {
-            const cat = await searchCatalog(pharmaQuery || medName);
-            rawPharmarackItems = [...cat.mapped || [], ...cat.nonMapped || []];
-          } catch (_) {
+        let custName = activeCustomerName;
+        if (!custName) {
+          const freshCust = await lookupCustomer(cleanDigits);
+          if (freshCust?.name && isKnownCustomerName(freshCust.name)) {
+            custName = freshCust.name.trim();
           }
         }
-        const inStockCandidates = rawPharmarackItems.filter((p) => isItemInStock(p.availability ?? p.stock));
-        const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-        const orderRes = await db2.run(
-          `INSERT INTO special_orders (
-             store_id, requester, phone, medicine_name, product, qty, priority, status,
-             date, notified, customer_order_source, total_amount, advance_payment, payment_status
-           ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID')`,
-          [
-            1,
-            customer?.name || "WhatsApp Customer",
-            cleanDigits,
-            medName,
-            medName,
-            medQty,
-            todayStr2
-          ]
-        );
-        const specialOrderId = Number(orderRes.lastID) || 0;
-        const soCode = `SO-${specialOrderId}`;
-        await db2.run(
-          `UPDATE wa_pending_clarifications
-           SET step = 'awaiting_owner_selection', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
-           WHERE phone = ?`,
-          [specialOrderId, soCode, pending2.phone]
-        );
-        if (inStockCandidates.length > 0) {
-          await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
-            specialOrderId,
-            soCode,
-            customerName: customer?.name || "Customer",
-            customerPhone: cleanDigits,
-            medicineName: medName,
-            quantity: medQty,
-            unit: medUnit,
-            pharmarackOptions: inStockCandidates.slice(0, 6)
-          });
-          const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.
-
-We will send you payment details shortly.`;
+        if (!custName) {
+          await db2.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_customer_name', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending2.phone]
+          );
+          const askNameMsg = `Before we confirm your request for *${pending2.suggested_name}* \xD7 ${pending2.quantity || 1}, *may I please know your name?*`;
           const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(phone, custWaitMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
-        } else {
-          const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.
-
-Our pharmacy owner has been notified (Ref: ${soCode}) to arrange it for you manually.`;
-          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-          await whatsappQueueWorker2.enqueue(phone, noStockMsg, "customer_inquiry_confirmed", customer?.name || "Customer");
-          const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
-          if (adminWhatsapp) {
-            const ownerOosMsg = `\u26A0\uFE0F *Special Order ${soCode} (All Distributors OOS)*
-
-Customer: ${customer?.name || "Customer"} (+91 ${cleanDigits})
-Medicine: *${medName}* \xD7 ${medQty}
-All checked Pharmarack distributors are currently out of stock.`;
-            await whatsappQueueWorker2.enqueue(adminWhatsapp, ownerOosMsg, "admin_escalation", "Owner");
-          }
+          await whatsappQueueWorker2.enqueue(phone, askNameMsg, "customer_medicine_clarification", "Customer");
+          return true;
         }
-        console.log(`[Intent Service] Customer confirmed request for ${medName} x ${medQty}. Created order #${specialOrderId} (${soCode}). Owner notified.`);
-        return true;
+        return await proceedWithConfirmedProcurement(phone, cleanDigits, pending2, custName, db2, chatId);
       }
     }
     if (isNegative) {
       await db2.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending2.phone]);
       const ackMsg = `Understood! Please reply with the exact medicine name or send a clear photo of your prescription / medicine strip, and our pharmacist will check it for you.`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", customer?.name || "Customer");
+      await whatsappQueueWorker2.enqueue(phone, ackMsg, "customer_inquiry_rejected", activeCustomerName || customer?.name || "Customer");
       console.log(`[Intent Service] Customer ${cleanDigits} cancelled pending clarification.`);
       return true;
     }
@@ -30113,6 +30396,87 @@ All checked Pharmarack distributors are currently out of stock.`;
     console.warn("[Intent Service] Error checking medicine clarification response:", err);
   }
   return false;
+}
+async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, customerName, db2, chatId) {
+  const medName = pending2.suggested_name;
+  const medQty = pending2.quantity || 1;
+  const medUnit = pending2.unit || "strip";
+  const pharmaQuery = sanitizePharmarackQuery(medName);
+  let rawPharmarackItems = [];
+  try {
+    const { performPharmarackSearch: performPharmarackSearch2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+    const searchRes = await performPharmarackSearch2(pharmaQuery || medName, null, true);
+    if (searchRes && searchRes.status === "ok" && Array.isArray(searchRes.items)) {
+      rawPharmarackItems = searchRes.items;
+    }
+  } catch (_) {
+  }
+  if (rawPharmarackItems.length === 0) {
+    try {
+      const cat = await searchCatalog(pharmaQuery || medName);
+      rawPharmarackItems = [...cat.mapped || [], ...cat.nonMapped || []];
+    } catch (_) {
+    }
+  }
+  const inStockCandidates = rawPharmarackItems.filter((p) => isItemInStock(p.availability ?? p.stock));
+  const todayStr2 = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const orderRes = await db2.run(
+    `INSERT INTO special_orders (
+       store_id, requester, phone, medicine_name, product, qty, priority, status,
+       date, notified, customer_order_source, total_amount, advance_payment, payment_status
+     ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID')`,
+    [
+      1,
+      customerName,
+      cleanDigits,
+      medName,
+      medName,
+      medQty,
+      todayStr2
+    ]
+  );
+  const specialOrderId = Number(orderRes.lastID) || 0;
+  const soCode = `SO-${specialOrderId}`;
+  await db2.run(
+    `UPDATE wa_pending_clarifications
+     SET step = 'awaiting_owner_selection', special_order_id = ?, so_code = ?, customer_name = ?, created_at = CURRENT_TIMESTAMP
+     WHERE phone = ?`,
+    [specialOrderId, soCode, customerName, pending2.phone]
+  );
+  if (inStockCandidates.length > 0) {
+    await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
+      specialOrderId,
+      soCode,
+      customerName,
+      customerPhone: cleanDigits,
+      medicineName: medName,
+      quantity: medQty,
+      unit: medUnit,
+      pharmarackOptions: inStockCandidates.slice(0, 6)
+    });
+    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.
+
+We will send you payment details shortly.`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(phone, custWaitMsg, "customer_inquiry_confirmed", customerName);
+  } else {
+    const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.
+
+Our pharmacy owner has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+    const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+    await whatsappQueueWorker2.enqueue(phone, noStockMsg, "customer_inquiry_confirmed", customerName);
+    const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+    if (adminWhatsapp) {
+      const ownerOosMsg = `\u26A0\uFE0F *Special Order ${soCode} (All Distributors OOS)*
+
+Customer: ${customerName} (+91 ${cleanDigits})
+Medicine: *${medName}* \xD7 ${medQty}
+All checked Pharmarack distributors are currently out of stock.`;
+      await whatsappQueueWorker2.enqueue(adminWhatsapp, ownerOosMsg, "admin_escalation", "Owner");
+    }
+  }
+  console.log(`[Intent Service] Customer confirmed request for ${medName} x ${medQty}. Created order #${specialOrderId} (${soCode}). Owner notified.`);
+  return true;
 }
 async function checkIsOwnerPhone(phone, db2) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
@@ -30202,7 +30566,7 @@ async function handleOwnerInteractiveReply(phone, body, db2) {
       eventService.broadcast("pharmarack_cart_changed", { at: Date.now() });
     } catch (_) {
     }
-    const custFinalMsg = `\u{1F389} Your medicine request is confirmed!
+    const custFinalMsg = `\u{1F389} Hello *${order.requester || "Customer"}*, your medicine request is confirmed!
 
 \u{1F194} Special Order ID: ${soCode2}
 
@@ -30565,7 +30929,22 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
       );
       const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
-      const greetingText = `\u{1F44B} Hello! Welcome to ${storeName}.
+      const hasKnownName = isKnownCustomerName(customer?.name);
+      if (!hasKnownName) {
+        const askNameText = `\u{1F44B} Hello! Welcome to ${storeName}.
+
+Before we begin, *may I please know your name?*`;
+        await db2.run(
+          `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, created_at)
+           VALUES (?, '', ?, 'awaiting_customer_name', CURRENT_TIMESTAMP)`,
+          [cleanDigits, body]
+        );
+        const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+        await whatsappQueueWorker3.enqueue(phone, askNameText, "customer_greeting", "Customer");
+        console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name.`);
+        return;
+      }
+      const greetingText = `\u{1F44B} Hello *${customer.name}*! Welcome back to ${storeName}.
 
 I can help you place a medicine request through WhatsApp.
 
@@ -30581,16 +30960,16 @@ After payment verification, your medicine will be added to your Live Cart.
 
 Please enter the medicine name you need.`;
       await db2.run(
-        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, created_at)
-         VALUES (?, '', ?, 'awaiting_medicine', CURRENT_TIMESTAMP)`,
-        [cleanDigits, body]
+        `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
+         VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)`,
+        [cleanDigits, body, customer.name]
       );
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-      await whatsappQueueWorker2.enqueue(phone, greetingText, "customer_greeting", customer?.name || "Customer");
-      console.log(`[Intent Service] Fresh greeting & 6-step workflow sent to ${cleanDigits}.`);
+      await whatsappQueueWorker2.enqueue(phone, greetingText, "customer_greeting", customer.name);
+      console.log(`[Intent Service] Fresh greeting sent to known customer ${customer.name} (${cleanDigits}).`);
       return;
     }
-    if (await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
+    if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
     }
     const parsed = parseMessage(body);
@@ -30652,28 +31031,38 @@ Please enter the medicine name you need.`;
         const serializedId = typeof msg?.id?._serialized === "string" ? msg.id._serialized : "";
         const downloadErrors = [];
         let media;
-        try {
-          media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 3, delayMs: 1500 });
-        } catch (primaryErr) {
-          const pMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-          downloadErrors.push(`direct: ${pMsg}`);
-          console.warn(`[Intent Service] Direct downloadMedia failed (${pMsg}) \u2014 hydrating chat store and retrying...`);
+        if (serializedId && typeof waClient.downloadMessageMediaReliably === "function") {
           try {
-            await msg.getChat?.();
-          } catch {
+            media = await waClient.downloadMessageMediaReliably(serializedId, { maxWaitMs: 12e3, chatId });
+          } catch (reliableErr) {
+            const rMsg = reliableErr instanceof Error ? reliableErr.message : String(reliableErr);
+            downloadErrors.push(`reliable: ${rMsg}`);
           }
+        }
+        if (!media?.data) {
           try {
-            media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 2, delayMs: 1500 });
-          } catch (hydrateErr) {
-            const hMsg = hydrateErr instanceof Error ? hydrateErr.message : String(hydrateErr);
-            downloadErrors.push(`hydrated: ${hMsg}`);
-            if (serializedId) {
-              console.warn("[Intent Service] Hydrated retry failed \u2014 trying store-fresh getMessageById copy...");
-              try {
-                media = await waClient.downloadMessageMediaById(serializedId);
-                if (!media?.data) downloadErrors.push("store-fresh: no data");
-              } catch (freshErr) {
-                downloadErrors.push(`store-fresh: ${freshErr instanceof Error ? freshErr.message : String(freshErr)}`);
+            media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 3, delayMs: 1500 });
+          } catch (primaryErr) {
+            const pMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+            downloadErrors.push(`direct: ${pMsg}`);
+            console.warn(`[Intent Service] Direct downloadMedia failed (${pMsg}) \u2014 hydrating chat store and retrying...`);
+            try {
+              await msg.getChat?.();
+            } catch {
+            }
+            try {
+              media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 2, delayMs: 1500 });
+            } catch (hydrateErr) {
+              const hMsg = hydrateErr instanceof Error ? hydrateErr.message : String(hydrateErr);
+              downloadErrors.push(`hydrated: ${hMsg}`);
+              if (serializedId) {
+                console.warn("[Intent Service] Hydrated retry failed \u2014 trying store-fresh getMessageById copy...");
+                try {
+                  media = await waClient.downloadMessageMediaById(serializedId);
+                  if (!media?.data) downloadErrors.push("store-fresh: no data");
+                } catch (freshErr) {
+                  downloadErrors.push(`store-fresh: ${freshErr instanceof Error ? freshErr.message : String(freshErr)}`);
+                }
               }
             }
           }
@@ -30714,11 +31103,12 @@ Please enter the medicine name you need.`;
             );
             const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
             if (adminWhatsapp) {
+              const custDisplayName = customer?.name && isKnownCustomerName(customer.name) ? customer.name : pendingPayment.customer_name && isKnownCustomerName(pendingPayment.customer_name) ? pendingPayment.customer_name : "Customer";
               const forwardCaption = `\u{1F4B0} *Payment Verification Required*
 
 \u{1F194} *Special Order*: ${soCode}
 
-\u{1F464} *Customer*: ${customer?.name || "Customer"}
+\u{1F464} *Customer*: ${custDisplayName}
 \u{1F4F1} +91 ${cleanPhone}
 
 \u{1F48A} *${pendingPayment.suggested_name}*
@@ -30763,6 +31153,19 @@ You will receive final confirmation shortly.`,
             chatId,
             reason: `Received an image from this customer but could not download it after repeated attempts (${downloadDetail.slice(0, 140)}).`
           });
+          if (phone && !isManualSession) {
+            const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+            await whatsappQueueWorker2.enqueue(
+              phone,
+              `\u{1F4F8} *Photo Received!*
+
+We received your photo, but the image is taking longer to download or read clearly.
+
+\u{1F449} *Please type the medicine name* you need (e.g. *Dolo 650*, *PRO-PL Chocolate*), and our pharmacy team will check availability immediately!`,
+              "customer_medicine_clarification",
+              customer?.name || "Customer"
+            );
+          }
         } catch (notifyErr) {
           console.error("[Intent Service] Failed to notify admin of media download failure:", notifyErr);
         }
@@ -30856,7 +31259,11 @@ You will receive final confirmation shortly.`,
               ]
             );
             const itemListText = bundledItems.map((item, idx) => `${idx + 1}. *${item.matchedName}* \xD7 ${item.quantity} ${item.unit}`).join("\n");
-            const promptMsg = `Please confirm your order for:
+            const knownName = (customer?.name || "").trim();
+            const nameLine = knownName && knownName.toLowerCase() !== "customer" ? `Hi ${knownName},
+
+` : "";
+            const promptMsg = `${nameLine}Please confirm your order for:
 ${itemListText}
 
 Reply *YES* to confirm or *NO* to cancel.`;
@@ -30871,7 +31278,7 @@ Reply *YES* to confirm or *NO* to cancel.`;
     } else if (!hasMedia && !isStale && phone && !isManualSession) {
       const cleanBody = body.trim();
       if (cleanBody.length >= 2) {
-        await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2);
+        await maybeSendGuidancePrompt(phone, customer?.name || "Customer", db2, cleanBody);
       }
     }
   } catch (err) {
@@ -31173,17 +31580,25 @@ async function searchAndBroadcast(opts) {
           if (!seenNorm.has(key) && key.length > 2) {
             seenNorm.add(key);
             deduplicated.push(norm);
-            if (deduplicated.length >= 5) break;
+            if (deduplicated.length >= 45) break;
           }
         }
         const cleanPhone = (phone || "").replace(/\D/g, "").slice(-10);
         await ensureClarificationsTable(db2);
         if (deduplicated.length > 1) {
-          const formatNum = (n) => ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3"][n] || `${n + 1}\uFE0F\u20E3`;
-          const optionsList = deduplicated.map((opt, i) => `${formatNum(i)} *${opt}*`).join("\n");
+          const PAGE_SIZE = 15;
+          const initialSlice = deduplicated.slice(0, PAGE_SIZE);
+          const formatNum = (idx) => {
+            const emojiNums = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3", "9\uFE0F\u20E3", "\u{1F51F}"];
+            return idx < 10 ? emojiNums[idx] : `${idx + 1}.`;
+          };
+          const optionsList = initialSlice.map((opt, i) => `${formatNum(i)} *${opt}*`).join("\n");
+          const moreHint = deduplicated.length > PAGE_SIZE ? `
+
+\u{1F449} Reply *MORE* to see more options.` : "";
           const promptMsg = `\u{1F50E} I found these medicine options for *${medicineName}*:
 
-${optionsList}
+${optionsList}${moreHint}
 
 Please reply with the number of the medicine you need.`;
           await db2.run(
@@ -31198,11 +31613,11 @@ Please reply with the number of the medicine you need.`;
                unit = excluded.unit,
                step = 'awaiting_selection',
                created_at = CURRENT_TIMESTAMP`,
-            [cleanPhone, deduplicated[0], medicineName, JSON.stringify(deduplicated), quantity || 1, unit || "strip"]
+            [cleanPhone, deduplicated[0], medicineName, JSON.stringify({ allOptions: deduplicated, page: 0 }), quantity || 1, unit || "strip"]
           );
           const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
           await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
-          console.log(`[Intent Service] Sent medicine options prompt (1..${deduplicated.length}) for "${medicineName}" to ${cleanPhone}.`);
+          console.log(`[Intent Service] Sent medicine options prompt (1..${initialSlice.length}) for "${medicineName}" to ${cleanPhone}.`);
         } else if (deduplicated.length === 1 || filterResult.matches[0]) {
           const topMatched = deduplicated[0] || filterResult.matches[0];
           const promptMsg = `\u{1F48A} I found *${topMatched}*.
@@ -31358,6 +31773,24 @@ async function handleOcrComplete(data) {
           });
         } catch (notifyErr) {
           console.error("[Intent Service] Failed to notify admin of unreadable scan:", notifyErr);
+        }
+      })();
+    }
+    if (phone) {
+      (async () => {
+        try {
+          const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
+          await whatsappQueueWorker2.enqueue(
+            phone,
+            `\u{1F4F8} *Photo Received!*
+
+We received your photo, but could not clearly detect the medicine name from this angle.
+
+\u{1F449} *Please type the medicine name* you need (e.g. *Dolo 650*, *PRO-PL Chocolate*), and our pharmacy team will check availability immediately!`,
+            "customer_medicine_clarification",
+            "Customer"
+          );
+        } catch (_) {
         }
       })();
     }
@@ -31748,6 +32181,7 @@ __export(whatsappClient_exports, {
   currentQr: () => currentQr,
   destroyClient: () => destroyClient,
   downloadMessageMediaById: () => downloadMessageMediaById,
+  downloadMessageMediaReliably: () => downloadMessageMediaReliably,
   ensureWhatsAppReady: () => ensureWhatsAppReady,
   forceReconnect: () => forceReconnect,
   getChatMessages: () => getChatMessages,
@@ -32864,6 +33298,29 @@ async function sendMessage(to, mediaPath, caption, file) {
               console.warn(`[WhatsApp] getNumberId resolution note for ${cleanPhone}, fallback to direct JID ${chatId}:`, numErr?.message || numErr);
             }
           }
+          if (targetClient.pupPage && !targetClient.pupPage.isClosed()) {
+            try {
+              await targetClient.pupPage.evaluate(async (jid) => {
+                try {
+                  const widFactory = window.require?.("WAWebWidFactory");
+                  const findChatAction = window.require?.("WAWebFindChatAction");
+                  const collections = window.require?.("WAWebCollections");
+                  if (widFactory && jid) {
+                    const wid = widFactory.createWid(jid);
+                    if (findChatAction?.findOrCreateLatestChat) {
+                      await findChatAction.findOrCreateLatestChat(wid);
+                    }
+                    if (collections?.Contact?.find) {
+                      await collections.Contact.find(wid).catch(() => {
+                      });
+                    }
+                  }
+                } catch (_) {
+                }
+              }, targetChatId);
+            } catch (_) {
+            }
+          }
           let sentMsg = null;
           if (file && file.mimetype && file.data) {
             const media = new MessageMedia(file.mimetype, file.data, file.filename || "file");
@@ -32901,6 +33358,29 @@ async function sendMessage(to, mediaPath, caption, file) {
             } catch (retryErr) {
               console.error("[WhatsApp] Send retry after client auto-reconnect failed:", retryErr);
               throw new Error("WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.");
+            }
+          } else if (errMsg.includes("Data passed to getter must include an id property") || errMsg.includes("it's how we memoize")) {
+            console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
+            try {
+              if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
+                await clientInstance.pupPage.evaluate(async (jid) => {
+                  try {
+                    const wid = window.require?.("WAWebWidFactory")?.createWid(jid);
+                    if (wid) {
+                      await window.require?.("WAWebFindChatAction")?.findOrCreateLatestChat(wid);
+                      await window.require?.("WAWebCollections")?.Contact?.find(wid).catch(() => {
+                      });
+                    }
+                  } catch (_) {
+                  }
+                }, `${cleanPhone}@c.us`);
+              }
+              await new Promise((r) => setTimeout(r, 600));
+              await doSend(clientInstance);
+              console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
+            } catch (retryErr) {
+              console.error(`[WhatsApp] Self-healing retry for ${cleanPhone} failed:`, retryErr?.message || retryErr);
+              throw new Error(`WhatsApp Web temporary contact sync delay for ${cleanPhone}. Message queued for review.`);
             }
           } else {
             if (errMsg.includes("No LID for user")) {
@@ -33237,6 +33717,88 @@ async function downloadMessageMediaById(serializedId) {
   const fresh = await clientInstance.getMessageById(serializedId);
   if (!fresh) return void 0;
   return await fresh.downloadMedia();
+}
+async function downloadMessageMediaReliably(serializedId, options) {
+  if (!clientInstance || !isReady || !serializedId) return void 0;
+  const maxWaitMs = options?.maxWaitMs ?? 12e3;
+  const chatId = options?.chatId;
+  if (clientInstance.pupPage) {
+    try {
+      const downloaded = await clientInstance.pupPage.evaluate(async (msgId, waitLimit, targetChatId) => {
+        try {
+          const wCollections = window.require ? window.require("WAWebCollections") : null;
+          const store = window.Store;
+          if (targetChatId && store?.Chat) {
+            try {
+              const chat = store.Chat.get(targetChatId) || await store.Chat.find(targetChatId);
+              if (chat && chat.loadEarlierMsgs) await chat.loadEarlierMsgs();
+            } catch (_) {
+            }
+          }
+          let msg = wCollections?.Msg?.get(msgId) || store?.Msg?.get(msgId);
+          if (!msg && wCollections?.Msg?.getMessagesById) {
+            const res = await wCollections.Msg.getMessagesById([msgId]);
+            msg = res?.messages?.[0];
+          }
+          if (!msg) return { error: "msg_not_found" };
+          if (!msg.mediaData) return { error: "no_media_data" };
+          if (msg.mediaData.mediaStage !== "RESOLVED") {
+            if (typeof msg.downloadMedia === "function") {
+              try {
+                await msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+              } catch (_) {
+              }
+            }
+          }
+          const start = Date.now();
+          while (Date.now() - start < waitLimit) {
+            if (msg.mediaData.mediaStage === "RESOLVED") break;
+            if (msg.mediaData.mediaStage && msg.mediaData.mediaStage.includes("ERROR")) break;
+            await new Promise((r) => setTimeout(r, 400));
+          }
+          if (msg.mediaData.mediaStage !== "RESOLVED") {
+            return { error: `media_stage_${msg.mediaData.mediaStage || "unknown"}` };
+          }
+          const mockQpl = { addAnnotations: () => {
+          }, addPoint: () => {
+          } };
+          const downloadManager = window.require("WAWebDownloadManager")?.downloadManager;
+          if (!downloadManager) return { error: "no_download_manager" };
+          const decryptedMedia = await downloadManager.downloadAndMaybeDecrypt({
+            directPath: msg.directPath,
+            encFilehash: msg.encFilehash,
+            filehash: msg.filehash,
+            mediaKey: msg.mediaKey,
+            mediaKeyTimestamp: msg.mediaKeyTimestamp,
+            type: msg.type,
+            signal: new AbortController().signal,
+            downloadQpl: mockQpl
+          });
+          const data = await window.WWebJS.arrayBufferToBase64Async(decryptedMedia);
+          return {
+            data,
+            mimetype: msg.mimetype,
+            filename: msg.filename
+          };
+        } catch (innerErr) {
+          return { error: innerErr?.message || String(innerErr) };
+        }
+      }, serializedId, maxWaitMs, chatId);
+      if (downloaded && downloaded.data) {
+        return {
+          data: downloaded.data,
+          mimetype: downloaded.mimetype,
+          filename: downloaded.filename
+        };
+      }
+      if (downloaded?.error) {
+        console.warn(`[WhatsApp Client] Reliable browser media download returned: ${downloaded.error}`);
+      }
+    } catch (evalErr) {
+      console.warn("[WhatsApp Client] Reliable browser media evaluate failed, falling back to getMessageById:", evalErr);
+    }
+  }
+  return await downloadMessageMediaById(serializedId);
 }
 async function checkPhoneWhatsAppRegistered(cleanDigits10) {
   if (!cleanDigits10 || cleanDigits10.length !== 10) return "NOT_AVAILABLE";
@@ -34312,8 +34874,9 @@ var init_whatsappQueueWorker = __esm({
               } else {
                 const isDistributorReminder = item.type === "distributor_dispatch_reminder";
                 const newRetryCount = item.retry_count + 1;
-                const isTemporaryError = errMsg.includes("client not ready") || errMsg.includes("disconnected") || errMsg.includes("timeout") || errMsg.includes("detached") || errMsg.includes("Execution context was destroyed") || errMsg.includes("Session closed") || errMsg.includes("Target closed") || errMsg.includes("could not be sent");
-                const newStatus = isDistributorReminder && isTemporaryError ? "failed_offline" : newRetryCount >= 3 ? "failed_perm" : "failed_offline";
+                const isTemporaryError = errMsg.includes("client not ready") || errMsg.includes("disconnected") || errMsg.includes("timeout") || errMsg.includes("detached") || errMsg.includes("Execution context was destroyed") || errMsg.includes("Session closed") || errMsg.includes("Target closed") || errMsg.includes("could not be sent") || errMsg.includes("Data passed to getter") || errMsg.includes("it's how we memoize") || errMsg.includes("contact sync");
+                const isStoreDesync = errMsg.includes("Data passed to getter") || errMsg.includes("it's how we memoize") || errMsg.includes("contact sync");
+                const newStatus = isDistributorReminder && isTemporaryError ? "failed_offline" : isStoreDesync && newRetryCount >= 3 ? "review_required" : newRetryCount >= 3 ? "failed_perm" : "failed_offline";
                 console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? " [retryable availability]" : "/3"}): ${errMsg}`);
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
@@ -34341,7 +34904,7 @@ var init_whatsappQueueWorker = __esm({
                   eventService.broadcast("automation_hub_updated", { type: "failed", id: item.id, error: errMsg });
                 } catch (_) {
                 }
-                if (newStatus === "failed_perm") {
+                if (newStatus === "failed_perm" || newStatus === "review_required") {
                   try {
                     await db2.run(
                       `INSERT INTO automation_notifications 
@@ -34352,7 +34915,12 @@ var init_whatsappQueueWorker = __esm({
                   } catch (_) {
                   }
                   const targetDesc = item.target_name ? `${item.target_name} (${item.number})` : item.number;
-                  const cleanReason = errMsg.includes("No LID for user") ? "Number not registered on WhatsApp" : errMsg;
+                  let cleanReason = errMsg;
+                  if (errMsg.includes("No LID for user")) {
+                    cleanReason = "Number not registered on WhatsApp";
+                  } else if (errMsg.includes("Data passed to getter") || errMsg.includes("it's how we memoize") || errMsg.includes("contact sync")) {
+                    cleanReason = "WhatsApp Web contact sync delay (held for review)";
+                  }
                   eventService.broadcast("toast_alert", {
                     type: "error",
                     message: `\u274C WhatsApp to ${targetDesc} failed: ${cleanReason}`
