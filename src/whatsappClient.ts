@@ -1021,7 +1021,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
         // Fetch existing session state to evaluate Human Takeover
         const existingChatRow = await db.get(
-          'SELECT session_mode, manual_active_until, last_pharmacist_message_at FROM whatsapp_chats WHERE id = ?',
+          'SELECT session_mode, manual_active_until, last_pharmacist_message_at, resolved_number FROM whatsapp_chats WHERE id = ?',
           [chatId]
         );
         let sessionMode = existingChatRow?.session_mode || 'auto';
@@ -1033,7 +1033,14 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           const msgHash = hashMessageBody(fullMsg);
           const sendKey1 = `${resolvedNumber}:${msgHash}:${fullMsg.length}`;
           const sendKey2 = `${chatId.split('@')[0]}:${msgHash}:${fullMsg.length}`;
-          const isAutomatedSend = recentSendsCache.has(sendKey1) || recentSendsCache.has(sendKey2);
+          const dbResolved = (existingChatRow?.resolved_number || '').replace(/@c\.us$/, '').replace(/^91/, '');
+          const sendKey3 = dbResolved ? `${dbResolved}:${msgHash}:${fullMsg.length}` : '';
+          const sendKey4 = dbResolved ? `91${dbResolved}:${msgHash}:${fullMsg.length}` : '';
+          const isAutomatedSend =
+            recentSendsCache.has(sendKey1) ||
+            recentSendsCache.has(sendKey2) ||
+            (sendKey3 ? recentSendsCache.has(sendKey3) : false) ||
+            (sendKey4 ? recentSendsCache.has(sendKey4) : false);
           if (!isAutomatedSend) {
             // Pharmacist sent a manual reply from actual WhatsApp phone/web -> activate Human Takeover
             sessionMode = 'manual';
@@ -1497,6 +1504,7 @@ export async function sendMessage(
     try {
       if (!useBusiness) {
         // Live WhatsApp Web client. Send via the WA Web.js client.
+        let resolvedTargetChatId = chatId;
         const doSend = async (targetClient: WAClient) => {
           let targetChatId = chatId;
 
@@ -1506,6 +1514,7 @@ export async function sendMessage(
               const numberDetails = await targetClient.getNumberId(cleanPhone);
               if (numberDetails && numberDetails._serialized) {
                 targetChatId = numberDetails._serialized;
+                resolvedTargetChatId = targetChatId;
               }
             } catch (numErr: any) {
               console.warn(`[WhatsApp] getNumberId resolution note for ${cleanPhone}, fallback to direct JID ${chatId}:`, numErr?.message || numErr);
@@ -1655,6 +1664,10 @@ export async function sendMessage(
 
         // Send confirmed — register in recent sends cache
         recentSendsCache.set(sendKey, Date.now());
+        if (resolvedTargetChatId && resolvedTargetChatId !== chatId) {
+          const lidUser = resolvedTargetChatId.split('@')[0];
+          recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
+        }
 
         // Provisional DB record — ensures chat + message appear immediately in UI.
         try {

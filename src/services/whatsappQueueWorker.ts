@@ -1,7 +1,7 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
 import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered, ensureSessionHealth } from '../whatsappClient.js';
-import { whatsappDeliveryRegister } from './whatsappDeliveryRegister.js';
+import { whatsappDeliveryRegister, CHATBOT_CONVERSATIONAL_TYPES } from './whatsappDeliveryRegister.js';
 
 const SERVER_BOOT_TIME = Date.now();
 
@@ -482,6 +482,17 @@ class WhatsAppQueueWorker {
     const cleanPhone = normalizeWhatsAppPhone(number);
     const now = Date.now();
 
+    if (CHATBOT_CONVERSATIONAL_TYPES.has(type)) {
+      // Direct conversational chatbot & interactive chat replies bypass the queue completely.
+      // Sends immediately so customer/owner has zero delay and queue popover stays clean.
+      try {
+        await sendMessage(cleanPhone, mediaUrl, message, file);
+      } catch (directErr: any) {
+        console.error(`[WhatsAppQueueWorker] Direct bypass send error for ${cleanPhone} (${type}):`, directErr?.message || directErr);
+      }
+      return 0;
+    }
+
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const startOfDayMs = startOfDay.getTime();
@@ -643,6 +654,15 @@ class WhatsAppQueueWorker {
         );
         await db.run(
           "UPDATE automation_notifications SET status = 'skipped_offline', error_message = 'Stale backlog (>24h old) — skipped on startup' WHERE status IN ('pending', 'queued') AND datetime(created_at) < datetime('now', '-1 day')"
+        );
+      } catch (_) {}
+
+      // Clean up any historical conversational chatbot rows from queue
+      try {
+        const nonTxPlaceholders = Array.from(CHATBOT_CONVERSATIONAL_TYPES).map(() => '?').join(',');
+        await db.run(
+          `DELETE FROM whatsapp_send_queue WHERE type IN (${nonTxPlaceholders})`,
+          Array.from(CHATBOT_CONVERSATIONAL_TYPES)
         );
       } catch (_) {}
 
@@ -1588,6 +1608,9 @@ class WhatsAppQueueWorker {
     startOfToday.setHours(0, 0, 0, 0);
     const startOfTodayMs = startOfToday.getTime();
 
+    const nonTxList = Array.from(CHATBOT_CONVERSATIONAL_TYPES);
+    const nonTxPlaceholders = nonTxList.map(() => '?').join(',');
+
     const countsRow = await db.get(`
       SELECT 
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -1596,11 +1619,15 @@ class WhatsAppQueueWorker {
         SUM(CASE WHEN status = 'failed_offline' THEN 1 ELSE 0 END) as failed_offline,
         SUM(CASE WHEN status = 'failed_perm' OR status = 'review_required' THEN 1 ELSE 0 END) as failed_perm
       FROM whatsapp_send_queue
-    `, [startOfTodayMs]);
+      WHERE type NOT IN (${nonTxPlaceholders})
+    `, [startOfTodayMs, ...nonTxList]);
 
-    // Fetch saved WhatsApp queue items (up to 300 recent items)
+    // Fetch saved WhatsApp queue items (up to 300 recent items, excluding conversational chatbot dialogue)
     const queueItems: QueueItem[] = await db.all(
-      `SELECT * FROM whatsapp_send_queue ORDER BY created_at DESC LIMIT 300`
+      `SELECT * FROM whatsapp_send_queue 
+       WHERE type NOT IN (${nonTxPlaceholders})
+       ORDER BY created_at DESC LIMIT 300`,
+      nonTxList
     );
 
     // Also fetch only genuine failure records from automation_notifications for the review card

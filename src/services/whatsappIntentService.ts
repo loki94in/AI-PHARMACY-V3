@@ -9,7 +9,7 @@ import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
 import { waAdminEscalationService } from './waAdminEscalationService.js';
-import { isItemInStock, resolveCommonOrFrequentDistributor, rankSpecialOrderDistributorCandidates, addItemsToPharmarackCart } from '../routes/pharmarack.js';
+import { isItemInStock, resolveCommonOrFrequentDistributor, addItemsToPharmarackCart } from '../routes/pharmarack.js';
 import { paymentQrService } from './paymentQrService.js';
 import { startupSyncCoordinator } from './startupSyncCoordinator.js';
 import { visualIndexService } from './visualIndexService.js';
@@ -257,20 +257,8 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
   if (!cleanDigits || cleanDigits.length < 10) return;
 
   try {
-    const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000;
-    const recent = await db.get(
-      `SELECT id FROM whatsapp_sent_register
-       WHERE phone_last10 = ? AND type = 'customer_guidance_prompt' AND sent_at > ?
-       LIMIT 1`,
-      [cleanDigits, twelveHoursAgo]
-    );
-    if (recent) {
-      console.log(`[Intent Service] Guidance prompt debounced for ${cleanDigits} (sent recently).`);
-      return;
-    }
-
     const { getStoreMedicalName } = await import('./storeSettingsService.js');
-    const storeName = await getStoreMedicalName(db);
+    const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
 
     const trimmedOriginal = (originalMessage || '').trim();
     const echoLine = trimmedOriginal
@@ -284,10 +272,21 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
       `📸 *Option 1: Prescription / Strip Photo*\n` +
       `Send a clear photo of your doctor's prescription or medicine strip.\n\n` +
       `✍️ *Option 2: Medicine Name(s)*\n` +
-      `Type *only* the medicine name and quantity (e.g. *Dolo 650 - 1 strip*).\n\n` +
+      `Type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*).\n\n` +
       `🔁 *Existing Regular Patients:*\n` +
       `To repeat your regular prescription, simply reply with *Refill* or *Same*.\n\n` +
-      `⏱️ Our pharmacist will check availability and message you shortly!`;
+      `Please send your prescription photo or medicine name to get started!`;
+
+    // Initialize session state so customer's subsequent message is actively tracked
+    await ensureClarificationsTable(db);
+    await db.run(
+      `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
+       VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(phone) DO UPDATE SET
+         step = 'awaiting_medicine',
+         created_at = CURRENT_TIMESTAMP`,
+      [cleanDigits, trimmedOriginal, customerName || 'Customer']
+    );
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(
@@ -296,7 +295,7 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
       'customer_guidance_prompt',
       customerName || 'Customer'
     );
-    console.log(`[Intent Service] Sent medicine ordering guidance prompt to ${cleanDigits}.`);
+    console.log(`[Intent Service] Sent medicine ordering guidance prompt to ${cleanDigits}. Session initialized to awaiting_medicine.`);
   } catch (err) {
     console.warn('[Intent Service] Failed to send guidance prompt:', err);
   }
@@ -309,7 +308,7 @@ export function isKnownCustomerName(name: string | null | undefined): boolean {
   if (!name) return false;
   const trimmed = name.trim();
   if (trimmed.length < 2) return false;
-  if (/^(\+?\d+|whatsapp customer|customer|walk-in.*|unknown|guest)$/i.test(trimmed)) {
+  if (/^(\+?\d+|whatsapp customer|customer|walk-in.*|unknown|guest|yes|no|ok|okay|haan|ho|yep|yup)$/i.test(trimmed)) {
     return false;
   }
   return true;
@@ -802,8 +801,11 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
+      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya)$/i.test(
+        cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
+      );
 
-      const isValidName = !isGreetingAgain && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
+      const isValidName = !isGreetingAgain && !isAffirmativeOrNegative && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
 
       if (!isValidName) {
         const retryNameMsg = `Could you please share your name so we can assist you?`;
@@ -847,16 +849,11 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
       const welcomeMsg =
         `🙏 Namaste *${formattedName}* ji! Welcome to ${storeName}.\n\n` +
-        `I can help you place a medicine request through WhatsApp.\n\n` +
-        `How it works:\n` +
-        `1️⃣ Send the medicine name\n` +
-        `2️⃣ Confirm the medicine\n` +
-        `3️⃣ Enter the quantity\n` +
-        `4️⃣ Confirm your request\n` +
-        `5️⃣ Pay the ₹50 booking amount\n` +
-        `6️⃣ Send the payment screenshot\n\n` +
-        `After payment verification, your medicine will be added to your Live Cart.\n\n` +
-        `Please enter the medicine name you need.`;
+        `I can help you check medicine availability or place an order.\n\n` +
+        `You can:\n` +
+        `📸 Send a clear photo of your prescription or medicine strip\n` +
+        `✍️ Or type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*)\n\n` +
+        `Please enter the medicine name or send a photo to begin.`;
 
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
       await whatsappQueueWorker.enqueue(phone, welcomeMsg, 'customer_greeting', formattedName);
@@ -875,7 +872,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
-      const isValidName = !isGreetingAgain && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
+      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya)$/i.test(
+        cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
+      );
+      const isValidName = !isGreetingAgain && !isAffirmativeOrNegative && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
 
       if (!isValidName) {
         const retryMsg = `Please enter your name to complete the order confirmation:`;
@@ -905,12 +905,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         await db.run(`UPDATE whatsapp_chats SET name = ? WHERE id = ?`, [formattedName, chatId]);
       }
 
-      await db.run(
-        `UPDATE wa_pending_clarifications SET customer_name = ? WHERE phone = ?`,
-        [formattedName, pending.phone]
+      await proceedWithConfirmedProcurement(
+        phone,
+        cleanDigits,
+        pending,
+        formattedName,
+        db,
+        chatId
       );
-
-      return await proceedWithConfirmedProcurement(phone, cleanDigits, pending, formattedName, db, chatId);
+      return true;
     }
 
     // Step: awaiting_medicine (Customer was greeted, now sends medicine name)
@@ -1072,18 +1075,25 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       }
 
       let chosenIndex = -1;
-      const numMatch = lower.match(/^(?:option\s*)?(\d{1,2})$/i);
+      const numMatch = lower.match(/^(?:option\s*)?(\d{1,3})$/i);
       if (numMatch) {
         const enteredNum = parseInt(numMatch[1], 10);
         const n = enteredNum - 1;
         if (n >= 0 && n < options.length) {
           chosenIndex = n;
         } else {
-          const maxVisible = Math.min(options.length, (currentPage + 1) * PAGE_SIZE);
-          const outOfRangeMsg = `⚠️ Option ${enteredNum} is not on the list. Please reply with a number between 1 and ${maxVisible}${options.length > PAGE_SIZE ? ', or reply *MORE* to see more options' : ''}.`;
-          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-          await whatsappQueueWorker.enqueue(phone, outOfRangeMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
-          return true;
+          // Check if entered number matches the strength in any of the options (e.g. user typed 100 for 100mg)
+          const strengthRegex = new RegExp(`\\b${enteredNum}\\s*(?:mg|ml|gm|mcg|iu)?\\b`, 'i');
+          const strengthMatchIdx = options.findIndex(opt => strengthRegex.test(opt));
+          if (strengthMatchIdx !== -1) {
+            chosenIndex = strengthMatchIdx;
+          } else {
+            const maxVisible = Math.min(options.length, (currentPage + 1) * PAGE_SIZE);
+            const outOfRangeMsg = `⚠️ Option ${enteredNum} is not on the list. Please reply with a number between 1 and ${maxVisible}${options.length > PAGE_SIZE ? ', or reply *MORE* to see more options' : ''}.`;
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(phone, outOfRangeMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+            return true;
+          }
         }
       } else {
         // Match by text only if input is at least 3 letters and NOT pure numbers
@@ -1213,7 +1223,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           return true;
         }
 
-        // Single confirmed medicine flow (Spec §7, §8, §9)
+        // Single confirmed medicine flow (Direct procurement + Staged Quick Assist message)
         let custName = activeCustomerName;
         if (!custName) {
           const freshCust = await lookupCustomer(cleanDigits);
@@ -1233,7 +1243,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           return true;
         }
 
-        return await proceedWithConfirmedProcurement(phone, cleanDigits, pending, custName, db, chatId);
+        await proceedWithConfirmedProcurement(
+          phone,
+          cleanDigits,
+          pending,
+          custName,
+          db,
+          chatId
+        );
+        return true;
       }
     }
 
@@ -1251,6 +1269,37 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     console.warn('[Intent Service] Error checking medicine clarification response:', err);
   }
   return false;
+}
+
+/**
+ * Generates dynamic Special Order Code based on Store Name initials + Address first 2 letters + Order ID.
+ * Format: SO-[STORE_INITIALS][ADDR_2]-[ORDER_ID] e.g., SO-TMSA-10452
+ * Example:
+ * Store "TANAMAY MEDICAL", Address "Sadashiv Peth" -> "TM" + "SA" = "TMSA" -> "SO-TMSA-10452"
+ */
+export async function generateStoreSpecialOrderCode(db: any, storeId: number = 1, orderId: number): Promise<string> {
+  try {
+    const store = await db.get('SELECT name, address FROM stores WHERE id = ?', [storeId]);
+    if (store) {
+      // 1. Store Name initials (e.g. "TANAMAY MEDICAL" -> "TM")
+      const words = String(store.name || '').trim().split(/\s+/).filter(Boolean);
+      let nameInitials = words.map((w: string) => w[0]?.toUpperCase() || '').join('').slice(0, 4);
+      if (!nameInitials) nameInitials = 'TM';
+
+      // 2. Address first 2 letters (e.g. "Sadashiv Peth" -> "SA")
+      let cleanAddr = String(store.address || '').replace(/[^a-zA-Z]/g, '').toUpperCase();
+      if (cleanAddr.startsWith('MAINPHARMACYCOUNTER') && (nameInitials === 'TM' || storeId === 1)) {
+        cleanAddr = 'SA';
+      }
+      let addrLetters = cleanAddr.slice(0, 2);
+      if (addrLetters.length < 2) addrLetters = 'SA';
+
+      return `SO-${nameInitials}${addrLetters}-${orderId}`;
+    }
+  } catch (err) {
+    console.warn('[Special Order] Error generating store special order code:', err);
+  }
+  return `SO-TMSA-${orderId}`;
 }
 
 async function proceedWithConfirmedProcurement(
@@ -1304,7 +1353,7 @@ async function proceedWithConfirmedProcurement(
     ]
   );
   const specialOrderId = Number(orderRes.lastID) || 0;
-  const soCode = `SO-${specialOrderId}`;
+  const soCode = await generateStoreSpecialOrderCode(db, 1, specialOrderId);
 
   // Link Special Order to pending clarification
   await db.run(
@@ -1315,7 +1364,7 @@ async function proceedWithConfirmedProcurement(
   );
 
   if (inStockCandidates.length > 0) {
-    // Rank distributor options: Tier 1 Frequent/Cart mapped, Tier 2 Other mapped, Tier 3 Unmapped (up to 10 options)
+    const { rankSpecialOrderDistributorCandidates } = await import('../routes/pharmarack.js');
     const rankedOptions = await rankSpecialOrderDistributorCandidates(db, inStockCandidates, 10, 2);
     const finalOptions = rankedOptions.length > 0 ? rankedOptions : inStockCandidates.slice(0, 10);
 
@@ -1375,15 +1424,16 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     }
   }
 
-  // 1. Check for owner payment verification. Accepts "CONFIRM SO-10452" and common variants:
-  // "CONFIRM PAYMENT SO-10452", "PAYMENT CONFIRMED SO-10452", "CONFIRMED SO-10452".
+  // 1. Check for owner payment verification. Accepts "CONFIRM SO-10452", "CONFIRM 10452", "CONFIRM PAYMENT SO-10452", etc.
   const confirmPaymentMatch =
-    cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?\s+(SO-\d+)$/i) ||
-    cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?\s+(SO-\d+)$/i);
+    cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)$/i) ||
+    cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)$/i) ||
+    cleanBody.match(/^(?:SO-)?([A-Z0-9\-]*\d+)\s+CONFIRM(?:ED)?$/i);
   if (confirmPaymentMatch) {
-    const soCode = confirmPaymentMatch[1].toUpperCase();
-    const orderId = parseInt(soCode.replace(/\D/g, ''), 10);
+    const rawDigits = confirmPaymentMatch[1].replace(/\D/g, '');
+    const orderId = parseInt(rawDigits, 10);
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
+    const soCode = order ? await generateStoreSpecialOrderCode(db, order.store_id || 1, orderId) : `SO-TMSA-${orderId}`;
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
 
@@ -1458,8 +1508,8 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
 
     // Mark owner pending request fulfilled
     await db.run(
-      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ?`,
-      [soCode]
+      `UPDATE wa_owner_pending_requests SET status = 'fulfilled' WHERE req_code = ? OR req_code LIKE ?`,
+      [soCode, `%${orderId}`]
     );
 
     // Mark customer clarification completed
@@ -1489,6 +1539,18 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       ['whatsapp_order', order.requester || 'Customer', String(order.phone || '').replace(/\D/g, '').slice(-10), custFinalMsg, String(orderId)]
     );
 
+    // Send final confirmation receipt directly to customer on WhatsApp
+    const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
+    if (cleanCustPhone) {
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(
+        cleanCustPhone,
+        custFinalMsg,
+        'customer_order_confirmed',
+        order.requester || 'Customer'
+      );
+    }
+
     // Notify Store Owner on WhatsApp via waAdminEscalationService (automatic; customer message stays staged)
     await waAdminEscalationService.notifyAdminOfLiveCartAdd({
       orderId: soCode,
@@ -1505,15 +1567,18 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     });
 
     // Ack to owner (owner-facing, allowed to stay automatic)
-    const ownerFinalAck = `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\nCustomer *${order.requester || 'Customer'}* message has been staged and is awaiting manual send in Quick Assist.`;
+    const ownerFinalAck = `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\nCustomer *${order.requester || 'Customer'}* has been sent their confirmation receipt.`;
     await whatsappQueueWorker.enqueue(phone, ownerFinalAck, 'admin_escalation', 'Owner');
 
     console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode}). Added to Live Cart.`);
     return true;
   }
 
-  // 2. Check for owner selecting distributor for special order: "SO-10452 2", "SO-10452-2", or digit 1..10
-  const soSupplierMatch = normalizedBody.match(/^(SO-\d+)(?:\s+|-)(10|[1-9])$/i);
+  // 2. Check for owner selecting distributor for special order: "SO-TMSA-10452 2", "SO-TMSA-10452-2", "SO-TMSA-104522", "10452-2", or digit 1..10
+  const soSupplierMatch =
+    normalizedBody.match(/^(?:SO-)?(?:[A-Z0-9]+-)?(\d+)[\s\-:]*(10|[1-9])$/i) ||
+    normalizedBody.match(/^(SO-[A-Z0-9]+-\d+)[\s\-:]*(10|[1-9])$/i) ||
+    normalizedBody.match(/^(SO-\d+)[\s\-:]*(10|[1-9])$/i);
   const singleDigitMatch = normalizedBody.match(/^(10|[1-9])$/);
 
   let soCode: string | null = null;
@@ -1521,19 +1586,25 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
   let targetRow: any = null;
 
   if (soSupplierMatch) {
-    soCode = soSupplierMatch[1].toUpperCase();
-    chosenOptionIdx = parseInt(soSupplierMatch[2], 10) - 1;
+    const rawOrderDigits = (soSupplierMatch[1] || '').replace(/\D/g, '');
+    const optCandidate = soSupplierMatch[2] || soSupplierMatch[soSupplierMatch.length - 1];
+    chosenOptionIdx = parseInt(optCandidate, 10) - 1;
     await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
     targetRow = await db.get(
-      `SELECT * FROM wa_owner_pending_requests WHERE req_code = ? AND status = 'pending'`,
-      [soCode]
+      `SELECT * FROM wa_owner_pending_requests WHERE (req_code = ? OR req_code LIKE ?) AND status = 'pending'`,
+      [soSupplierMatch[0], `%${rawOrderDigits}`]
     );
+    if (targetRow) {
+      soCode = targetRow.req_code;
+    } else {
+      soCode = await generateStoreSpecialOrderCode(db, 1, parseInt(rawOrderDigits, 10));
+    }
   } else if (singleDigitMatch) {
     await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
     const latest = await db.get(
       `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
     );
-    if (latest && String(latest.req_code).startsWith('SO-')) {
+    if (latest && (String(latest.req_code).startsWith('SO-') || String(latest.req_code).includes('-'))) {
       soCode = latest.req_code;
       chosenOptionIdx = parseInt(singleDigitMatch[1], 10) - 1;
       targetRow = latest;
@@ -1872,10 +1943,11 @@ export async function handleInbound(msg: any): Promise<void> {
       }
     }
 
-    // 2c. INITIAL CUSTOMER GREETING & 6-STEP WORKFLOW EXPLANATION (Spec §3)
+    // 2c. INITIAL CUSTOMER GREETING & AUTOMATION TRIGGER
     // Treats ANY greeting as a fresh new session: resets old states and starts clean
     const cleanGreeting = body.trim().toLowerCase().replace(/[^\w\s]/g, '').trim();
-    const isGreeting = /^(hi|hello|hey|hola|namaste|namaskar|pranam|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order)$/i.test(cleanGreeting);
+    const isGreeting =
+      /^(h+i+|h+e+y+|h+e+l+l*o+|hola+|namaste+|namaskar+|pranam+|ram ram|radhe radhe|good morning|gm|good afternoon|good evening|start|help|order)(\s+(sir|ji|mam|madam|team|there|bhai|bro|medical|pharmacy|tanamay))?$/i.test(cleanGreeting);
     if (isGreeting && !hasMedia) {
       await ensureClarificationsTable(db);
       let cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
@@ -1922,16 +1994,11 @@ export async function handleInbound(msg: any): Promise<void> {
 
       const greetingText =
         `👋 Hello *${customer!.name}*! Welcome back to ${storeName}.\n\n` +
-        `I can help you place a medicine request through WhatsApp.\n\n` +
-        `How it works:\n` +
-        `1️⃣ Send the medicine name\n` +
-        `2️⃣ Confirm the medicine\n` +
-        `3️⃣ Enter the quantity\n` +
-        `4️⃣ Confirm your request\n` +
-        `5️⃣ Pay the ₹50 booking amount\n` +
-        `6️⃣ Send the payment screenshot\n\n` +
-        `After payment verification, your medicine will be added to your Live Cart.\n\n` +
-        `Please enter the medicine name you need.`;
+        `I can help you check medicine availability or place an order.\n\n` +
+        `You can:\n` +
+        `📸 Send a clear photo of your prescription or medicine strip\n` +
+        `✍️ Or type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*)\n\n` +
+        `Please enter the medicine name or send a photo to begin.`;
 
       await db.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
@@ -1948,6 +2015,24 @@ export async function handleInbound(msg: any): Promise<void> {
     // 2d. MEDICINE CLARIFICATION CHECK ("yes", "haan", option numbers, quantities, etc.)
     if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
+    }
+
+    // 2e. MEDICINE ID DIRECT LOOKUP (e.g. "#4512", "med 4512", "order 4512")
+    const medIdMatch = body.trim().match(/^(?:#|id\s*#?|med(?:icine)?\s*#?|order\s*#?)(\d{1,7})(?:\s*[-–x*]?\s*(\d+)\s*(strip|tablets?|capsules?|pack|bottles?|box)?)?$/i);
+    let resolvedMedFromId: { id: number; name: string; quantity: number; unit: string } | null = null;
+    if (medIdMatch) {
+      const targetMedId = parseInt(medIdMatch[1], 10);
+      if (targetMedId > 0) {
+        const medRow = await db.get('SELECT id, name FROM medicines WHERE id = ?', [targetMedId]);
+        if (medRow?.name) {
+          resolvedMedFromId = {
+            id: medRow.id,
+            name: medRow.name,
+            quantity: medIdMatch[2] ? parseInt(medIdMatch[2], 10) : 1,
+            unit: medIdMatch[3] || 'strip'
+          };
+        }
+      }
     }
 
     // 3. TEXT PARSE
@@ -2092,7 +2177,7 @@ export async function handleInbound(msg: any): Promise<void> {
 
           if (pendingPayment && pendingPayment.special_order_id && imagePath) {
             const soId = pendingPayment.special_order_id;
-            const soCode = pendingPayment.so_code || `SO-${soId}`;
+            const soCode = pendingPayment.so_code || await generateStoreSpecialOrderCode(db, 1, soId);
 
             await db.run(
               `UPDATE special_orders
@@ -2195,6 +2280,10 @@ export async function handleInbound(msg: any): Promise<void> {
       seenCandidateNames.add(key);
       candidates.push({ name: clean, quantity: quantity || 1, unit: unit || '', fromScispacy });
     };
+
+    if (resolvedMedFromId) {
+      pushCandidate(resolvedMedFromId.name, resolvedMedFromId.quantity, resolvedMedFromId.unit);
+    }
 
     for (const c of extractMedicineCandidates(body)) {
       pushCandidate(c.medicineName, c.quantity, c.unit);

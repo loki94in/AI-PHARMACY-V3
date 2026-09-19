@@ -16,6 +16,30 @@ export interface DeliveryRegisterRecord {
   metadata?: string | null;
 }
 
+/**
+ * Types of WhatsApp messages that are conversational / chatbot interactions.
+ * These messages are dispatched directly and instantly to WhatsApp without entering
+ * whatsapp_send_queue or the sent register, ensuring:
+ * 1. Immediate response to the customer (zero delay from queue pacing).
+ * 2. Full chat history recorded in SQLite (whatsapp_messages) for the CRM chat window.
+ * 3. Zero queue pollution: the Queue Popover and Register strictly show real outbound business transactions (bills, POs, dispatches, reminders).
+ */
+export const CHATBOT_CONVERSATIONAL_TYPES = new Set([
+  'customer_greeting',
+  'customer_guidance_prompt',
+  'customer_medicine_clarification',
+  'customer_inquiry_confirmed',
+  'customer_inquiry_rejected',
+  'customer_inquiry_ack',
+  'customer_payment_qr',
+  'admin_escalation',
+  'admin_escalation_cart_add',
+  'admin_escalation_image',
+  'admin_escalation_unmatched',
+  'admin_escalation_confirmed',
+  'admin_escalation_non_allopathic'
+]);
+
 export class WhatsAppDeliveryRegister {
   private schemaEnsured = false;
 
@@ -41,6 +65,16 @@ export class WhatsAppDeliveryRegister {
       await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_lookup ON whatsapp_sent_register (phone_last10, message_hash, sent_at)");
       await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_type ON whatsapp_sent_register (type, sent_at)");
       await db.run("CREATE INDEX IF NOT EXISTS idx_wa_sent_reg_sent_at ON whatsapp_sent_register (sent_at)");
+
+      // Clean up any historical conversational chatbot rows from sent register
+      try {
+        const nonTxPlaceholders = Array.from(CHATBOT_CONVERSATIONAL_TYPES).map(() => '?').join(',');
+        await db.run(
+          `DELETE FROM whatsapp_sent_register WHERE type IN (${nonTxPlaceholders})`,
+          Array.from(CHATBOT_CONVERSATIONAL_TYPES)
+        );
+      } catch (_) {}
+
       this.schemaEnsured = true;
     } catch (_) {}
   }
@@ -57,6 +91,10 @@ export class WhatsAppDeliveryRegister {
     waMessageId?: string | null,
     metadata?: any
   ): Promise<number> {
+    if (CHATBOT_CONVERSATIONAL_TYPES.has(type)) {
+      return 0;
+    }
+
     const cleanDigits = normalizeWhatsAppPhone(phone || '');
     const last10 = cleanDigits.slice(-10);
     if (!last10 || last10.length < 7) {
@@ -192,6 +230,10 @@ export class WhatsAppDeliveryRegister {
       if (options.type && options.type !== 'all') {
         whereClause += ' AND type = ?';
         params.push(options.type);
+      } else {
+        const nonTxPlaceholders = Array.from(CHATBOT_CONVERSATIONAL_TYPES).map(() => '?').join(',');
+        whereClause += ` AND type NOT IN (${nonTxPlaceholders})`;
+        params.push(...Array.from(CHATBOT_CONVERSATIONAL_TYPES));
       }
 
       if (options.search?.trim()) {
