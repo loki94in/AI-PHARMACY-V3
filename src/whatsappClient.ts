@@ -406,6 +406,30 @@ export async function ensureWhatsAppReady(timeoutMs: number = 30_000): Promise<b
   return waitForWhatsAppReady(timeoutMs);
 }
 
+/**
+ * Verifies session health when idle for >= 15 min.
+ * If WhatsApp Web is stalled or desynced, re-probes or refreshes to guarantee delivery.
+ */
+export async function ensureSessionHealth(): Promise<boolean> {
+  if (!isReady || !clientInstance) return false;
+  const idleMin = (Date.now() - lastWaActivityAt) / 60_000;
+  if (idleMin >= 15) {
+    console.log(`[WhatsApp Health] Session idle for ${Math.round(idleMin)}m. Running health probe...`);
+    try {
+      const state = await (clientInstance as any).getState?.().catch(() => null);
+      if (state && state !== 'CONNECTED') {
+        console.warn(`[WhatsApp Health] Non-connected state (${state}). Refreshing WhatsApp page...`);
+        if (clientInstance.pupPage && !clientInstance.pupPage.isClosed()) {
+          await clientInstance.pupPage.reload({ waitUntil: 'networkidle0', timeout: 30_000 }).catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      console.warn('[WhatsApp Health] Health probe note:', e?.message);
+    }
+  }
+  return true;
+}
+
 /** Helper to check whether we should route messages to WhatsApp Business Cloud API */
 export async function shouldRouteToBusiness(): Promise<boolean> {
   const db = await dbManager.getConnection();
@@ -820,6 +844,32 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       } catch (saveErr) {
         console.warn('[WhatsApp Persist] Failed to save connected state to app_settings:', saveErr);
       }
+
+      // Pre-patch window.WWebJS in Puppeteer to protect against memoizer getter crashes on unsaved contacts
+      try {
+        if (client.pupPage && !client.pupPage.isClosed()) {
+          await client.pupPage.evaluate(() => {
+            try {
+              if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
+                (window as any).WWebJS.__memoizePatched = true;
+                const origGetChatModel = (window as any).WWebJS.getChatModel;
+                (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
+                  try {
+                    return await origGetChatModel.apply(this, arguments);
+                  } catch (err: any) {
+                    if (String(err).includes('id property') || String(err).includes('memoize')) {
+                      const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
+                      model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
+                      return model;
+                    }
+                    throw err;
+                  }
+                };
+              }
+            } catch (_) {}
+          });
+        }
+      } catch (_) {}
 
       // Trigger background queue worker with proper pacing and status tracking
       import('./services/whatsappQueueWorker.js').then(({ whatsappQueueWorker }) => {
@@ -1467,6 +1517,24 @@ export async function sendMessage(
             try {
               await targetClient.pupPage.evaluate(async (jid) => {
                 try {
+                  // Ensure WWebJS patch is active
+                  if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
+                    (window as any).WWebJS.__memoizePatched = true;
+                    const origGetChatModel = (window as any).WWebJS.getChatModel;
+                    (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
+                      try {
+                        return await origGetChatModel.apply(this, arguments);
+                      } catch (err: any) {
+                        if (String(err).includes('id property') || String(err).includes('memoize')) {
+                          const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
+                          model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
+                          return model;
+                        }
+                        throw err;
+                      }
+                    };
+                  }
+
                   const widFactory = (window as any).require?.('WAWebWidFactory');
                   const findChatAction = (window as any).require?.('WAWebFindChatAction');
                   const collections = (window as any).require?.('WAWebCollections');
@@ -1475,8 +1543,16 @@ export async function sendMessage(
                     if (findChatAction?.findOrCreateLatestChat) {
                       await findChatAction.findOrCreateLatestChat(wid);
                     }
-                    if (collections?.Contact?.find) {
-                      await collections.Contact.find(wid).catch(() => {});
+                    if (collections?.Contact) {
+                      let contact = collections.Contact.get ? collections.Contact.get(wid) : null;
+                      if (!contact && collections.Contact.find) {
+                        contact = await collections.Contact.find(wid).catch(() => null);
+                      }
+                      if (!contact && collections.Contact.add) {
+                        try {
+                          collections.Contact.add({ id: wid, name: wid.user });
+                        } catch (_) {}
+                      }
                     }
                   }
                 } catch (_) {}
@@ -1502,6 +1578,7 @@ export async function sendMessage(
         };
 
         try {
+          await ensureSessionHealth().catch(() => {});
           await doSend(clientInstance!);
         } catch (sendErr: any) {
           const errMsg = sendErr?.message || String(sendErr);
@@ -1530,10 +1607,33 @@ export async function sendMessage(
               if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
                 await clientInstance.pupPage.evaluate(async (jid) => {
                   try {
-                    const wid = (window as any).require?.('WAWebWidFactory')?.createWid(jid);
-                    if (wid) {
-                      await (window as any).require?.('WAWebFindChatAction')?.findOrCreateLatestChat(wid);
-                      await (window as any).require?.('WAWebCollections')?.Contact?.find(wid).catch(() => {});
+                    if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
+                      (window as any).WWebJS.__memoizePatched = true;
+                      const origGetChatModel = (window as any).WWebJS.getChatModel;
+                      (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
+                        try {
+                          return await origGetChatModel.apply(this, arguments);
+                        } catch (err: any) {
+                          if (String(err).includes('id property') || String(err).includes('memoize')) {
+                            const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
+                            model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
+                            return model;
+                          }
+                          throw err;
+                        }
+                      };
+                    }
+                    const widFactory = (window as any).require?.('WAWebWidFactory');
+                    const findChatAction = (window as any).require?.('WAWebFindChatAction');
+                    const collections = (window as any).require?.('WAWebCollections');
+                    if (widFactory && jid) {
+                      const wid = widFactory.createWid(jid);
+                      if (findChatAction?.findOrCreateLatestChat) {
+                        await findChatAction.findOrCreateLatestChat(wid);
+                      }
+                      if (collections?.Contact?.find) {
+                        await collections.Contact.find(wid).catch(() => {});
+                      }
                     }
                   } catch (_) {}
                 }, `${cleanPhone}@c.us`);

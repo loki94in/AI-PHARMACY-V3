@@ -3,7 +3,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { sendMessage, normalizeWhatsAppPhone } from '../whatsappClient.js';
+import { sendMessage, normalizeWhatsAppPhone, ensureWhatsAppReady } from '../whatsappClient.js';
 import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage, buildMultiOrderNotificationMessage, type MultiOrderItemArrival } from '../services/storeSettingsService.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
@@ -454,6 +454,8 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
     { skipDedupe: options?.skipDedupe }
   );
 
+  // Pre-warm / wake WhatsApp if sleeping so it is ready immediately
+  void ensureWhatsAppReady(30_000).catch(() => {});
   // User clicked: clear pacing countdown so the tick appears immediately in the queue UI
   void whatsappQueueWorker.forceNext().catch(() => {});
 
@@ -649,6 +651,8 @@ router.post('/batch-notify-arrival', async (req, res) => {
       { skipDedupe: true }
     );
 
+    // Pre-warm / wake WhatsApp if sleeping so it is ready immediately
+    void ensureWhatsAppReady(30_000).catch(() => {});
     void whatsappQueueWorker.forceNext().catch(() => {});
 
     // Update orders in SQLite

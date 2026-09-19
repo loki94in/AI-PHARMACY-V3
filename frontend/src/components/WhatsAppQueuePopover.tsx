@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   X, RefreshCw, Send, AlertTriangle, CheckCircle2, Clock,
   WifiOff, Edit3, Play, Pause, ShieldAlert, ChevronDown, ChevronUp, Zap, Truck, Building2, MessageSquare, Calendar, Trash2, CheckCheck,
-  Moon, Loader2, ShieldCheck
+  Moon, Loader2, ShieldCheck, ExternalLink
 } from 'lucide-react';
 import { api, apiClient, peekWhatsAppQueueStatusCache, type WhatsAppQueueItem, type WhatsAppQueueStatus, type WhatsAppDeliveryRecord } from '../services/api';
 import { toastEvent, whatsappQueueEvent, messageSendEvent, automationHubEvent } from '../services/events';
@@ -649,7 +649,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               {item.message}
             </p>
 
-            {(item.status.includes('failed') || item.error_message) && (
+            {(item.status.includes('failed') || item.status === 'review_required' || item.status.includes('skipped') || item.error_message) && (
               <div className="p-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs space-y-1 my-1">
                 <div className="flex items-center gap-1.5 font-bold text-rose-400">
                   <ShieldAlert size={12} className="shrink-0" />
@@ -661,12 +661,28 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                   </p>
                 )}
                 <p className="text-[10px] text-muted leading-tight">
-                  💡 <strong>Fixing Tip:</strong> {item.error_message?.toLowerCase().includes('phone') ? 'Click Edit to update the phone number.' : 'Ensure internet is connected or click Retry Failed.'}
+                  💡 <strong>Fixing Tip:</strong> {(() => {
+                    const raw = (item.error_message || '').toLowerCase();
+                    const reason = getFormattedFailureReason(item.error_message, item.status).toLowerCase();
+                    if (reason.includes('not registered') || raw.includes('not registered') || raw.includes('not on whatsapp') || raw.includes('no lid')) {
+                      return 'This recipient does not have a WhatsApp account. Click "Edit Phone" with their WhatsApp number or call them directly.';
+                    }
+                    if (reason.includes('sync delay') || raw.includes('contact sync') || raw.includes('memoize')) {
+                      return 'WhatsApp Web contact sync delay. Click "Resend" now to dispatch with the warmed-up session.';
+                    }
+                    if (reason.includes('format') || raw.includes('invalid') || raw.includes('10 digits')) {
+                      return 'Phone format error. Click "Edit Phone" to ensure it is a valid 10-digit mobile number.';
+                    }
+                    if (reason.includes('offline') || raw.includes('offline') || raw.includes('network') || raw.includes('timeout')) {
+                      return 'Check PC internet connection and click "Retry Failed" or "Resend".';
+                    }
+                    return 'Ensure WhatsApp is connected or click "Resend" to retry.';
+                  })()}
                 </p>
               </div>
             )}
 
-            <div className="pt-1 flex items-center justify-end gap-2">
+            <div className="pt-1 flex items-center justify-end gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={(e) => handleDeleteItem(item.id, e)}
@@ -677,7 +693,20 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                 <Trash2 size={11} /> Dismiss / Mark Read
               </button>
 
-              {(item.status === 'sent' || item.status.includes('failed')) && (
+              {/* Direct Open in WhatsApp Human Fallback */}
+              {item.number && (
+                <a
+                  href={`https://wa.me/${item.number.replace(/\D/g, '')}?text=${encodeURIComponent(item.message || '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 bg-bg3 hover:bg-bg2 text-text font-semibold text-[10px] rounded-lg transition-all flex items-center gap-1 border border-border"
+                  title="Open chat directly in WhatsApp Web/App to send manually"
+                >
+                  <ExternalLink size={11} /> Open WhatsApp
+                </a>
+              )}
+
+              {(item.status === 'sent' || item.status.includes('failed') || item.status === 'review_required' || item.status.includes('skipped')) && (
                 <button
                   type="button"
                   onClick={(e) => handleResendItem(item.id, e)}
@@ -690,7 +719,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                 </button>
               )}
 
-              {item.status.includes('failed') && (
+              {(item.status.includes('failed') || item.status === 'review_required' || item.status.includes('skipped')) && (
                 <button
                   onClick={() => {
                     setEditingItem(item);

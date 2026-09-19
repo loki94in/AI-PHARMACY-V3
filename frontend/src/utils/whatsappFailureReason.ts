@@ -7,7 +7,13 @@ export function getFormattedFailureReason(errorMsg?: string, status?: string): s
     return 'Message delivery failed during queue dispatch attempt';
   }
   const msg = errorMsg.toLowerCase();
-  if (msg.includes('invalid') || msg.includes('phone') || msg.includes('number')) {
+  if (msg.includes('not registered') || msg.includes('not on whatsapp') || msg.includes('no lid')) {
+    return 'Recipient phone number is not registered on WhatsApp';
+  }
+  if (msg.includes('memoize') || msg.includes('id property') || msg.includes('getter') || msg.includes('static.whatsapp.net') || msg.includes('contact sync')) {
+    return 'WhatsApp Web contact sync delay (retry available)';
+  }
+  if (msg.includes('invalid') || msg.includes('10 digits') || msg.includes('phone number format')) {
     return 'Invalid recipient phone number format';
   }
   if (msg.includes('session') || msg.includes('auth') || msg.includes('token') || msg.includes('login')) {
@@ -15,12 +21,6 @@ export function getFormattedFailureReason(errorMsg?: string, status?: string): s
   }
   if (msg.includes('timeout') || msg.includes('net::err') || msg.includes('econnrefused')) {
     return 'Network connection timeout';
-  }
-  if (msg.includes('not registered') || msg.includes('not on whatsapp')) {
-    return 'Recipient phone number is not registered on WhatsApp';
-  }
-  if (msg.includes('memoize') || msg.includes('id property') || msg.includes('getter') || msg.includes('static.whatsapp.net') || msg.includes('contact sync')) {
-    return 'WhatsApp Web contact sync delay (retry available)';
   }
   return errorMsg;
 }

@@ -2801,7 +2801,7 @@ const QuickAssistSidebar = memo(({
         }
       }
 
-      toastEvent.trigger(`Consolidated WhatsApp message sent to ${group.recipient_name}!`, 'success');
+      toastEvent.trigger(`Consolidated WhatsApp message queued for ${group.recipient_name}!`, 'success');
       refillEvent.triggerRefresh();
       onActionComplete();
     } catch (err: unknown) {

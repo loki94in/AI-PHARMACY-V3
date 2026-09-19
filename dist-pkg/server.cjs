@@ -11447,14 +11447,16 @@ async function notifyOwnerOfSpecialOrderPharmarackResults(payload) {
       ]
     );
     const formatNum = (n) => {
-      const symbols = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3"];
+      const symbols = ["1\uFE0F\u20E3", "2\uFE0F\u20E3", "3\uFE0F\u20E3", "4\uFE0F\u20E3", "5\uFE0F\u20E3", "6\uFE0F\u20E3", "7\uFE0F\u20E3", "8\uFE0F\u20E3", "9\uFE0F\u20E3", "\u{1F51F}"];
       return symbols[n] || `${n + 1}\uFE0F\u20E3`;
     };
     const resultsList = payload.pharmarackOptions.map((opt, i) => {
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || "Distributor";
       const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? opt.mrp ?? 0;
       const rateStr = rate > 0 ? `\u20B9${Number(rate).toFixed(2)}` : "Available";
-      return `${formatNum(i)} ${dist} | Available | ${rateStr}`;
+      const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === "0" || String(opt.Ismapped) === "0";
+      const tag = isUnmapped ? " [Unmapped]" : "";
+      return `${formatNum(i)} ${dist}${tag} | Available | ${rateStr}`;
     }).join("\n");
     const messageText = `\u{1F514} *New Special Order Request*
 
@@ -25913,6 +25915,7 @@ __export(pharmarack_exports, {
   invalidatePharmarackCartCache: () => invalidatePharmarackCartCache,
   isItemInStock: () => isItemInStock,
   performPharmarackSearch: () => performPharmarackSearch,
+  rankSpecialOrderDistributorCandidates: () => rankSpecialOrderDistributorCandidates,
   resolveCommonOrFrequentDistributor: () => resolveCommonOrFrequentDistributor,
   warmupStartupCart: () => warmupStartupCart
 });
@@ -26574,6 +26577,120 @@ async function resolveCommonOrFrequentDistributor(db2, candidateDistributors) {
   } catch (_) {
   }
   return candidateDistributors[0];
+}
+async function rankSpecialOrderDistributorCandidates(db2, candidates, maxTotal = 10, maxUnmapped = 2) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return [];
+  const inStock = candidates.filter((c) => isItemInStock(c.availability ?? c.stock));
+  if (inStock.length === 0) return [];
+  const dedupedMap = /* @__PURE__ */ new Map();
+  for (const item of inStock) {
+    const rawDist = item.distributor || item.supplier_name || item.storeName || item.distributor_name || "";
+    const key = (rawDist || String(item.storeId || "")).trim().toLowerCase();
+    if (!key) continue;
+    const existing = dedupedMap.get(key);
+    if (!existing) {
+      dedupedMap.set(key, item);
+    } else {
+      const exRate = Number(existing.rate ?? existing.distributorPrice ?? existing.ptr ?? 0);
+      const curRate = Number(item.rate ?? item.distributorPrice ?? item.ptr ?? 0);
+      if (exRate <= 0 && curRate > 0) {
+        dedupedMap.set(key, item);
+      } else if (curRate > 0 && curRate < exRate) {
+        dedupedMap.set(key, item);
+      }
+    }
+  }
+  const allUnique = Array.from(dedupedMap.values());
+  const isMappedCandidate = (c) => {
+    return Boolean(
+      c.mapped === true || c.isMapped === true || c.is_mapped === 1 || String(c.IsMapped) === "1" || String(c.Ismapped) === "1"
+    );
+  };
+  const mappedCandidates = allUnique.filter((c) => isMappedCandidate(c));
+  const unmappedCandidates = allUnique.filter((c) => !isMappedCandidate(c));
+  let purchaseRows = [];
+  try {
+    if (db2) {
+      const rows = await db2.all(`
+        SELECT d.name, COUNT(p.id) as cnt 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY cnt DESC
+      `).catch(() => []);
+      purchaseRows = (rows || []).map((r) => ({ name: String(r.name || ""), cnt: Number(r.cnt || 0) }));
+    }
+  } catch (_) {
+  }
+  const activeCartDistributorNames = /* @__PURE__ */ new Set();
+  try {
+    const liveCartPromise = loadLiveCartCore();
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1e3));
+    const liveCart = await Promise.race([liveCartPromise, timeoutPromise]).catch(() => null);
+    if (liveCart && Array.isArray(liveCart.distributors)) {
+      for (const cd of liveCart.distributors) {
+        if (cd.storeName && cd.items && cd.items.length > 0) {
+          activeCartDistributorNames.add(cd.storeName.trim().toLowerCase());
+        }
+      }
+    }
+  } catch (_) {
+  }
+  const cleanNameForMatch = (str) => {
+    return (str || "").toLowerCase().replace(/\b(pvt|ltd|private|limited|distributor|distributors|pharma|pharmaceuticals|agency|enterprises|counter|delivery|narhe|pune)\b/gi, "").replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+  };
+  const getScore = (distName) => {
+    const rawLower = (distName || "").trim().toLowerCase();
+    let score = 0;
+    if (activeCartDistributorNames.has(rawLower)) {
+      score += 1e4;
+    }
+    const cDist = cleanNameForMatch(distName);
+    if (!cDist || cDist.length < 3) return score;
+    for (const pRow of purchaseRows) {
+      const cRow = cleanNameForMatch(pRow.name);
+      if (!cRow || cRow.length < 3) continue;
+      if (cDist.includes(cRow) || cRow.includes(cDist)) {
+        score += pRow.cnt;
+        break;
+      }
+      const tokens = cRow.split(" ").filter((t) => t.length >= 3);
+      if (tokens.length > 0 && tokens.every((t) => cDist.includes(t))) {
+        score += pRow.cnt;
+        break;
+      }
+    }
+    return score;
+  };
+  mappedCandidates.sort((a, b) => {
+    const scoreA = getScore(a.distributor || a.supplier_name || a.storeName || "");
+    const scoreB = getScore(b.distributor || b.supplier_name || b.storeName || "");
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    const rateA = Number(a.rate ?? a.distributorPrice ?? a.ptr ?? 0);
+    const rateB = Number(b.rate ?? b.distributorPrice ?? b.ptr ?? 0);
+    if (rateA > 0 && rateB > 0 && rateA !== rateB) return rateA - rateB;
+    if (rateA > 0 && rateB <= 0) return -1;
+    if (rateA <= 0 && rateB > 0) return 1;
+    const nameA = String(a.distributor || a.supplier_name || a.storeName || "");
+    const nameB = String(b.distributor || b.supplier_name || b.storeName || "");
+    return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+  });
+  unmappedCandidates.sort((a, b) => {
+    const rateA = Number(a.rate ?? a.distributorPrice ?? a.ptr ?? 0);
+    const rateB = Number(b.rate ?? b.distributorPrice ?? b.ptr ?? 0);
+    if (rateA > 0 && rateB > 0 && rateA !== rateB) return rateA - rateB;
+    if (rateA > 0 && rateB <= 0) return -1;
+    if (rateA <= 0 && rateB > 0) return 1;
+    const nameA = String(a.distributor || a.supplier_name || a.storeName || "");
+    const nameB = String(b.distributor || b.supplier_name || b.storeName || "");
+    return nameA.localeCompare(nameB, void 0, { numeric: true, sensitivity: "base" });
+  });
+  const allowedUnmapped = Math.min(unmappedCandidates.length, maxUnmapped);
+  const allowedMapped = Math.min(mappedCandidates.length, maxTotal - allowedUnmapped);
+  const selectedMapped = mappedCandidates.slice(0, allowedMapped);
+  const remainingSlots = Math.max(0, maxTotal - selectedMapped.length);
+  const selectedUnmapped = unmappedCandidates.slice(0, Math.min(unmappedCandidates.length, Math.max(allowedUnmapped, remainingSlots)));
+  return [...selectedMapped, ...selectedUnmapped];
 }
 async function addItemsToPharmarackCart(items) {
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -30444,6 +30561,8 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
     [specialOrderId, soCode, customerName, pending2.phone]
   );
   if (inStockCandidates.length > 0) {
+    const rankedOptions = await rankSpecialOrderDistributorCandidates(db2, inStockCandidates, 10, 2);
+    const finalOptions = rankedOptions.length > 0 ? rankedOptions : inStockCandidates.slice(0, 10);
     await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
       specialOrderId,
       soCode,
@@ -30452,7 +30571,7 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       medicineName: medName,
       quantity: medQty,
       unit: medUnit,
-      pharmarackOptions: inStockCandidates.slice(0, 6)
+      pharmarackOptions: finalOptions
     });
     const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.
 
@@ -30487,6 +30606,24 @@ async function checkIsOwnerPhone(phone, db2) {
 }
 async function handleOwnerInteractiveReply(phone, body, db2) {
   const cleanBody = body.trim().toUpperCase();
+  let normalizedBody = cleanBody;
+  const emojiDigits = {
+    "1\uFE0F\u20E3": "1",
+    "2\uFE0F\u20E3": "2",
+    "3\uFE0F\u20E3": "3",
+    "4\uFE0F\u20E3": "4",
+    "5\uFE0F\u20E3": "5",
+    "6\uFE0F\u20E3": "6",
+    "7\uFE0F\u20E3": "7",
+    "8\uFE0F\u20E3": "8",
+    "9\uFE0F\u20E3": "9",
+    "\u{1F51F}": "10"
+  };
+  for (const [emoji, num] of Object.entries(emojiDigits)) {
+    if (normalizedBody.includes(emoji)) {
+      normalizedBody = normalizedBody.replaceAll(emoji, num);
+    }
+  }
   const confirmPaymentMatch = cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?\s+(SO-\d+)$/i) || cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?\s+(SO-\d+)$/i);
   if (confirmPaymentMatch) {
     const soCode2 = confirmPaymentMatch[1].toUpperCase();
@@ -30602,8 +30739,8 @@ Customer *${order.requester || "Customer"}* message has been staged and is await
     console.log(`[Intent Service] Owner verified payment for order #${orderId} (${soCode2}). Added to Live Cart.`);
     return true;
   }
-  const soSupplierMatch = cleanBody.match(/^(SO-\d+)(?:\s+|-)([1-6])$/i);
-  const singleDigitMatch = cleanBody.match(/^([1-6])$/);
+  const soSupplierMatch = normalizedBody.match(/^(SO-\d+)(?:\s+|-)(10|[1-9])$/i);
+  const singleDigitMatch = normalizedBody.match(/^(10|[1-9])$/);
   let soCode = null;
   let chosenOptionIdx = -1;
   let targetRow = null;
@@ -30706,7 +30843,7 @@ Awaiting customer payment screenshot.`;
     console.log(`[Intent Service] Owner selected supplier #${chosenOptionIdx + 1} (${distName}) for ${soCode}. Sent \u20B950 QR to customer.`);
     return true;
   }
-  const reqCodeMatch = cleanBody.match(/^(REQ-\d+)-([1-6])$/i);
+  const reqCodeMatch = normalizedBody.match(/^(REQ-\d+)-(10|[1-9])$/i);
   if (reqCodeMatch) {
     await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db2);
     let targetRow2 = null;
@@ -32182,6 +32319,7 @@ __export(whatsappClient_exports, {
   destroyClient: () => destroyClient,
   downloadMessageMediaById: () => downloadMessageMediaById,
   downloadMessageMediaReliably: () => downloadMessageMediaReliably,
+  ensureSessionHealth: () => ensureSessionHealth,
   ensureWhatsAppReady: () => ensureWhatsAppReady,
   forceReconnect: () => forceReconnect,
   getChatMessages: () => getChatMessages,
@@ -32446,6 +32584,26 @@ async function waitForWhatsAppReady(timeoutMs = 9e4) {
 async function ensureWhatsAppReady(timeoutMs = 3e4) {
   markWhatsAppActivity();
   return waitForWhatsAppReady(timeoutMs);
+}
+async function ensureSessionHealth() {
+  if (!isReady || !clientInstance) return false;
+  const idleMin = (Date.now() - lastWaActivityAt) / 6e4;
+  if (idleMin >= 15) {
+    console.log(`[WhatsApp Health] Session idle for ${Math.round(idleMin)}m. Running health probe...`);
+    try {
+      const state = await clientInstance.getState?.().catch(() => null);
+      if (state && state !== "CONNECTED") {
+        console.warn(`[WhatsApp Health] Non-connected state (${state}). Refreshing WhatsApp page...`);
+        if (clientInstance.pupPage && !clientInstance.pupPage.isClosed()) {
+          await clientInstance.pupPage.reload({ waitUntil: "networkidle0", timeout: 3e4 }).catch(() => {
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[WhatsApp Health] Health probe note:", e?.message);
+    }
+  }
+  return true;
 }
 async function shouldRouteToBusiness() {
   const db2 = await dbManager.getConnection();
@@ -32795,6 +32953,32 @@ function launchClientInstance(forceQr) {
         }
       } catch (saveErr) {
         console.warn("[WhatsApp Persist] Failed to save connected state to app_settings:", saveErr);
+      }
+      try {
+        if (client.pupPage && !client.pupPage.isClosed()) {
+          await client.pupPage.evaluate(() => {
+            try {
+              if (window.WWebJS && !window.WWebJS.__memoizePatched) {
+                window.WWebJS.__memoizePatched = true;
+                const origGetChatModel = window.WWebJS.getChatModel;
+                window.WWebJS.getChatModel = async function(chat, opts) {
+                  try {
+                    return await origGetChatModel.apply(this, arguments);
+                  } catch (err) {
+                    if (String(err).includes("id property") || String(err).includes("memoize")) {
+                      const model = typeof chat?.serialize === "function" ? chat.serialize() : { id: chat?.id };
+                      model.formattedTitle = chat?.id?._serialized || chat?.id?.user || "Customer";
+                      return model;
+                    }
+                    throw err;
+                  }
+                };
+              }
+            } catch (_) {
+            }
+          });
+        }
+      } catch (_) {
       }
       Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports)).then(({ whatsappQueueWorker: whatsappQueueWorker2 }) => {
         whatsappQueueWorker2.triggerProcessing();
@@ -33302,6 +33486,22 @@ async function sendMessage(to, mediaPath, caption, file) {
             try {
               await targetClient.pupPage.evaluate(async (jid) => {
                 try {
+                  if (window.WWebJS && !window.WWebJS.__memoizePatched) {
+                    window.WWebJS.__memoizePatched = true;
+                    const origGetChatModel = window.WWebJS.getChatModel;
+                    window.WWebJS.getChatModel = async function(chat, opts) {
+                      try {
+                        return await origGetChatModel.apply(this, arguments);
+                      } catch (err) {
+                        if (String(err).includes("id property") || String(err).includes("memoize")) {
+                          const model = typeof chat?.serialize === "function" ? chat.serialize() : { id: chat?.id };
+                          model.formattedTitle = chat?.id?._serialized || chat?.id?.user || "Customer";
+                          return model;
+                        }
+                        throw err;
+                      }
+                    };
+                  }
                   const widFactory = window.require?.("WAWebWidFactory");
                   const findChatAction = window.require?.("WAWebFindChatAction");
                   const collections = window.require?.("WAWebCollections");
@@ -33310,9 +33510,17 @@ async function sendMessage(to, mediaPath, caption, file) {
                     if (findChatAction?.findOrCreateLatestChat) {
                       await findChatAction.findOrCreateLatestChat(wid);
                     }
-                    if (collections?.Contact?.find) {
-                      await collections.Contact.find(wid).catch(() => {
-                      });
+                    if (collections?.Contact) {
+                      let contact = collections.Contact.get ? collections.Contact.get(wid) : null;
+                      if (!contact && collections.Contact.find) {
+                        contact = await collections.Contact.find(wid).catch(() => null);
+                      }
+                      if (!contact && collections.Contact.add) {
+                        try {
+                          collections.Contact.add({ id: wid, name: wid.user });
+                        } catch (_) {
+                        }
+                      }
                     }
                   }
                 } catch (_) {
@@ -33337,6 +33545,8 @@ async function sendMessage(to, mediaPath, caption, file) {
           return sentMsg;
         };
         try {
+          await ensureSessionHealth().catch(() => {
+          });
           await doSend(clientInstance);
         } catch (sendErr) {
           const errMsg = sendErr?.message || String(sendErr);
@@ -33365,11 +33575,34 @@ async function sendMessage(to, mediaPath, caption, file) {
               if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
                 await clientInstance.pupPage.evaluate(async (jid) => {
                   try {
-                    const wid = window.require?.("WAWebWidFactory")?.createWid(jid);
-                    if (wid) {
-                      await window.require?.("WAWebFindChatAction")?.findOrCreateLatestChat(wid);
-                      await window.require?.("WAWebCollections")?.Contact?.find(wid).catch(() => {
-                      });
+                    if (window.WWebJS && !window.WWebJS.__memoizePatched) {
+                      window.WWebJS.__memoizePatched = true;
+                      const origGetChatModel = window.WWebJS.getChatModel;
+                      window.WWebJS.getChatModel = async function(chat, opts) {
+                        try {
+                          return await origGetChatModel.apply(this, arguments);
+                        } catch (err) {
+                          if (String(err).includes("id property") || String(err).includes("memoize")) {
+                            const model = typeof chat?.serialize === "function" ? chat.serialize() : { id: chat?.id };
+                            model.formattedTitle = chat?.id?._serialized || chat?.id?.user || "Customer";
+                            return model;
+                          }
+                          throw err;
+                        }
+                      };
+                    }
+                    const widFactory = window.require?.("WAWebWidFactory");
+                    const findChatAction = window.require?.("WAWebFindChatAction");
+                    const collections = window.require?.("WAWebCollections");
+                    if (widFactory && jid) {
+                      const wid = widFactory.createWid(jid);
+                      if (findChatAction?.findOrCreateLatestChat) {
+                        await findChatAction.findOrCreateLatestChat(wid);
+                      }
+                      if (collections?.Contact?.find) {
+                        await collections.Contact.find(wid).catch(() => {
+                        });
+                      }
                     }
                   } catch (_) {
                   }
@@ -34604,6 +34837,10 @@ var init_whatsappQueueWorker = __esm({
                 }
               }
             }
+            if (!useBusiness && status.isReady) {
+              await ensureSessionHealth().catch(() => {
+              });
+            }
             if (!useBusiness && !status.isReady) {
               const logNow = Date.now();
               if (!this.lastWasOffline || logNow - this.lastOfflineLogTime > 6e5) {
@@ -34877,6 +35114,10 @@ var init_whatsappQueueWorker = __esm({
                 const isTemporaryError = errMsg.includes("client not ready") || errMsg.includes("disconnected") || errMsg.includes("timeout") || errMsg.includes("detached") || errMsg.includes("Execution context was destroyed") || errMsg.includes("Session closed") || errMsg.includes("Target closed") || errMsg.includes("could not be sent") || errMsg.includes("Data passed to getter") || errMsg.includes("it's how we memoize") || errMsg.includes("contact sync");
                 const isStoreDesync = errMsg.includes("Data passed to getter") || errMsg.includes("it's how we memoize") || errMsg.includes("contact sync");
                 const newStatus = isDistributorReminder && isTemporaryError ? "failed_offline" : isStoreDesync && newRetryCount >= 3 ? "review_required" : newRetryCount >= 3 ? "failed_perm" : "failed_offline";
+                if (isStoreDesync && newRetryCount < 3) {
+                  console.log(`[WhatsAppQueueWorker] Store sync delay on #${item.id}. Backing off 5s to allow WhatsApp Web contact hydration...`);
+                  await new Promise((r) => setTimeout(r, 5e3));
+                }
                 console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? " [retryable availability]" : "/3"}): ${errMsg}`);
                 await db2.run(
                   "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ? WHERE id = ?",
@@ -77840,6 +78081,8 @@ async function enqueueArrivalWhatsApp(db2, order, options) {
     void 0,
     { skipDedupe: options?.skipDedupe }
   );
+  void ensureWhatsAppReady(3e4).catch(() => {
+  });
   void whatsappQueueWorker.forceNext().catch(() => {
   });
   await db2.run(
@@ -78375,6 +78618,8 @@ var init_orders = __esm({
           void 0,
           { skipDedupe: true }
         );
+        void ensureWhatsAppReady(3e4).catch(() => {
+        });
         void whatsappQueueWorker.forceNext().catch(() => {
         });
         for (const ord of orders) {

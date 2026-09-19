@@ -7,6 +7,18 @@
 
 ## Fixed
 
+### [Fixed] P2-09 — WhatsApp Contact Pre-Warm Desync & False "Invalid Phone Format" UI Error
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. In newly installed/updated builds or when sending to unsaved contacts, the WhatsApp Queue Popover displayed `Failure Cause: Invalid recipient phone number format` with `Raw Output: Number not registered on WhatsApp` and a misleading tip `Ensure internet is connected or click Retry Failed`.<br>2. When marking an order Ready (e.g. `VOLIX M 0.2 TAB`), the UI prematurely displayed a success toast claiming the message was sent, but the message actually remained in the queue and failed with `Data passed to getter must include an id property (it's how we memoize) but got undefined`, exhausting retries and entering `review_required` without clear recovery options. |
+| **Root cause** | 1. In `frontend/src/utils/whatsappFailureReason.ts`, `msg.includes('number')` matched before checking `'not registered'`, falsely categorizing unregistered accounts as phone format errors.<br>2. In `WhatsAppQueuePopover.tsx`, the fixing tip only checked for `'phone'` and missed unregistered/sync delay cases, and action buttons (`Resend`, `Edit`) were hidden for `review_required` and `skipped_not_on_whatsapp` statuses.<br>3. In `src/whatsappClient.ts`, modern WhatsApp Web memoizers throw on `chat.formattedTitle` when an unsaved contact has not finished syncing in the headless browser. Rapid retries without backoff exhausted the 3 retry budget in seconds.<br>4. In `src/components/Layout.tsx`, the notification send toast claimed *"message sent"* upon queue ingestion instead of truthfully indicating that the message was *"queued for delivery"*. |
+| **How it was fixed** | 1. **Prioritized Error Classifier:** In `whatsappFailureReason.ts`, moved `not registered`, `not on whatsapp`, and `contact sync` checks ahead of generic format checks and removed the overly greedy `number` keyword.<br>2. **Pre-Warm & Memoizer Protection:** In `src/whatsappClient.ts`, pre-patched `window.WWebJS.getChatModel` to catch getter crashes and fallback to safe identifier titles, and pre-hydrated `WAWebCollections.Contact` before dispatch.<br>3. **Session Health Watchdog & Instant Wakeup:** Added `ensureSessionHealth` in `src/whatsappClient.ts` to probe connection state and refresh stale pages after $\ge 15$ minutes of inactivity, and added `ensureWhatsAppReady(30_000)` wakeup when orders are marked Ready in `src/routes/orders.ts`.<br>4. **Worker Backoff:** Added a 5-second backoff on store desync in `src/services/whatsappQueueWorker.ts` before retry attempts.<br>5. **Human-in-the-Loop Recovery & Truthful Toasts:** In `WhatsAppQueuePopover.tsx`, enabled `Resend` and `Edit Phone` for all failed/review/skipped items, added a 1-click `Open WhatsApp` manual link, and updated toasts in `Layout.tsx` to truthfully state *"message queued"*. |
+| **Priority** | P2 |
+| **What not to touch** | WhatsApp queue pacing delays, idle-sleep memory evaluator (`whatsapp_idle_sleep_min`), and multi-store dispatch rules. |
+| **Verified by** | `npm run guardrails` (PASS, 0 violations, clean TypeScript compilation); `node scripts/quick-update.mjs` (PASS); verified error classification and recovery button rendering. |
+
+
 ### [Fixed] P1-26 — Pharmarack Live Cart Deletion Failure & Stale Page Flash Upon Navigation
 
 | Field | Content |

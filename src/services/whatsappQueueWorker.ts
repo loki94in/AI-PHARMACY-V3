@@ -1,6 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered } from '../whatsappClient.js';
+import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered, ensureSessionHealth } from '../whatsappClient.js';
 import { whatsappDeliveryRegister } from './whatsappDeliveryRegister.js';
 
 const SERVER_BOOT_TIME = Date.now();
@@ -860,6 +860,11 @@ class WhatsAppQueueWorker {
           }
         }
 
+        // If client is ready, ensure session is healthy / not stale
+        if (!useBusiness && status.isReady) {
+          await ensureSessionHealth().catch(() => {});
+        }
+
         // If client is still not ready, leave items safely pending in queue without launching Chrome
         if (!useBusiness && !status.isReady) {
           const logNow = Date.now();
@@ -1167,6 +1172,12 @@ class WhatsAppQueueWorker {
                 : (isStoreDesync && newRetryCount >= 3)
                   ? 'review_required'
                   : (newRetryCount >= 3 ? 'failed_perm' : 'failed_offline');
+
+              // Apply 5s backoff on store desync to allow WhatsApp Web background contact hydration
+              if (isStoreDesync && newRetryCount < 3) {
+                console.log(`[WhatsAppQueueWorker] Store sync delay on #${item.id}. Backing off 5s to allow WhatsApp Web contact hydration...`);
+                await new Promise(r => setTimeout(r, 5000));
+              }
 
               console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? ' [retryable availability]' : '/3'}): ${errMsg}`);
               await db.run(
