@@ -1860,13 +1860,27 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       console.warn('[Intent Service] Non-fatal online_order_items insert note:', ooiErr);
     }
 
+    // Resolve distributor storeId if available
+    let resolvedStoreId = 0;
+    if (order.pharmarack_distributor) {
+      try {
+        const dRow = await db.get(
+          `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
+          [order.pharmarack_distributor.trim(), `%${order.pharmarack_distributor.trim()}%`]
+        );
+        if (dRow && dRow.store_id) {
+          resolvedStoreId = Number(dRow.store_id);
+        }
+      } catch (_) {}
+    }
+
     // Add item to Pharmarack Live Cart
     const cartItem = {
       productName: order.medicine_name || order.product,
       product: order.medicine_name || order.product,
       productId: 0,
       productCode: '',
-      storeId: 0,
+      storeId: resolvedStoreId,
       storeName: order.pharmarack_distributor || 'Standard Distributor',
       company: '',
       qty: order.qty > 0 ? order.qty : 1,
@@ -1877,7 +1891,12 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
 
     try {
       const { addItemsToPharmarackCart } = await import('../routes/pharmarack.js');
-      await addItemsToPharmarackCart([cartItem]);
+      const cartResult = await addItemsToPharmarackCart([cartItem]);
+      if (cartResult?.success) {
+        console.log(`[Intent Service] Live cart successfully added "${cartItem.productName}" to ${cartItem.storeName} (mode: ${cartResult.mode || 'live'})`);
+      } else {
+        console.warn(`[Intent Service] Live cart add note for "${cartItem.productName}":`, cartResult?.error || cartResult?.details);
+      }
     } catch (cartErr) {
       console.warn('[Intent Service] Live Cart add attempt warning:', cartErr);
     }

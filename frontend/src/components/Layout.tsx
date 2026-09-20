@@ -3116,7 +3116,9 @@ const QuickAssistSidebar = memo(({
       if (g.items.some(i => i.status === 'Pending')) g.overallStatus = 'Pending';
       else if (g.items.some(i => i.status === 'Ordered')) g.overallStatus = 'Ordered';
       else if (g.items.some(i => i.status === 'Ready')) g.overallStatus = 'Ready';
-      else g.overallStatus = 'Other';
+      else if (g.items.some(i => i.status === 'Confirmed')) g.overallStatus = 'Confirmed';
+      else if (g.items.some(i => i.status === 'Waiting')) g.overallStatus = 'Waiting';
+      else g.overallStatus = g.items[0]?.status || 'Other';
     }
 
     return list;
@@ -3610,6 +3612,10 @@ const QuickAssistSidebar = memo(({
                     className={`p-3 rounded-xl border flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs ${
                       group.overallStatus === 'Ready'
                         ? 'bg-sky-500/[0.06] border-sky-500/30'
+                        : group.overallStatus === 'Confirmed'
+                        ? 'bg-emerald-500/[0.06] border-emerald-500/30'
+                        : group.overallStatus === 'Ordered'
+                        ? 'bg-indigo-500/[0.06] border-indigo-500/30'
                         : 'bg-cyan-500/[0.06] border-cyan-500/30'
                     }`}
                   >
@@ -3619,13 +3625,20 @@ const QuickAssistSidebar = memo(({
                       className="flex items-start justify-between gap-1.5 min-w-0 cursor-pointer select-none"
                     >
                       <div className="flex flex-col min-w-0 flex-1">
+                        {/* Medicine Name & Qty directly visible */}
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                          <span className="font-bold text-xs text-text truncate" title={group.requester}>
-                            {group.requester}
+                          <span className="font-bold text-xs text-text truncate" title={group.items[0]?.product || 'Medicine'}>
+                            {group.items[0]?.product || 'Medicine'}
                           </span>
-                          <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-bold shrink-0 border border-cyan-500/20">
-                            {group.items.length} item{group.items.length > 1 ? 's' : ''}
-                          </span>
+                          {group.items.length > 1 ? (
+                            <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-bold shrink-0 border border-cyan-500/20">
+                              +{group.items.length - 1} more
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-mono font-bold shrink-0 border border-cyan-500/20">
+                              Qty: {group.items[0]?.qty || 1}
+                            </span>
+                          )}
                           <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 border ${
                             group.deliveryMode === 'Home Delivery'
                               ? 'bg-amber-500/15 text-amber-300 border-amber-500/25'
@@ -3634,8 +3647,10 @@ const QuickAssistSidebar = memo(({
                             {group.deliveryMode}
                           </span>
                         </div>
+                        {/* Customer, Phone, Payment & Address */}
                         <div className="flex items-center gap-1 text-[10px] text-muted truncate mt-0.5">
-                          {group.phone && <span className="font-mono">{group.phone}</span>}
+                          <span className="font-semibold text-text truncate">{group.requester}</span>
+                          {group.phone && <span className="font-mono">• {group.phone}</span>}
                           <span>• {group.paymentMethod}</span>
                           {group.address && <span className="truncate" title={group.address}>• {group.address}</span>}
                         </div>
@@ -3645,6 +3660,10 @@ const QuickAssistSidebar = memo(({
                           className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
                             group.overallStatus === 'Ready'
                               ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                              : group.overallStatus === 'Confirmed'
+                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                              : group.overallStatus === 'Ordered'
+                              ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
                               : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
                           }`}
                         >

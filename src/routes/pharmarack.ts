@@ -1254,6 +1254,26 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
       }
     }
 
+    // If storeId is missing/0 and storeName is provided, resolve from distributor_catalog
+    if ((!item.storeId || Number(item.storeId) === 0) && item.storeName) {
+      try {
+        const db = await dbManager.getConnection();
+        const cleanStoreName = String(item.storeName).trim();
+        const row = await db.get(
+          `SELECT store_id, store_name FROM distributor_catalog 
+           WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?)
+           LIMIT 1`,
+          [cleanStoreName, `%${cleanStoreName}%`]
+        );
+        if (row && row.store_id) {
+          item.storeId = Number(row.store_id);
+          item.storeName = row.store_name;
+        }
+      } catch (distErr) {
+        console.warn('Failed to resolve storeId from distributor_catalog:', distErr);
+      }
+    }
+
     // If productId is missing/0, resolve exact PrProductId.
     // Fast path first: a recent autocomplete/search for the SAME product name
     // already carries the real ids — reuse it instead of paying another
@@ -1318,8 +1338,10 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
               const matched = searchData.data.find((p: any) => 
                 (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
-                Number(p.StoreId) === Number(item.storeId)
-              ) || searchData.data.find((p: any) => Number(p.StoreId) === Number(item.storeId)) || searchData.data[0];
+                (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : true)
+              ) || searchData.data.find((p: any) => 
+                Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : (wantStore && String(p.StoreName || '').toLowerCase().includes(wantStore))
+              ) || searchData.data[0];
 
               if (matched) {
                 item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
@@ -2286,7 +2308,7 @@ router.get('/live-cart-summary', async (req, res) => {
 
     const db = await dbManager.getConnection();
     const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
-      db.all("SELECT * FROM special_orders WHERE status = 'Pending' OR status = 'Ordered' ORDER BY id DESC"),
+      db.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Waiting') ORDER BY id DESC"),
       db.all("SELECT word FROM permanently_ignored_words").catch(() => []),
       db.all(`
         SELECT 
@@ -2707,7 +2729,7 @@ router.post('/log-placed-order', async (req, res) => {
     // Auto-update matching pending special requests to status = 'Ordered'
     if (Array.isArray(items) && items.length > 0) {
       try {
-        const pendingOrders = await db.all("SELECT id, product FROM special_orders WHERE status = 'Pending'");
+        const pendingOrders = await db.all("SELECT id, product FROM special_orders WHERE status IN ('Pending', 'Confirmed', 'Waiting')");
         for (const item of items) {
           const prodName = (item.productName || item.product || item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
           if (!prodName) continue;

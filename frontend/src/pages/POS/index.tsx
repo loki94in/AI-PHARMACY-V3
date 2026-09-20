@@ -1540,7 +1540,7 @@ const POS = () => {
 
   const { data: specialOrders = [] } = useApiQuery<SpecialOrder[]>(
     'pos-special-orders',
-    () => api.getOrders().then((data: unknown) => Array.isArray(data) ? (data as SpecialOrder[]).filter(o => o.status === 'Pending' || o.status === 'Ordered') : []),
+    () => api.getOrders().then((data: unknown) => Array.isArray(data) ? (data as SpecialOrder[]).filter(o => o.status === 'Pending' || o.status === 'Ordered' || o.status === 'Confirmed' || o.status === 'Waiting') : []),
     { enabled: mountFetchesReady && specialOrdersControl.shouldFetch }
   );
 

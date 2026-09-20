@@ -602,6 +602,23 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
       [orderId, `Payment confirmed via ${payment_method}. Ref: ${payment_reference || 'N/A'}. Ready for pickup.`, confirmed_by]
     );
 
+    // Auto-add item to Pharmarack Live Cart
+    try {
+      const { addItemsToPharmarackCart } = await import('./pharmarack.js');
+      void addItemsToPharmarackCart([{
+        productName: order.medicine_name || order.product,
+        product: order.medicine_name || order.product,
+        productId: order.medicine_id || 0,
+        productCode: '',
+        storeId: 0,
+        storeName: order.pharmarack_distributor || 'Standard Distributor',
+        qty: order.qty > 0 ? order.qty : 1,
+        rate: order.pharmarack_rate || 0,
+        mrp: order.pharmarack_mrp || 0,
+        packaging: '1 strip'
+      }]).catch((err: any) => console.warn('[WebsiteOrdersRoute] Live cart add error on payment confirm:', err?.message || err));
+    } catch (_) {}
+
     broadcastOrdersChanged();
 
     res.json({
