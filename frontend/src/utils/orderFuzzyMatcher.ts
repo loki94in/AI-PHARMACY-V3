@@ -5,6 +5,10 @@ export interface FuzzyOrder {
   pharmarack_distributor?: string | null;
   pharmarack_rate?: number | null;
   pharmarack_mrp?: number | null;
+  pharmarack_product_id?: number | null;
+  pharmarack_product_code?: string | null;
+  pharmarack_store_id?: number | null;
+  pharmarack_product_name?: string | null;
 }
 
 export interface FuzzyCartItem {
@@ -20,6 +24,7 @@ export interface FuzzyCartItem {
   MRP?: number;
   company?: string;
   productCode?: string;
+  productId?: number;
 }
 
 export interface MatchResult {
@@ -63,7 +68,21 @@ export function evaluateOrderCartMatch(
   cartItem: FuzzyCartItem
 ): MatchResult {
   const matchReasons: string[] = [];
-  const orderTitle = order.product || '';
+
+  // 0. Direct Product Code / Product ID Match
+  if (order.pharmarack_product_code && cartItem.productCode && String(order.pharmarack_product_code).toLowerCase() === String(cartItem.productCode).toLowerCase()) {
+    matchReasons.push('Exact ProductCode match');
+    return {
+      isMatch: true,
+      score: 100,
+      confidence: 'High',
+      tier: 'high',
+      matchedItem: cartItem,
+      matchReasons
+    };
+  }
+
+  const orderTitle = order.pharmarack_product_name || order.product || '';
   const itemTitle = cartItem.productName || cartItem.name || cartItem.medicine_name || '';
 
   if (!orderTitle || !itemTitle) {

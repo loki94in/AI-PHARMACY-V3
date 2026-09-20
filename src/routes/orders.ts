@@ -248,7 +248,11 @@ router.post('/', async (req, res) => {
     customer_order_source = 'in_store',
     prescription_url,
     product_image_url,
-    notes
+    notes,
+    pharmarack_product_id,
+    pharmarack_product_code,
+    pharmarack_store_id,
+    pharmarack_product_name
   } = req.body;
 
   const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
@@ -291,8 +295,8 @@ router.post('/', async (req, res) => {
         customer_order_source, prescription_url, product_image_url, notes, notification_count,
         scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
         cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
-        schedule_calculated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        schedule_calculated_at, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         targetStoreId,
         medName,
@@ -321,7 +325,11 @@ router.post('/', async (req, res) => {
         calculatedSchedule.scheduleStatus,
         calculatedSchedule.scheduleReason,
         calculatedSchedule.scheduleVersion,
-        calculatedSchedule.calculatedAt
+        calculatedSchedule.calculatedAt,
+        pharmarack_product_id ? Number(pharmarack_product_id) : null,
+        pharmarack_product_code || null,
+        pharmarack_store_id ? Number(pharmarack_store_id) : null,
+        pharmarack_product_name || null
       ]
     );
     
@@ -868,16 +876,17 @@ router.post('/:id/mark-advance-paid', async (req, res) => {
     try {
       const { addItemsToPharmarackCart } = await import('./pharmarack.js');
       void addItemsToPharmarackCart([{
-        productName: order.medicine_name || order.product,
-        product: order.medicine_name || order.product,
-        productId: order.medicine_id || 0,
-        productCode: '',
-        storeId: 0,
+        productName: order.pharmarack_product_name || order.medicine_name || order.product,
+        product: order.pharmarack_product_name || order.medicine_name || order.product,
+        productId: order.pharmarack_product_id || order.medicine_id || 0,
+        productCode: order.pharmarack_product_code || '',
+        storeId: order.pharmarack_store_id || 0,
         storeName: order.pharmarack_distributor || 'Standard Distributor',
         qty: order.qty > 0 ? order.qty : 1,
         rate: order.pharmarack_rate || 0,
         mrp: order.pharmarack_mrp || 0,
-        packaging: '1 strip'
+        packaging: '1 strip',
+        mapped: order.pharmarack_mapped === 1
       }]).catch((err: any) => console.warn('[Orders] Live cart add error on mark-advance-paid:', err?.message || err));
     } catch (_) {}
 
@@ -970,7 +979,8 @@ router.put('/:id', async (req, res) => {
   const {
     status, priority, qty, product, requester, phone,
     pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped,
-    advance_payment, cart_add_error, resend, sendPaymentQr, skipWhatsApp, sendWhatsApp
+    advance_payment, cart_add_error, resend, sendPaymentQr, skipWhatsApp, sendWhatsApp,
+    pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
   } = req.body;
   try {
     const db = await dbManager.getConnection();
@@ -999,6 +1009,10 @@ router.put('/:id', async (req, res) => {
     const newMapped = pharmarack_mapped !== undefined ? (pharmarack_mapped ? 1 : 0) : existing.pharmarack_mapped;
     const newAdvancePayment = advance_payment !== undefined ? advance_payment : existing.advance_payment;
     const newCartAddError = cart_add_error !== undefined ? cart_add_error : existing.cart_add_error;
+    const newProductId = pharmarack_product_id !== undefined ? (pharmarack_product_id ? Number(pharmarack_product_id) : null) : existing.pharmarack_product_id;
+    const newProductCode = pharmarack_product_code !== undefined ? (pharmarack_product_code || null) : existing.pharmarack_product_code;
+    const newStoreId = pharmarack_store_id !== undefined ? (pharmarack_store_id ? Number(pharmarack_store_id) : null) : existing.pharmarack_store_id;
+    const newProductName = pharmarack_product_name !== undefined ? (pharmarack_product_name || null) : existing.pharmarack_product_name;
 
     // Manual-only messaging contract: a status transition to 'Ready' (or manual resend with resend===true)
     // dispatches the arrival WhatsApp and increments notification_count unless skipWhatsApp is explicitly requested.
@@ -1027,9 +1041,10 @@ router.put('/:id', async (req, res) => {
       `UPDATE special_orders
        SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
            pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
-           advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?
+           advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
+           pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?
        WHERE id = ?`,
-      [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, id]
+      [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, newProductId, newProductCode, newStoreId, newProductName, id]
     );
 
     // Auto-send payment QR when distributor is newly assigned via the CRM UI

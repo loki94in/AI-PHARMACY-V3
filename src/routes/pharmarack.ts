@@ -1056,7 +1056,8 @@ export async function rankSpecialOrderDistributorCandidates(
   db: any,
   candidates: any[],
   maxTotal: number = 10,
-  maxUnmapped: number = 2
+  maxUnmapped: number = 2,
+  targetMedicineName?: string
 ): Promise<any[]> {
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
 
@@ -1139,6 +1140,21 @@ export async function rankSpecialOrderDistributorCandidates(
       .trim();
   };
 
+  const getFormulationScore = (item: any): number => {
+    if (!targetMedicineName) return 0;
+    const targetClean = targetMedicineName.toLowerCase();
+    const pName = String(item.name || item.productName || item.product || item.shortName || '').toLowerCase();
+    const mods = ['p', 'sp', 'd', 'am', 'h', 'cv', 'plus', 'forte', 'ds', 'ls', 'cr', 'sr'];
+    for (const m of mods) {
+      const targetHas = new RegExp(`\\b${m}\\b`, 'i').test(targetClean);
+      const itemHas = new RegExp(`\\b${m}\\b`, 'i').test(pName);
+      if (targetHas && itemHas) return 50000;
+      if (targetHas && !itemHas) return -50000;
+      if (!targetHas && itemHas) return -20000;
+    }
+    return 0;
+  };
+
   const getScore = (distName: string): number => {
     const rawLower = (distName || '').trim().toLowerCase();
     let score = 0;
@@ -1164,8 +1180,12 @@ export async function rankSpecialOrderDistributorCandidates(
     return score;
   };
 
-  // Sort mapped distributors: Tier 1 (frequent/cart score DESC) -> Tier 2 (other mapped, lowest rate ASC)
+  // Sort mapped distributors: Formulation match -> Tier 1 (frequent/cart score DESC) -> Tier 2 (other mapped, lowest rate ASC)
   mappedCandidates.sort((a, b) => {
+    const formA = getFormulationScore(a);
+    const formB = getFormulationScore(b);
+    if (formA !== formB) return formB - formA;
+
     const scoreA = getScore(a.distributor || a.supplier_name || a.storeName || '');
     const scoreB = getScore(b.distributor || b.supplier_name || b.storeName || '');
     if (scoreA !== scoreB) return scoreB - scoreA;
@@ -1254,7 +1274,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
       }
     }
 
-    // If storeId is missing/0 and storeName is provided, resolve from distributor_catalog
+    // If storeId is missing/0 and storeName is provided, resolve from distributor_catalog or special_orders
     if ((!item.storeId || Number(item.storeId) === 0) && item.storeName) {
       try {
         const db = await dbManager.getConnection();
@@ -1268,9 +1288,79 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         if (row && row.store_id) {
           item.storeId = Number(row.store_id);
           item.storeName = row.store_name;
+        } else {
+          // Check special_orders for any previously recorded store_id for this distributor
+          const soDistRow = await db.get(
+            `SELECT pharmarack_store_id, pharmarack_distributor FROM special_orders 
+             WHERE (LOWER(pharmarack_distributor) = LOWER(?) OR LOWER(pharmarack_distributor) LIKE LOWER(?))
+               AND pharmarack_store_id > 0
+             ORDER BY id DESC LIMIT 1`,
+            [cleanStoreName, `%${cleanStoreName}%`]
+          );
+          if (soDistRow && soDistRow.pharmarack_store_id) {
+            item.storeId = Number(soDistRow.pharmarack_store_id);
+            if (soDistRow.pharmarack_distributor) {
+              item.storeName = soDistRow.pharmarack_distributor;
+            }
+          }
         }
       } catch (distErr) {
-        console.warn('Failed to resolve storeId from distributor_catalog:', distErr);
+        console.warn('Failed to resolve storeId from distributor tables:', distErr);
+      }
+    }
+
+    // Resolve missing productId/storeId from special_orders if previously locked by user/bot
+    if ((!item.productId || Number(item.productId) === 0 || !item.storeId || Number(item.storeId) === 0)) {
+      try {
+        const db = await dbManager.getConnection();
+        const cleanStoreName = String(item.storeName || '').trim();
+        const prodName = (item.productName || item.product || item.name || '').trim();
+        if (prodName) {
+          let soRow = null;
+          if (cleanStoreName) {
+            soRow = await db.get(
+              `SELECT pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
+               FROM special_orders
+               WHERE (LOWER(product) = LOWER(?) OR LOWER(product) LIKE LOWER(?))
+                 AND (LOWER(pharmarack_distributor) = LOWER(?) OR LOWER(pharmarack_distributor) LIKE LOWER(?))
+                 AND pharmarack_product_id > 0
+               ORDER BY id DESC LIMIT 1`,
+              [prodName, `%${prodName}%`, cleanStoreName, `%${cleanStoreName}%`]
+            );
+          }
+          if (!soRow) {
+            soRow = await db.get(
+              `SELECT pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
+               FROM special_orders
+               WHERE (LOWER(product) = LOWER(?) OR LOWER(product) LIKE LOWER(?))
+                 AND pharmarack_product_id > 0
+               ORDER BY id DESC LIMIT 1`,
+              [prodName, `%${prodName}%`]
+            );
+          }
+          if (soRow) {
+            if (!item.storeId || Number(item.storeId) === 0) {
+              item.storeId = Number(soRow.pharmarack_store_id || 0);
+            }
+            if (soRow.pharmarack_distributor && !item.storeName) {
+              item.storeName = soRow.pharmarack_distributor;
+            }
+            if (!item.productId || Number(item.productId) === 0) {
+              item.productId = Number(soRow.pharmarack_product_id || 0);
+            }
+            if (!item.productCode && soRow.pharmarack_product_code) {
+              item.productCode = soRow.pharmarack_product_code;
+            }
+            if (soRow.pharmarack_product_name) {
+              item.productName = soRow.pharmarack_product_name;
+            }
+            if (soRow.pharmarack_mapped !== undefined && item.mapped === undefined) {
+              item.mapped = soRow.pharmarack_mapped === 1;
+            }
+          }
+        }
+      } catch (soErr) {
+        console.warn('Failed to resolve IDs from special_orders:', soErr);
       }
     }
 
@@ -1316,10 +1406,11 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         }
 
         if (cleanKeyword) {
+          const isStoreMapped = item.mapped !== false && item.isMapped !== false;
           const searchPayload = {
             SearchKeyword: cleanKeyword,
-            StoreId: item.storeId ? [Number(item.storeId)] : [],
-            NonMappedStoreId: [],
+            StoreId: (item.storeId && isStoreMapped) ? [Number(item.storeId)] : [],
+            NonMappedStoreId: (item.storeId && !isStoreMapped) ? [Number(item.storeId)] : [],
             Count: 10,
             SkipCount: 0,
             isMappedSearch: null,
@@ -1336,12 +1427,13 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
           if (searchRes.ok) {
             const searchData: any = await searchRes.json().catch(() => null);
             if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+              const isTargetingSpecificStore = Number(item.storeId) > 0 || Boolean(wantStore);
               const matched = searchData.data.find((p: any) => 
                 (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
                 (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : true)
               ) || searchData.data.find((p: any) => 
                 Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : (wantStore && String(p.StoreName || '').toLowerCase().includes(wantStore))
-              ) || searchData.data[0];
+              ) || (isTargetingSpecificStore ? null : searchData.data[0]);
 
               if (matched) {
                 item.productId = Number(matched.PrProductId || matched.ProductId || item.productId || 0);
@@ -1352,6 +1444,8 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
                 item.company = matched.Company || item.company || '';
                 item.mrp = Number(matched.MRP || item.mrp || 0);
                 item.rate = Number(matched.PTR || item.rate || 0);
+              } else if (isTargetingSpecificStore) {
+                console.warn(`[Pharmarack Cart] "${cleanKeyword}" not found under targeted distributor "${item.storeName}" (${item.storeId}). Blocked silent fallback to prevent cart mismatch.`);
               }
             }
           }

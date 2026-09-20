@@ -257,6 +257,104 @@ export function sanitizePharmarackQuery(rawName: string): string {
   return coreWords.slice(0, 3).join(' ');
 }
 
+/**
+ * Filters Pharmarack candidate medicines to strictly match requested formulation modifiers
+ * (e.g. 'P', 'SP', 'PLUS', 'D', 'AM', 'H', 'CV') and strengths, eliminating mismatched
+ * single-salt or alternate variants (e.g. rejecting 'ZERODOL 100 MG' when 'ZERODOL P' is requested).
+ */
+export function filterCandidatesByFormulation(targetName: string, candidates: any[]): any[] {
+  if (!targetName || !Array.isArray(candidates) || candidates.length === 0) {
+    return candidates || [];
+  }
+
+  const FORMULATION_MODIFIERS = new Set([
+    'p', 'sp', 'd', 'l', 'm', 'h', 'am', 'cv', 'az', 'cl', 'plus', 'forte', 'advance',
+    'max', 'super', 'gold', 'pro', 'kid', 'jr', 'junior', 'ds', 'ls', 'dx', 'cr',
+    'sr', 'mr', 'xl', 'er', 'tr', 'od', 'bd', 'xt', 'ct', 'th', 'tc', 'ap', 'dp'
+  ]);
+
+  const tokenize = (name: string): { brand: string; modifiers: Set<string>; strengths: Set<string> } => {
+    const clean = String(name || '')
+      .toLowerCase()
+      .replace(/[+/,._\-()\[\]#*]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const words = clean.split(' ').filter(w => !DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(w));
+    const brand = words[0] || '';
+    const modifiers = new Set<string>();
+    const strengths = new Set<string>();
+
+    for (let i = 1; i < words.length; i++) {
+      const w = words[i];
+      if (FORMULATION_MODIFIERS.has(w)) {
+        modifiers.add(w);
+      }
+      const numMatch = w.match(/^(\d+(?:\.\d+)?)(?:mg|ml|gm|g|mcg|iu|%)?$/);
+      if (numMatch) {
+        strengths.add(numMatch[1]);
+      }
+    }
+    return { brand, modifiers, strengths };
+  };
+
+  const targetTokens = tokenize(targetName);
+
+  if (targetTokens.modifiers.size > 0 || targetTokens.strengths.size > 0) {
+    const exactMatches: any[] = [];
+    for (const c of candidates) {
+      const cName = c.name || c.productName || c.product || c.shortName || '';
+      const cTokens = tokenize(cName);
+
+      // Verify brand matches (or starts with)
+      if (targetTokens.brand && !cTokens.brand.startsWith(targetTokens.brand) && !targetTokens.brand.startsWith(cTokens.brand)) {
+        continue;
+      }
+
+      // Check formulation modifiers match
+      let modifiersMatch = true;
+      for (const mod of targetTokens.modifiers) {
+        if (!cTokens.modifiers.has(mod)) {
+          modifiersMatch = false;
+          break;
+        }
+      }
+
+      // Reject candidates with conflicting extra modifiers (e.g. target asked for 'P', candidate has 'SP')
+      if (modifiersMatch) {
+        for (const cMod of cTokens.modifiers) {
+          if (!targetTokens.modifiers.has(cMod)) {
+            modifiersMatch = false;
+            break;
+          }
+        }
+      }
+
+      if (modifiersMatch) {
+        if (targetTokens.strengths.size > 0) {
+          let strengthMatch = true;
+          for (const str of targetTokens.strengths) {
+            if (!cTokens.strengths.has(str)) {
+              strengthMatch = false;
+              break;
+            }
+          }
+          if (strengthMatch) {
+            exactMatches.push(c);
+          }
+        } else {
+          exactMatches.push(c);
+        }
+      }
+    }
+
+    if (exactMatches.length > 0) {
+      return exactMatches;
+    }
+  }
+
+  return candidates;
+}
+
 function formatTime12h(timeStr: string): string {
   if (!timeStr) return '';
   const [hStr, mStr] = timeStr.split(':');
@@ -1625,10 +1723,13 @@ async function proceedWithConfirmedProcurement(
     [specialOrderId, soCode, customerName, pending.phone]
   );
 
-  if (inStockCandidates.length > 0) {
+  // Strict formulation/variant shield: reject mismatched single-salts or conflicting combinations
+  const validCandidates = filterCandidatesByFormulation(medName, inStockCandidates);
+
+  if (validCandidates.length > 0) {
     const { rankSpecialOrderDistributorCandidates } = await import('../routes/pharmarack.js');
-    const rankedOptions = await rankSpecialOrderDistributorCandidates(db, inStockCandidates, 10, 2);
-    const finalOptions = rankedOptions.length > 0 ? rankedOptions : inStockCandidates.slice(0, 10);
+    const rankedOptions = await rankSpecialOrderDistributorCandidates(db, validCandidates, 10, 2, medName);
+    const finalOptions = rankedOptions.length > 0 ? rankedOptions : validCandidates.slice(0, 10);
 
     // Notify owner with in-stock results
     await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
@@ -1860,9 +1961,9 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       console.warn('[Intent Service] Non-fatal online_order_items insert note:', ooiErr);
     }
 
-    // Resolve distributor storeId if available
-    let resolvedStoreId = 0;
-    if (order.pharmarack_distributor) {
+    // Resolve distributor storeId from locked special order or distributor_catalog
+    let resolvedStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : 0;
+    if (!resolvedStoreId && order.pharmarack_distributor) {
       try {
         const dRow = await db.get(
           `SELECT store_id FROM distributor_catalog WHERE LOWER(store_name) = LOWER(?) OR LOWER(store_name) LIKE LOWER(?) LIMIT 1`,
@@ -1874,12 +1975,16 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       } catch (_) {}
     }
 
+    const resolvedProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+    const resolvedProdId = order.pharmarack_product_id ? Number(order.pharmarack_product_id) : 0;
+    const resolvedProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : '';
+
     // Add item to Pharmarack Live Cart
     const cartItem = {
-      productName: order.medicine_name || order.product,
-      product: order.medicine_name || order.product,
-      productId: 0,
-      productCode: '',
+      productName: resolvedProdName,
+      product: resolvedProdName,
+      productId: resolvedProdId,
+      productCode: resolvedProdCode,
       storeId: resolvedStoreId,
       storeName: order.pharmarack_distributor || 'Standard Distributor',
       company: '',
@@ -2039,6 +2144,10 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     const distName = selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || selectedDist.distributor_name || 'Standard Distributor';
     const distRate = Number(selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0);
     const distMrp = Number(selectedDist.mrp ?? selectedDist.MRP ?? 0);
+    const selectedProdId = selectedDist.productId ? Number(selectedDist.productId) : (selectedDist.product_id ? Number(selectedDist.product_id) : null);
+    const selectedProdCode = selectedDist.productCode ? String(selectedDist.productCode) : (selectedDist.product_code ? String(selectedDist.product_code) : null);
+    const selectedStoreId = selectedDist.storeId ? Number(selectedDist.storeId) : (selectedDist.store_id ? Number(selectedDist.store_id) : null);
+    const selectedProdName = selectedDist.name || selectedDist.productName || selectedDist.shortName || targetRow.medicine_name || '';
 
     // Update special order with selected distributor details and status
     await db.run(
@@ -2046,12 +2155,16 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
          pharmarack_distributor = ?,
          pharmarack_rate = ?,
          pharmarack_mrp = ?,
+         pharmarack_product_id = ?,
+         pharmarack_product_code = ?,
+         pharmarack_store_id = ?,
+         pharmarack_product_name = ?,
          payment_status = 'AWAITING_PAYMENT',
          advance_payment = 50,
          total_amount = 50,
          updated_at = datetime('now')
        WHERE id = ?`,
-      [distName, distRate, distMrp, orderId]
+      [distName, distRate, distMrp, selectedProdId, selectedProdCode, selectedStoreId, selectedProdName, orderId]
     );
 
     // Allocate alternating UPI QR config
@@ -2217,8 +2330,9 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
           `INSERT INTO special_orders (
             store_id, requester, phone, medicine_name, product, qty, priority, status,
             date, notified, customer_order_source,
-            pharmarack_distributor, pharmarack_rate, pharmarack_mrp
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?)`,
+            pharmarack_distributor, pharmarack_rate, pharmarack_mrp,
+            pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?)`,
           [
             1,
             targetRow.customer_name || 'WhatsApp Customer',
@@ -2229,7 +2343,11 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
             todayStr,
             cartItem.storeName,
             cartItem.rate,
-            cartItem.mrp
+            cartItem.mrp,
+            cartItem.productId,
+            cartItem.productCode,
+            cartItem.storeId,
+            cartItem.productName
           ]
         );
         const specialOrderId = orderRes.lastID;

@@ -94,6 +94,10 @@ export interface SpecialOrder {
   pharmarack_mrp?: number;
   pharmarack_mapped?: number;
   pharmarack_scheme?: string;
+  pharmarack_product_id?: number | null;
+  pharmarack_product_code?: string | null;
+  pharmarack_store_id?: number | null;
+  pharmarack_product_name?: string | null;
   advance_payment?: number;
   cart_add_error?: string | null;
   sendWhatsApp?: boolean;

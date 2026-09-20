@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 66;
+const CURRENT_SCHEMA_VERSION = 67;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -421,6 +421,24 @@ async function ensureOrderTimingSchema(db: any) {
     const emailColNames = new Set(emailCols.map((c: any) => c.name));
     if (emailCols.length > 0 && !emailColNames.has('classification')) {
       await db.run("ALTER TABLE emails ADD COLUMN classification TEXT DEFAULT 'UNKNOWN'");
+    }
+  } catch (_) { }
+
+  // special_orders exact product & store persistence (Schema v67)
+  try {
+    const soCols = await db.all('PRAGMA table_info(special_orders)');
+    const soColNames = new Set(soCols.map((c: any) => c.name));
+    if (soCols.length > 0 && !soColNames.has('pharmarack_product_id')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_id INTEGER DEFAULT NULL');
+    }
+    if (soCols.length > 0 && !soColNames.has('pharmarack_product_code')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_code TEXT DEFAULT NULL');
+    }
+    if (soCols.length > 0 && !soColNames.has('pharmarack_store_id')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_store_id INTEGER DEFAULT NULL');
+    }
+    if (soCols.length > 0 && !soColNames.has('pharmarack_product_name')) {
+      await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_product_name TEXT DEFAULT NULL');
     }
   } catch (_) { }
 
@@ -1845,6 +1863,10 @@ export async function ensureSchema(dbPath: string) {
       pharmarack_rate REAL,
       pharmarack_mrp REAL,
       pharmarack_scheme TEXT,
+      pharmarack_product_id INTEGER DEFAULT NULL,
+      pharmarack_product_code TEXT DEFAULT NULL,
+      pharmarack_store_id INTEGER DEFAULT NULL,
+      pharmarack_product_name TEXT DEFAULT NULL,
       advance_payment REAL DEFAULT 0.0,
       distributor_name TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

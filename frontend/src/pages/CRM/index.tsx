@@ -3840,6 +3840,10 @@ interface SpecialOrderItem {
   pharmarack_mrp?: number | null;
   pharmarack_scheme?: string | null;
   pharmarack_mapped?: number | null;
+  pharmarack_product_id?: number | null;
+  pharmarack_product_code?: string | null;
+  pharmarack_store_id?: number | null;
+  pharmarack_product_name?: string | null;
   advance_payment?: number | null;
   payment_status?: string | null;
   payment_qr_id?: string | number | null;
@@ -4198,10 +4202,11 @@ const SpecialOrdersSection: React.FC = () => {
     setAddingCartId(order.id);
     try {
       const res = await api.addPharmarackCart([{
-        productId: 0,
-        storeId: 0,
+        productId: order.pharmarack_product_id || 0,
+        productCode: order.pharmarack_product_code || undefined,
+        storeId: order.pharmarack_store_id || 0,
         qty: order.qty || 1,
-        productName: order.product,
+        productName: order.pharmarack_product_name || order.product,
         storeName: order.pharmarack_distributor || undefined,
         rate: order.pharmarack_rate || undefined,
         mrp: order.pharmarack_mrp || undefined,
@@ -4396,6 +4401,10 @@ const SpecialOrdersSection: React.FC = () => {
         pharmarack_mrp: selectedMrp !== '' ? Number(selectedMrp) : undefined,
         pharmarack_mapped: selectedMapped ? 1 : 0,
         pharmarack_scheme: selectedScheme || undefined,
+        pharmarack_product_id: selectedProductId ? Number(selectedProductId) : undefined,
+        pharmarack_product_code: selectedProductCode || undefined,
+        pharmarack_store_id: selectedStoreId ? Number(selectedStoreId) : undefined,
+        pharmarack_product_name: product.trim() || undefined,
         advance_payment: advancePayment !== '' ? Number(advancePayment) : 0
       });
 
@@ -4513,6 +4522,10 @@ const SpecialOrdersSection: React.FC = () => {
         pharmarack_rate: editRate !== '' ? Number(editRate) : undefined,
         pharmarack_mrp: editMrp !== '' ? Number(editMrp) : undefined,
         pharmarack_scheme: editScheme || undefined,
+        pharmarack_product_id: editingOrder.pharmarack_distributor === editDistributor ? (editingOrder.pharmarack_product_id ?? undefined) : undefined,
+        pharmarack_product_code: editingOrder.pharmarack_distributor === editDistributor ? (editingOrder.pharmarack_product_code ?? undefined) : undefined,
+        pharmarack_store_id: editingOrder.pharmarack_distributor === editDistributor ? (editingOrder.pharmarack_store_id ?? undefined) : undefined,
+        pharmarack_product_name: editingOrder.pharmarack_distributor === editDistributor ? (editingOrder.pharmarack_product_name ?? undefined) : undefined,
         advance_payment: editAdvancePayment !== '' ? Number(editAdvancePayment) : 0,
         skipWhatsApp: editNotOnWa
       });
