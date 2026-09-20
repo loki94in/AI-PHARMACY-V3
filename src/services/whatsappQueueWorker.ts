@@ -1063,10 +1063,10 @@ class WhatsAppQueueWorker {
           );
           await db.run(
             `UPDATE automation_notifications 
-             SET status = 'sent', error_message = NULL 
-             WHERE reference_id = ? OR reference_id = ? 
-                OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending'))`,
-            [`queue_${item.id}`, String(item.id), `%${last10}%`]
+             SET status = 'sent', error_message = NULL, acknowledged = 1, resolved_at = ?
+             WHERE reference_id = ? OR reference_id = ? OR reference_id = ?
+                OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending', 'failed'))`,
+            [Date.now(), `queue-${item.id}`, `queue_${item.id}`, String(item.id), `%${last10}%`]
           ).catch(() => {});
 
           if (item.type === 'pharmarack_distributor_order') {
@@ -1126,10 +1126,10 @@ class WhatsAppQueueWorker {
               );
               await db.run(
                 `UPDATE automation_notifications 
-                 SET status = 'sent', error_message = NULL 
-                 WHERE reference_id = ? OR reference_id = ? 
-                    OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending'))`,
-                [`queue_${item.id}`, String(item.id), `%${fallbackLast10}%`]
+                 SET status = 'sent', error_message = NULL, acknowledged = 1, resolved_at = ?
+                 WHERE reference_id = ? OR reference_id = ? OR reference_id = ?
+                    OR (recipient_phone LIKE ? AND status IN ('pending', 'queued', 'staged', 'sending', 'failed'))`,
+                [Date.now(), `queue-${item.id}`, `queue_${item.id}`, String(item.id), `%${fallbackLast10}%`]
               ).catch(() => {});
 
               if (item.type === 'pharmarack_distributor_order') {
@@ -1466,6 +1466,14 @@ class WhatsAppQueueWorker {
           }
         }
         const res = await db.run("DELETE FROM automation_notifications WHERE id = ?", [realNotifId]);
+        // Also if this notification was referencing a queue item, remove from whatsapp_send_queue
+        if (notif?.reference_id) {
+          const refStr = String(notif.reference_id);
+          const qId = refStr.startsWith('queue-') ? refStr.replace('queue-', '') : (refStr.startsWith('queue_') ? refStr.replace('queue_', '') : refStr);
+          if (/^\d+$/.test(qId)) {
+            await db.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [Number(qId)]).catch(() => {});
+          }
+        }
         changed = (res.changes || 0) > 0;
       } else if (id >= 800000) {
         // Direct message placeholder — no direct row to delete or ignore
@@ -1481,7 +1489,10 @@ class WhatsAppQueueWorker {
             this.currentSendingItemId = null;
           }
           const res = await db.run("DELETE FROM whatsapp_send_queue WHERE id = ?", [id]);
-          await db.run("DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ?", [`queue_${id}`, String(id)]).catch(() => {});
+          await db.run(
+            "DELETE FROM automation_notifications WHERE reference_id = ? OR reference_id = ? OR reference_id = ?",
+            [`queue-${id}`, `queue_${id}`, String(id)]
+          ).catch(() => {});
           changed = (res.changes || 0) > 0;
         }
       }
@@ -1503,12 +1514,15 @@ class WhatsAppQueueWorker {
     const db = await dbManager.getConnection();
     let totalCleared = 0;
     try {
-      const res1 = await db.run("DELETE FROM whatsapp_send_queue WHERE status IN ('failed_offline', 'failed_perm', 'review_required')");
+      const res1 = await db.run("DELETE FROM whatsapp_send_queue WHERE status IN ('failed_offline', 'failed_perm', 'review_required', 'skipped_invalid_phone', 'skipped_not_on_whatsapp', 'skipped_offline')");
       totalCleared += (res1.changes || 0);
-      const res2 = await db.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error')");
+      const res2 = await db.run("DELETE FROM automation_notifications WHERE status IN ('failed', 'error') OR status LIKE 'failed%'");
       totalCleared += (res2.changes || 0);
       if (totalCleared > 0) {
         this.broadcastQueueState(this.isProcessing);
+        try {
+          eventService.broadcast('automation_hub_updated', { type: 'cleared' });
+        } catch (_) {}
       }
     } catch (err) {
       console.warn('[WhatsAppQueueWorker] Error clearing failed items:', err);
@@ -1558,6 +1572,12 @@ class WhatsAppQueueWorker {
 
       const result = await db.run(sql, params);
       changed = (result.changes || 0) > 0;
+
+      // Also update any linked failure row in automation_notifications
+      await db.run(
+        "UPDATE automation_notifications SET recipient_phone = ?, status = 'queued', acknowledged = 1, resolved_at = ?, error_message = NULL WHERE reference_id = ? OR reference_id = ? OR reference_id = ?",
+        [cleanPhone, Date.now(), `queue-${id}`, `queue_${id}`, String(id)]
+      ).catch(() => {});
     }
 
     if (changed) {

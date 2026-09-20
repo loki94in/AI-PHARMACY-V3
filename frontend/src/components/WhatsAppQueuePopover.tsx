@@ -335,6 +335,30 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     }
   };
 
+  const [resolvingId, setResolvingId] = useState<number | null>(null);
+
+  const handleResolveItem = async (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (resolvingId === id) return;
+    setResolvingId(id);
+    try {
+      const isNotif = id >= 900000;
+      await api.resolveAutomationFailure({
+        rawId: isNotif ? (id - 900000) : id,
+        source: isNotif ? 'notification' : 'queue'
+      });
+      toastEvent.trigger('Issue marked as resolved', 'success');
+      whatsappQueueEvent.triggerUpdated();
+      automationHubEvent.triggerUpdated();
+      await fetchStatus();
+    } catch (err) {
+      const e = err as LocalApiError;
+      toastEvent.trigger(e.response?.data?.error || e.message || 'Failed to resolve issue', 'error');
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   const handleClearAllFailed = async () => {
     try {
       setClearingFailed(true);
@@ -704,6 +728,19 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                 >
                   <ExternalLink size={11} /> Open WhatsApp
                 </a>
+              )}
+
+              {(item.status.includes('failed') || item.status === 'review_required' || item.status.includes('skipped')) && (
+                <button
+                  type="button"
+                  onClick={(e) => handleResolveItem(item.id, e)}
+                  disabled={resolvingId === item.id}
+                  className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 font-semibold text-[10px] rounded-lg transition-all flex items-center gap-1 border border-teal-500/25 disabled:opacity-50"
+                  title="Mark this delivery issue as resolved"
+                >
+                  {resolvingId === item.id ? <RefreshCw size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                  {resolvingId === item.id ? 'Resolving...' : 'Mark Resolved'}
+                </button>
               )}
 
               {(item.status === 'sent' || item.status.includes('failed') || item.status === 'review_required' || item.status.includes('skipped')) && (

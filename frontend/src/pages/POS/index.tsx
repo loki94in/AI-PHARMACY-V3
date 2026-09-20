@@ -489,7 +489,7 @@ const getInitialPOSTabs = (): POSTab[] => {
     prescriptions: []
   };
 
-  const savedTabsJson = localStorage.getItem('pos_active_tabs');
+  const savedTabsJson = localStorage.getItem('pos_active_tabs') || localStorage.getItem('pos_draft_tabs');
   if (savedTabsJson) {
     try {
       const parsed = JSON.parse(savedTabsJson);
@@ -1596,9 +1596,11 @@ const POS = () => {
     });
   }, [cart, patientSalutation, patientCustomSalutation, patientName, patientPhone, refillEnabled, refillDays, doctor, isManualDoctor, discount, sendWhatsApp, paymentMedium, selectedDoctorId, activeTabId]);
 
-  // Save tabs and activeTabId to localStorage whenever they change
+  // Save tabs and activeTabId to localStorage whenever they change (harmonized keys)
   useEffect(() => {
-    localStorage.setItem('pos_draft_tabs', JSON.stringify(tabs));
+    const serialized = JSON.stringify(tabs);
+    localStorage.setItem('pos_active_tabs', serialized);
+    localStorage.setItem('pos_draft_tabs', serialized);
   }, [tabs]);
 
   // E4+E5+E13: merged empty-row management. These two [cart]-only effects used
@@ -2063,6 +2065,7 @@ const POS = () => {
           }
           const ranked = rankAndSortMedicines(merged, term, { onlySellable: true }).slice(0, 30);
           setRowSearchResults(ranked);
+          setRowSearchHighlightIndex(prev => (prev >= 0 && prev < ranked.length ? prev : (ranked.length > 0 ? 0 : -1)));
         }
       } catch (err: any) {
         if (err?.name !== 'CanceledError' && err?.name !== 'AbortError' && err?.code !== 'ERR_CANCELED') {
@@ -2963,7 +2966,7 @@ const POS = () => {
       setOnlineResults([]);
       setSearchResults([]);
     } catch (err) {
-      alert(`Failed to auto-enrich medicine: ${(err as LocalApiError).message || 'Unknown error'}`);
+      toastEvent.trigger(`Failed to auto-enrich medicine: ${(err as LocalApiError).message || 'Unknown error'}`, 'error');
     }
   };
 
@@ -3392,7 +3395,7 @@ const POS = () => {
   const handleCompleteSale = async (overridePhone?: string, isDirectSave: boolean = false) => {
     if (isSavingBillRef.current) return;
     if (!hasValidItems) {
-      alert('⚠️ CANNOT SAVE BILL:\n\nPlease add at least one valid medicine to the cart before saving the bill.');
+      toastEvent.trigger('⚠️ Please add at least one valid medicine to the cart before saving the bill.', 'error');
       return;
     }
 
@@ -3409,7 +3412,7 @@ const POS = () => {
     const phoneToUse = sanitizePhoneInput(overridePhone !== undefined ? overridePhone : patientPhone);
 
     if (isLoss) {
-      alert(`❌ CANNOT SAVE BILL:\n\nTransaction results in a Net Loss (Grand Total ₹${grandTotal} is less than Cost Price ₹${Math.round(totalCost)}).\nPlease adjust overall discount or items MRP to proceed.`);
+      toastEvent.trigger(`❌ Cannot Save Bill: Transaction results in a Net Loss (Grand Total ₹${grandTotal} is less than Cost Price ₹${Math.round(totalCost)}). Please adjust overall discount or items MRP to proceed.`, 'error');
       return;
     }
 
@@ -3443,7 +3446,7 @@ const POS = () => {
           expDate = new Date(expiryStr);
         }
         if (expDate < new Date()) {
-          alert(`❌ CRITICAL SAFETY BLOCK:\n\nCart contains EXPIRED product: ${item.name} (${expiryStr}).\nCannot proceed with checkout.`);
+          toastEvent.trigger(`❌ Critical Safety Block: Cart contains EXPIRED product "${item.name}" (${expiryStr}). Cannot proceed with checkout.`, 'error');
           return;
         }
       }
@@ -3469,7 +3472,7 @@ const POS = () => {
         const availTotalUnits = availQty * packSize + availLoose;
         
         if (availTotalUnits < reqTotalUnits) {
-          alert(`❌ INSUFFICIENT STOCK:\n\nMedicine: ${item.name || 'Medicine'}\nRequested: ${reqQty} strips & ${reqLoose} loose (${reqTotalUnits} units)\nAvailable: ${availQty} strips & ${availLoose} loose (${availTotalUnits} units)\n\nPlease reduce the quantity to match available stock before proceeding.`);
+          toastEvent.trigger(`❌ Insufficient Stock: "${item.name || 'Medicine'}" has only ${availQty} strips & ${availLoose} loose available (${availTotalUnits} units). Please reduce quantity to match available stock.`, 'error');
           return;
         }
       }
@@ -3485,11 +3488,11 @@ const POS = () => {
       const invId = Number(item.inventory_id || (typeof item.id === 'number' && item.id < 1000000 ? item.id : (typeof item.id === 'string' && /^\d+$/.test(item.id) && Number(item.id) < 1000000 ? Number(item.id) : undefined)));
 
       if (!invId || !batch.trim()) {
-        alert(`❌ Missing Inventory Batch:\n\n"${name}" is not linked to verified inventory stock. Please select an in-stock batch or record a purchase first.`);
+        toastEvent.trigger(`❌ Missing Inventory Batch: "${name}" is not linked to verified inventory stock. Please select an in-stock batch or record a purchase first.`, 'error');
         return;
       }
       if (unitPrice <= 0) {
-        alert(`❌ Invalid Price:\n\n"${name}" must have a selling price greater than ₹0.`);
+        toastEvent.trigger(`❌ Invalid Price: "${name}" must have a selling price greater than ₹0.`, 'error');
         return;
       }
     }
@@ -3559,13 +3562,17 @@ const POS = () => {
       try {
         const validation = await api.validateBill(payload as Parameters<typeof api.validateBill>[0]);
         if (!validation.success) {
-          alert(`❌ Save Blocked by Verification Layer:\n\nStep: ${validation.layer}\nReason: ${validation.message}`);
+          writeRef(isSavingBillRef, false);
+          setIsSavingBill(false);
+          toastEvent.trigger(`❌ Save Blocked (${validation.layer}): ${validation.message}`, 'error');
           return;
         }
       } catch (err) {
+        writeRef(isSavingBillRef, false);
+        setIsSavingBill(false);
         const serverError = (err as LocalApiError).response?.data?.message || (err as LocalApiError).response?.data?.error || (err as LocalApiError).message;
         const layer = (err as LocalApiError).response?.data?.layer || 'Validation';
-        alert(`❌ Verification Layer Pre-Save Failure:\n\nStep: ${layer}\nReason: ${serverError}`);
+        toastEvent.trigger(`❌ Verification Pre-Save Failure (${layer}): ${serverError}`, 'error');
         return;
       }
 
@@ -3704,7 +3711,7 @@ const POS = () => {
       console.error('Error completing sale:', error);
       // Show actual server error message to help diagnose the issue
       const serverMsg = (error as LocalApiError)?.response?.data?.error || (error as LocalApiError)?.message || 'Unknown error';
-      alert(`Failed to save sale:\n\n${serverMsg}\n\nIf this persists, check that the backend server is running.`);
+      toastEvent.trigger(`Failed to save sale: ${serverMsg}`, 'error');
     } finally {
       writeRef(isSavingBillRef, false);
       setIsSavingBill(false);
@@ -3799,7 +3806,7 @@ const POS = () => {
       setNewDoctorRegNo('');
     } catch (err) {
       console.error(err);
-      alert('Failed to save doctor details');
+      toastEvent.trigger('Failed to save doctor details', 'error');
     }
   };
 

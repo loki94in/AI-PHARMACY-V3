@@ -128,4 +128,47 @@ describe('Automation hub summary endpoint', () => {
     expect(summaryRes.body.unresolvedFailuresCount).toBe(0);
     expect(summaryRes.body.headline).toBe('idle');
   });
+
+  it('POST /resolve-failure with source: "queue" marks both queue and linked automation_notifications resolved', async () => {
+    const db = await dbManager.getConnection();
+    await db.run("DELETE FROM whatsapp_send_queue");
+    await db.run("DELETE FROM automation_notifications");
+
+    const qRes = await db.run(
+      "INSERT INTO whatsapp_send_queue (number, message, type, status, target_name, error_message, acknowledged) VALUES ('919999999999', 'test msg', 'credit_reminder', 'failed_perm', 'Customer A', 'Network fail', 0)"
+    );
+    const queueId = qRes.lastID;
+
+    // Simulate worker logging failure to automation_notifications
+    await db.run(
+      "INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, error_message, reference_id, created_at, acknowledged) VALUES ('whatsapp_queue_failure', 'Customer A', '919999999999', 'test msg', 'failed', 'Network fail', ?, ?, 0)",
+      [`queue-${queueId}`, Date.now()]
+    );
+
+    // Verify counted as unresolved failure
+    const beforeRes = await request(app).get('/api/automation/hub-summary');
+    expect(beforeRes.body.unresolvedFailuresCount).toBeGreaterThan(0);
+    expect(beforeRes.body.headline).toBe('failed');
+
+    // Resolve via source: 'queue'
+    const resolveRes = await request(app)
+      .post('/api/automation/resolve-failure')
+      .send({ rawId: queueId, source: 'queue' });
+    expect(resolveRes.status).toBe(200);
+
+    // Verify both rows now have acknowledged = 1
+    const qRow = await db.get("SELECT acknowledged, resolved_at FROM whatsapp_send_queue WHERE id = ?", [queueId]);
+    expect(qRow.acknowledged).toBe(1);
+    expect(qRow.resolved_at).toBeTruthy();
+
+    const notifRow = await db.get("SELECT acknowledged, resolved_at FROM automation_notifications WHERE reference_id = ?", [`queue-${queueId}`]);
+    expect(notifRow.acknowledged).toBe(1);
+    expect(notifRow.resolved_at).toBeTruthy();
+
+    // Verify hub-summary is now clean
+    const afterRes = await request(app).get('/api/automation/hub-summary');
+    expect(afterRes.body.unresolvedFailuresCount).toBe(0);
+    expect(afterRes.body.headline).toBe('idle');
+  });
 });
+

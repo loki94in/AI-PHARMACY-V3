@@ -140,21 +140,37 @@ router.post('/resolve-failure', async (req, res) => {
     const now = Date.now();
 
     if (resolveAll) {
-      await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE status LIKE 'failed%'", [now]);
-      await db.run("UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE status LIKE 'failed%'", [now]);
+      await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE status LIKE 'failed%' OR status LIKE 'skipped%' OR status = 'review_required'", [now]);
+      await db.run("UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE status LIKE 'failed%' OR status = 'error'", [now]);
     } else if (source === 'queue' || (typeof id === 'string' && id.startsWith('q_'))) {
       const qId = rawId || (typeof id === 'string' ? id.replace('q_', '') : id);
       await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, qId]);
+      await db.run(
+        "UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE reference_id = ? OR reference_id = ? OR reference_id = ?",
+        [now, `queue-${qId}`, `queue_${qId}`, String(qId)]
+      );
     } else if (source === 'notification' || (typeof id === 'string' && id.startsWith('n_'))) {
       const nId = rawId || (typeof id === 'string' ? id.replace('n_', '') : id);
+      const notifRow = await db.get("SELECT reference_id FROM automation_notifications WHERE id = ?", [nId]);
       await db.run("UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, nId]);
+      if (notifRow?.reference_id) {
+        const refStr = String(notifRow.reference_id);
+        const qId = refStr.startsWith('queue-') ? refStr.replace('queue-', '') : (refStr.startsWith('queue_') ? refStr.replace('queue_', '') : refStr);
+        if (/^\d+$/.test(qId)) {
+          await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, Number(qId)]).catch(() => {});
+        }
+      }
     } else if (rawId) {
       await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, rawId]);
-      await db.run("UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, rawId]);
+      await db.run(
+        "UPDATE automation_notifications SET acknowledged = 1, resolved_at = ? WHERE reference_id = ? OR reference_id = ? OR reference_id = ? OR id = ?",
+        [now, `queue-${rawId}`, `queue_${rawId}`, String(rawId), rawId]
+      );
     }
 
     const { eventService } = await import('../services/eventService.js');
     eventService.broadcast('automation_hub_updated', { type: 'resolved' });
+    eventService.broadcast('wa_queue_updated', { type: 'resolved' });
 
     res.json({ success: true, message: 'Failure marked as resolved' });
   } catch (err: any) {

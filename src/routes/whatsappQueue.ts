@@ -534,6 +534,29 @@ router.post('/items/:id/resend', async (req, res) => {
       { skipDedupe: true }
     );
 
+    // Resolve / acknowledge the previous failed item so the Automation Hub badge clears
+    const now = Date.now();
+    if (id < 900000) {
+      await db.run(
+        "UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?",
+        [now, id]
+      ).catch(() => {});
+      await db.run(
+        "UPDATE automation_notifications SET acknowledged = 1, resolved_at = ?, status = 'sent' WHERE reference_id = ? OR reference_id = ? OR reference_id = ?",
+        [now, `queue-${id}`, `queue_${id}`, String(id)]
+      ).catch(() => {});
+    } else {
+      const notifId = id - 900000;
+      await db.run(
+        "UPDATE automation_notifications SET acknowledged = 1, resolved_at = ?, status = 'sent' WHERE id = ?",
+        [now, notifId]
+      ).catch(() => {});
+    }
+
+    try {
+      eventService.broadcast('automation_hub_updated', { type: 'resolved', id });
+    } catch (_) {}
+
     await whatsappQueueWorker.forceNext();
 
     res.json({

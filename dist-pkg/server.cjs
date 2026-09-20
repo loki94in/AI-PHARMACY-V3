@@ -1409,17 +1409,35 @@ function closeAppBrowser() {
   }
   if (process.platform === "win32") {
     try {
-      (0, import_child_process.execSync)(`taskkill /f /fi "WINDOWTITLE eq AI PHARMACY*"`, { stdio: "ignore" });
-    } catch (_) {
-    }
-    try {
-      (0, import_child_process.execSync)(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy*"`, { stdio: "ignore" });
-    } catch (_) {
-    }
-    try {
-      const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' -or $_.CommandLine -like '*localhost:5175*' -or $_.CommandLine -like '*localhost:5173*' -or $_.CommandLine -like '*127.0.0.1:5175*' -or $_.CommandLine -like '*127.0.0.1:5173*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      (0, import_child_process.execSync)(killCmd, { stdio: "ignore", timeout: 3e3 });
-    } catch (_) {
+      const psScript = [
+        "$ProgressPreference = 'SilentlyContinue'",
+        "$targets = Get-CimInstance Win32_Process | Where-Object {",
+        "  ($_.Name -match 'chrome|msedge|GoogleChromePortable') -and (",
+        "    $_.CommandLine -like '*app_browser_profile*' -or",
+        "    $_.CommandLine -like '*localhost:5175*' -or",
+        "    $_.CommandLine -like '*localhost:5173*' -or",
+        "    $_.CommandLine -like '*127.0.0.1:5175*' -or",
+        "    $_.CommandLine -like '*127.0.0.1:5173*'",
+        "  )",
+        "}",
+        "foreach ($p in $targets) {",
+        "  Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue",
+        "}",
+        "Get-Process | Where-Object { ($_.ProcessName -match 'chrome|msedge|GoogleChromePortable') -and ($_.MainWindowTitle -match 'AI PHARMACY|AI Pharmacy') } | ForEach-Object {",
+        "  $_.CloseMainWindow() | Out-Null",
+        "  Start-Sleep -Milliseconds 100",
+        "  if (!$_.HasExited) {",
+        "    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue",
+        "  }",
+        "}"
+      ].join("\n");
+      const b64 = Buffer.from(psScript, "utf16le").toString("base64");
+      (0, import_child_process.execSync)(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${b64}`, {
+        stdio: "ignore",
+        timeout: 3e3
+      });
+    } catch (fallbackErr) {
+      console.warn(`[ChromeBrowser] Browser process fallback termination notice: ${fallbackErr?.message || fallbackErr}`);
     }
   }
 }
@@ -9573,13 +9591,28 @@ function startScispacySidecar(force = false) {
   });
   process.on("exit", () => {
     if (sidecarProcess) {
-      sidecarProcess.kill();
+      if (process.platform === "win32" && sidecarProcess.pid) {
+        try {
+          (0, import_child_process3.execSync)(`taskkill /pid ${sidecarProcess.pid} /t /f`, { stdio: "ignore" });
+        } catch (_) {
+        }
+      } else {
+        sidecarProcess.kill();
+      }
     }
   });
 }
 function stopScispacySidecar() {
   if (sidecarProcess) {
-    sidecarProcess.kill();
+    if (process.platform === "win32" && sidecarProcess.pid) {
+      try {
+        (0, import_child_process3.execSync)(`taskkill /pid ${sidecarProcess.pid} /t /f`, { stdio: "ignore" });
+      } catch (_) {
+        sidecarProcess.kill();
+      }
+    } else {
+      sidecarProcess.kill();
+    }
     sidecarProcess = null;
   }
 }
@@ -11935,8 +11968,9 @@ async function notifyOwnerOfSpecialOrderPharmarackResults(payload) {
       } else {
         priceLine = `Rate: Available`;
       }
+      const medLine = (opt.name || opt.shortName || "").trim();
       return `${formatNum(i)} ${dist}${tag} | ${stockIndicator} |
-${priceLine}`;
+${medLine ? medLine + "\n" : ""}${priceLine}`;
     }).join("\n");
     const messageText = `\u{1F514} *New Special Order Request*
 
@@ -30257,6 +30291,47 @@ function sanitizePharmarackQuery(rawName) {
   }
   return coreWords.slice(0, 3).join(" ");
 }
+function formatTime12h(timeStr) {
+  if (!timeStr) return "";
+  const [hStr, mStr] = timeStr.split(":");
+  let h = parseInt(hStr, 10);
+  const m = mStr || "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+async function getStoreHoursNotice(db2) {
+  try {
+    const { getPharmacyOperatingSchedule: getPharmacyOperatingSchedule2 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
+    const sched = await getPharmacyOperatingSchedule2(db2);
+    const nowIst = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const curMinutes = nowIst.getHours() * 60 + nowIst.getMinutes();
+    const [openH, openM] = (sched.openTime || "09:00").split(":").map(Number);
+    const [closeH, closeM] = (sched.closeTime || "22:00").split(":").map(Number);
+    const openMinutes = (openH || 9) * 60 + (openM || 0);
+    const closeMinutes = (closeH || 22) * 60 + (closeM || 0);
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const currentDayName = days[nowIst.getDay()];
+    const isWeeklyOff = Boolean(sched.weeklyOff && sched.weeklyOff.toLowerCase() === currentDayName.toLowerCase());
+    const isOutsideHours = isWeeklyOff || curMinutes < openMinutes || curMinutes >= closeMinutes;
+    if (isOutsideHours) {
+      const open12 = formatTime12h(sched.openTime || "09:00");
+      const close12 = formatTime12h(sched.closeTime || "22:00");
+      if (isWeeklyOff) {
+        return `
+
+\u{1F552} *Note:* Today is our weekly off (Regular hours: ${open12} - ${close12}).
+\u2705 *You can still send your request or prescription now!* Our team will prepare it on our next working day at ${open12}.`;
+      }
+      return `
+
+\u{1F552} *Note:* Our pharmacy is currently closed (Store hours: ${open12} - ${close12}).
+\u2705 *You can still send your request or prescription now!* Our team will prepare it when we open tomorrow at ${open12}.`;
+    }
+  } catch (_) {
+  }
+  return "";
+}
 async function maybeSendGuidancePrompt(phone, customerName, db2, originalMessage) {
   const cleanDigits = (phone || "").replace(/\D/g, "").slice(-10);
   if (!cleanDigits || cleanDigits.length < 10) return;
@@ -30679,7 +30754,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
     const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm)$/i.test(lower);
     const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
     if (pending2.step === "awaiting_owner_selection") {
-      const waitMsg = `Your request for *${pending2.suggested_name}* \xD7 ${pending2.quantity || 1} has been forwarded to our pharmacy owner for distributor confirmation.
+      const waitMsg = `Your request for *${pending2.suggested_name}* \xD7 ${pending2.quantity || 1} has been forwarded to our pharmacy for distributor confirmation.
 
 We will send you payment details shortly.`;
       const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
@@ -30824,7 +30899,8 @@ Whenever you need any other medicine, just reply with the medicine name here!`;
       );
       const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
-      const welcomeMsg = `\u{1F64F} Namaste *${formattedName}* ji! Welcome to ${storeName}.
+      const hoursNotice = await getStoreHoursNotice(db2);
+      const welcomeMsg = `\u{1F64F} Namaste *${formattedName}* ji! Welcome to ${storeName}.${hoursNotice}
 
 I can help you check medicine availability or place an order.
 
@@ -31306,7 +31382,7 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       unit: medUnit,
       pharmarackOptions: finalOptions
     });
-    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.
+    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty} has been forwarded to our pharmacy for distributor confirmation.
 
 We will send you payment details shortly.`;
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
@@ -31314,7 +31390,7 @@ We will send you payment details shortly.`;
   } else {
     const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.
 
-Our pharmacy owner has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+Our pharmacy has been notified (Ref: ${soCode}) to arrange it for you manually.`;
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
     await whatsappQueueWorker2.enqueue(phone, noStockMsg, "customer_inquiry_confirmed", customerName);
     const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
@@ -31919,9 +31995,10 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
       );
       const { getStoreMedicalName: getStoreMedicalName4 } = await Promise.resolve().then(() => (init_storeSettingsService(), storeSettingsService_exports));
       const storeName = await getStoreMedicalName4(db2) || "AI Pharmacy";
+      const hoursNotice = await getStoreHoursNotice(db2);
       const hasKnownName = isKnownCustomerName(customer?.name);
       if (!hasKnownName) {
-        const askNameText = `\u{1F44B} Hello! Welcome to ${storeName}.
+        const askNameText = `\u{1F44B} Hello! Welcome to ${storeName}.${hoursNotice}
 
 Before we begin, *may I please know your name?*`;
         await db2.run(
@@ -31934,7 +32011,7 @@ Before we begin, *may I please know your name?*`;
         console.log(`[Intent Service] Prompted new customer ${cleanDigits} for their name.`);
         return;
       }
-      const greetingText = `\u{1F44B} Hello *${customer.name}*! Welcome back to ${storeName}.
+      const greetingText = `\u{1F44B} Hello *${customer.name}*! Welcome back to ${storeName}.${hoursNotice}
 
 I can help you check medicine availability or place an order.
 
@@ -32097,29 +32174,17 @@ Please enter the medicine name or send a photo to begin.`;
             );
             await db2.run(
               `UPDATE wa_pending_clarifications
-               SET step = 'awaiting_owner_payment_confirmation', created_at = CURRENT_TIMESTAMP
+               SET step = 'awaiting_owner_payment_confirmation', payment_reminder_sent = 0, created_at = CURRENT_TIMESTAMP
                WHERE phone = ?`,
               [pendingPayment.phone]
             );
             const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
             if (adminWhatsapp) {
               const custDisplayName = customer?.name && isKnownCustomerName(customer.name) ? customer.name : pendingPayment.customer_name && isKnownCustomerName(pendingPayment.customer_name) ? pendingPayment.customer_name : "Customer";
-              const forwardCaption = `\u{1F4B0} *Payment Verification Required*
-
-\u{1F194} *Special Order*: ${soCode}
-
-\u{1F464} *Customer*: ${custDisplayName}
-\u{1F4F1} +91 ${cleanPhone}
-
-\u{1F48A} *${pendingPayment.suggested_name}*
-\u{1F4E6} *Quantity*: ${pendingPayment.quantity || 1}
-
-\u{1F4B5} *Booking Amount*: \u20B950
-
-\u{1F4F8} *Customer Payment Screenshot Attached*
-
-Please reply:
-CONFIRM ${soCode}`;
+              const forwardCaption = `\u{1F4B0} *Payment Verification (${soCode})*
+\u{1F464} ${custDisplayName} (+91 ${cleanPhone})
+\u{1F48A} ${pendingPayment.suggested_name} \xD7 ${pendingPayment.quantity || 1} | \u20B950 Paid
+\u{1F449} Reply: *CONFIRM ${soCode}*`;
               const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
               await whatsappQueueWorker3.enqueue(
                 adminWhatsapp,
@@ -33079,6 +33144,38 @@ We noticed we haven't received your \u20B950 booking advance payment for *${medN
       );
       sentCount++;
       console.log(`[PaymentReminder] Dispatched advance payment reminder for ${soCode} to ${item.phone}`);
+    }
+    const pendingOwnerList = await db2.all(`
+      SELECT p.phone, p.suggested_name, p.quantity, p.so_code, p.customer_name, p.special_order_id, p.created_at
+      FROM wa_pending_clarifications p
+      LEFT JOIN special_orders so ON p.special_order_id = so.id
+      WHERE p.step = 'awaiting_owner_payment_confirmation'
+        AND (p.payment_reminder_sent IS NULL OR p.payment_reminder_sent = 0)
+        AND p.created_at <= datetime('now', '-2 hours')
+        AND p.created_at >= datetime('now', '-48 hours')
+        AND (so.payment_status IS NULL OR so.payment_status = 'SCREENSHOT_RECEIVED')
+      LIMIT 10
+    `).catch(() => []);
+    for (const item of pendingOwnerList) {
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db2);
+      if (adminWhatsapp) {
+        const soCode = item.so_code || (item.special_order_id ? `SO-${item.special_order_id}` : "SO");
+        const custName = item.customer_name && isKnownCustomerName(item.customer_name) ? item.customer_name.trim() : "Customer";
+        const cleanCustDigits = String(item.phone || "").replace(/\D/g, "").slice(-10);
+        const ownerPingMsg = `\u23F3 *Reminder: Payment Verification Needed*
+\u{1F194} *Order*: ${soCode}
+\u{1F464} ${custName} (+91 ${cleanCustDigits})
+\u{1F48A} *${item.suggested_name || "Special Order"}* \xD7 ${item.quantity || 1}
+
+\u{1F449} Reply: *CONFIRM ${soCode}*`;
+        await whatsappQueueWorker2.enqueue(adminWhatsapp, ownerPingMsg, "admin_escalation", "Owner");
+        await db2.run(
+          `UPDATE wa_pending_clarifications SET payment_reminder_sent = 1 WHERE phone = ?`,
+          [item.phone]
+        );
+        sentCount++;
+        console.log(`[PaymentReminder] Dispatched owner payment verification reminder for ${soCode} to admin`);
+      }
     }
     return sentCount;
   } catch (err) {
@@ -46860,7 +46957,15 @@ var init_workerSupervisor = __esm({
         for (const [key, config2] of Object.entries(this.workers)) {
           if (config2.instance) {
             config2.instance.removeAllListeners("exit");
-            config2.instance.kill("SIGTERM");
+            if (process.platform === "win32" && config2.instance.pid) {
+              try {
+                (0, import_child_process7.execSync)(`taskkill /pid ${config2.instance.pid} /t /f`, { stdio: "ignore" });
+              } catch (_) {
+                config2.instance.kill("SIGTERM");
+              }
+            } else {
+              config2.instance.kill("SIGTERM");
+            }
             config2.instance = void 0;
             console.log(`[WorkerSupervisor] Terminated ${config2.name}.`);
           }
@@ -51347,8 +51452,8 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
           await import_fs34.default.createReadStream(tempProcessingPath).pipe(import_unzipper.default.Extract({ path: extractPath })).promise();
         } catch (unzipError) {
           try {
-            const { execSync: execSync5 } = await import("child_process");
-            execSync5(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+            const { execSync: execSync7 } = await import("child_process");
+            execSync7(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
           } catch (_) {
             throw new Error(`Failed to extract ZIP file: ${unzipError.message}`);
           }
@@ -51419,9 +51524,9 @@ async function processMigrationFile(originalFilePath, dataType, mapping, skipLin
       migrationStatus.message = "Extracting TAR archive...";
       extractPath = import_path36.default.join(TEMP_DIR3, `extract_${Date.now()}`);
       import_fs34.default.mkdirSync(extractPath, { recursive: true });
-      const { execSync: execSync5 } = await import("child_process");
+      const { execSync: execSync7 } = await import("child_process");
       try {
-        execSync5(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
+        execSync7(`tar -xf "${tempProcessingPath}" -C "${extractPath}"`);
       } catch (tarError) {
         throw new Error(`Failed to extract TAR archive: ${tarError.message}`);
       }
@@ -78775,6 +78880,7 @@ async function initOrdersTable(db2) {
   ordersTableInitialized = true;
 }
 async function enqueueArrivalWhatsApp(db2, order, options) {
+  if (options?.skipWhatsApp) return false;
   const cleanPhone = String(order.phone || "").replace(/\D/g, "");
   if (!cleanPhone) return false;
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
@@ -79578,7 +79684,10 @@ After payment, please send the payment screenshot in this chat.`;
         pharmarack_mapped,
         advance_payment,
         cart_add_error,
-        resend
+        resend,
+        sendPaymentQr,
+        skipWhatsApp,
+        sendWhatsApp
       } = req.body;
       try {
         const db2 = await dbManager.getConnection();
@@ -79604,12 +79713,13 @@ After payment, please send the payment screenshot in this chat.`;
         const newCartAddError = cart_add_error !== void 0 ? cart_add_error : existing.cart_add_error;
         let whatsappQueued = false;
         const isResend = Boolean(resend);
-        if (newStatus === "Ready" && (Number(existing.notified) !== 1 || isResend)) {
+        const shouldSkipWa = skipWhatsApp === true || sendWhatsApp === false;
+        if (newStatus === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
           try {
             whatsappQueued = await enqueueArrivalWhatsApp(
               db2,
               { ...existing, phone: newPhone, requester: newRequester, product: newProduct, qty: newQty },
-              { skipDedupe: isResend || Number(existing.notified) === 1 }
+              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
             );
           } catch (waErr) {
             console.error("Failed to queue arrival WhatsApp on order update:", waErr?.message || waErr);
@@ -79628,6 +79738,61 @@ After payment, please send the payment screenshot in this chat.`;
        WHERE id = ?`,
           [newStatus, newPriority, newQty, newProduct, newRequester, newPhone, newDistributor, newRate, newMrp, newMapped, newAdvancePayment, newCartAddError, newNotified, newCount, id]
         );
+        let paymentQrSent = false;
+        const distributorNewlyAssigned = !existing.pharmarack_distributor && newDistributor;
+        const shouldSendQr = Boolean(distributorNewlyAssigned || sendPaymentQr);
+        const cleanPhoneForQr = String(newPhone || existing.phone || "").replace(/\D/g, "");
+        if (shouldSendQr && cleanPhoneForQr.length >= 10) {
+          try {
+            const advanceAmount = Number(newAdvancePayment || existing.advance_payment || 50);
+            const qrAmount = advanceAmount > 0 ? advanceAmount : 50;
+            const soCode = `SO-${id}`;
+            const activeQr = await paymentQrService.allocateNextQr();
+            const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, qrAmount, soCode);
+            const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+            await db2.run(
+              `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
+              [activeQr.id, qrAmount, id]
+            );
+            const formattedQrPhone = cleanPhoneForQr.length === 10 ? `91${cleanPhoneForQr}` : cleanPhoneForQr;
+            const custQrMsg = `\u2705 Medicine & supplier confirmed
+
+\u{1F194} *Special Order*: ${soCode}
+
+\u{1F48A} *Medicine*: ${newProduct || existing.product || "Medicine"}
+\u{1F4E6} *Quantity*: ${newQty || existing.qty || 1}
+
+\u{1F3E2} *Supplier*: ${newDistributor}
+
+\u{1F510} *Booking Advance Amount*: \u20B9${qrAmount.toFixed(2)}
+
+Please pay the \u20B9${qrAmount.toFixed(2)} booking amount using the QR code below.
+
+UPI ID: ${activeQr.upi_id}
+Payee: ${activeQr.payee_name}
+
+After payment, please send the payment screenshot in this chat.`;
+            await whatsappQueueWorker.enqueue(
+              formattedQrPhone,
+              custQrMsg,
+              "customer_payment_qr",
+              newRequester || existing.requester || "Customer",
+              void 0,
+              void 0,
+              {
+                mimetype: "image/png",
+                data: qrBuffer.toString("base64"),
+                filename: `payment_qr_${soCode}.png`
+              }
+            );
+            paymentQrSent = true;
+            void whatsappQueueWorker.forceNext().catch(() => {
+            });
+            console.log(`[Orders] Auto-sent payment QR to ${formattedQrPhone} for ${soCode} after distributor assigned: ${newDistributor}`);
+          } catch (qrErr) {
+            console.error("[Orders] Failed to auto-send payment QR on distributor assignment:", qrErr?.message || qrErr);
+          }
+        }
         if (newStatus === "Cancelled") {
           await cancelPendingWhatsAppForOrder(db2, {
             id,
@@ -79703,7 +79868,7 @@ After payment, please send the payment screenshot in this chat.`;
           }
         }
         broadcastOrdersChanged2();
-        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment });
+        res.json({ success: true, message: "Order updated successfully", whatsapp_queued: whatsappQueued, notification_count: newCount, cartAdjustment, payment_qr_sent: paymentQrSent });
       } catch (err) {
         console.error("Update order error:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -79727,12 +79892,13 @@ After payment, please send the payment screenshot in this chat.`;
         }
         let whatsappQueued = false;
         const isResend = Boolean(resend);
-        if (status === "Ready" && (Number(existing.notified) !== 1 || isResend)) {
+        const shouldSkipWa = req.body?.skipWhatsApp === true || req.body?.sendWhatsApp === false;
+        if (status === "Ready" && !shouldSkipWa && (Number(existing.notified) !== 1 || isResend)) {
           try {
             whatsappQueued = await enqueueArrivalWhatsApp(
               db2,
               existing,
-              { skipDedupe: isResend || Number(existing.notified) === 1 }
+              { skipDedupe: isResend || Number(existing.notified) === 1, skipWhatsApp: shouldSkipWa }
             );
           } catch (waErr) {
             console.error("Failed to queue arrival WhatsApp on status Ready:", waErr?.message || waErr);
@@ -86583,7 +86749,8 @@ async function gracefulShutdown(signal) {
       try {
         const pid = process.pid;
         const { spawn: spawn6 } = await import("child_process");
-        spawn6("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], { detached: true, stdio: "ignore" }).unref();
+        const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
+        spawn6("cmd.exe", ["/c", `taskkill /pid ${targetPid} /t /f`], { detached: true, stdio: "ignore" }).unref();
       } catch (_) {
       }
     }
@@ -86677,7 +86844,8 @@ async function gracefulShutdown(signal) {
     try {
       const pid = process.pid;
       const { spawn: spawn6 } = await import("child_process");
-      spawn6("cmd.exe", ["/c", `taskkill /pid ${pid} /t /f`], {
+      const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
+      spawn6("cmd.exe", ["/c", `taskkill /pid ${targetPid} /t /f`], {
         detached: true,
         stdio: "ignore"
       }).unref();
@@ -86686,7 +86854,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express57, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path66, import_child_process11, import_url49, import_fs63, import_axios4, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express57, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path66, import_child_process11, import_url49, import_fs63, import_axios4, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, appDataDir2, frontendCandidates, frontendDist, PORT, server, pendingShutdownTimer, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -86948,7 +87116,7 @@ var init_server = __esm({
         const uiUrl = !isPackagedApp() && config.nodeEnv !== "production" ? `http://localhost:5173` : serverUrl;
         setTimeout(() => {
           console.log(`[Boot] Launching dedicated app window at ${uiUrl}...`);
-          launchAppBrowser(uiUrl, void 0, !isPackagedApp() ? void 0 : () => {
+          launchAppBrowser(uiUrl, void 0, () => {
             console.log("[Boot] Main application UI window closed. Exiting AI Pharmacy OS...");
             void gracefulShutdown("UI_WINDOW_CLOSED");
           });
@@ -87196,8 +87364,32 @@ var init_server = __esm({
         process.exit(1);
       }
     })();
+    pendingShutdownTimer = null;
+    app.post("/api/system/cancel-shutdown", (req, res) => {
+      if (pendingShutdownTimer) {
+        clearTimeout(pendingShutdownTimer);
+        pendingShutdownTimer = null;
+        console.log("[System] Pending tab-close shutdown cancelled (client reconnected or refreshed).");
+      }
+      res.json({ success: true, message: "Pending shutdown cancelled." });
+    });
     app.post("/api/system/shutdown", (req, res) => {
-      console.log("[System] Received client exit / shutdown request. Terminating server...");
+      const isTabClose = req.query.type === "tab_close";
+      if (isTabClose) {
+        console.log("[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...");
+        if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
+        pendingShutdownTimer = setTimeout(() => {
+          console.log("[System] No active client reconnected within grace period. Terminating server...");
+          void gracefulShutdown("TAB_CLOSED");
+        }, 3500);
+        res.json({ success: true, message: "Tab-close graceful shutdown scheduled." });
+        return;
+      }
+      console.log("[System] Received direct client exit request. Terminating server...");
+      if (pendingShutdownTimer) {
+        clearTimeout(pendingShutdownTimer);
+        pendingShutdownTimer = null;
+      }
       res.json({ success: true, message: "Shutting down AI Pharmacy OS..." });
       setTimeout(() => {
         void gracefulShutdown("CLIENT_EXIT");

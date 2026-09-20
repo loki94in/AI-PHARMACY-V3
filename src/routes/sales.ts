@@ -260,8 +260,9 @@ router.post('/', async (req, res) => {
     }
 
     if (!customerId && (patient_phone || patient_name)) {
-      const cleanPhone = (patient_phone || '').trim();
-      const digitsOnly = cleanPhone.replace(/\D/g, '').slice(-10);
+      const rawPhone = (patient_phone || '').trim();
+      const digitsOnly = rawPhone.replace(/\D/g, '').slice(-10);
+      const cleanPhone = digitsOnly.length === 10 ? digitsOnly : rawPhone;
       const cleanName = (patient_name || 'Customer').trim();
 
       let existing = null;
@@ -270,8 +271,8 @@ router.post('/', async (req, res) => {
       if (digitsOnly.length === 10) {
         existing = await db.get(
           `SELECT id, name, phone FROM customers 
-           WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-          [cleanPhone, `%${digitsOnly}`]
+           WHERE phone = ? OR phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+          [cleanPhone, rawPhone, `%${digitsOnly}`]
         );
       }
 
@@ -285,7 +286,7 @@ router.post('/', async (req, res) => {
 
       if (existing) {
         customerId = existing.id;
-        if (cleanPhone && (!existing.phone || existing.phone.trim() === '')) {
+        if (cleanPhone && (!existing.phone || existing.phone.trim() === '' || existing.phone.length > 10)) {
           await db.run('UPDATE customers SET phone = ? WHERE id = ?', [cleanPhone, customerId]);
         }
       } else {

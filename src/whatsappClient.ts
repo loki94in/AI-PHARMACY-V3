@@ -637,6 +637,168 @@ async function syncWhatsappData(client: WAClient) {
   }
 }
 
+/**
+ * Injects defensive runtime patches into the WhatsApp Web page context:
+ * 1. Wraps internal memoized getters (WAWebChatGetters, WAWebContactGetters, WAWebFrontendContactGetters)
+ *    so any missing/partial ID returns safe fallback values rather than throwing
+ *    "Data passed to getter must include an id property, it's how we memoize".
+ * 2. Patches window.WWebJS.getChat to safely resolve chats for unsaved / new contacts
+ *    using Chat.get -> Chat.find -> findOrCreateLatestChat -> Chat.add fallback.
+ * 3. Patches window.WWebJS.getChatModel and getMessageModel to handle incomplete objects gracefully.
+ */
+export async function patchWWebJSInternals(pupPage: any): Promise<void> {
+  if (!pupPage || pupPage.isClosed()) return;
+  try {
+    await pupPage.evaluate(() => {
+      try {
+        // 1. Wrap internal WhatsApp Web getters to neutralize memoizer crashes on unsaved contacts
+        const wrapGetterModule = (modName: string, defaultBool = false) => {
+          try {
+            const mod = (window as any).require?.(modName);
+            if (!mod) return;
+            for (const key of Object.keys(mod)) {
+              if (typeof mod[key] === 'function' && !mod[key].__patchedSafe) {
+                const origFn = mod[key];
+                const wrapped = function(this: any, ...args: any[]) {
+                  try {
+                    const first = args[0];
+                    if (!first || (!first.id && !first._serialized && !first.user)) {
+                      if (key === 'getName' || key === 'getPushname' || key === 'getFormattedTitle') return '';
+                      return defaultBool;
+                    }
+                    return origFn.apply(this, args);
+                  } catch (err: any) {
+                    if (String(err).includes('id property') || String(err).includes('memoize')) {
+                      if (key === 'getName' || key === 'getPushname' || key === 'getFormattedTitle') return '';
+                      return defaultBool;
+                    }
+                    throw err;
+                  }
+                };
+                wrapped.__patchedSafe = true;
+                mod[key] = wrapped;
+              }
+            }
+          } catch (_) {}
+        };
+
+        wrapGetterModule('WAWebChatGetters', false);
+        wrapGetterModule('WAWebContactGetters', false);
+        wrapGetterModule('WAWebFrontendContactGetters', true);
+
+        // 2. Patch window.WWebJS.getChat to never crash on unsaved / new phone numbers
+        if ((window as any).WWebJS && !(window as any).WWebJS.__getChatPatched) {
+          (window as any).WWebJS.__getChatPatched = true;
+          const origGetChat = (window as any).WWebJS.getChat;
+          (window as any).WWebJS.getChat = async function(this: any, chatId: string, opts: any = {}) {
+            const isChannel = /@\w*newsletter\b/.test(chatId);
+            if (isChannel) {
+              return await origGetChat.apply(this, arguments as any);
+            }
+
+            const widFactory = (window as any).require?.('WAWebWidFactory');
+            const collections = (window as any).require?.('WAWebCollections');
+            const findChatAction = (window as any).require?.('WAWebFindChatAction');
+
+            if (!widFactory || !collections?.Chat) {
+              return await origGetChat.apply(this, arguments as any);
+            }
+
+            let chatWid: any = null;
+            try {
+              chatWid = widFactory.createWid(chatId);
+            } catch (_) {
+              return await origGetChat.apply(this, arguments as any);
+            }
+
+            let chat = collections.Chat.get(chatWid);
+
+            // Step A1: Search local IndexedDB cache by primary JID
+            if (!chat && collections.Chat.find) {
+              try {
+                chat = await collections.Chat.find(chatWid);
+              } catch (_) {}
+            }
+
+            // Step A2: Check alternate LID / Phone JID mapping
+            if (!chat) {
+              try {
+                const apiContact = (window as any).require?.('WAWebApiContact');
+                const altWid = apiContact?.getAlternateUserWid?.(chatWid);
+                if (altWid) {
+                  chat = collections.Chat.get(altWid) || (collections.Chat.find ? await collections.Chat.find(altWid).catch(() => null) : null);
+                }
+              } catch (_) {}
+            }
+
+            // Step B: Attempt native findOrCreateLatestChat with error suppression
+            if (!chat && findChatAction?.findOrCreateLatestChat) {
+              try {
+                const res = await findChatAction.findOrCreateLatestChat(chatWid);
+                chat = res?.chat || res;
+              } catch (_) {}
+            }
+
+            // Step C: Fallback to collection creation if store didn't return a chat
+            if (!chat && collections.Chat.add) {
+              try {
+                const added = collections.Chat.add({ id: chatWid });
+                chat = Array.isArray(added) ? added[0] : added;
+              } catch (_) {}
+            }
+
+            // Step D: If still not found, try original implementation
+            if (!chat) {
+              try {
+                chat = await origGetChat.apply(this, arguments as any);
+              } catch (_) {}
+            }
+
+            if (opts.getAsModel && chat) {
+              return await (window as any).WWebJS.getChatModel(chat, { isChannel: false });
+            }
+            return chat;
+          };
+        }
+
+        // 3. Patch window.WWebJS.getChatModel to never throw on missing id/memoize
+        if ((window as any).WWebJS && !(window as any).WWebJS.__chatModelPatched) {
+          (window as any).WWebJS.__chatModelPatched = true;
+          const origGetChatModel = (window as any).WWebJS.getChatModel;
+          (window as any).WWebJS.getChatModel = async function(this: any, chat: any, opts: any) {
+            try {
+              return await origGetChatModel.apply(this, arguments as any);
+            } catch (err: any) {
+              if (String(err).includes('id property') || String(err).includes('memoize')) {
+                const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
+                model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
+                return model;
+              }
+              throw err;
+            }
+          };
+        }
+
+        // 4. Patch window.WWebJS.getMessageModel to never throw on missing id/memoize
+        if ((window as any).WWebJS && !(window as any).WWebJS.__msgModelPatched) {
+          (window as any).WWebJS.__msgModelPatched = true;
+          const origGetMessageModel = (window as any).WWebJS.getMessageModel;
+          (window as any).WWebJS.getMessageModel = function(this: any, message: any) {
+            try {
+              return origGetMessageModel.apply(this, arguments as any);
+            } catch (err: any) {
+              if (String(err).includes('id property') || String(err).includes('memoize')) {
+                return typeof message?.serialize === 'function' ? message.serialize() : { id: message?.id, body: message?.body };
+              }
+              throw err;
+            }
+          };
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+}
+
 /** Internal helper to instantiate WAClient and bind event listeners */
 function launchClientInstance(forceQr: boolean): Promise<WAClient> {
   return new Promise<WAClient>((resolve, reject) => {
@@ -845,29 +1007,10 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         console.warn('[WhatsApp Persist] Failed to save connected state to app_settings:', saveErr);
       }
 
-      // Pre-patch window.WWebJS in Puppeteer to protect against memoizer getter crashes on unsaved contacts
+      // Pre-patch window.WWebJS and internal getters in Puppeteer to protect against memoizer crashes on unsaved contacts
       try {
         if (client.pupPage && !client.pupPage.isClosed()) {
-          await client.pupPage.evaluate(() => {
-            try {
-              if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
-                (window as any).WWebJS.__memoizePatched = true;
-                const origGetChatModel = (window as any).WWebJS.getChatModel;
-                (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
-                  try {
-                    return await origGetChatModel.apply(this, arguments);
-                  } catch (err: any) {
-                    if (String(err).includes('id property') || String(err).includes('memoize')) {
-                      const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
-                      model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
-                      return model;
-                    }
-                    throw err;
-                  }
-                };
-              }
-            } catch (_) {}
-          });
+          await patchWWebJSInternals(client.pupPage);
         }
       } catch (_) {}
 
@@ -1505,11 +1648,40 @@ export async function sendMessage(
       if (!useBusiness) {
         // Live WhatsApp Web client. Send via the WA Web.js client.
         let resolvedTargetChatId = chatId;
-        const doSend = async (targetClient: WAClient) => {
-          let targetChatId = chatId;
+
+        // Ground-Truth Phone Registry Lookup:
+        // Query local database for any established chat thread (especially @lid threads from prior bookings/chats)
+        let knownChatId: string | null = null;
+        let knownCustomerName: string = '';
+        try {
+          const last10 = cleanPhone.slice(-10);
+          const chatRow = await db.get(
+            `SELECT id, name FROM whatsapp_chats 
+             WHERE (resolved_number LIKE ? OR id LIKE ?) 
+             ORDER BY (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC, timestamp DESC 
+             LIMIT 1`,
+            [`%${last10}%`, `%${last10}%`]
+          );
+          if (chatRow?.id) {
+            knownChatId = chatRow.id;
+            if (chatRow.name && chatRow.name !== cleanPhone && !chatRow.name.includes('@')) {
+              knownCustomerName = chatRow.name;
+            }
+          }
+          if (!knownCustomerName) {
+            const custRow = await db.get(
+              `SELECT name FROM customers WHERE phone LIKE ? LIMIT 1`,
+              [`%${last10}%`]
+            );
+            if (custRow?.name) knownCustomerName = custRow.name;
+          }
+        } catch (_) {}
+
+        const doSend = async (targetClient: WAClient, overrideChatId?: string) => {
+          let targetChatId = overrideChatId || knownChatId || chatId;
 
           // Attempt to resolve contact & LID via getNumberId to populate Store and prevent "No LID for user" errors
-          if (!chatId.includes('@g.us') && !chatId.includes('@broadcast') && !chatId.includes('-')) {
+          if (!targetChatId.includes('@lid') && !chatId.includes('@g.us') && !chatId.includes('@broadcast') && !chatId.includes('-')) {
             try {
               const numberDetails = await targetClient.getNumberId(cleanPhone);
               if (numberDetails && numberDetails._serialized) {
@@ -1524,48 +1696,47 @@ export async function sendMessage(
           // Pre-hydrate chat and contact model in WhatsApp Web store to prevent memoizer 'id undefined' crash
           if (targetClient.pupPage && !targetClient.pupPage.isClosed()) {
             try {
-              await targetClient.pupPage.evaluate(async (jid) => {
+              await patchWWebJSInternals(targetClient.pupPage);
+              await targetClient.pupPage.evaluate(async (targetJid, fallbackJid, customerName) => {
                 try {
-                  // Ensure WWebJS patch is active
-                  if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
-                    (window as any).WWebJS.__memoizePatched = true;
-                    const origGetChatModel = (window as any).WWebJS.getChatModel;
-                    (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
-                      try {
-                        return await origGetChatModel.apply(this, arguments);
-                      } catch (err: any) {
-                        if (String(err).includes('id property') || String(err).includes('memoize')) {
-                          const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
-                          model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
-                          return model;
-                        }
-                        throw err;
-                      }
-                    };
-                  }
-
                   const widFactory = (window as any).require?.('WAWebWidFactory');
                   const findChatAction = (window as any).require?.('WAWebFindChatAction');
                   const collections = (window as any).require?.('WAWebCollections');
-                  if (widFactory && jid) {
-                    const wid = widFactory.createWid(jid);
-                    if (findChatAction?.findOrCreateLatestChat) {
-                      await findChatAction.findOrCreateLatestChat(wid);
-                    }
-                    if (collections?.Contact) {
-                      let contact = collections.Contact.get ? collections.Contact.get(wid) : null;
-                      if (!contact && collections.Contact.find) {
-                        contact = await collections.Contact.find(wid).catch(() => null);
+                  if (widFactory && collections?.Chat) {
+                    const jidsToHydrate = [targetJid, fallbackJid].filter(Boolean);
+                    for (const jid of jidsToHydrate) {
+                      const wid = widFactory.createWid(jid);
+                      let chat = collections.Chat.get(wid);
+                      if (!chat && collections.Chat.find) {
+                        chat = await collections.Chat.find(wid).catch(() => null);
                       }
-                      if (!contact && collections.Contact.add) {
+                      if (!chat && findChatAction?.findOrCreateLatestChat) {
+                        const res = await findChatAction.findOrCreateLatestChat(wid).catch(() => null);
+                        chat = res?.chat || res;
+                      }
+                      if (!chat && collections.Chat.add) {
                         try {
-                          collections.Contact.add({ id: wid, name: wid.user });
+                          collections.Chat.add({ id: wid });
                         } catch (_) {}
+                      }
+                      if (collections?.Contact) {
+                        let contact = collections.Contact.get ? collections.Contact.get(wid) : null;
+                        if (!contact && collections.Contact.add) {
+                          try {
+                            collections.Contact.add({
+                              id: wid,
+                              name: customerName || wid.user,
+                              pushname: customerName || wid.user,
+                              isMyContact: true,
+                              isWAContact: true
+                            });
+                          } catch (_) {}
+                        }
                       }
                     }
                   }
                 } catch (_) {}
-              }, targetChatId);
+              }, targetChatId, chatId, knownCustomerName);
             } catch (_) {}
           }
 
@@ -1582,6 +1753,8 @@ export async function sendMessage(
 
           if (sentMsg?.id?._serialized) {
             messageId = sentMsg.id._serialized;
+          } else if (sentMsg?.id) {
+            messageId = typeof sentMsg.id === 'string' ? sentMsg.id : sentMsg.id._serialized || `${Date.now()}`;
           }
           return sentMsg;
         };
@@ -1589,76 +1762,90 @@ export async function sendMessage(
         try {
           await ensureSessionHealth().catch(() => {});
           await doSend(clientInstance!);
+          success = true;
         } catch (sendErr: any) {
           const errMsg = sendErr?.message || String(sendErr);
-          if (isPuppeteerDetachedError(errMsg)) {
-            console.warn('[WhatsApp] Detached Frame or destroyed browser context detected during sendMessage. Invalidating stale client...');
-            isReady = false;
-            clientInstance = null;
-            if (activeClient) {
-              activeClient.destroy().catch(() => {});
-              activeClient = null;
-            }
 
-            console.log('[WhatsApp] Attempting automatic client re-initialization and retry...');
+          // Dual-Key Ground-Truth Cascade: If sending to primary route failed, retry via alternate verified route (@lid <-> @c.us)
+          const primaryChatId = resolvedTargetChatId || knownChatId || chatId;
+          const alternateChatId = primaryChatId.includes('@lid') ? chatId : (knownChatId || null);
+          let recoveredViaAlt = false;
+          if (alternateChatId && alternateChatId !== primaryChatId) {
+            console.log(`[WhatsApp Ground-Truth] Retrying send via alternate verified route ${alternateChatId} for ${cleanPhone}...`);
             try {
-              const freshClient = await initClient();
-              if (!freshClient) throw new Error('Re-initialization returned null client.');
-              await doSend(freshClient);
-              console.log('[WhatsApp] Automatic re-initialization and message send retry succeeded!');
-            } catch (retryErr: any) {
-              console.error('[WhatsApp] Send retry after client auto-reconnect failed:', retryErr);
-              throw new Error('WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.');
+              await doSend(clientInstance!, alternateChatId);
+              console.log(`[WhatsApp Ground-Truth] Alternate route ${alternateChatId} send succeeded for ${cleanPhone}!`);
+              recoveredViaAlt = true;
+              success = true;
+            } catch (altErr: any) {
+              console.warn(`[WhatsApp Ground-Truth] Alternate route retry note:`, altErr?.message || altErr);
             }
-          } else if (errMsg.includes('Data passed to getter must include an id property') || errMsg.includes("it's how we memoize")) {
-            console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
-            try {
-              if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
-                await clientInstance.pupPage.evaluate(async (jid) => {
-                  try {
-                    if ((window as any).WWebJS && !(window as any).WWebJS.__memoizePatched) {
-                      (window as any).WWebJS.__memoizePatched = true;
-                      const origGetChatModel = (window as any).WWebJS.getChatModel;
-                      (window as any).WWebJS.getChatModel = async function(chat: any, opts: any) {
-                        try {
-                          return await origGetChatModel.apply(this, arguments);
-                        } catch (err: any) {
-                          if (String(err).includes('id property') || String(err).includes('memoize')) {
-                            const model = typeof chat?.serialize === 'function' ? chat.serialize() : { id: chat?.id };
-                            model.formattedTitle = chat?.id?._serialized || chat?.id?.user || 'Customer';
-                            return model;
-                          }
-                          throw err;
-                        }
-                      };
-                    }
-                    const widFactory = (window as any).require?.('WAWebWidFactory');
-                    const findChatAction = (window as any).require?.('WAWebFindChatAction');
-                    const collections = (window as any).require?.('WAWebCollections');
-                    if (widFactory && jid) {
-                      const wid = widFactory.createWid(jid);
-                      if (findChatAction?.findOrCreateLatestChat) {
-                        await findChatAction.findOrCreateLatestChat(wid);
-                      }
-                      if (collections?.Contact?.find) {
-                        await collections.Contact.find(wid).catch(() => {});
-                      }
-                    }
-                  } catch (_) {}
-                }, `${cleanPhone}@c.us`);
+          }
+
+          if (!recoveredViaAlt) {
+            if (isPuppeteerDetachedError(errMsg)) {
+              console.warn('[WhatsApp] Detached Frame or destroyed browser context detected during sendMessage. Invalidating stale client...');
+              isReady = false;
+              clientInstance = null;
+              if (activeClient) {
+                activeClient.destroy().catch(() => {});
+                activeClient = null;
               }
+
+              console.log('[WhatsApp] Attempting automatic client re-initialization and retry...');
+              try {
+                const freshClient = await initClient();
+                if (!freshClient) throw new Error('Re-initialization returned null client.');
+                await doSend(freshClient);
+                console.log('[WhatsApp] Automatic re-initialization and message send retry succeeded!');
+                success = true;
+              } catch (retryErr: any) {
+                console.error('[WhatsApp] Send retry after client auto-reconnect failed:', retryErr);
+                throw new Error('WhatsApp connection lost (detached browser frame). Please scan the QR code in Settings to reconnect.');
+              }
+            } else if (errMsg.includes('Data passed to getter must include an id property') || errMsg.includes("it's how we memoize")) {
+              console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
+              try {
+                if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
+                  await patchWWebJSInternals(clientInstance.pupPage);
+                  await clientInstance.pupPage.evaluate(async (jid) => {
+                    try {
+                      const widFactory = (window as any).require?.('WAWebWidFactory');
+                      const findChatAction = (window as any).require?.('WAWebFindChatAction');
+                      const collections = (window as any).require?.('WAWebCollections');
+                      if (widFactory && jid && collections?.Chat) {
+                        const wid = widFactory.createWid(jid);
+                        if (findChatAction?.findOrCreateLatestChat) {
+                          await findChatAction.findOrCreateLatestChat(wid).catch(() => {});
+                        }
+                        if (collections.Chat.add && !collections.Chat.get(wid)) {
+                          try {
+                            collections.Chat.add({ id: wid });
+                          } catch (_) {}
+                        }
+                        if (collections.Contact?.add && !collections.Contact.get?.(wid)) {
+                          try {
+                            collections.Contact.add({ id: wid, name: wid.user });
+                          } catch (_) {}
+                        }
+                      }
+                    } catch (_) {}
+                  }, `${cleanPhone}@c.us`);
+                }
               await new Promise(r => setTimeout(r, 600));
               await doSend(clientInstance!);
               console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
+              success = true;
             } catch (retryErr: any) {
               console.error(`[WhatsApp] Self-healing retry for ${cleanPhone} failed:`, retryErr?.message || retryErr);
               throw new Error(`WhatsApp Web temporary contact sync delay for ${cleanPhone}. Message queued for review.`);
             }
-          } else {
-            if (errMsg.includes('No LID for user')) {
-              throw new Error(`Contact not registered or not saved in phone contacts (No LID found for ${cleanPhone}). Save this contact in your WhatsApp phone's contact book or verify the phone number.`);
+            } else {
+              if (errMsg.includes('No LID for user')) {
+                throw new Error(`Contact not registered or not saved in phone contacts (No LID found for ${cleanPhone}). Save this contact in your WhatsApp phone's contact book or verify the phone number.`);
+              }
+              throw sendErr;
             }
-            throw sendErr;
           }
         }
 

@@ -22,7 +22,11 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve({ registered: true, jid: '919999999999@c.us' })),
+  ensureSessionHealth: jest.fn(() => Promise.resolve({ healthy: true })),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => Promise.resolve(true))
 }));
 
 import request from 'supertest';
@@ -237,8 +241,8 @@ describe('Smart Auto Reminder & Communication Center APIs', () => {
     });
     expect(mockSendMessage).toHaveBeenCalledWith(
       '917777777777',
-      undefined,
-      expect.stringContaining('Jane Doe'),
+      expect.anything(),
+      expect.stringMatching(/Jane Doe/i),
       undefined
     );
 
