@@ -390,6 +390,7 @@ router.get('/chats/:chatId/messages/:messageId/media', async (req, res) => {
   }
 });
 
+
 // GET /messaging/wa-media/:msgId — READ-ONLY thumbnail of a saved inbound
 // WhatsApp photo (data/inbound_media/<safeId>.jpg, written by
 // saveInboundMedia). Same id sanitization as the writer so no path traversal

@@ -421,41 +421,106 @@ router.post('/orders/:orderId/mark-paid', async (req, res) => {
     const orderId = parseInt(req.params.orderId, 10);
     if (isNaN(orderId)) return res.status(400).json({ error: 'Invalid order ID' });
 
+    const { screenshot_base64, filename } = req.body || {};
+
     const db = await dbManager.getConnection();
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
+    let proofImagePath: string | undefined;
+    if (screenshot_base64 && typeof screenshot_base64 === 'string') {
+      try {
+        const cleanBase64 = screenshot_base64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+        const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+        proofImagePath = path.join(uploadsDir, `payment_proof_SO-${orderId}.jpg`);
+        fs.writeFileSync(proofImagePath, Buffer.from(cleanBase64, 'base64'));
+      } catch (saveErr) {
+        console.error('[WebsiteOrdersRoute] Failed to save payment proof from portal:', saveErr);
+      }
+    }
+
+    const newPaymentStatus = proofImagePath ? 'SCREENSHOT_RECEIVED' : 'PENDING_VERIFICATION';
+
     await db.run(
       `UPDATE special_orders
-       SET payment_status = 'PENDING_VERIFICATION',
+       SET payment_status = ?,
            pharmacy_verification_status = 'PENDING',
+           payment_screenshot_path = COALESCE(?, payment_screenshot_path),
+           screenshot_amount = COALESCE(?, screenshot_amount),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [orderId]
+      [newPaymentStatus, proofImagePath || null, Number(order.total_amount || 50), orderId]
     );
 
     await db.run(
       `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-       VALUES (?, 'customer_marked_paid', 'Customer reported payment completed. Awaiting pharmacy verification.', 'customer', CURRENT_TIMESTAMP)`,
-      [orderId]
+       VALUES (?, 'customer_marked_paid', ?, 'customer', CURRENT_TIMESTAMP)`,
+      [
+        orderId,
+        proofImagePath 
+          ? 'Customer reported payment and uploaded payment screenshot. Awaiting pharmacy verification.' 
+          : 'Customer reported payment completed. Awaiting pharmacy verification.'
+      ]
     );
 
-    // Automatically send WhatsApp message requesting payment screenshot
+    const storeName = (await getStoreMedicalName(db, order.store_id)) || 'AI Pharmacy';
+    const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
+    const formattedAmount = Number(order.total_amount || 0).toFixed(2);
+    const soCode = `SO-${orderId}`;
+
+    // 1. Forward notification & screenshot directly to store owner on WhatsApp
+    try {
+      const { resolveAdminWhatsappNumber } = await import('../services/waAdminEscalationService.js');
+      const adminPhone = (await resolveAdminWhatsappNumber(db)) || '';
+      if (adminPhone) {
+        const adminCaption = proofImagePath
+          ? `📸 *Website Order Payment Proof Received*\n\n` +
+            `🆔 *Order*: ${soCode}\n` +
+            `👤 *Customer*: ${customerName} (${order.phone || 'N/A'})\n` +
+            `💊 *Medicine*: ${order.product || order.medicine_name || 'Special Order'}\n` +
+            `💰 *Amount*: ₹${formattedAmount}\n\n` +
+            `👉 Reply *CONFIRM ${soCode}* to verify payment and add to Live Cart.`
+          : `💳 *Customer Reported Payment on Website*\n\n` +
+            `🆔 *Order*: ${soCode}\n` +
+            `👤 *Customer*: ${customerName} (${order.phone || 'N/A'})\n` +
+            `💊 *Medicine*: ${order.product || order.medicine_name || 'Special Order'}\n` +
+            `💰 *Amount*: ₹${formattedAmount}\n\n` +
+            `ℹ️ Customer clicked "I HAVE PAID" on the portal. Awaiting screenshot verification.`;
+
+        await whatsappQueueWorker.enqueue(
+          adminPhone,
+          adminCaption,
+          proofImagePath ? 'admin_escalation_image' : 'admin_escalation',
+          'Owner',
+          undefined,
+          proofImagePath || undefined
+        );
+        console.log(`[WebsiteOrdersRoute] Payment alert for ${soCode} enqueued to owner (${adminPhone}).`);
+      }
+    } catch (adminErr) {
+      console.warn('[WebsiteOrdersRoute] Failed to notify owner of payment report:', adminErr);
+    }
+
+    // 2. Automatically send WhatsApp message to customer
     if (order.phone) {
       try {
-        const storeName = (await getStoreMedicalName(db, order.store_id)) || 'AI Pharmacy';
-        const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
-        const formattedAmount = Number(order.total_amount || 0).toFixed(2);
-        const screenshotMsg =
-          `🙏 Namaste ${customerName}!\n\n` +
-          `We have received your payment report for Order #${orderId} (₹${formattedAmount}).\n\n` +
-          `📸 *Please reply directly to this WhatsApp message with a screenshot of your payment receipt / UPI confirmation.*\n\n` +
-          `Our pharmacy team will manually verify the payment details and process your order.\n\n` +
-          `Thank you!\n— ${storeName}`;
+        const custMsg = proofImagePath
+          ? `🙏 Namaste ${customerName}!\n\n` +
+            `We have received your payment screenshot for Order #${orderId} (₹${formattedAmount}).\n\n` +
+            `Our pharmacy team is verifying the payment details and preparing your order.\n\n` +
+            `Thank you!\n— ${storeName}`
+          : `🙏 Namaste ${customerName}!\n\n` +
+            `We have received your payment report for Order #${orderId} (₹${formattedAmount}).\n\n` +
+            `📸 *Please reply directly to this WhatsApp message with a screenshot of your payment receipt / UPI confirmation.*\n\n` +
+            `Our pharmacy team will manually verify the payment details and process your order.\n\n` +
+            `Thank you!\n— ${storeName}`;
 
         await whatsappQueueWorker.enqueue(
           order.phone,
-          screenshotMsg,
+          custMsg,
           'payment_screenshot_request',
           customerName
         );
@@ -468,9 +533,12 @@ router.post('/orders/:orderId/mark-paid', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Payment reported successfully. Pharmacy verification is in progress.',
+      message: proofImagePath 
+        ? 'Payment screenshot uploaded successfully. Pharmacy verification is in progress.' 
+        : 'Payment reported successfully. Pharmacy verification is in progress.',
       order_id: orderId,
-      payment_status: 'PENDING_VERIFICATION'
+      payment_status: newPaymentStatus,
+      has_screenshot: Boolean(proofImagePath)
     });
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Mark paid error:', err);

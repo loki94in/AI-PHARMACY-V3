@@ -1,6 +1,7 @@
 import { Database } from 'sqlite';
 import { dbManager } from '../database/connection.js';
 import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
+import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
 export class OrderFulfillmentService {
   private static instance: OrderFulfillmentService;
@@ -161,9 +162,13 @@ export class OrderFulfillmentService {
 
     // Insert or update refill rule
     // We map to patient_refills table
-    const nextRefillDate = new Date();
-    nextRefillDate.setDate(nextRefillDate.getDate() + refillIntervalDays);
-    const nextRefillStr = nextRefillDate.toISOString().replace('T', ' ').substring(0, 19);
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + refillIntervalDays);
+    const openDayRes = await advanceToNextOpenDay(targetDate, {
+      storeId: order.store_id || 1,
+      dbInstance: db
+    });
+    const nextRefillStr = openDayRes.targetDate.toISOString().replace('T', ' ').substring(0, 19);
 
     const result = await db.run(
       `INSERT INTO patient_refills (

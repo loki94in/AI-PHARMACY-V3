@@ -5902,6 +5902,22 @@ const CustomerCreditSection: React.FC = () => {
     }
   };
 
+  const [checkingOverdue, setCheckingOverdue] = useState(false);
+
+  const handleCheckOverdueCredit = async () => {
+    setCheckingOverdue(true);
+    try {
+      const res = await apiClient.post('/crm/credit-customers/check-overdue', {});
+      toastEvent.trigger(res.data?.message || 'Overdue credit check completed', 'success', '/crm');
+      await loadCreditCustomers();
+      whatsappQueueEvent.triggerUpdated();
+    } catch (err) {
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to check overdue credit', 'error', '/crm');
+    } finally {
+      setCheckingOverdue(false);
+    }
+  };
+
   const handleSendManualReminder = async (cust: CreditCustomerItem) => {
     setSendingId(cust.id);
     try {
@@ -5984,14 +6000,23 @@ const CustomerCreditSection: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-3.5 bg-bg border border-border rounded-2xl flex items-center justify-between shadow-sm">
+        <div className="p-3.5 bg-bg border border-border rounded-2xl flex items-center gap-2 shadow-sm">
           <button
             onClick={loadCreditCustomers}
             disabled={loading}
-            className="w-full h-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-bg3 border border-border text-xs font-bold text-text hover:text-primary transition-all disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-bg3 border border-border text-xs font-bold text-text hover:text-primary transition-all disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            <span>Refresh Ledger Dues</span>
+            <span>Refresh</span>
+          </button>
+          <button
+            onClick={handleCheckOverdueCredit}
+            disabled={checkingOverdue}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 border border-primary/20 text-xs font-bold text-primary hover:bg-primary/20 transition-all disabled:opacity-50"
+            title="Scan overdue credit accounts and queue amount-specific UPI QR reminders"
+          >
+            <QrCode size={14} className={checkingOverdue ? 'animate-spin' : ''} />
+            <span>Check Overdue (QR)</span>
           </button>
         </div>
       </div>
@@ -6048,7 +6073,10 @@ const CustomerCreditSection: React.FC = () => {
                     }`}
                   >
                     <div>
-                      <div className="text-xs font-bold text-text">{cust.name || 'Unnamed Patient'}</div>
+                      <div className="text-xs font-bold text-text flex items-center gap-1.5">
+                        <span>{cust.name || 'Unnamed Patient'}</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky/10 text-sky border border-sky/20 font-medium">UPI QR</span>
+                      </div>
                       <div className="text-[10px] text-muted flex items-center gap-1.5 mt-0.5">
                         <span>📱 {cust.phone || 'No phone'}</span>
                         <span>•</span>
@@ -6126,10 +6154,10 @@ const CustomerCreditSection: React.FC = () => {
                         ? 'bg-rose-500/10 text-rose-400/60 border border-rose-500/20 cursor-not-allowed opacity-60'
                         : 'bg-primary hover:bg-primary/90 text-white disabled:opacity-50 cursor-pointer'
                     }`}
-                    title={creditNotOnWa ? 'This number is not registered on WhatsApp' : 'Send instant manual credit reminder on WhatsApp'}
+                    title={creditNotOnWa ? 'This number is not registered on WhatsApp' : 'Send instant manual credit reminder on WhatsApp with UPI QR & Statement PDF'}
                   >
-                    <Send size={12} className={sendingId === selectedCustomer.id ? 'animate-pulse' : ''} />
-                    <span>{creditNotOnWa ? 'Not on WhatsApp' : 'Send WhatsApp Message'}</span>
+                    <QrCode size={13} className={sendingId === selectedCustomer.id ? 'animate-pulse' : ''} />
+                    <span>{creditNotOnWa ? 'Not on WhatsApp' : 'Send WhatsApp Reminder + QR'}</span>
                   </button>
 
                   {/* Clear Credit Entry Button */}

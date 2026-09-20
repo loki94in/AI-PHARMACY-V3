@@ -4,7 +4,7 @@
       "expiryAlert": "⚠️ *Medicine Expiry Alert*\nThe following medicines are nearing expiry (within {{months}} months):\n{{list}}\nPlease review stock and consider returning to supplier.",
       "refillReminder": "🙏 *Refill Reminder from {{pharmacyName}}*\nHi {{patientName}}, this is a friendly reminder that your refill for *{{medicineName}}* is due on {{dueDate}}.\nYou have {{quantityLeft}} {{unit}} left. Please visit the pharmacy or reply with \"REFILL\" to confirm your pickup.\nThank you!",
       "orderStatus": "📦 *Order Update*\nYour order #{{orderId}} has been received and is being prepared.\nExpected ready for pickup: {{pickupTime}}.\nReply with any questions.",
-      "creditReminder": "Dear {{name}},\n\n📌 *Credit Outstanding Balance Reminder*\n\n{{billsBreakdown}}📊 *Summary Calculation*\nDue Date: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *Total Outstanding Balance: ₹{{total}}*\n\nKindly arrange payment at your earliest convenience or visit our pharmacy.\n\nThank you!\n— {{storeName}}",
+      "creditReminder": "Dear {{name}},\n\n📌 *Credit Outstanding Balance Reminder*\n\n{{billsBreakdown}}📊 *Summary Calculation*\nDue Date: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *Total Outstanding Balance: ₹{{total}}*\n\n💳 *UPI Payment QR Code is attached below.* Scan with any UPI app (GPay/PhonePe/Paytm) to clear your outstanding dues directly.\n\nKindly arrange payment at your earliest convenience or visit our pharmacy.\n\nThank you!\n— {{storeName}}",
       "paymentReceipt": "Dear {{name}},\n\n✅ *Payment Received Receipt*\nAmount Received: *₹{{amount}}*\nRemaining Dues: *₹{{remaining}}*\nDate: *{{date}}*\n\nThank you for your payment!\n— {{storeName}}"
     },
     "telegram": {
@@ -84,7 +84,7 @@
       "expiryAlert": "⚠️ *दवा समाप्ति警報*\nनिम्नलिखित दवाएँ {{months}} महीनों के भीतर समाप्त हो रही हैं:\n{{list}}\nकृपया स्टॉक की जाँच करें और सप्लायर से वापस करने पर विचार करें।",
       "refillReminder": "🙏 *{{pharmacyName}} से रिफिल prom*\nनमस्ते {{patientName}}, यह एक मैत्रीपूर्ण अनुस्मारक है कि आपकी {{medicineName}} की रिफिल {{dueDate}} को देय है।\nआपके पास {{quantityLeft}} {{unit}} बचे हैं। कृपया फ़ार्मेसी आकर अपनी रिफिल की पुष्टि करने के लिए \"REFILL\" उत्तर दें।\nधन्यवाद!",
       "orderStatus": "📦 *आर्डर अपडेट*\nआपका ऑर्डर #{{orderId}} प्राप्त हो गया है और तैयार किया जा रहा है।\nउपलब्ध होने की संभावित समय: {{pickupTime}}।\nकिसी भी प्रश्न के लिए उत्तर दें।",
-      "creditReminder": "प्रिय {{name}},\n\n📌 *बकाया राशि याद दिलाने हेतु*\n\n{{billsBreakdown}}📊 *संक्षिप्त विवरण*\nदेय तिथि: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *कुल बकाया राशि: ₹{{total}}*\n\nकृपया जल्द से जल्द भुगतान की व्यवस्था करें या हमारी दुकान पर आएं।\n\nधन्यवाद!\n— {{storeName}}",
+      "creditReminder": "प्रिय {{name}},\n\n📌 *बकाया राशि याद दिलाने हेतु*\n\n{{billsBreakdown}}📊 *संक्षिप्त विवरण*\nदेय तिथि: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *कुल बकाया राशि: ₹{{total}}*\n\n💳 *यूपीआई भुगतान क्यूआर कोड नीचे संलग्न है।* किसी भी यूपीआई ऐप (GPay/PhonePe/Paytm) से स्कैन करके तुरंत भुगतान करें।\n\nकृपया जल्द से जल्द भुगतान की व्यवस्था करें या हमारी दुकान पर आएं।\n\nधन्यवाद!\n— {{storeName}}",
       "paymentReceipt": "प्रिय {{name}},\n\n✅ *भुगतान प्राप्ति रसीद*\nप्राप्त राशि: *₹{{amount}}*\nशेष बकाया: *₹{{remaining}}*\nदिनांक: *{{date}}*\n\nआपके भुगतान के लिए धन्यवाद!\n— {{storeName}}"
     },
     "telegram": {
@@ -164,7 +164,7 @@
       "expiryAlert": "⚠️ *ओषधी समाप्ती प्रेत*\nपालले {{months}} महिन्यांचीतील ओषधी समाप्त होऱ्या आहेत:\n{{list}}\nकृपया स्टॉक तपासा व पुरव químकांशीपर्यंत परत वhoven विचारा.",
       "refillReminder": "🙏 *{{pharmacyName}} पासून रिफिल शैक्षणिक*\nनमस्कार {{patientName}}, हे एक मैत्रीपूर्ण सुचना आहे की तुमच्याकडील {{medicineName}} ची रिफिल {{dueDate}} रोजी पायाभावी आहे.\nतुमच्या पास {{quantityLeft}} {{unit}} शेष आहेत. कृपया ओषधीशाळेत जाण्यावर तुमचा रिफिल bestätigt करण्यासाठी \"REFILL\" उत्तर द्या.\nधन्यवाद!",
       "orderStatus": "📦 *ऑर्डर अपडेट*\nतुमचा ORDER #{{orderId}} मिळवला आहे व तयार होत आहे.\nतयार होकर मिळवण्याची शक्यता वेळ: {{pickupTime}}.\nकोणतेही प्रश्न असतील तर उत्तर द्या.",
-      "creditReminder": "प्रिय {{name}},\n\n📌 *थकबाकी रक्कम आठवण*\n\n{{billsBreakdown}}📊 *थोडक्यात तपशील*\nदेय तारीख: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *एकूण थकबाकी रक्कम: ₹{{total}}*\n\nकृपया लवकरात लवकर भरणा करावा किंवा आमच्या औषध दुकानाला भेट द्यावी.\n\nधन्यवाद!\n— {{storeName}}",
+      "creditReminder": "प्रिय {{name}},\n\n📌 *थकबाकी रक्कम आठवण*\n\n{{billsBreakdown}}📊 *थोडक्यात तपशील*\nदेय तारीख: *{{dueDate}}*\n━━━━━━━━━━━━━━━━━━\n💰 *एकूण थकबाकी रक्कम: ₹{{total}}*\n\n💳 *युपीआय पेमेंट क्यूआर कोड खाली जोडलेला आहे.* कोणत्याही युपीआय अॅपद्वारे (GPay/PhonePe/Paytm) स्कॅन करून त्वरित पेमेंट करा.\n\nकृपया लवकरात लवकर भरणा करावा किंवा आमच्या औषध दुकानाला भेट द्यावी.\n\nधन्यवाद!\n— {{storeName}}",
       "paymentReceipt": "प्रिय {{name}},\n\n✅ *जमा रक्कम पावती*\nप्राप्त रक्कम: *₹{{amount}}*\nउर्वरित थकबाकी: *₹{{remaining}}*\nतारीख: *{{date}}*\n\nतुमच्या देयकबद्दल धन्यवाद!\n— {{storeName}}"
     },
     "telegram": {

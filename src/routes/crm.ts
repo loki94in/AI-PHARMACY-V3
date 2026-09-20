@@ -14,6 +14,7 @@ import { resolveStoreId } from '../services/storeContextService.js';
 import { eventService } from '../services/eventService.js';
 import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
+import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -625,7 +626,7 @@ router.put('/credit-customers/:id/due-date', async (req, res) => {
   }
 });
 
-// Send Manual Credit WhatsApp Reminder to Patient
+// Send Manual Credit WhatsApp Reminder to Patient with dynamic UPI QR
 router.post('/credit-customers/:id/send-reminder', async (req, res) => {
   const { id } = req.params;
   const { custom_message } = req.body || {};
@@ -637,103 +638,44 @@ router.post('/credit-customers/:id/send-reminder', async (req, res) => {
       return res.status(409).json({ error: 'Credit reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
     }
 
-    const customer = await db.get('SELECT * FROM customers WHERE id = ?', [id]);
-    if (!customer || !customer.phone) {
-      return res.status(400).json({ error: 'Customer phone number not found' });
+    const { creditReminderService } = await import('../services/creditReminderService.js');
+    const result = await creditReminderService.buildCreditReminderWithQr(Number(id), db, {
+      skipDedupe: true,
+      customMessage: custom_message,
+      isManual: true
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.reason || 'Failed to send credit reminder' });
     }
-
-    const cleanPhone = normalizeWhatsAppPhone(customer.phone);
-    if (!cleanPhone || cleanPhone.length < 10) {
-      return res.status(400).json({ error: 'Customer phone number is invalid' });
-    }
-
-    const dueDateStr = customer.credit_due_date ? new Date(customer.credit_due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'As agreed';
-
-    const formatDate = (dStr?: string) => {
-      if (!dStr) return '';
-      try {
-        const d = new Date(dStr);
-        return isNaN(d.getTime()) ? dStr : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-      } catch {
-        return dStr || '';
-      }
-    };
-
-    // Fetch all unpaid credit invoices for itemized summary breakdown
-    const pendingInvoices = await db.all(
-      `SELECT invoice_no, total_amount, date FROM sales_invoices
-       WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING') AND payment_status != 'PAID'
-       ORDER BY date ASC, id ASC`,
-      [id]
-    );
-
-    let billsBreakdownStr = '';
-    let computedTotal = 0;
-    if (pendingInvoices && pendingInvoices.length > 0) {
-      billsBreakdownStr += `📜 *Pending Bills Breakdown (${pendingInvoices.length})*\n`;
-      for (const inv of pendingInvoices) {
-        const amt = Number(inv.total_amount || 0);
-        computedTotal += amt;
-        const dFormatted = formatDate(inv.date);
-        billsBreakdownStr += `• Bill #${inv.invoice_no} (${dFormatted}): ₹${amt.toFixed(2)}\n`;
-      }
-      billsBreakdownStr += `\n`;
-    }
-
-    const finalOutstanding = customer.credit_balance !== undefined && customer.credit_balance !== null 
-      ? Number(customer.credit_balance)
-      : computedTotal;
-
-    let message = custom_message;
-    if (!message) {
-      const storeSetting = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL LIMIT 1");
-      const storeName = storeSetting?.value || 'AI Pharmacy';
-      const lang = (customer.language === 'hi' || customer.language === 'mr') ? customer.language : 'en';
-
-      message = getMessage(lang, 'whatsapp.creditReminder', {
-        name: customer.name || 'Customer',
-        billsBreakdown: billsBreakdownStr ? billsBreakdownStr : '',
-        dueDate: dueDateStr,
-        total: finalOutstanding.toFixed(2),
-        storeName: storeName
-      });
-    }
-
-    let pdfPath: string | undefined = undefined;
-    try {
-      const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-      const pdfFilename = `credit_statement_cust_${id}_${Date.now()}.pdf`;
-      const fullPdfPath = path.join(uploadsDir, pdfFilename);
-      await pdfInvoiceService.generateCreditStatementPdf(Number(id), fullPdfPath);
-      pdfPath = fullPdfPath;
-    } catch (pdfErr) {
-      console.warn(`[CRM Credit Reminder] PDF generation note for customer ${id}:`, pdfErr);
-    }
-
-    const queueId = await whatsappQueueWorker.enqueue(
-      cleanPhone,
-      message,
-      'credit_reminder',
-      customer.name || 'Customer',
-      undefined,
-      pdfPath
-    );
 
     whatsappQueueWorker.triggerProcessing();
 
-    await db.run(
-      `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      ['manual_credit_reminder', customer.name, cleanPhone, message, 'queued', `customer_${id}`]
-    );
-
-    res.json({ success: true, queueId, message: `Credit reminder queued for ${customer.name} (${cleanPhone})` });
+    res.json({
+      success: true,
+      queueId: result.queueId,
+      amount: result.amount,
+      message: `Credit reminder with payment QR queued successfully.`
+    });
   } catch (error: any) {
     console.error('Failed to send credit reminder:', error);
     res.status(500).json({ error: 'Failed to send reminder: ' + error.message });
+  }
+});
+
+// Run manual scan for overdue credit customers (mirrors /refills/check)
+router.post('/credit-customers/check-overdue', async (_req, res) => {
+  try {
+    const { creditReminderService } = await import('../services/creditReminderService.js');
+    const result = await creditReminderService.checkOverdueAndEnqueue(undefined, true);
+    res.json({
+      success: true,
+      message: `Overdue scan complete. Processed: ${result.processed}, Queued: ${result.queued}, Skipped: ${result.skipped}.`,
+      ...result
+    });
+  } catch (error: any) {
+    console.error('Failed to run overdue credit check:', error);
+    res.status(500).json({ error: 'Failed to run overdue check: ' + error.message });
   }
 });
 
@@ -1003,32 +945,40 @@ router.post('/broadcast-delay-notices', async (req, res) => {
           ['delay_notice', cleanName, formattedPhone, personalizedMsg, 'queued', `${item.type}_${item.id}`]
         );
 
-        // Advance scheduled dates if postponement requested
+        // Advance scheduled dates if postponement requested (adjusted to next open day via pharmacyCalendar)
         if (postponeNum > 0) {
+          const baseDate = new Date();
+          baseDate.setDate(baseDate.getDate() + postponeNum);
+          const openDayRes = await advanceToNextOpenDay(baseDate, {
+            storeId: item.store_id || 1,
+            dbInstance: db
+          });
+          const targetIso = openDayRes.targetDate.toISOString().replace('T', ' ').substring(0, 19);
+
           if (item.type === 'special_order') {
             await db.run(
               `UPDATE special_orders 
-               SET estimated_delivery_start = datetime(COALESCE(estimated_delivery_start, CURRENT_TIMESTAMP), '+' || ? || ' days'),
-                   estimated_delivery_end = datetime(COALESCE(estimated_delivery_end, CURRENT_TIMESTAMP), '+' || ? || ' days'),
-                   scheduled_processing_at = datetime(COALESCE(scheduled_processing_at, CURRENT_TIMESTAMP), '+' || ? || ' days'),
+               SET estimated_delivery_start = ?,
+                   estimated_delivery_end = datetime(?, '+2 hours'),
+                   scheduled_processing_at = ?,
                    updated_at = CURRENT_TIMESTAMP
                WHERE id = ?`,
-              [postponeNum, postponeNum, postponeNum, item.id]
+              [targetIso, targetIso, targetIso, item.id]
             );
 
             try {
               await db.run(
                 `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
                  VALUES (?, 'delay_notice_sent', ?, 'staff', CURRENT_TIMESTAMP)`,
-                [item.id, `Delay notice queued via WhatsApp (+${postponeNum} day schedule adjustment)`]
+                [item.id, `Delay notice queued via WhatsApp (+${postponeNum} day schedule adjustment to ${openDayRes.ymd})`]
               );
             } catch (_) {}
           } else if (item.type === 'refill') {
             await db.run(
               `UPDATE patient_refills
-               SET next_refill_date = datetime(COALESCE(next_refill_date, CURRENT_TIMESTAMP), '+' || ? || ' days')
+               SET next_refill_date = ?
                WHERE id = ?`,
-              [postponeNum, item.id]
+              [targetIso, item.id]
             );
           }
         }

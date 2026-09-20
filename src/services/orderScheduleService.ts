@@ -1,5 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
+import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
 export interface PharmacyTimingConfig {
   orderCutoffTime: string;          // e.g. "23:00"
@@ -327,24 +328,18 @@ export class OrderScheduleService {
       scheduleStatus = 'standard';
       primaryShiftReason = null;
     } else {
-      // Advance to next valid operating day
-      while (daysAdvanced < 14) {
-        daysAdvanced++;
-        targetDate.setDate(targetDate.getDate() + 1);
-        const targetParts = this.getTimezoneParts(targetDate, config.pharmacyTimezone);
-        const isSun = targetParts.dayOfWeek === 0;
-        const holidayRec = holidayMap.get(targetParts.ymd);
-        const isHolClosed = Boolean(
-          holidayRec && (Number(holidayRec.is_closed) === 1 || holidayRec.is_closed === true) && !config.holidayDelivery
-        );
-
-        if (isSun && !sundayAllowed) {
-          continue;
-        }
-        if (isHolClosed) {
-          continue;
-        }
-        break;
+      // Advance to next valid operating day via shared pharmacyCalendar util
+      const shiftResult = await advanceToNextOpenDay(now, {
+        storeId,
+        dbInstance: db,
+        advanceAtLeastOneDay: true
+      });
+      targetDate = shiftResult.targetDate;
+      daysAdvanced = shiftResult.daysAdvanced;
+      if (shiftResult.isSundayShift) isSundayShift = true;
+      if (shiftResult.isHolidayShift) isHolidayShift = true;
+      if (!primaryShiftReason && shiftResult.shiftReason) {
+        primaryShiftReason = shiftResult.shiftReason;
       }
     }
 

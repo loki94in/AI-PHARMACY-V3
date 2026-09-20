@@ -26,7 +26,7 @@ export interface GateVariant {
 
 // ─── Shared heuristics ───────────────────────────────────────────────
 
-const DOC_SIGNS = [
+export const DOC_SIGNS = [
   'invoice', 'bill no', 'booking', 'ticket', 'train', 'flight', 'pnr',
   'rail', 'journey', 'boarding', 'passenger', 'fare', 'seat', 'berth', 'airline',
   'bank', 'payment', 'receipt', 'statement', 'aadhaar', 'aadhar', 'pan card',
@@ -36,7 +36,7 @@ const DOC_SIGNS = [
   'namkeen', 'chips', 'restaurant', 'menu', 'hotel', 'wb.', 'wb ', 'pnr no',
 ];
 
-const STRONG_DOC_SIGNS = [
+export const STRONG_DOC_SIGNS = [
   'invoice', 'booking', 'ticket', 'train', 'flight', 'pnr', 'rail',
   'boarding', 'passenger', 'fare', 'berth', 'airline', 'bank', 'payment',
   'receipt', 'statement', 'aadhaar', 'aadhar', 'gst', 'tax invoice',

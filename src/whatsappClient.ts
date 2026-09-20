@@ -685,6 +685,49 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
         wrapGetterModule('WAWebChatGetters', false);
         wrapGetterModule('WAWebContactGetters', false);
         wrapGetterModule('WAWebFrontendContactGetters', true);
+        wrapGetterModule('WAWebMsgGetters', false);
+        wrapGetterModule('WAWebMediaGetters', false);
+
+        // Global memoize error suppressor: scan Webpack cache for any getter containing "how we memoize" or "id property"
+        try {
+          const req = (window as any).require;
+          const cache = req?.c;
+          if (cache) {
+            for (const modId of Object.keys(cache)) {
+              const modExports = cache[modId]?.exports;
+              if (!modExports) continue;
+              const targets = [modExports, modExports.default].filter(Boolean);
+              for (const t of targets) {
+                if (typeof t === 'object') {
+                  const propNames = Object.getOwnPropertyNames(t);
+                  for (const prop of propNames) {
+                    try {
+                      const val = t[prop];
+                      if (typeof val === 'function' && !val.__memoizePatched) {
+                        const str = val.toString();
+                        if (str.includes('how we memoize') || str.includes('id property')) {
+                          const orig = val;
+                          const patched = function(this: any, ...args: any[]) {
+                            try {
+                              return orig.apply(this, args);
+                            } catch (err: any) {
+                              if (String(err).includes('id property') || String(err).includes('memoize')) {
+                                return undefined;
+                              }
+                              throw err;
+                            }
+                          };
+                          patched.__memoizePatched = true;
+                          try { t[prop] = patched; } catch (_) {}
+                        }
+                      }
+                    } catch (_) {}
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
 
         // 2. Patch window.WWebJS.getChat to never crash on unsaved / new phone numbers
         if ((window as any).WWebJS && !(window as any).WWebJS.__getChatPatched) {
@@ -720,7 +763,7 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
               } catch (_) {}
             }
 
-            // Step A2: Check alternate LID / Phone JID mapping
+            // Step A2: Check alternate phone JID mapping (bidirectional @lid <-> @c.us)
             if (!chat) {
               try {
                 const apiContact = (window as any).require?.('WAWebApiContact');
@@ -792,6 +835,32 @@ export async function patchWWebJSInternals(pupPage: any): Promise<void> {
               }
               throw err;
             }
+          };
+        }
+
+        // 5. Patch window.WWebJS.sendMessage to ensure chat.contact is attached
+        if ((window as any).WWebJS && !(window as any).WWebJS.__sendMsgSafePatched) {
+          (window as any).WWebJS.__sendMsgSafePatched = true;
+          const origSendMessage = (window as any).WWebJS.sendMessage;
+          (window as any).WWebJS.sendMessage = async function(this: any, chat: any, content: any, options: any = {}) {
+            try {
+              const collections = (window as any).require?.('WAWebCollections');
+              if (chat && collections?.Contact) {
+                if (!chat.contact && collections.Contact.get) {
+                  chat.contact = collections.Contact.get(chat.id);
+                }
+                if (!chat.contact && collections.Contact.add) {
+                  try {
+                    const added = collections.Contact.add({ id: chat.id, isWAContact: true });
+                    chat.contact = Array.isArray(added) ? added[0] : added;
+                  } catch (_) {}
+                }
+                if (chat.contact && !chat.__x_contact) {
+                  chat.__x_contact = chat.contact;
+                }
+              }
+            } catch (_) {}
+            return await origSendMessage.apply(this, arguments as any);
           };
         }
       } catch (_) {}
@@ -1590,6 +1659,7 @@ export async function sendMessage(
   let aggregateResult: SendMessageResult = { sent: false };
 
   for (const recipient of recipients) {
+    const isLidRecipient = recipient.endsWith('@lid');
     let cleanPhone = recipient;
     if (cleanPhone.includes('@')) {
       cleanPhone = cleanPhone.split('@')[0];
@@ -1601,7 +1671,7 @@ export async function sendMessage(
       throw new Error(`Invalid phone number: "${recipient}" (must contain at least 8 valid digits).`);
     }
 
-    const chatId = `${cleanPhone}@c.us`;
+    const chatId = isLidRecipient ? recipient : `${cleanPhone}@c.us`;
 
     // Any send (user-clicked or queue-drained) counts as activity for idle-sleep.
     markWhatsAppActivity();
@@ -1650,7 +1720,7 @@ export async function sendMessage(
         let resolvedTargetChatId = chatId;
 
         // Ground-Truth Phone Registry Lookup:
-        // Query local database for any established chat thread (especially @lid threads from prior bookings/chats)
+        // Query local database for any established chat thread (especially @c.us direct phone threads)
         let knownChatId: string | null = null;
         let knownCustomerName: string = '';
         try {
@@ -1658,8 +1728,8 @@ export async function sendMessage(
           const chatRow = await db.get(
             `SELECT id, name FROM whatsapp_chats 
              WHERE (resolved_number LIKE ? OR id LIKE ?) 
-             ORDER BY (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC, timestamp DESC 
-             LIMIT 1`,
+              ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC 
+              LIMIT 1`,
             [`%${last10}%`, `%${last10}%`]
           );
           if (chatRow?.id) {
@@ -1677,14 +1747,17 @@ export async function sendMessage(
           }
         } catch (_) {}
 
-        const doSend = async (targetClient: WAClient, overrideChatId?: string) => {
+        const doSend = async (targetClient: WAClient, overrideChatId?: string, skipLidResolution = false) => {
+          // Priority: overrideChatId > most recent known active chat thread > standard chatId (cleanPhone@c.us)
           let targetChatId = overrideChatId || knownChatId || chatId;
+          resolvedTargetChatId = targetChatId;
 
-          // Attempt to resolve contact & LID via getNumberId to populate Store and prevent "No LID for user" errors
-          if (!targetChatId.includes('@lid') && !chatId.includes('@g.us') && !chatId.includes('@broadcast') && !chatId.includes('-')) {
+          // Attempt to resolve contact via getNumberId ONLY if not already a clean phone JID and skipLidResolution is false.
+          // Crucial: getNumberId must NEVER overwrite a valid @c.us phone number with a broken @lid JID!
+          if (!skipLidResolution && !targetChatId.includes('@c.us') && !targetChatId.includes('@lid') && !chatId.includes('@g.us') && !chatId.includes('@broadcast') && !chatId.includes('-')) {
             try {
               const numberDetails = await targetClient.getNumberId(cleanPhone);
-              if (numberDetails && numberDetails._serialized) {
+              if (numberDetails && numberDetails._serialized && !numberDetails._serialized.includes('@lid')) {
                 targetChatId = numberDetails._serialized;
                 resolvedTargetChatId = targetChatId;
               }
@@ -1742,11 +1815,95 @@ export async function sendMessage(
 
           let sentMsg: any = null;
           if (file && file.mimetype && file.data) {
-            const media = new MessageMedia(file.mimetype, file.data, file.filename || 'file');
-            sentMsg = await targetClient.sendMessage(targetChatId, media, { caption: caption ?? '' });
+            let tempSavedPath: string | null = null;
+            const safeName = (file.filename || 'media.png').replace(/[^a-zA-Z0-9._-]/g, '_');
+            try {
+              if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+              tempSavedPath = path.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
+              fs.writeFileSync(tempSavedPath, Buffer.from(file.data, 'base64'));
+
+              const media = MessageMedia.fromFilePath(tempSavedPath);
+              const isPdf = safeName.toLowerCase().endsWith('.pdf');
+              sentMsg = await targetClient.sendMessage(targetChatId, media, {
+                caption: caption ?? '',
+                sendMediaAsDocument: isPdf
+              });
+            } catch (mediaErr: any) {
+              console.warn(`[WhatsApp] Media attachment send failed to ${targetChatId}, trying direct phone route ${chatId}:`, mediaErr?.message || mediaErr);
+              if (tempSavedPath && fs.existsSync(tempSavedPath) && targetChatId !== chatId) {
+                try {
+                  const mediaAlt = MessageMedia.fromFilePath(tempSavedPath);
+                  sentMsg = await targetClient.sendMessage(chatId, mediaAlt, {
+                    caption: caption ?? '',
+                    sendMediaAsDocument: safeName.toLowerCase().endsWith('.pdf')
+                  });
+                } catch (_) {}
+              }
+              if (!sentMsg && tempSavedPath && fs.existsSync(tempSavedPath)) {
+                try {
+                  const mediaDoc = MessageMedia.fromFilePath(tempSavedPath);
+                  sentMsg = await targetClient.sendMessage(chatId, mediaDoc, {
+                    caption: caption ?? '',
+                    sendMediaAsDocument: true
+                  });
+                } catch (_) {}
+              }
+              if (!sentMsg && caption) {
+                console.warn(`[WhatsApp] Falling back to text caption for ${targetChatId}`);
+                sentMsg = await targetClient.sendMessage(targetChatId, caption);
+              } else if (!sentMsg) {
+                throw mediaErr;
+              }
+            } finally {
+              if (tempSavedPath && fs.existsSync(tempSavedPath)) {
+                try { fs.unlinkSync(tempSavedPath); } catch (_) {}
+              }
+            }
           } else if (mediaPath) {
-            const media = MessageMedia.fromFilePath(mediaPath);
-            sentMsg = await targetClient.sendMessage(targetChatId, media, { caption: caption ?? '' });
+            try {
+              const media = MessageMedia.fromFilePath(mediaPath);
+              const isPdf = mediaPath.toLowerCase().endsWith('.pdf');
+              sentMsg = await targetClient.sendMessage(targetChatId, media, {
+                caption: caption ?? '',
+                sendMediaAsDocument: isPdf
+              });
+            } catch (mediaErr: any) {
+              const errMsg = mediaErr?.stack || mediaErr?.message || String(mediaErr);
+              try { fs.writeFileSync('data/last_media_error.txt', `[${targetChatId}] ${errMsg}`); } catch (_) {}
+              console.warn(`[WhatsApp] Media file send failed to ${targetChatId}:`, errMsg);
+
+              // RETRY 1: If primary send failed and wasn't direct phone @c.us, retry media to @c.us
+              if (chatId !== targetChatId) {
+                try {
+                  console.log(`[WhatsApp Ground-Truth] Retrying media send via direct phone route ${chatId}...`);
+                  const mediaAlt = MessageMedia.fromFilePath(mediaPath);
+                  sentMsg = await targetClient.sendMessage(chatId, mediaAlt, {
+                    caption: caption ?? '',
+                    sendMediaAsDocument: mediaPath.toLowerCase().endsWith('.pdf')
+                  });
+                } catch (altErr: any) {
+                  console.warn(`[WhatsApp Ground-Truth] Alternate phone media send note:`, altErr?.message || altErr);
+                }
+              }
+
+              // RETRY 2: Try document fallback if photo failed
+              if (!sentMsg && !mediaPath.toLowerCase().endsWith('.pdf')) {
+                try {
+                  const mediaDoc = MessageMedia.fromFilePath(mediaPath);
+                  sentMsg = await targetClient.sendMessage(chatId, mediaDoc, {
+                    caption: caption ?? '',
+                    sendMediaAsDocument: true
+                  });
+                } catch (_) {}
+              }
+
+              if (!sentMsg && caption) {
+                console.warn(`[WhatsApp] Falling back to text caption for ${targetChatId}`);
+                sentMsg = await targetClient.sendMessage(targetChatId, caption);
+              } else if (!sentMsg) {
+                throw mediaErr;
+              }
+            }
           } else {
             sentMsg = await targetClient.sendMessage(targetChatId, caption ?? '');
           }
@@ -1766,15 +1923,15 @@ export async function sendMessage(
         } catch (sendErr: any) {
           const errMsg = sendErr?.message || String(sendErr);
 
-          // Dual-Key Ground-Truth Cascade: If sending to primary route failed, retry via alternate verified route (@lid <-> @c.us)
-          const primaryChatId = resolvedTargetChatId || knownChatId || chatId;
-          const alternateChatId = primaryChatId.includes('@lid') ? chatId : (knownChatId || null);
+          // Dual-Key Ground-Truth Cascade: If sending to primary route failed and it was an @lid, retry via verified direct phone (@c.us)
+          const primaryChatId = resolvedTargetChatId || chatId;
+          const alternateChatId = primaryChatId.includes('@lid') ? chatId : null;
           let recoveredViaAlt = false;
           if (alternateChatId && alternateChatId !== primaryChatId) {
-            console.log(`[WhatsApp Ground-Truth] Retrying send via alternate verified route ${alternateChatId} for ${cleanPhone}...`);
+            console.log(`[WhatsApp Ground-Truth] Retrying send via alternate direct phone route ${alternateChatId} for ${cleanPhone}...`);
             try {
-              await doSend(clientInstance!, alternateChatId);
-              console.log(`[WhatsApp Ground-Truth] Alternate route ${alternateChatId} send succeeded for ${cleanPhone}!`);
+              await doSend(clientInstance!, alternateChatId, true);
+              console.log(`[WhatsApp Ground-Truth] Alternate direct route ${alternateChatId} send succeeded for ${cleanPhone}!`);
               recoveredViaAlt = true;
               success = true;
             } catch (altErr: any) {
@@ -1806,6 +1963,15 @@ export async function sendMessage(
             } else if (errMsg.includes('Data passed to getter must include an id property') || errMsg.includes("it's how we memoize")) {
               console.warn(`[WhatsApp] Memoize getter desync detected for ${cleanPhone}. Running self-healing Store hydration and retry...`);
               try {
+                try {
+                  await db.run(
+                    `INSERT INTO whatsapp_chats (id, name, unread_count, timestamp, last_message, is_group, resolved_number)
+                     VALUES (?, ?, 0, ?, '', 0, ?)
+                     ON CONFLICT(id) DO UPDATE SET resolved_number = excluded.resolved_number`,
+                    [`${cleanPhone}@c.us`, knownCustomerName || cleanPhone, Math.floor(Date.now() / 1000), cleanPhone]
+                  );
+                } catch (_) {}
+
                 if (clientInstance?.pupPage && !clientInstance.pupPage.isClosed()) {
                   await patchWWebJSInternals(clientInstance.pupPage);
                   await clientInstance.pupPage.evaluate(async (jid) => {
@@ -1833,7 +1999,8 @@ export async function sendMessage(
                   }, `${cleanPhone}@c.us`);
                 }
               await new Promise(r => setTimeout(r, 600));
-              await doSend(clientInstance!);
+              // Force plain @c.us JID + skip getNumberId so we don't re-resolve back to the broken @lid
+              await doSend(clientInstance!, `${cleanPhone}@c.us`, true);
               console.log(`[WhatsApp] Self-healing Store hydration and retry succeeded for ${cleanPhone}!`);
               success = true;
             } catch (retryErr: any) {
@@ -2220,7 +2387,23 @@ export async function getChatMessages(chatId: string, limit: number = 500): Prom
 
 
 /** Retrieve cached media file from local storage */
-export async function getMessageMedia(chatId: string, messageId: string): Promise<{ mimetype: string; data: string; filename?: string }> {  if (!fs.existsSync(UPLOADS_DIR)) {
+export async function getMessageMedia(chatId: string, messageId: string): Promise<{ mimetype: string; data: string; filename?: string }> {
+  const safeId = String(messageId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+  // Check data/inbound_media first (where customer WhatsApp photos are stored)
+  const inboundDir = path.resolve(process.cwd(), 'data', 'inbound_media');
+  if (safeId && fs.existsSync(inboundDir)) {
+    for (const ext of ['.jpg', '.jpeg', '.png', '.pdf']) {
+      const p = path.join(inboundDir, `${safeId}${ext}`);
+      if (fs.existsSync(p)) {
+        const data = fs.readFileSync(p).toString('base64');
+        const mimetype = ext === '.png' ? 'image/png' : ext === '.pdf' ? 'application/pdf' : 'image/jpeg';
+        return { mimetype, data, filename: `${safeId}${ext}` };
+      }
+    }
+  }
+
+  if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
 
@@ -2229,6 +2412,30 @@ export async function getMessageMedia(chatId: string, messageId: string): Promis
   const matchedFile = files.find(f => f.startsWith(messageId));
 
   if (!matchedFile) {
+    // Attempt live on-demand download via resilient cascade
+    try {
+      if ((!isReady || !clientInstance) && hasSavedSession()) {
+        await waitForWhatsAppReady(20_000);
+      }
+      const downloaded = await downloadMessageMediaReliably(messageId, { chatId, maxWaitMs: 15000 });
+      if (downloaded?.data) {
+        const buffer = Buffer.from(downloaded.data, 'base64');
+        if (!fs.existsSync(inboundDir)) fs.mkdirSync(inboundDir, { recursive: true });
+        const filePath = path.join(inboundDir, `${safeId}.jpg`);
+        fs.writeFileSync(filePath, buffer);
+        try {
+          fs.writeFileSync(path.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
+        } catch (_) {}
+        return {
+          mimetype: downloaded.mimetype || 'image/jpeg',
+          data: downloaded.data,
+          filename: downloaded.filename || `${safeId}.jpg`
+        };
+      }
+    } catch (dlErr) {
+      console.warn(`[WhatsApp Client] On-demand media download failed for ${messageId}:`, dlErr);
+    }
+
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
 
@@ -2267,41 +2474,145 @@ export async function downloadMessageMediaById(serializedId: string): Promise<{ 
 
 /**
  * Resiliently download media for an inbound message:
- * 1. If mediaStage is 'FETCHING' (common on high-res camera photos), actively poll
- *    until 'RESOLVED' rather than aborting prematurely with undefined.
- * 2. Hydrate @lid chat in store before decryption to prevent minified Error("r").
- * 3. Fallback gracefully to getMessageById fresh copy.
+ * 1. Tier 1: Direct Node.js WhatsApp CDN decryption via crypto HKDF + AES-256-CBC (zero browser UI dependency).
+ * 2. Tier 2: In-browser blob fetch (msg.mediaData.renderableUrl) and WAWebDownloadManager.
+ * 3. Tier 3: Browser-extracted metadata passed back to Node decryptor.
+ * 4. Tier 4: Store-fresh getMessageById copy.
+ * 5. Tier 5: High-res embedded thumbnail / preview fallback.
  */
 export async function downloadMessageMediaReliably(
-  serializedId: string,
-  options?: { maxWaitMs?: number; chatId?: string }
+  rawId: string,
+  options?: { maxWaitMs?: number; chatId?: string; rawMsg?: any }
 ): Promise<{ data?: string; mimetype?: string; filename?: string } | undefined> {
-  if (!clientInstance || !isReady || !serializedId) return undefined;
+
+  if ((!clientInstance || !isReady) && hasSavedSession()) {
+    console.log(`[WhatsApp Client] downloadMessageMediaReliably for ${rawId} called while client is not ready — waiting for session restore...`);
+    await waitForWhatsAppReady(20_000);
+  }
+  if (!clientInstance || !isReady || !rawId) return undefined;
   const maxWaitMs = options?.maxWaitMs ?? 12000;
   const chatId = options?.chatId;
+  const rawMsg = options?.rawMsg;
+  const serializedId = (!rawId.includes('_') && chatId) ? `false_${chatId}_${rawId}` : rawId;
 
+  // ── Tier 1: Direct Node.js CDN Decryption (Pure Node, Zero Browser UI dependency) ──
+  const rawData = rawMsg?._data;
+  if (rawData && rawData.directPath && rawData.mediaKey) {
+    try {
+      const { extractWhatsAppMedia } = await import('./utils/whatsappMediaDecryptor.js');
+      const cdnResult = await extractWhatsAppMedia({
+        directPath: rawData.directPath,
+        mediaKey: rawData.mediaKey,
+        mimetype: rawData.mimetype || rawMsg.mimetype || 'image/jpeg',
+        type: rawData.type || rawMsg.type || 'image',
+        encFilehash: rawData.encFilehash,
+        filehash: rawData.filehash,
+        preview: rawData.body || rawMsg.body
+      }, 10000);
+
+      if (cdnResult?.data) {
+        console.log(`[WhatsApp Client] Direct Node CDN media decryption succeeded (${cdnResult.source}) for msgId=${serializedId}`);
+        return {
+          data: cdnResult.data,
+          mimetype: cdnResult.mimetype,
+          filename: `${serializedId}.jpg`
+        };
+      }
+    } catch (nodeDecryptErr: any) {
+      console.warn('[WhatsApp Client] Direct Node CDN decrypt error:', nodeDecryptErr?.message || nodeDecryptErr);
+    }
+  }
+
+  // ── Tier 2 & 3: Browser evaluate with blob URL fetch + downloadManager + metadata extraction ──
   if ((clientInstance as any).pupPage) {
     try {
-      const downloaded = await (clientInstance as any).pupPage.evaluate(async (msgId: string, waitLimit: number, targetChatId?: string) => {
+      // Log WA Web version so we can correlate API failures with WhatsApp Web updates
+      try {
+        const waVersion = await (clientInstance as any).pupPage.evaluate(() => (window as any).Debug?.VERSION || 'unknown');
+        console.log(`[WhatsApp Client] downloadMessageMediaReliably — msgId=${serializedId} waVersion=${waVersion}`);
+      } catch (_) {}
+
+      const downloaded = await (clientInstance as any).pupPage.evaluate(async (msgId: string, waitLimit: number, targetChatId?: string, bareId?: string) => {
         try {
           const wCollections = (window as any).require ? (window as any).require('WAWebCollections') : null;
           const store = (window as any).Store;
 
-          if (targetChatId && store?.Chat) {
+          let msg: any = null;
+          let chat: any = null;
+
+          if (targetChatId) {
             try {
-              const chat = store.Chat.get(targetChatId) || (await store.Chat.find(targetChatId));
-              if (chat && chat.loadEarlierMsgs) await chat.loadEarlierMsgs();
+              if ((window as any).WWebJS?.getChat) {
+                chat = await (window as any).WWebJS.getChat(targetChatId, { getAsModel: false });
+              }
             } catch (_) {}
+            if (!chat && store?.Chat) {
+              try {
+                chat = store.Chat.get(targetChatId) || (await store.Chat.find(targetChatId));
+              } catch (_) {}
+            }
+            if (chat) {
+              try { if (chat.loadEarlierMsgs) await chat.loadEarlierMsgs(); } catch (_) {}
+              if (chat.msgs?.models) {
+                msg = chat.msgs.models.find((m: any) =>
+                  m.id?._serialized === msgId ||
+                  m.id?.id === msgId ||
+                  (bareId && (m.id?.id === bareId || m.id?._serialized?.includes(bareId)))
+                );
+              }
+            }
           }
 
-          let msg = wCollections?.Msg?.get(msgId) || store?.Msg?.get(msgId);
-          if (!msg && wCollections?.Msg?.getMessagesById) {
-            const res = await wCollections.Msg.getMessagesById([msgId]);
-            msg = res?.messages?.[0];
+          if (!msg) {
+            msg = wCollections?.Msg?.get(msgId) || store?.Msg?.get(msgId);
+          }
+          if (!msg && store?.Msg?.models) {
+            msg = store.Msg.models.find((m: any) =>
+              m.id?._serialized === msgId ||
+              m.id?.id === msgId ||
+              (bareId && (m.id?.id === bareId || m.id?._serialized?.includes(bareId)))
+            );
+          }
+          if (!msg && targetChatId) {
+            const c1 = `false_${targetChatId}_${bareId || msgId}`;
+            const c2 = `true_${targetChatId}_${bareId || msgId}`;
+            msg = wCollections?.Msg?.get(c1) || store?.Msg?.get(c1)
+               || wCollections?.Msg?.get(c2) || store?.Msg?.get(c2);
+            if (!msg && wCollections?.Msg?.getMessagesById) {
+              const res = await wCollections.Msg.getMessagesById([c1, c2, msgId]);
+              msg = res?.messages?.[0] || res?.messages?.[1] || res?.messages?.[2];
+            }
           }
 
           if (!msg) return { error: 'msg_not_found' };
-          if (!msg.mediaData) return { error: 'no_media_data' };
+
+          // Extract raw media metadata for Node.js fallback decryption
+          const msgMeta = {
+            directPath: msg.directPath,
+            mediaKey: msg.mediaKey,
+            encFilehash: msg.encFilehash,
+            filehash: msg.filehash,
+            mimetype: msg.mimetype || 'image/jpeg',
+            type: msg.type || 'image',
+            preview: msg.body || msg.mediaData?.preview
+          };
+
+          // Check if a renderable blob URL is already available in the browser DOM
+          if (msg.mediaData?.renderableUrl) {
+            try {
+              const blobResp = await fetch(msg.mediaData.renderableUrl);
+              const ab = await blobResp.arrayBuffer();
+              const bytes = new Uint8Array(ab);
+              let binary = '';
+              for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+              return { data: btoa(binary), mimetype: msg.mimetype || 'image/jpeg', filename: msg.filename };
+            } catch (_) {}
+          }
+
+          if (!msg.mediaData) return { error: 'no_media_data', msgMeta };
+
+          // Record initial stage for logging
+          const initialStage = msg.mediaData.mediaStage || 'unknown';
 
           if (msg.mediaData.mediaStage !== 'RESOLVED') {
             if (typeof msg.downloadMedia === 'function') {
@@ -2318,35 +2629,63 @@ export async function downloadMessageMediaReliably(
             await new Promise(r => setTimeout(r, 400));
           }
 
-          if (msg.mediaData.mediaStage !== 'RESOLVED') {
-            return { error: `media_stage_${msg.mediaData.mediaStage || 'unknown'}` };
+          // Check renderableUrl again after waiting
+          if (msg.mediaData?.renderableUrl) {
+            try {
+              const blobResp = await fetch(msg.mediaData.renderableUrl);
+              const ab = await blobResp.arrayBuffer();
+              const bytes = new Uint8Array(ab);
+              let binary = '';
+              for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+              return { data: btoa(binary), mimetype: msg.mimetype || 'image/jpeg', filename: msg.filename };
+            } catch (_) {}
           }
 
           const mockQpl = { addAnnotations: () => {}, addPoint: () => {} };
-          const downloadManager = (window as any).require('WAWebDownloadManager')?.downloadManager;
-          if (!downloadManager) return { error: 'no_download_manager' };
+          // Try WAWebDownloadManager (primary internal API)
+          let downloadManager = (window as any).require?.('WAWebDownloadManager')?.downloadManager;
+          // Fallback: some WA Web versions expose it under a different module path
+          if (!downloadManager) {
+            downloadManager = (window as any).require?.('WAWebDownloadManager/WAWebDownloadManager')?.downloadManager
+              || (window as any).require?.('WAWebDownloadManagerWeb')?.downloadManager;
+          }
 
-          const decryptedMedia = await downloadManager.downloadAndMaybeDecrypt({
-            directPath: msg.directPath,
-            encFilehash: msg.encFilehash,
-            filehash: msg.filehash,
-            mediaKey: msg.mediaKey,
-            mediaKeyTimestamp: msg.mediaKeyTimestamp,
-            type: msg.type,
-            signal: new AbortController().signal,
-            downloadQpl: mockQpl,
-          });
+          if (downloadManager && msg.directPath && msg.mediaKey) {
+            const decryptedMedia = await downloadManager.downloadAndMaybeDecrypt({
+              directPath: msg.directPath,
+              encFilehash: msg.encFilehash,
+              filehash: msg.filehash,
+              mediaKey: msg.mediaKey,
+              mediaKeyTimestamp: msg.mediaKeyTimestamp,
+              type: msg.type,
+              signal: new AbortController().signal,
+              downloadQpl: mockQpl,
+            });
 
-          const data = await (window as any).WWebJS.arrayBufferToBase64Async(decryptedMedia);
-          return {
-            data,
-            mimetype: msg.mimetype,
-            filename: msg.filename
-          };
+            // WWebJS.arrayBufferToBase64Async may not exist on all versions — fall back to manual conversion
+            let data: string;
+            if (typeof (window as any).WWebJS?.arrayBufferToBase64Async === 'function') {
+              data = await (window as any).WWebJS.arrayBufferToBase64Async(decryptedMedia);
+            } else {
+              const bytes = new Uint8Array(decryptedMedia);
+              let binary = '';
+              for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+              data = btoa(binary);
+            }
+            return {
+              data,
+              mimetype: msg.mimetype,
+              filename: msg.filename
+            };
+          }
+
+          return { error: `media_stage_${msg.mediaData?.mediaStage || 'unknown'}`, initialStage, msgMeta };
         } catch (innerErr: any) {
           return { error: innerErr?.message || String(innerErr) };
         }
-      }, serializedId, maxWaitMs, chatId);
+      }, serializedId, maxWaitMs, chatId, rawId);
+
+      console.log(`[WhatsApp Client] downloadMessageMediaReliably evaluate result for ${rawId}:`, JSON.stringify(downloaded));
 
       if (downloaded && downloaded.data) {
         return {
@@ -2355,16 +2694,49 @@ export async function downloadMessageMediaReliably(
           filename: downloaded.filename
         };
       }
+
+      // ── Tier 3: If in-browser decryption didn't return data, use extracted msgMeta in Node ──
+      if (downloaded?.msgMeta?.directPath && downloaded?.msgMeta?.mediaKey) {
+        console.log(`[WhatsApp Client] Browser evaluate provided media metadata for ${serializedId}. Executing Node CDN decryptor...`);
+        try {
+          const { extractWhatsAppMedia } = await import('./utils/whatsappMediaDecryptor.js');
+          const metaResult = await extractWhatsAppMedia(downloaded.msgMeta, 12000);
+          if (metaResult?.data) {
+            console.log(`[WhatsApp Client] Node CDN decryptor succeeded via browser metadata (${metaResult.source}) for ${serializedId}`);
+            return {
+              data: metaResult.data,
+              mimetype: metaResult.mimetype,
+              filename: `${serializedId}.jpg`
+            };
+          }
+        } catch (mErr: any) {
+          console.warn('[WhatsApp Client] Browser metadata Node decrypt failed:', mErr?.message || mErr);
+        }
+      }
+
       if (downloaded?.error) {
-        console.warn(`[WhatsApp Client] Reliable browser media download returned: ${downloaded.error}`);
+        console.warn(`[WhatsApp Client] Browser media download failed — stage=${downloaded.error} initialStage=${downloaded.initialStage || 'n/a'} msgId=${serializedId}`);
       }
     } catch (evalErr) {
       console.warn('[WhatsApp Client] Reliable browser media evaluate failed, falling back to getMessageById:', evalErr);
     }
   }
 
-  // Fallback to fresh getMessageById
-  return await downloadMessageMediaById(serializedId);
+  // ── Tier 4: Fallback to fresh getMessageById ──
+  const storeFresh = await downloadMessageMediaById(serializedId);
+  if (storeFresh?.data) return storeFresh;
+
+  // ── Tier 5: Fallback to raw preview thumbnail if available ──
+  if (rawData?.body && typeof rawData.body === 'string' && rawData.body.length > 50) {
+    console.log(`[WhatsApp Client] Using raw preview thumbnail as final fallback for ${serializedId}`);
+    return {
+      data: rawData.body.replace(/^data:image\/[a-z]+;base64,/, ''),
+      mimetype: rawData.mimetype || 'image/jpeg',
+      filename: `${serializedId}_thumb.jpg`
+    };
+  }
+
+  return undefined;
 }
 
 // In-memory cache for WhatsApp registration status (24 hours for verified, 12 hours for not registered)

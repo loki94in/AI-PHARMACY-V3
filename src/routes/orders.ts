@@ -798,8 +798,17 @@ router.post('/:id/send-payment-qr', async (req, res) => {
     const activeQr = await paymentQrService.allocateNextQr();
     const amount = Number(order.advance_payment || order.total_amount || 50);
     const soCode = `SO-${order.id}`;
+    const medicineName = order.product || order.medicine_name || 'Medicine';
     const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
-    const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+    const fullQrPath = await paymentQrService.generatePaymentCard({
+      upiUri,
+      orderNumber: soCode,
+      medicineName,
+      amount,
+      payeeName: activeQr.payee_name,
+      upiId: activeQr.upi_id,
+      filename: `payment_card_${soCode}.png`
+    });
 
     await db.run(
       `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
@@ -807,15 +816,16 @@ router.post('/:id/send-payment-qr', async (req, res) => {
     );
 
     const custQrMsg =
-      `✅ Medicine request confirmed\n\n` +
-      `🆔 *Special Order*: ${soCode}\n\n` +
-      `💊 *Medicine*: ${order.product || order.medicine_name || 'Medicine'}\n` +
+      `✅ *Medicine Request Confirmed*\n\n` +
+      `🆔 *Special Order*: ${soCode}\n` +
+      `💊 *Medicine*: ${medicineName}\n` +
       `📦 *Quantity*: ${order.qty || 1}\n\n` +
       `🔐 *Booking Advance Amount*: ₹${amount.toFixed(2)}\n\n` +
-      `Please pay the ₹${amount.toFixed(2)} booking amount using the QR code below.\n\n` +
-      `UPI ID: ${activeQr.upi_id}\n` +
-      `Payee: ${activeQr.payee_name}\n\n` +
-      `After payment, please send the payment screenshot in this chat.`;
+      `Please pay the ₹${amount.toFixed(2)} booking amount using the QR card attached above.\n\n` +
+      `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
+      `👤 *Payee*: ${activeQr.payee_name}\n\n` +
+      `👉 *Or tap to pay directly on this phone*:\n${upiUri}\n\n` +
+      `📸 After payment, please send the payment screenshot in this chat.`;
 
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
@@ -823,12 +833,7 @@ router.post('/:id/send-payment-qr', async (req, res) => {
       'customer_payment_qr',
       order.requester || 'Customer',
       undefined,
-      undefined,
-      {
-        mimetype: 'image/png',
-        data: qrBuffer.toString('base64'),
-        filename: `payment_qr_${soCode}.png`
-      }
+      fullQrPath
     );
 
     broadcastOrdersChanged();
@@ -1022,9 +1027,18 @@ router.put('/:id', async (req, res) => {
         const advanceAmount = Number(newAdvancePayment || existing.advance_payment || 50);
         const qrAmount = advanceAmount > 0 ? advanceAmount : 50;
         const soCode = `SO-${id}`;
+        const medicineName = newProduct || existing.product || 'Medicine';
         const activeQr = await paymentQrService.allocateNextQr();
         const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, qrAmount, soCode);
-        const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+        const fullQrPath = await paymentQrService.generatePaymentCard({
+          upiUri,
+          orderNumber: soCode,
+          medicineName,
+          amount: qrAmount,
+          payeeName: activeQr.payee_name,
+          upiId: activeQr.upi_id,
+          filename: `payment_card_${soCode}.png`
+        });
 
         await db.run(
           `UPDATE special_orders SET payment_qr_id = ?, payment_status = 'AWAITING_PAYMENT', advance_payment = ? WHERE id = ?`,
@@ -1033,16 +1047,17 @@ router.put('/:id', async (req, res) => {
 
         const formattedQrPhone = cleanPhoneForQr.length === 10 ? `91${cleanPhoneForQr}` : cleanPhoneForQr;
         const custQrMsg =
-          `✅ Medicine & supplier confirmed\n\n` +
-          `🆔 *Special Order*: ${soCode}\n\n` +
-          `💊 *Medicine*: ${newProduct || existing.product || 'Medicine'}\n` +
-          `📦 *Quantity*: ${newQty || existing.qty || 1}\n\n` +
+          `✅ *Medicine & Supplier Confirmed*\n\n` +
+          `🆔 *Special Order*: ${soCode}\n` +
+          `💊 *Medicine*: ${medicineName}\n` +
+          `📦 *Quantity*: ${newQty || existing.qty || 1}\n` +
           `🏢 *Supplier*: ${newDistributor}\n\n` +
           `🔐 *Booking Advance Amount*: ₹${qrAmount.toFixed(2)}\n\n` +
-          `Please pay the ₹${qrAmount.toFixed(2)} booking amount using the QR code below.\n\n` +
-          `UPI ID: ${activeQr.upi_id}\n` +
-          `Payee: ${activeQr.payee_name}\n\n` +
-          `After payment, please send the payment screenshot in this chat.`;
+          `Please pay the ₹${qrAmount.toFixed(2)} booking amount using the QR card attached above.\n\n` +
+          `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
+          `👤 *Payee*: ${activeQr.payee_name}\n\n` +
+          `👉 *Or tap to pay directly on this phone*:\n${upiUri}\n\n` +
+          `📸 After payment, please send the payment screenshot in this chat.`;
 
         await whatsappQueueWorker.enqueue(
           formattedQrPhone,
@@ -1050,12 +1065,7 @@ router.put('/:id', async (req, res) => {
           'customer_payment_qr',
           newRequester || existing.requester || 'Customer',
           undefined,
-          undefined,
-          {
-            mimetype: 'image/png',
-            data: qrBuffer.toString('base64'),
-            filename: `payment_qr_${soCode}.png`
-          }
+          fullQrPath
         );
 
         paymentQrSent = true;

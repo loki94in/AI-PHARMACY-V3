@@ -5,8 +5,23 @@
  * Reference: CENTRALIZED CATALOG + BOOKING/PICKUP WORKFLOW.md (§12, §13, §14)
  */
 
+import path from 'path';
+import fs from 'fs';
 import { dbManager } from '../database/connection.js';
+import { getAppDataDir } from '../config/index.js';
 import QRCode from 'qrcode';
+import { createCanvas, loadImage } from 'canvas';
+
+export interface PaymentCardOptions {
+  upiUri: string;
+  orderNumber: string;
+  medicineName?: string;
+  amount: number;
+  payeeName?: string;
+  upiId: string;
+  storeName?: string;
+  filename?: string;
+}
 
 export interface PaymentQrConfig {
   id: 'QR_1' | 'QR_2' | 'QR_3';
@@ -157,10 +172,188 @@ class PaymentQrService {
   }
 
   /**
+   * Resolve configured store name from app_settings
+   */
+  async getStoreName(): Promise<string> {
+    try {
+      const db = await dbManager.getConnection();
+      const row = await db.get(
+        "SELECT value FROM app_settings WHERE key IN ('pharmacy_name', 'shop_name') AND value IS NOT NULL AND value != '' LIMIT 1"
+      );
+      return row?.value || 'TANMAY MEDICAL';
+    } catch {
+      return 'TANMAY MEDICAL';
+    }
+  }
+
+  /**
+   * Generate Branded Visual Payment Card (Sample 3) on disk.
+   * Includes store header, Special Order number, medicine name, amount badge,
+   * high-resolution Level-H QR code, UPI ID banner, and supported apps footer.
+   */
+  async generatePaymentCard(options: PaymentCardOptions): Promise<string> {
+    const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const cleanFilename = options.filename
+      ? (options.filename.endsWith('.png') ? options.filename : `${options.filename}.png`)
+      : `payment_card_${options.orderNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+    const fullPath = path.join(uploadsDir, cleanFilename);
+
+    const storeName = (options.storeName || (await this.getStoreName())).toUpperCase();
+    const qrBuffer = await QRCode.toBuffer(options.upiUri, {
+      width: 380,
+      margin: 1,
+      errorCorrectionLevel: 'H'
+    });
+    const qrImg = await loadImage(qrBuffer);
+
+    const width = 540;
+    const height = 720;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    // Helper for safe rounded rect drawing
+    const drawRoundRect = (x: number, y: number, w: number, h: number, r: number | number[]) => {
+      const anyCtx = ctx as any;
+      if (typeof anyCtx.roundRect === 'function') {
+        ctx.beginPath();
+        anyCtx.roundRect(x, y, w, h, r);
+      } else {
+        const radius = Array.isArray(r) ? r[0] : r;
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.arcTo(x + w, y, x + w, y + h, radius);
+        ctx.arcTo(x + w, y + h, x, y + h, radius);
+        ctx.arcTo(x, y + h, x, y, radius);
+        ctx.arcTo(x, y, x + w, y, radius);
+        ctx.closePath();
+      }
+    };
+
+    // 1. Card Container Background
+    ctx.fillStyle = '#ffffff';
+    drawRoundRect(0, 0, width, height, 24);
+    ctx.fill();
+
+    // Subtle outer card border
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 2;
+    drawRoundRect(1, 1, width - 2, height - 2, 24);
+    ctx.stroke();
+
+    // 2. Header Banner
+    ctx.fillStyle = '#0f766e'; // Deep Medical Teal
+    drawRoundRect(0, 0, width, 120, [24, 24, 0, 0]);
+    ctx.fill();
+
+    // Pharmacy Title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(storeName, width / 2, 45);
+
+    // Special Order Subtitle
+    ctx.fillStyle = '#ccfbf1';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(`Special Order: ${options.orderNumber}`, width / 2, 78);
+
+    // Medicine line if available
+    if (options.medicineName) {
+      ctx.fillStyle = '#99f6e4';
+      ctx.font = '14px sans-serif';
+      const medText = options.medicineName.length > 38
+        ? `${options.medicineName.substring(0, 36)}...`
+        : options.medicineName;
+      ctx.fillText(`💊 ${medText}`, width / 2, 103);
+    }
+
+    // 3. Amount Badge
+    const badgeW = 280;
+    const badgeH = 48;
+    const badgeX = (width - badgeW) / 2;
+    const badgeY = 135;
+    ctx.fillStyle = '#f0fdf4';
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    drawRoundRect(badgeX, badgeY, badgeW, badgeH, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#15803d';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`BOOKING ADVANCE: ₹${Number(options.amount || 0).toFixed(2)}`, width / 2, badgeY + 31);
+
+    // 4. Center QR Code (High-contrast, Level-H)
+    const qrSize = 360;
+    const qrX = (width - qrSize) / 2;
+    const qrY = 195;
+    ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+
+    // 5. UPI ID Container Pill
+    const pillW = 460;
+    const pillH = 44;
+    const pillX = (width - pillW) / 2;
+    const pillY = 575;
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    drawRoundRect(pillX, pillY, pillW, pillH, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#1e293b';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(`UPI ID: ${options.upiId.trim()}`, width / 2, pillY + 28);
+
+    // 6. Footer - Accepted UPI Apps
+    ctx.fillStyle = '#64748b';
+    ctx.font = '13px sans-serif';
+    ctx.fillText('Accepted on GPay • PhonePe • Paytm • Any UPI App', width / 2, 650);
+
+    // 7. Write to disk
+    const buffer = canvas.toBuffer('image/png');
+    fs.writeFileSync(fullPath, buffer);
+    return fullPath;
+  }
+
+  /**
    * Generate PNG Buffer for a given UPI URI to send over WhatsApp
    */
   async generateQrBuffer(upiUri: string): Promise<Buffer> {
     return QRCode.toBuffer(upiUri, { width: 300, margin: 2 });
+  }
+
+  /**
+   * Generate payment file on disk for a given UPI URI.
+   * If card options are provided, generates the full visual card (Sample 3).
+   * Otherwise falls back to clean QR code.
+   */
+  async generateQrFile(upiUri: string, filename: string, options?: Partial<PaymentCardOptions>): Promise<string> {
+    if (options && options.orderNumber && options.amount !== undefined && options.upiId) {
+      return this.generatePaymentCard({
+        upiUri,
+        orderNumber: options.orderNumber,
+        medicineName: options.medicineName,
+        amount: options.amount,
+        payeeName: options.payeeName,
+        upiId: options.upiId,
+        storeName: options.storeName,
+        filename
+      });
+    }
+
+    const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    const cleanFilename = filename.endsWith('.png') ? filename : `${filename}.png`;
+    const fullPath = path.join(uploadsDir, cleanFilename);
+    const buffer = await this.generateQrBuffer(upiUri);
+    fs.writeFileSync(fullPath, buffer);
+    return fullPath;
   }
 
   /**

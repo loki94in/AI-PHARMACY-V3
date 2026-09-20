@@ -74,6 +74,10 @@ class TriggerSchedulerService {
       trigger_daily_check_enabled: 'true',
       trigger_daily_check_time: '09:00',
 
+      // 1b. Overdue Credit WhatsApp Reminder
+      trigger_credit_overdue_check_enabled: 'true',
+      trigger_credit_overdue_check_time: '09:30',
+
       // 2. Near-Expiry Scan
       trigger_expiry_scan_enabled: 'true',
       trigger_expiry_scan_time: '09:00',
@@ -437,6 +441,34 @@ class TriggerSchedulerService {
         console.log(`[TriggerScheduler] Registered 'Pharmarack Cart Daily Auto-Send' -> Schedule: ${timeStr} (${cronExpr})`);
       } catch (err) {
         console.error('[TriggerScheduler] Failed to schedule Pharmarack Cart Daily Auto-Send:', err);
+      }
+    }
+
+    // ----------------------------------------------------
+    // Trigger 12: Overdue Credit WhatsApp Reminder
+    // ----------------------------------------------------
+    if (cfg.trigger_credit_overdue_check_enabled !== 'false') {
+      const timeStr = cfg.trigger_credit_overdue_check_time || '09:30';
+      const cronExpr = this.timeToCron(timeStr);
+      try {
+        const task = cron.schedule(cronExpr, () => {
+          void runHeavyJob('credit_overdue', async () => {
+            try {
+              const mode = await getBackendFetchMode('bg.dailyScans', 'off');
+              if (mode === 'off' || (mode === 'manual' && activityTracker.isIdle())) return;
+
+              console.log(`[Trigger: Credit Overdue] Running overdue credit scan scheduled at ${timeStr}...`);
+              const { creditReminderService } = await import('./creditReminderService.js');
+              await creditReminderService.checkOverdueAndEnqueue(database);
+            } catch (err) {
+              console.error('[Trigger: Credit Overdue] Execution failed:', err);
+            }
+          });
+        });
+        this.scheduledTasks.set('credit_overdue', task);
+        console.log(`[TriggerScheduler] Registered 'Overdue Credit Check' -> Cron: ${cronExpr} (${timeStr})`);
+      } catch (err) {
+        console.error('[TriggerScheduler] Failed to schedule Credit Overdue Check:', err);
       }
     }
 

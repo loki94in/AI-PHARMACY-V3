@@ -5,7 +5,7 @@ import {
   ArrowRight, RefreshCw, ShoppingCart, ShoppingBag, Check, X, AlertCircle, MapPin,
   QrCode, FileText, ChevronDown, Plus, Minus, UserCheck, MessageSquare,
   Activity, Pill, Heart, Wind, Search, ChevronRight, Receipt,
-  CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera,
+  CreditCard, ExternalLink, Copy, RotateCcw, Trash2, Camera, Upload,
   LayoutGrid, Eye, EyeOff, Star, Image, Filter, ChevronLeft,
   UserPlus, Sparkles, BadgeCheck, Truck, Info, HelpCircle, Lock, User
 } from 'lucide-react';
@@ -194,6 +194,9 @@ export default function CustomerPortal() {
     isPaidMarked?: boolean;
   } | null>(null);
   const [isMarkingPaid, setIsMarkingPaid] = useState(false);
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+  const [screenshotBase64, setScreenshotBase64] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<{
     store_name: string;
     orders: any[];
@@ -598,6 +601,9 @@ export default function CustomerPortal() {
         // Open 3-UPI QR modal if UPI payment was selected (§12, §13)
         if (res.payment_qr) {
           const qr = res.payment_qr;
+          setScreenshotFile(null);
+          setScreenshotPreview(null);
+          setScreenshotBase64(null);
           setPaymentQrModal({
             isOpen: true,
             orderId: res.order_id || res.orders[0]?.id,
@@ -618,11 +624,27 @@ export default function CustomerPortal() {
     }
   };
 
+  const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScreenshotFile(file);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setScreenshotPreview(result);
+      setScreenshotBase64(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleMarkPaid = async () => {
     if (!paymentQrModal?.orderId) return;
     setIsMarkingPaid(true);
     try {
-      await api.markOrderPaid(paymentQrModal.orderId);
+      await api.markOrderPaid(paymentQrModal.orderId, {
+        screenshot_base64: screenshotBase64 || undefined,
+        filename: screenshotFile?.name || undefined
+      });
       setPaymentQrModal(prev => prev ? { ...prev, isPaidMarked: true } : null);
       if (session) {
         loadCustomerData(session.id, session.phone);
@@ -638,6 +660,9 @@ export default function CustomerPortal() {
     try {
       const qrRes = await api.getOrderPaymentQr(order.id);
       if (qrRes?.success) {
+        setScreenshotFile(null);
+        setScreenshotPreview(null);
+        setScreenshotBase64(null);
         setPaymentQrModal({
           isOpen: true,
           orderId: order.id,
@@ -2535,7 +2560,12 @@ export default function CustomerPortal() {
                 </div>
               </div>
               <button
-                onClick={() => setPaymentQrModal(null)}
+                onClick={() => {
+                  setPaymentQrModal(null);
+                  setScreenshotFile(null);
+                  setScreenshotPreview(null);
+                  setScreenshotBase64(null);
+                }}
                 className="text-muted hover:text-text p-1 rounded-lg text-sm"
               >
                 ✕
@@ -2582,6 +2612,58 @@ export default function CustomerPortal() {
               <span>Open in UPI App (GPay / PhonePe / Paytm)</span>
             </a>
 
+            {/* Payment Screenshot Attachment (Proof) */}
+            {!paymentQrModal.isPaidMarked && (
+              <div className="text-left bg-bg p-3 rounded-xl border border-border space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-text flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5 text-primary" />
+                    <span>Attach Payment Screenshot</span>
+                  </label>
+                  <span className="text-[10px] text-muted">(Recommended)</span>
+                </div>
+
+                {screenshotPreview ? (
+                  <div className="relative rounded-lg overflow-hidden border border-border bg-bg2 p-1.5 flex items-center gap-2">
+                    <img
+                      src={screenshotPreview}
+                      alt="Payment proof preview"
+                      className="w-12 h-12 object-cover rounded-md border border-border"
+                    />
+                    <div className="flex-1 min-w-0 text-[11px]">
+                      <p className="font-medium text-text truncate">{screenshotFile?.name || 'Screenshot attached'}</p>
+                      <p className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Ready to forward to pharmacy
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScreenshotFile(null);
+                        setScreenshotPreview(null);
+                        setScreenshotBase64(null);
+                      }}
+                      className="p-1 text-muted hover:text-red-400 rounded-md transition-colors"
+                      title="Remove screenshot"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 w-full p-2.5 rounded-lg border border-dashed border-border hover:border-primary/50 bg-bg2 hover:bg-bg3 cursor-pointer transition-colors text-xs text-muted hover:text-text">
+                    <Upload className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-[11px]">Upload GPay / PhonePe / Paytm receipt</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleScreenshotChange}
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+
             {/* Actions: "I HAVE PAID" (§12) */}
             <div className="space-y-2 pt-1">
               {!paymentQrModal.isPaidMarked ? (
@@ -2601,7 +2683,12 @@ export default function CustomerPortal() {
               )}
 
               <button
-                onClick={() => setPaymentQrModal(null)}
+                onClick={() => {
+                  setPaymentQrModal(null);
+                  setScreenshotFile(null);
+                  setScreenshotPreview(null);
+                  setScreenshotBase64(null);
+                }}
                 className="w-full py-1.5 text-xs text-muted hover:text-text font-medium"
               >
                 {paymentQrModal.isPaidMarked ? 'Close & View Orders' : 'Cancel & Close'}

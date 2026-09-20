@@ -663,6 +663,17 @@ server.on('error', (err: any) => {
             }
           }
 
+          // Credit overdue catch-up check
+          try {
+            const autoCreditRow = await db.get("SELECT value FROM app_settings WHERE key = 'credit_auto_reminder_enabled'");
+            if (autoCreditRow?.value === 'true') {
+              const { creditReminderService } = await import('./services/creditReminderService.js');
+              await creditReminderService.checkOverdueAndEnqueue(db, false);
+            }
+          } catch (creditErr) {
+            console.error('[Boot:Phase3] Credit overdue check failed:', creditErr);
+          }
+
           // Expiry alerts & shortage reminder scans
           const expiryRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_expiry_scan_enabled'");
           if (expiryRow?.value !== 'false') {

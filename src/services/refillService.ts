@@ -1,6 +1,9 @@
 import { Database } from 'sqlite';
 import { telegramBotService } from '../telegramBot.js';
 import { getConfiguredPharmacyName, getStorePhone } from './storeSettingsService.js';
+import { effectiveNoticeDays, advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { refillOrderReconciler } from './refillOrderReconciler.js';
+import { scoreOrderNameMatch, ARRIVAL_MATCH_THRESHOLD } from '../utils/orderNameMatcher.js';
 
 export async function checkAllRefills(db: Database): Promise<void> {
   // Clean up paused refills (is_active = 0) so they don't remain marked ready or held
@@ -12,6 +15,37 @@ export async function checkAllRefills(db: Database): Promise<void> {
          SELECT CAST(id AS TEXT) FROM patient_refills WHERE is_active = 0
        )`
     );
+
+    // Paused-not-missed: if paused refill is within 7 days, ensure it is surfaced in special_orders with shifted open day
+    const pausedUpcoming = await db.all(
+      `SELECT pr.*, m.name as medicine_name FROM patient_refills pr
+       JOIN medicines m ON pr.medicine_id = m.id
+       WHERE pr.is_active = 0 AND pr.next_refill_date IS NOT NULL
+         AND date(pr.next_refill_date) <= date('now', '+7 days')`
+    ).catch(() => []);
+
+    for (const pRefill of pausedUpcoming) {
+      try {
+        const openDay = await advanceToNextOpenDay(new Date(pRefill.next_refill_date), {
+          storeId: pRefill.store_id || 1,
+          dbInstance: db
+        });
+        await refillOrderReconciler.upsertForPhone({
+          phone: pRefill.patient_phone,
+          customer_name: pRefill.patient_name,
+          items: [{
+            medicine_name: pRefill.medicine_name,
+            qty: Number(pRefill.quantity_needed || 3)
+          }],
+          source: 'refill',
+          source_refill_id: pRefill.id,
+          store_id: pRefill.store_id || 1,
+          priority: 'Normal',
+          notes: `Paused at patient request, auto-shifted to ${openDay.ymd}`,
+          dbInstance: db
+        });
+      } catch (_) {}
+    }
   } catch (cleanErr) {
     console.warn('[RefillService] Cleanup of paused refills warning:', cleanErr);
   }
@@ -49,16 +83,12 @@ export async function checkAllRefills(db: Database): Promise<void> {
     const diffTime = nextDate.getTime() - today.getTime();
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
-    const dueDayName = dayNames[nextDate.getDay()];
     const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : '';
-    const isDueOnClosedDay = dueDayName === weeklyOffLower || operatingSchedule.closedDates.includes(dateYmd);
-    
-    // If due on a closed day, trigger notice 1 day earlier so patient can prepare
-    const effectiveNoticeDays = isDueOnClosedDay ? noticeDays + 1 : noticeDays;
+    const effNotice = await effectiveNoticeDays(noticeDays, dateYmd, refill.store_id || 1, db);
 
     // Check if within the notice lead time
-    const highlightTrigger = diffDays <= effectiveNoticeDays;
-    const orderTrigger = diffDays <= effectiveNoticeDays;
+    const highlightTrigger = diffDays <= effNotice;
+    const orderTrigger = diffDays <= effNotice;
 
     if (!orderTrigger && !highlightTrigger) {
       continue;
@@ -98,23 +128,21 @@ export async function checkAllRefills(db: Database): Promise<void> {
       // Stock is missing and override is not active!
       if (orderTrigger) {
         if (refill.ordering_triggered === 0) {
-          // Check if a pending/ordered special order already exists for this patient & medicine to avoid duplicates
-          const existingOrder = await db.get(
-            `SELECT id FROM special_orders 
-             WHERE phone = ? AND LOWER(product) = LOWER(?) AND status IN ('Pending', 'Ordered')`,
-            [refill.patient_phone, refill.medicine_name]
-          );
+          const orderQty = Number(refill.quantity_needed || refill.quantity || 3);
+          await refillOrderReconciler.upsertForPhone({
+            phone: refill.patient_phone,
+            customer_name: refill.patient_name,
+            items: [{
+              medicine_name: refill.medicine_name,
+              qty: orderQty
+            }],
+            source: 'refill',
+            source_refill_id: refill.id,
+            store_id: refill.store_id || 1,
+            priority: 'High',
+            dbInstance: db
+          });
 
-          if (!existingOrder) {
-            // Log order in special_orders
-            const orderQty = Number(refill.quantity_needed || refill.quantity || 3);
-            await db.run(
-              `INSERT INTO special_orders (product, requester, phone, qty, priority, status, pharmarack_mapped, source_refill_id, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [refill.medicine_name, refill.patient_name, refill.patient_phone, orderQty, 'High', 'Pending', 1, refill.id, 'refill']
-            );
-          }
-          
           await db.run(
             `UPDATE patient_refills 
              SET hold_for_stock = 1, is_ready = 0, ordering_triggered = 1 
@@ -324,13 +352,15 @@ export async function triggerPendingRefillsForMedicine(db: Database, medicineId:
 export async function triggerPendingSpecialOrdersForMedicineName(db: Database, medicineName: string): Promise<void> {
   if (!medicineName) return;
   const pendingOrders = await db.all(
-    `SELECT * FROM special_orders WHERE LOWER(product) = LOWER(?) AND (status = 'Pending' OR status = 'Ordered')`,
-    [medicineName.trim()]
+    `SELECT * FROM special_orders WHERE status IN ('Pending', 'Ordered')`
   );
 
   for (const order of pendingOrders) {
-    // Stage order as 'Ready' (in stock), keeping notified = 0 so user can manually send WhatsApp from the UI
-    await db.run("UPDATE special_orders SET status = 'Ready', notified = 0 WHERE id = ?", [order.id]);
+    const match = scoreOrderNameMatch(medicineName.trim(), order.product || order.medicine_name || '');
+    if (match.score >= ARRIVAL_MATCH_THRESHOLD) {
+      // Stage order as 'Ready' (in stock), keeping notified = 0 so user can manually send WhatsApp from the UI
+      await db.run("UPDATE special_orders SET status = 'Ready', notified = 0 WHERE id = ?", [order.id]);
+    }
   }
 }
 

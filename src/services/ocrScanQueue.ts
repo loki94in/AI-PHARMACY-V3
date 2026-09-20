@@ -62,6 +62,17 @@ async function runScan(item: QueueItem): Promise<void> {
     console.log(`[OCR Queue] Scan complete for ${item.msgId}: "${result?.text?.substring(0, 60)}..."`);
   } catch (err) {
     console.error(`[OCR Queue] Scan failed for ${item.msgId}:`, err);
+    try {
+      const { handleOcrComplete } = await import('./whatsappIntentService.js');
+      handleOcrComplete({
+        msgId: item.msgId,
+        phone: item.meta.phone,
+        chatId: item.meta.chatId,
+        messageBody: item.meta.messageBody,
+        imagePath: item.meta.imagePath,
+        ocrResult: { text: '', medicineInfo: null, isPrescription: false, error: err instanceof Error ? err.message : String(err) }
+      });
+    } catch (_) {}
   }
 }
 

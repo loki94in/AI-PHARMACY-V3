@@ -479,7 +479,7 @@ class WhatsAppQueueWorker {
     await this.ensureSchema(db);
     // Lazy-start the poll loop on first enqueue (owner rule: no WhatsApp usage → no ticks).
     this.ensureLoopStarted();
-    const cleanPhone = normalizeWhatsAppPhone(number);
+    const cleanPhone = (number && number.includes('@lid')) ? number : normalizeWhatsAppPhone(number);
     const now = Date.now();
 
     if (CHATBOT_CONVERSATIONAL_TYPES.has(type)) {
@@ -487,10 +487,11 @@ class WhatsAppQueueWorker {
       // Sends immediately so customer/owner has zero delay and queue popover stays clean.
       try {
         await sendMessage(cleanPhone, mediaUrl, message, file);
+        return 1;
       } catch (directErr: any) {
         console.error(`[WhatsAppQueueWorker] Direct bypass send error for ${cleanPhone} (${type}):`, directErr?.message || directErr);
+        throw directErr;
       }
-      return 0;
     }
 
     const startOfDay = new Date();

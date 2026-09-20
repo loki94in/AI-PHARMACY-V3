@@ -13,7 +13,8 @@ import { isItemInStock, resolveCommonOrFrequentDistributor, addItemsToPharmarack
 import { paymentQrService } from './paymentQrService.js';
 import { startupSyncCoordinator } from './startupSyncCoordinator.js';
 import { visualIndexService } from './visualIndexService.js';
-import { GATE_VARIANTS, type GateDecision } from '../../scanGateAlgorithms.js';
+import { GATE_VARIANTS, type GateDecision, DOC_SIGNS } from '../../scanGateAlgorithms.js';
+import { getAppDataDir } from '../config/index.js';
 
 // Confidence gate: below these similarity scores a message is discarded as
 // chit-chat instead of being broadcast/escalated. Tune here; every discard is
@@ -81,6 +82,14 @@ export async function saveInboundMedia(msgId: string, buffer: Buffer): Promise<s
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, '_');
   const filePath = path.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
   await fs.promises.writeFile(filePath, buffer);
+
+  // Also save a copy to <appDataDir>/uploads/ so UI and legacy routes resolve immediately
+  try {
+    const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+    await fs.promises.mkdir(uploadsDir, { recursive: true });
+    await fs.promises.writeFile(path.join(uploadsDir, `${safeId}.jpg`), buffer);
+  } catch (_) {}
+
   return filePath;
 }
 
@@ -316,6 +325,20 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
 
     // Initialize session state so customer's subsequent message is actively tracked
     await ensureClarificationsTable(db);
+
+    // 20-minute per-phone guard to prevent burst flush on multiple rapid messages
+    const recentPrompt = await db.get(
+      `SELECT 1 FROM wa_pending_clarifications 
+       WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
+         AND created_at > datetime('now', '-20 minutes') 
+       LIMIT 1`,
+      [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
+    );
+    if (recentPrompt) {
+      console.log(`[Intent Service] Suppressed duplicate guidance prompt for ${cleanDigits} (within 20m burst window).`);
+      return;
+    }
+
     await db.run(
       `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
        VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)
@@ -345,24 +368,118 @@ export function isKnownCustomerName(name: string | null | undefined): boolean {
   if (!name) return false;
   const trimmed = name.trim();
   if (trimmed.length < 2) return false;
-  if (/^(\+?\d+|whatsapp customer|customer|walk-in.*|unknown|guest|yes|no|ok|okay|haan|ho|yep|yup)$/i.test(trimmed)) {
+  if (/^(\+?\d+|whatsapp customer|customer|walk-in.*|unknown|guest|yes|no|ok|okay|haan|ho|yep|yup|please|pls|plz|thx|thanks|thank you|help|hello|hi|hey|start|order)$/i.test(trimmed)) {
     return false;
   }
   return true;
 }
 
 /**
- * Look up customer by phone number. Returns null if not found (new customer).
+ * Look up customer by phone number across customers, patient_refills, sales_invoices, and whatsapp_chats.
+ * Returns null only if the customer truly does not exist in any system record.
  */
-async function lookupCustomer(phone: string): Promise<{ id: number; name: string; phone: string } | null> {
+async function lookupCustomer(phone: string, chatId?: string): Promise<{ id: number; name: string; phone: string } | null> {
   const db = await dbManager.getConnection();
-  // Strip country code prefixes and @c.us suffix for matching
-  const cleanPhone = phone.replace(/@c\.us$/, '').replace(/^91/, '');
-  const row = await db.get(
-    `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1`,
-    [`%${cleanPhone}`, `%${cleanPhone.slice(-10)}`]
-  );
-  return row || null;
+
+  // 1. Extract pure 10 digits
+  let cleanDigits = phone.replace(/\D/g, '').slice(-10);
+
+  // If phone is an @lid and had < 10 clean digits, check if whatsapp_chats already resolved it
+  if ((!cleanDigits || cleanDigits.length < 10) && chatId) {
+    try {
+      const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [chatId]);
+      if (chatRow?.resolved_number) {
+        cleanDigits = chatRow.resolved_number.replace(/\D/g, '').slice(-10);
+      }
+    } catch (_) {}
+  }
+
+  // If still no valid 10 digits, cannot match
+  if (!cleanDigits || cleanDigits.length < 10) {
+    return null;
+  }
+
+  // 2. Check primary `customers` table
+  try {
+    const row = await db.get(
+      `SELECT id, name, phone FROM customers 
+       WHERE REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+       ORDER BY (CASE WHEN name IS NOT NULL AND name != '' AND name NOT LIKE 'Customer%' THEN 1 ELSE 2 END) ASC, id DESC
+       LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (row && isKnownCustomerName(row.name)) {
+      return row;
+    }
+  } catch (_) {}
+
+  // 3. Fallback: Check `patient_refills` table (chronic patients with prescriptions)
+  try {
+    const refillRow = await db.get(
+      `SELECT patient_name, patient_phone FROM patient_refills 
+       WHERE REPLACE(REPLACE(REPLACE(patient_phone, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND patient_name IS NOT NULL AND patient_name != ''
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (refillRow?.patient_name && isKnownCustomerName(refillRow.patient_name)) {
+      try {
+        const ins = await db.run(
+          `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [refillRow.patient_name, cleanDigits]
+        );
+        return { id: ins.lastID || 0, name: refillRow.patient_name, phone: cleanDigits };
+      } catch (_) {
+        return { id: 0, name: refillRow.patient_name, phone: cleanDigits };
+      }
+    }
+  } catch (_) {}
+
+  // 4. Fallback: Check `sales_invoices` table (counter bills with phone snapshot)
+  try {
+    const saleRow = await db.get(
+      `SELECT patient_name, customer_phone_snapshot FROM sales_invoices 
+       WHERE REPLACE(REPLACE(REPLACE(customer_phone_snapshot, '+', ''), '-', ''), ' ', '') LIKE ? 
+         AND patient_name IS NOT NULL AND patient_name != ''
+       ORDER BY id DESC LIMIT 1`,
+      [`%${cleanDigits}%`]
+    );
+    if (saleRow?.patient_name && isKnownCustomerName(saleRow.patient_name)) {
+      try {
+        const ins = await db.run(
+          `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [saleRow.patient_name, cleanDigits]
+        );
+        return { id: ins.lastID || 0, name: saleRow.patient_name, phone: cleanDigits };
+      } catch (_) {
+        return { id: 0, name: saleRow.patient_name, phone: cleanDigits };
+      }
+    }
+  } catch (_) {}
+
+  // 5. Fallback: Check `whatsapp_chats` table (previous chat interactions with saved name)
+  try {
+    const chatRow = await db.get(
+      `SELECT name, resolved_number FROM whatsapp_chats 
+       WHERE (resolved_number LIKE ? OR id LIKE ?) 
+         AND name IS NOT NULL AND name != '' AND name NOT LIKE '%@%'
+       ORDER BY timestamp DESC LIMIT 1`,
+      [`%${cleanDigits}%`, `%${cleanDigits}%`]
+    );
+    if (chatRow?.name && isKnownCustomerName(chatRow.name)) {
+      try {
+        const ins = await db.run(
+          `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+          [chatRow.name, cleanDigits]
+        );
+        return { id: ins.lastID || 0, name: chatRow.name, phone: cleanDigits };
+      } catch (_) {
+        return { id: 0, name: chatRow.name, phone: cleanDigits };
+      }
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 /**
@@ -828,8 +945,17 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         const activeQr = await paymentQrService.allocateNextQr();
         const amount = 50;
         const soCode = pending.so_code || (pending.special_order_id ? `SO-${pending.special_order_id}` : 'SO');
+        const medicineName = pending.suggested_name || 'Special Order';
         const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
-        const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+        const fullQrPath = await paymentQrService.generatePaymentCard({
+          upiUri,
+          orderNumber: soCode,
+          medicineName,
+          amount,
+          payeeName: activeQr.payee_name,
+          upiId: activeQr.upi_id,
+          filename: `payment_card_${soCode}.png`
+        });
 
         // Reset timer in pending clarifications so customer has a fresh window
         await db.run(
@@ -839,14 +965,15 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
         const qrResendMsg =
           `💳 *Special Order Booking Advance Payment*\n\n` +
-          `🆔 *Order*: ${soCode}\n` +
-          `💊 *Medicine*: ${pending.suggested_name || 'Special Order'}\n` +
-          `📦 *Quantity*: ${pending.quantity || 1} ${pending.unit || 'strip'}\n` +
+          `🆔 *Special Order*: ${soCode}\n` +
+          `💊 *Medicine*: ${medicineName}\n` +
+          `📦 *Quantity*: ${pending.quantity || 1} ${pending.unit || 'strip'}\n\n` +
           `🔐 *Booking Advance*: ₹${amount.toFixed(2)}\n\n` +
-          `Please scan the QR code below using Google Pay, PhonePe, or Paytm to pay ₹${amount.toFixed(2)}.\n\n` +
-          `UPI ID: ${activeQr.upi_id}\n` +
-          `Payee: ${activeQr.payee_name}\n\n` +
-          `After paying, please reply with the payment screenshot in this chat.`;
+          `Please pay the ₹${amount.toFixed(2)} booking amount using the QR card attached above.\n\n` +
+          `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
+          `👤 *Payee*: ${activeQr.payee_name}\n\n` +
+          `👉 *Or tap to pay directly on this phone*:\n${upiUri}\n\n` +
+          `📸 After paying, please reply with the payment screenshot in this chat.`;
 
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(
@@ -855,12 +982,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           'customer_payment_qr',
           activeCustomerName || customer?.name || 'Customer',
           undefined,
-          undefined,
-          {
-            mimetype: 'image/png',
-            data: qrBuffer.toString('base64'),
-            filename: `payment_qr_${soCode}.png`
-          }
+          fullQrPath
         );
         return true;
       }
@@ -940,7 +1062,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
-      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya)$/i.test(
+      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya|please|pls|plz)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
 
@@ -1012,7 +1134,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const isGreetingAgain = /^(hi|hello|hey|hola|namaste|namaskar|pranam|good morning|gm|start|help|order)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
-      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya)$/i.test(
+      const isAffirmativeOrNegative = /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|no|nahi|nako|wrong|galat|cancel|n|thanks|thank you|shukriya|please|pls|plz)$/i.test(
         cleaned.toLowerCase().replace(/[^\w\s]/g, '').trim()
       );
       const isValidName = !isGreetingAgain && !isAffirmativeOrNegative && cleaned.length >= 2 && cleaned.length <= 50 && /^[\p{L}\s.']{2,50}$/u.test(cleaned);
@@ -1885,6 +2007,16 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       return true;
     }
 
+    // Resolve customer phone robustly — targetRow.customer_phone may be empty if the
+    // original inbound message used an @lid JID and payload.phone was not set.
+    // Fall back to the special_orders table which stores the raw inbound phone.
+    let custPhone: string = (targetRow.customer_phone || '').trim();
+    if (!custPhone) {
+      const soRow = await db.get('SELECT phone FROM special_orders WHERE id = ?', [orderId]);
+      custPhone = (soRow?.phone || '').trim();
+    }
+    const custPhoneLast10 = custPhone.replace(/\D/g, '').slice(-10);
+
     const distName = selectedDist.distributor || selectedDist.supplier_name || selectedDist.storeName || selectedDist.distributor_name || 'Standard Distributor';
     const distRate = Number(selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0);
     const distMrp = Number(selectedDist.mrp ?? selectedDist.MRP ?? 0);
@@ -1906,54 +2038,118 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     // Allocate alternating UPI QR config
     const activeQr = await paymentQrService.allocateNextQr();
     const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, 50, soCode);
-    const qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
+    const medicineName = targetRow.medicine_name || 'Medicine';
+    const fullQrPath = await paymentQrService.generatePaymentCard({
+      upiUri,
+      orderNumber: soCode,
+      medicineName,
+      amount: 50,
+      payeeName: activeQr.payee_name,
+      upiId: activeQr.upi_id,
+      filename: `payment_card_${soCode}.png`
+    });
 
     await db.run(
       `UPDATE special_orders SET payment_qr_id = ? WHERE id = ?`,
       [activeQr.id, orderId]
     );
 
-    // Update customer conversation state to awaiting_payment
-    await db.run(
-      `UPDATE wa_pending_clarifications
-       SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
-       WHERE phone = ? OR phone LIKE ?`,
-      [orderId, soCode, targetRow.customer_phone, `%${targetRow.customer_phone.slice(-10)}`]
-    );
+    // Update customer conversation state to awaiting_payment (guarded against empty phone)
+    if (custPhoneLast10) {
+      await db.run(
+        `UPDATE wa_pending_clarifications
+         SET step = 'awaiting_payment', special_order_id = ?, so_code = ?, created_at = CURRENT_TIMESTAMP
+         WHERE phone LIKE ? OR phone LIKE ?`,
+        [orderId, soCode, `%${custPhoneLast10}`, `%${custPhoneLast10}%`]
+      );
+    }
 
     // Send customer message with ₹50 UPI QR (Spec §11)
     const custQrMsg =
-      `✅ Medicine & supplier confirmed\n\n` +
-      `🆔 *Special Order*: ${soCode}\n\n` +
-      `💊 *Medicine*: ${targetRow.medicine_name}\n` +
+      `✅ *Medicine & Supplier Confirmed*\n\n` +
+      `🆔 *Special Order*: ${soCode}\n` +
+      `💊 *Medicine*: ${medicineName}\n` +
       `📦 *Quantity*: ${targetRow.quantity}\n\n` +
-      `🔐 *Booking Amount*: ₹50\n\n` +
-      `Please pay the ₹50 booking amount using the QR code below.\n\n` +
-      `After payment, please send the payment screenshot in this chat.`;
+      `🔐 *Booking Advance Amount*: ₹50.00\n\n` +
+      `Please pay the ₹50.00 booking amount using the QR card attached above.\n\n` +
+      `🏦 *UPI ID*: ${activeQr.upi_id.trim()}\n` +
+      `👤 *Payee*: ${activeQr.payee_name}\n\n` +
+      `👉 *Or tap to pay directly on this phone*:\n${upiUri}\n\n` +
+      `📸 After payment, please send the payment screenshot in this chat.`;
 
-    await whatsappQueueWorker.enqueue(
-      targetRow.customer_phone,
-      custQrMsg,
-      'customer_payment_qr',
-      targetRow.customer_name || 'Customer',
-      undefined,
-      undefined,
-      {
-        mimetype: 'image/png',
-        data: qrBuffer.toString('base64'),
-        filename: 'booking_qr.png'
+    // Resolve customer phone or active chat target (e.g. @lid)
+    let custTarget = custPhone;
+    if (custPhoneLast10) {
+      const activeChat = await db.get(
+        `SELECT id FROM whatsapp_chats 
+         WHERE (resolved_number LIKE ? OR id LIKE ?) 
+         ORDER BY timestamp DESC, (CASE WHEN id LIKE '%@lid' THEN 1 ELSE 2 END) ASC LIMIT 1`,
+        [`%${custPhoneLast10}%`, `%${custPhoneLast10}%`]
+      );
+      if (activeChat?.id) {
+        custTarget = activeChat.id;
       }
-    );
+    }
 
-    // Send ack to owner
-    const ownerAck =
-      `✅ *Supplier Confirmed for ${soCode}*\n\n` +
-      `Selected: *${distName}* (PTR ₹${distRate.toFixed(2)})\n` +
-      `₹50 booking payment QR code sent to customer *${targetRow.customer_name}* (+91 ${targetRow.customer_phone.slice(-10)}).\n` +
-      `Awaiting customer payment screenshot.`;
+    let custSendSuccess = false;
+    if (custTarget) {
+      try {
+        await whatsappQueueWorker.enqueue(
+          custTarget,
+          custQrMsg,
+          'customer_payment_qr',
+          targetRow.customer_name || 'Customer',
+          undefined,
+          fullQrPath
+        );
+        custSendSuccess = true;
+      } catch (sendErr: any) {
+        console.warn(`[Intent Service] Failed to send QR image to ${custTarget}, attempting text fallback:`, sendErr?.message || sendErr);
+        try {
+          const textFallbackMsg =
+            custQrMsg +
+            `\n\n🔗 *Pay via UPI link*:\n${upiUri}\n\n` +
+            `UPI ID: ${activeQr.upi_id}\n` +
+            `Payee: ${activeQr.payee_name}`;
+          await whatsappQueueWorker.enqueue(
+            custTarget,
+            textFallbackMsg,
+            'customer_inquiry_confirmed',
+            targetRow.customer_name || 'Customer'
+          );
+          custSendSuccess = true;
+        } catch (textErr: any) {
+          console.error(`[Intent Service] All dispatch attempts failed to ${custTarget}:`, textErr?.message || textErr);
+        }
+      }
+    } else {
+      console.warn(`[Intent Service] Could not send QR for ${soCode} — customer phone missing from targetRow and special_orders.`);
+    }
+
+    // Send ack to owner (Truthful reporting & Human-in-the-Loop)
+    let ownerAck = '';
+    if (custSendSuccess) {
+      ownerAck =
+        `✅ *Supplier Confirmed for ${soCode}*\n\n` +
+        `Selected: *${distName}* (PTR ₹${distRate.toFixed(2)})\n` +
+        (custPhoneLast10
+          ? `₹50 booking payment details sent to customer *${targetRow.customer_name || 'Customer'}* (+91 ${custPhoneLast10}).\n`
+          : `Payment details sent to customer.\n`) +
+        `Awaiting customer payment screenshot.`;
+    } else {
+      ownerAck =
+        `⚠️ *Supplier Confirmed for ${soCode}* (Selected: *${distName}*)\n\n` +
+        `❌ *Could not automatically send payment message to customer* (+91 ${custPhoneLast10 || 'unknown'}).\n\n` +
+        `Please send payment details manually to the customer:\n` +
+        `• Medicine: ${targetRow.medicine_name} × ${targetRow.quantity}\n` +
+        `• Booking Advance: ₹50.00\n` +
+        `• UPI ID: ${activeQr.upi_id}\n` +
+        `• Payee: ${activeQr.payee_name}\n` +
+        `• UPI Link: ${upiUri}`;
+    }
     await whatsappQueueWorker.enqueue(phone, ownerAck, 'admin_escalation', 'Owner');
 
-    console.log(`[Intent Service] Owner selected supplier #${chosenOptionIdx + 1} (${distName}) for ${soCode}. Sent ₹50 QR to customer.`);
+    console.log(`[Intent Service] Owner selected supplier #${chosenOptionIdx + 1} (${distName}) for ${soCode}. ${custSendSuccess ? 'Sent ₹50 payment details to customer.' : 'Customer send failed / manual follow-up required.'}`);
     return true;
   }
 
@@ -2049,30 +2245,42 @@ export async function handleInbound(msg: any): Promise<void> {
     const msgTimestamp = msg.timestamp ? Number(msg.timestamp) : null;
     const isStale = msgTimestamp ? (Math.floor(Date.now() / 1000) - msgTimestamp > 300) : false;
 
-    // Resolve standard phone number if sender is an LID
-    if (phone.endsWith('@lid')) {
-      try {
-        if (msg.client && typeof msg.client.getContactLidAndPhone === 'function') {
-          const mapping = await msg.client.getContactLidAndPhone([phone]);
-          if (mapping && mapping[0] && mapping[0].pn) {
-            phone = `${mapping[0].pn}@c.us`;
-          }
-        }
-        if (phone.endsWith('@lid') && typeof msg.getContact === 'function') {
-          const contact = await msg.getContact();
-          if (contact && contact.number) {
-            phone = `${contact.number}@c.us`;
-          }
-        }
-      } catch (e) {
-        console.warn('[Intent Service] Non-fatal LID resolution skipped:', e);
-      }
-    }
-
     // 1. IGNORE CHECK
     if (await isIgnored(chatId)) return;
 
     const db = await dbManager.getConnection();
+
+    // Resolve standard phone number if sender is an LID
+    if (phone.endsWith('@lid')) {
+      try {
+        const chatRow = await db.get('SELECT resolved_number FROM whatsapp_chats WHERE id = ?', [phone]);
+        if (chatRow?.resolved_number) {
+          const digits = chatRow.resolved_number.replace(/\D/g, '');
+          if (digits.length >= 10) {
+            phone = `${digits.slice(-10)}@c.us`;
+          }
+        }
+      } catch (_) {}
+
+      if (phone.endsWith('@lid')) {
+        try {
+          if (msg.client && typeof msg.client.getContactLidAndPhone === 'function') {
+            const mapping = await msg.client.getContactLidAndPhone([phone]);
+            if (mapping && mapping[0] && mapping[0].pn) {
+              phone = `${mapping[0].pn}@c.us`;
+            }
+          }
+          if (phone.endsWith('@lid') && typeof msg.getContact === 'function') {
+            const contact = await msg.getContact();
+            if (contact && contact.number) {
+              phone = `${contact.number}@c.us`;
+            }
+          }
+        } catch (e) {
+          console.warn('[Intent Service] Non-fatal LID resolution skipped:', e);
+        }
+      }
+    }
 
     // 1a. OWNER INTERACTIVE COMMAND CHECK
     const isOwner = await checkIsOwnerPhone(phone || chatId, db);
@@ -2121,7 +2329,7 @@ export async function handleInbound(msg: any): Promise<void> {
     await startupSyncCoordinator.waitForCartSync();
 
     // 2. CUSTOMER LOOKUP
-    const customer = await lookupCustomer(phone);
+    const customer = await lookupCustomer(phone, chatId);
     const isNewCustomer = !customer;
 
     // 2b. REFILL CONFIRMATION CHECK — "refill", "yes", "confirm", "haan", "ho", "bhej do", etc.
@@ -2162,6 +2370,24 @@ export async function handleInbound(msg: any): Promise<void> {
             refill_count: pendingRefills.length
           });
 
+          // Reconcile and stage as special order with exact quantity
+          try {
+            const { refillOrderReconciler } = await import('./refillOrderReconciler.js');
+            await refillOrderReconciler.upsertForPhone({
+              phone: cleanDigits,
+              customer_name: primaryRefill.patient_name,
+              items: pendingRefills.map((r: any) => ({
+                medicine_name: r.medicine_name,
+                qty: Number(r.quantity_needed || 3)
+              })),
+              source: 'whatsapp_refill_confirm',
+              source_refill_id: primaryRefill.id,
+              dbInstance: db
+            });
+          } catch (recErr) {
+            console.warn('[Intent Service] Reconciler upsert note on refill confirm:', recErr);
+          }
+
           // Optional acknowledgement to patient via queue worker (suppressed in active manual takeover)
           if (!isManualSession) {
             try {
@@ -2169,6 +2395,7 @@ export async function handleInbound(msg: any): Promise<void> {
               const sched = await getPharmacyOperatingSchedule(db);
               const storeName = await getStoreMedicalName(db);
               const storePhone = await getStorePhone(db);
+              const hoursNotice = await getStoreHoursNotice(db);
               const phoneSuffix = storePhone ? `\n📞 ${storePhone}` : '';
               const medListText = pendingRefills.length === 1 
                 ? `*${primaryRefill.medicine_name}*` 
@@ -2176,7 +2403,7 @@ export async function handleInbound(msg: any): Promise<void> {
 
               const ackMsg = `✅ *Refill Confirmed — ${storeName}*\n\n` +
                 `Thank you ${primaryRefill.patient_name}! Your regular prescription for:\n${medListText}\nhas been confirmed.\n\n` +
-                `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}\n` +
+                `🕒 *Store Hours:* ${sched.openTime} to ${sched.closeTime}${hoursNotice ? `\n${hoursNotice.trim()}` : ''}\n` +
                 `Our team will keep your medicines ready for collection.${phoneSuffix}`;
 
               const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
@@ -2267,6 +2494,118 @@ export async function handleInbound(msg: any): Promise<void> {
       return;
     }
 
+    // 2d. PAYMENT SCREENSHOT / MEDIA CLARIFICATION CHECK
+    if (hasMedia) {
+      const cleanDigitsForPayment = (phone || '').replace(/\D/g, '').slice(-10);
+      const pendingPayment = await db.get(
+        `SELECT phone, suggested_name, special_order_id, so_code, customer_name, step, quantity
+         FROM wa_pending_clarifications
+         WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
+           AND step IN ('awaiting_payment', 'awaiting_owner_payment_confirmation')
+           AND created_at > datetime('now', '-72 hours')
+         ORDER BY created_at DESC LIMIT 1`,
+        [`%${cleanDigitsForPayment}`, `%${cleanDigitsForPayment}%`, cleanDigitsForPayment]
+      );
+
+      if (pendingPayment) {
+        console.log(`[Intent Service] Detected payment screenshot from ${cleanDigitsForPayment} for order ${pendingPayment.so_code || pendingPayment.special_order_id}.`);
+        let media: any = null;
+        if (typeof msg.downloadMedia === 'function') {
+          try {
+            media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 3, delayMs: 1500 });
+          } catch (dlErr) {
+            console.warn('[Intent Service] Direct download failed for payment proof, attempting resilient download:', dlErr);
+            try {
+              const { downloadMessageMediaReliably } = await import('../whatsappClient.js');
+              media = await downloadMessageMediaReliably(msg.id?._serialized || msg.id?.id || String(msg.id), {
+                chatId: msg.from,
+                rawMsg: msg
+              });
+            } catch (dlErr2) {
+              console.warn('[Intent Service] Resilient download also failed for payment proof:', dlErr2);
+            }
+          }
+        }
+
+        const soCode = pendingPayment.so_code || (pendingPayment.special_order_id ? `SO-${pendingPayment.special_order_id}` : 'SO');
+
+        let proofImagePath: string | undefined;
+        if (media?.data) {
+          try {
+            const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
+            if (!fs.existsSync(uploadsDir)) {
+              fs.mkdirSync(uploadsDir, { recursive: true });
+            }
+            proofImagePath = path.join(uploadsDir, `payment_proof_${soCode}.jpg`);
+            fs.writeFileSync(proofImagePath, Buffer.from(media.data, 'base64'));
+          } catch (saveErr) {
+            console.error('[Intent Service] Failed to persist payment proof to disk:', saveErr);
+          }
+        }
+
+        // Update pending clarification to awaiting_owner_payment_confirmation
+        await db.run(
+          `UPDATE wa_pending_clarifications 
+           SET step = 'awaiting_owner_payment_confirmation' 
+           WHERE phone = ?`,
+          [pendingPayment.phone]
+        );
+
+        if (pendingPayment.special_order_id) {
+          await db.run(
+            `UPDATE special_orders 
+             SET payment_status = 'SCREENSHOT_RECEIVED', payment_screenshot_path = COALESCE(?, payment_screenshot_path), screenshot_amount = 50, updated_at = datetime('now') 
+             WHERE id = ?`,
+            [proofImagePath || null, pendingPayment.special_order_id]
+          );
+        }
+
+        // Forward screenshot to store owner
+        const adminPhone = (await waAdminEscalationService.resolveAdminWhatsappNumber?.(db)) || '';
+        if (adminPhone) {
+          const adminCaption =
+            `📸 *Payment Screenshot Received*\n\n` +
+            `🆔 *Order*: ${soCode}\n` +
+            `👤 *Customer*: ${pendingPayment.customer_name || customer?.name || 'Customer'} (${cleanDigitsForPayment})\n` +
+            `💊 *Medicine*: ${pendingPayment.suggested_name || 'Special Order'}\n` +
+            `💰 *Advance*: ₹50\n\n` +
+            `👉 Reply *CONFIRM ${soCode}* to verify payment and add to Live Cart.`;
+
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(
+            adminPhone,
+            adminCaption,
+            proofImagePath ? 'admin_escalation_image' : 'admin_escalation',
+            'Owner',
+            undefined,
+            proofImagePath || undefined,
+            (!proofImagePath && media?.data) ? {
+              mimetype: media.mimetype || 'image/jpeg',
+              data: media.data,
+              filename: `payment_proof_${soCode}.jpg`
+            } : undefined
+          );
+          console.log(`[Intent Service] Payment proof for ${soCode} enqueued to owner (${adminPhone}).`);
+        }
+
+        // Reassure customer
+        const custAck = `✅ Thank you! Your payment screenshot has been received and forwarded to our pharmacy team for verification.\n\nWe will confirm your order shortly!`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          custAck,
+          'customer_inquiry_confirmed',
+          pendingPayment.customer_name || customer?.name || 'Customer'
+        );
+
+        try {
+          eventService.broadcast('order_updated', { at: Date.now(), id: pendingPayment.special_order_id });
+        } catch (_) {}
+
+        return;
+      }
+    }
+
     // 2d. MEDICINE CLARIFICATION CHECK ("yes", "haan", option numbers, quantities, etc.)
     if (!hasMedia && await checkMedicineClarificationResponse(phone, body, customer, chatId)) {
       return;
@@ -2351,6 +2690,8 @@ export async function handleInbound(msg: any): Promise<void> {
         console.log(`[Intent Service] Pre-OCR filter: skipped promotional or group image from ${phone || chatId}`);
         return;
       }
+      // serializedId hoisted before try so the catch block (Fix 2 deferred retry) can access it
+      const serializedId = typeof msg?.id?._serialized === 'string' ? msg.id._serialized : '';
       try {
         // Media decryption requires a READY client. Images arriving during the
         // boot session-restore window (T+45s+) or right after an idle-sleep
@@ -2365,14 +2706,13 @@ export async function handleInbound(msg: any): Promise<void> {
         // Late decryption keys are common for @lid chats / big photos — give
         // the download itself a wider bounded budget (3 × 1.5s) before the
         // deeper fallbacks below.
-        const serializedId = typeof msg?.id?._serialized === 'string' ? msg.id._serialized : '';
         const downloadErrors: string[] = [];
         let media: { data?: string } | undefined;
 
         // Step 0: Try resilient polling download (waits for FETCHING to resolve on large photos and hydrates @lid)
         if (serializedId && typeof (waClient as any).downloadMessageMediaReliably === 'function') {
           try {
-            media = await (waClient as any).downloadMessageMediaReliably(serializedId, { maxWaitMs: 12000, chatId });
+            media = await (waClient as any).downloadMessageMediaReliably(serializedId, { maxWaitMs: 12000, chatId, rawMsg: msg });
           } catch (reliableErr) {
             const rMsg = reliableErr instanceof Error ? reliableErr.message : String(reliableErr);
             downloadErrors.push(`reliable: ${rMsg}`);
@@ -2491,6 +2831,28 @@ export async function handleInbound(msg: any): Promise<void> {
       } catch (mediaErr) {
         console.error('[Intent Service] Failed to download media after retries:', mediaErr);
         const downloadDetail = mediaErr instanceof Error ? mediaErr.message : String(mediaErr);
+
+        // Fix 2 — Deferred 30s retry: WA sometimes resolves decryption keys 15-30s after event fires.
+        // Fire-and-forget: non-blocking, uses existing downloadMessageMediaById, OCR queue is idempotent on msgId.
+        if (serializedId) {
+          setTimeout(async () => {
+            try {
+              const waClient = await import('../whatsappClient.js');
+              const deferred = await waClient.downloadMessageMediaById(serializedId);
+              if (deferred?.data) {
+                console.log(`[Intent Service] Deferred 30s retry succeeded for msgId=${serializedId}`);
+                const buffer = Buffer.from(deferred.data, 'base64');
+                let imagePath: string | undefined;
+                try { imagePath = await saveInboundMedia(msgId, buffer); } catch (_) {}
+                ocrScanQueue.enqueue(msgId, buffer, { phone, chatId, messageBody: body, imagePath });
+              }
+            } catch (_) {
+              // Deferred retry is best-effort — no further action
+            }
+          }, 30_000);
+        }
+
+        // Fix 3 — Smart fallback: notify admin + send intelligent reply instead of static prompt.
         try {
           const db = await dbManager.getConnection();
           await waAdminEscalationService.notifyAdminOfUnprocessedMedia(db, {
@@ -2498,11 +2860,61 @@ export async function handleInbound(msg: any): Promise<void> {
             chatId,
             reason: `Received an image from this customer but could not download it after repeated attempts (${downloadDetail.slice(0, 140)}).`
           });
+
           if (phone && !isManualSession) {
             const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            const caption = (body || '').trim();
+
+            // Branch A: caption has text — extract medicine candidates and search DB immediately
+            if (caption.length >= 2) {
+              const captionCandidates = extractMedicineCandidates(caption);
+              if (captionCandidates.length > 0) {
+                console.log(`[Intent Service] Image download failed but caption has medicine candidates: ${captionCandidates.map(c => c.medicineName).join(', ')} — searching DB`);
+                for (const cand of captionCandidates) {
+                  await searchAndBroadcast({
+                    medicineName: cand.medicineName,
+                    quantity: cand.quantity || 1,
+                    unit: cand.unit || '',
+                    customer,
+                    isNewCustomer,
+                    messageBody: caption,
+                    source: 'text',
+                    msgId,
+                    phone,
+                    chatId,
+                    hasIntentWords: true,
+                    isStale: false,
+                    suppressClarification: captionCandidates.length > 1
+                  });
+                }
+                return; // Caption handled — no generic message needed
+              }
+            }
+
+            // Branch B: no caption (or no medicine in caption) — show customer's recent medicines from DB
+            if (customer) {
+              const history = await getCustomerHistory(customer).catch(() => []);
+              if (history.length > 0) {
+                const topMeds = history.slice(0, 5);
+                const medList = topMeds
+                  .map((h: any, i: number) => `${i + 1}. *${h.medicine_name}*`)
+                  .join('\n');
+                const nameGreet = isKnownCustomerName(customer.name) ? `Hi ${customer.name},\n\n` : '';
+                await whatsappQueueWorker.enqueue(
+                  phone,
+                  `📸 ${nameGreet}We received your photo! The image is being processed.\n\nMeanwhile, here are your recent medicines:\n\n${medList}\n\n👉 Reply with a number to re-order, or type the medicine name directly.`,
+                  'customer_medicine_clarification',
+                  customer.name || 'Customer'
+                );
+                console.log(`[Intent Service] Image download failed — sent DB history list (${topMeds.length} medicines) to ${phone}`);
+                return;
+              }
+            }
+
+            // Branch C: new customer or no history — fall back to standard guidance
             await whatsappQueueWorker.enqueue(
               phone,
-              `📸 *Photo Received!*\n\nWe received your photo, but the image is taking longer to download or read clearly.\n\n👉 *Please type the medicine name* you need (e.g. *Dolo 650*, *PRO-PL Chocolate*), and our pharmacy team will check availability immediately!`,
+              `📸 *Photo Received!*\n\nWe received your photo, but the image is taking longer to process.\n\n👉 *Please type the medicine name* you need (e.g. *Dolo 650*, *Zifi 200mg*), and our pharmacy team will check availability immediately!`,
               'customer_medicine_clarification',
               customer?.name || 'Customer'
             );
@@ -3345,8 +3757,8 @@ export async function handleOcrComplete(data: any): Promise<void> {
     if (textParsed.medicineName && isPlausibleMedicineName(textParsed.medicineName)) {
       finalName = textParsed.medicineName;
     } else {
-      console.log(`[Intent Service] OCR name "${finalName}" failed plausibility check. Discarding.`);
-      return;
+      console.log(`[Intent Service] OCR name "${finalName}" failed plausibility check. Falling through to human pharmacist review.`);
+      finalName = '';
     }
   }
   if (!finalName) {
@@ -3360,7 +3772,7 @@ export async function handleOcrComplete(data: any): Promise<void> {
             phone: phone || '',
             chatId,
             imagePath,
-            reason: 'Could not extract any readable medicine name from this photo.'
+            reason: 'Prescription / medicine photo received — OCR could not read medicine clearly. Needs pharmacist review.'
           });
         } catch (notifyErr) {
           console.error('[Intent Service] Failed to notify admin of unreadable scan:', notifyErr);
@@ -3373,7 +3785,7 @@ export async function handleOcrComplete(data: any): Promise<void> {
           const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
           await whatsappQueueWorker.enqueue(
             phone,
-            `📸 *Photo Received!*\n\nWe received your photo, but could not clearly detect the medicine name from this angle.\n\n👉 *Please type the medicine name* you need (e.g. *Dolo 650*, *PRO-PL Chocolate*), and our pharmacy team will check availability immediately!`,
+            `📋 *Prescription Photo Received!* 🩺\n\nHello, we have received your doctor's prescription / medicine photo.\n\nOur registered pharmacist is reviewing it right now and will confirm available stock and details with you shortly.\n\n*(You can also type any medicine names or instructions here if you want!)*`,
             'customer_medicine_clarification',
             'Customer'
           );
@@ -3446,6 +3858,17 @@ export async function handleOcrComplete(data: any): Promise<void> {
       return combined.filter(Boolean);
     })
   ]).then(async ([customer, apiNames]) => {
+    let isManualChatSession = false;
+    if (chatId) {
+      try {
+        const db = await dbManager.getConnection();
+        const chatRow = await db.get('SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?', [chatId]);
+        if (chatRow?.session_mode === 'manual' && Number(chatRow?.manual_active_until || 0) > Date.now()) {
+          isManualChatSession = true;
+        }
+      } catch (_) {}
+    }
+
     const knownApis = new Set(apiNames.map((s: string) => String(s).toLowerCase().trim()));
     // Also include core tokens from loaded medicine dictionary if available
     const medNames = productNameFilterService.getMedicineNames();
@@ -3470,7 +3893,41 @@ export async function handleOcrComplete(data: any): Promise<void> {
       passingNames.push(candName);
     }
     if (passingNames.length === 0) {
-      console.log(`[Intent Service] Scan gate (V2): skipped non-medicine image (name="${finalName}", chat=${chatId}).`);
+      const lowerRaw = ocrRaw.toLowerCase();
+      const isClearNonMedicineDoc = DOC_SIGNS.some(s => lowerRaw.includes(s));
+      if (isClearNonMedicineDoc) {
+        console.log(`[Intent Service] Scan gate (V2): skipped non-medicine document/flyer (name="${finalName}", chat=${chatId}).`);
+        return;
+      }
+      console.log(`[Intent Service] Scan gate (V2): unverified medicine photo (name="${finalName}", chat=${chatId}). Escalating to human pharmacist.`);
+      if (imagePath) {
+        (async () => {
+          try {
+            const db = await dbManager.getConnection();
+            await waAdminEscalationService.notifyAdminOfUnprocessedMedia(db, {
+              phone: phone || '',
+              chatId,
+              imagePath,
+              reason: 'Customer shared medicine/prescription photo — OCR could not verify medicine salt or brand clearly. Needs pharmacist review.'
+            });
+          } catch (notifyErr) {
+            console.error('[Intent Service] Failed to notify admin of unverified scan:', notifyErr);
+          }
+        })();
+      }
+      if (phone && !isManualChatSession) {
+        (async () => {
+          try {
+            const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+            await whatsappQueueWorker.enqueue(
+              phone,
+              `📋 *Prescription Photo Received!* 🩺\n\nHello, we have received your doctor's prescription / medicine photo.\n\nOur registered pharmacist is reviewing it right now and will confirm available stock and details with you shortly.\n\n*(You can also type any medicine names or instructions here if you want!)*`,
+              'customer_medicine_clarification',
+              customer?.name || 'Customer'
+            );
+          } catch (_) {}
+        })();
+      }
       return;
     }
 
@@ -3515,16 +3972,7 @@ export async function handleOcrComplete(data: any): Promise<void> {
     const relatedMedicines = await resolveRelatedMedicinesLocal(passingNames.slice(1));
     const captionHit = captionCandidates
       .find(c => c.medicineName.toLowerCase() === finalName.toLowerCase());
-    let isManualChatSession = false;
-    if (chatId) {
-      try {
-        const db = await dbManager.getConnection();
-        const chatRow = await db.get('SELECT session_mode, manual_active_until FROM whatsapp_chats WHERE id = ?', [chatId]);
-        if (chatRow?.session_mode === 'manual' && Number(chatRow?.manual_active_until || 0) > Date.now()) {
-          isManualChatSession = true;
-        }
-      } catch (_) {}
-    }
+
 
     searchAndBroadcast({
       medicineName: finalName,

@@ -2038,8 +2038,11 @@ export const api = {
     apiClient.get<{ success: boolean; delivery_enabled: boolean }>('/settings/delivery-config').then(res => res.data),
   saveDeliveryConfig: (delivery_enabled: boolean) =>
     apiClient.post<{ success: boolean; delivery_enabled: boolean }>('/settings/delivery-config', { delivery_enabled }).then(res => res.data),
-  markOrderPaid: (orderId: number) =>
-    apiClient.post<{ success: boolean; message: string; order_id: number; payment_status: string }>(`/website/orders/${orderId}/mark-paid`).then(res => res.data),
+  markOrderPaid: (orderId: number, payload?: { screenshot_base64?: string; filename?: string }) =>
+    apiClient.post<{ success: boolean; message: string; order_id: number; payment_status: string; has_screenshot?: boolean }>(
+      `/website/orders/${orderId}/mark-paid`,
+      payload || {}
+    ).then(res => res.data),
   getOrderPaymentQr: (orderId: number) =>
     apiClient.get<{ success: boolean; qr_id: string; label: string; payee_name: string; upi_id: string; upi_uri: string; qr_image_url: string; amount: number; payment_status: string }>(`/website/orders/${orderId}/payment-qr`).then(res => res.data),
 

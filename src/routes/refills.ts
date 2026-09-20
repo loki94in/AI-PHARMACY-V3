@@ -14,6 +14,7 @@ import { getAppDataDir } from '../config/index.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
 import { orderScheduleService } from '../services/orderScheduleService.js';
 import { resolveStoreId } from '../services/storeContextService.js';
+import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -749,29 +750,12 @@ router.post('/:id/toggle-pause', async (req, res) => {
             targetDate.setDate(targetDate.getDate() + (refill.refill_interval_days || 30));
           }
 
-          // Adjust for closed Sunday or holiday
-          const timingConfig = await orderScheduleService.getTimingConfig(db, refill.store_id || 1);
-          let advanceCount = 0;
-          while (advanceCount < 14) {
-            const ymd = orderScheduleService.formatDateYMD(targetDate);
-            const isSun = targetDate.getDay() === 0;
-            const holiday = await db.get(
-              'SELECT is_closed FROM pharmacy_holidays WHERE (store_id = ? OR store_id = 1) AND holiday_date = ?',
-              [refill.store_id || 1, ymd]
-            );
-
-            if (isSun && !timingConfig.operatesSunday) {
-              targetDate.setDate(targetDate.getDate() + 1);
-              advanceCount++;
-              continue;
-            }
-            if (holiday && holiday.is_closed === 1) {
-              targetDate.setDate(targetDate.getDate() + 1);
-              advanceCount++;
-              continue;
-            }
-            break;
-          }
+          // Adjust for closed Sunday or holiday via shared calendar util
+          const openDayRes = await advanceToNextOpenDay(targetDate, {
+            storeId: refill.store_id || 1,
+            dbInstance: db
+          });
+          targetDate = openDayRes.targetDate;
 
           recalculatedNextDate = targetDate.toISOString().slice(0, 19).replace('T', ' ');
         }
