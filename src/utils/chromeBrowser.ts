@@ -195,15 +195,37 @@ export function closeAppBrowser(): void {
   // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile or matching our app port
   if (process.platform === 'win32') {
     try {
-      execSync(`taskkill /f /fi "WINDOWTITLE eq AI PHARMACY*"`, { stdio: 'ignore' });
-    } catch (_) {}
-    try {
-      execSync(`taskkill /f /fi "WINDOWTITLE eq AI Pharmacy*"`, { stdio: 'ignore' });
-    } catch (_) {}
-    try {
-      const killCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name = 'chrome.exe' or name = 'msedge.exe'\\" | Where-Object { $_.CommandLine -like '*app_browser_profile*' -or $_.CommandLine -like '*localhost:5175*' -or $_.CommandLine -like '*localhost:5173*' -or $_.CommandLine -like '*127.0.0.1:5175*' -or $_.CommandLine -like '*127.0.0.1:5173*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`;
-      execSync(killCmd, { stdio: 'ignore', timeout: 3000 });
-    } catch (_) {}
+      const psScript = [
+        "$ProgressPreference = 'SilentlyContinue'",
+        "$targets = Get-CimInstance Win32_Process | Where-Object {",
+        "  ($_.Name -match 'chrome|msedge|GoogleChromePortable') -and (",
+        "    $_.CommandLine -like '*app_browser_profile*' -or",
+        "    $_.CommandLine -like '*localhost:5175*' -or",
+        "    $_.CommandLine -like '*localhost:5173*' -or",
+        "    $_.CommandLine -like '*127.0.0.1:5175*' -or",
+        "    $_.CommandLine -like '*127.0.0.1:5173*'",
+        "  )",
+        "}",
+        "foreach ($p in $targets) {",
+        "  Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue",
+        "}",
+        "Get-Process | Where-Object { ($_.ProcessName -match 'chrome|msedge|GoogleChromePortable') -and ($_.MainWindowTitle -match 'AI PHARMACY|AI Pharmacy') } | ForEach-Object {",
+        "  $_.CloseMainWindow() | Out-Null",
+        "  Start-Sleep -Milliseconds 100",
+        "  if (!$_.HasExited) {",
+        "    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue",
+        "  }",
+        "}"
+      ].join('\n');
+
+      const b64 = Buffer.from(psScript, 'utf16le').toString('base64');
+      execSync(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${b64}`, {
+        stdio: 'ignore',
+        timeout: 3000
+      });
+    } catch (fallbackErr: any) {
+      console.warn(`[ChromeBrowser] Browser process fallback termination notice: ${fallbackErr?.message || fallbackErr}`);
+    }
   }
 }
 

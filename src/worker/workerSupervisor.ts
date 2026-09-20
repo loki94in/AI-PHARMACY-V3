@@ -1,4 +1,4 @@
-import { fork, ChildProcess } from 'child_process';
+import { fork, ChildProcess, execSync } from 'child_process';
 import { isPackagedApp } from '../config/index.js';
 import { activityTracker } from '../utils/activityTracker.js';
 
@@ -65,7 +65,15 @@ export class WorkerSupervisor {
     for (const [key, config] of Object.entries(this.workers)) {
       if (config.instance) {
         config.instance.removeAllListeners('exit');
-        config.instance.kill('SIGTERM');
+        if (process.platform === 'win32' && config.instance.pid) {
+          try {
+            execSync(`taskkill /pid ${config.instance.pid} /t /f`, { stdio: 'ignore' });
+          } catch (_) {
+            config.instance.kill('SIGTERM');
+          }
+        } else {
+          config.instance.kill('SIGTERM');
+        }
         config.instance = undefined;
         console.log(`[WorkerSupervisor] Terminated ${config.name}.`);
       }

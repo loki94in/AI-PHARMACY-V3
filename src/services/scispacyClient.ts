@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -72,14 +72,28 @@ export function startScispacySidecar(force = false) {
   // Ensure child process is killed when parent exits
   process.on('exit', () => {
     if (sidecarProcess) {
-      sidecarProcess.kill();
+      if (process.platform === 'win32' && sidecarProcess.pid) {
+        try {
+          execSync(`taskkill /pid ${sidecarProcess.pid} /t /f`, { stdio: 'ignore' });
+        } catch (_) {}
+      } else {
+        sidecarProcess.kill();
+      }
     }
   });
 }
 
 export function stopScispacySidecar() {
   if (sidecarProcess) {
-    sidecarProcess.kill();
+    if (process.platform === 'win32' && sidecarProcess.pid) {
+      try {
+        execSync(`taskkill /pid ${sidecarProcess.pid} /t /f`, { stdio: 'ignore' });
+      } catch (_) {
+        sidecarProcess.kill();
+      }
+    } else {
+      sidecarProcess.kill();
+    }
     sidecarProcess = null;
   }
 }

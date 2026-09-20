@@ -494,7 +494,7 @@ const server = app.listen(PORT, '127.0.0.1', async () => {
       : serverUrl;               // Packaged: backend serves the SPA
     setTimeout(() => {
       console.log(`[Boot] Launching dedicated app window at ${uiUrl}...`);
-      launchAppBrowser(uiUrl, undefined, !isPackagedApp() ? undefined : () => {
+      launchAppBrowser(uiUrl, undefined, () => {
         console.log('[Boot] Main application UI window closed. Exiting AI Pharmacy OS...');
         void gracefulShutdown('UI_WINDOW_CLOSED');
       });
@@ -896,9 +896,39 @@ async function setupCrons(db: any) {
   }
 }
 
-// Client-initiated clean application exit: releases port 5175, runs backup, and closes DB
+// Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)
+let pendingShutdownTimer: NodeJS.Timeout | null = null;
+
+// Client-initiated cancellation of pending tab-close shutdown
+app.post('/api/system/cancel-shutdown', (req, res) => {
+  if (pendingShutdownTimer) {
+    clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = null;
+    console.log('[System] Pending tab-close shutdown cancelled (client reconnected or refreshed).');
+  }
+  res.json({ success: true, message: 'Pending shutdown cancelled.' });
+});
+
+// Client-initiated clean application exit: releases port, runs backup, and closes DB
 app.post('/api/system/shutdown', (req, res) => {
-  console.log('[System] Received client exit / shutdown request. Terminating server...');
+  const isTabClose = req.query.type === 'tab_close';
+
+  if (isTabClose) {
+    console.log('[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...');
+    if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = setTimeout(() => {
+      console.log('[System] No active client reconnected within grace period. Terminating server...');
+      void gracefulShutdown('TAB_CLOSED');
+    }, 3500);
+    res.json({ success: true, message: 'Tab-close graceful shutdown scheduled.' });
+    return;
+  }
+
+  console.log('[System] Received direct client exit request. Terminating server...');
+  if (pendingShutdownTimer) {
+    clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = null;
+  }
   res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
   setTimeout(() => {
     void gracefulShutdown('CLIENT_EXIT');
@@ -937,7 +967,8 @@ async function gracefulShutdown(signal: string) {
       try {
         const pid = process.pid;
         const { spawn } = await import('child_process');
-        spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
+        const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
+        spawn('cmd.exe', ['/c', `taskkill /pid ${targetPid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
       } catch (_) {}
     }
     process.exit(0);
@@ -1045,7 +1076,8 @@ async function gracefulShutdown(signal: string) {
     try {
       const pid = process.pid;
       const { spawn } = await import('child_process');
-      spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], {
+      const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
+      spawn('cmd.exe', ['/c', `taskkill /pid ${targetPid} /t /f`], {
         detached: true,
         stdio: 'ignore'
       }).unref();

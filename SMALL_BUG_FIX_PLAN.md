@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P1-28 — Clean Process Tree & Terminal Termination on App Exit (Dev & Standalone)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When exiting the app (via "Exit App" button, closing browser tab/window, or pressing Ctrl+C in terminal), the backend server and its child workers (catalog worker, email poller, Python NLP, WhatsApp Chrome) remained running in the background. The terminal prompt never returned, and ports 5174/5173 remained bound, causing `EADDRINUSE` errors on next start. |
+| **Root cause** | 1. In `package.json`, `"dev"` used `concurrently` without `-k` (`--kill-others`), meaning terminating the backend left Vite running indefinitely in the terminal.<br>2. `tsx watch` intercepted `process.exit(0)` and remained active in watch mode rather than exiting the process group.<br>3. `src/server.ts` guarded Windows `taskkill` behind `isPackagedApp()`, skipping process tree termination in development.<br>4. In `frontend/src/components/Layout.tsx`, `pagehide` unload beacon was gated on `isStandalone`, so closing standard browser tabs never notified the backend.<br>5. Subprocesses in `workerSupervisor.ts` and `scispacyClient.ts` used `SIGTERM` which does not terminate entire Windows process trees. |
+| **How it was fixed** | 1. Added `-k` (`--kill-others`) to `concurrently` in `package.json`.<br>2. Updated `src/server.ts` to kill `targetPid` (`process.ppid` in dev mode, `process.pid` in packaged mode) via `taskkill /pid ${targetPid} /t /f` so `tsx watch` and `concurrently` terminate completely.<br>3. Added `cancel-shutdown` endpoint and a 3.5s grace period for `tab_close` in `src/server.ts` with auto-cancel on page mount in `Layout.tsx` (allowing F5 reloads without unwanted shutdowns while cleanly terminating on actual tab close).<br>4. Replaced `SIGTERM` with Windows process tree `taskkill` in `workerSupervisor.ts` and `scispacyClient.ts`. |
+| **Priority** | P1 |
+| **What not to touch** | Database checkpointing & backup in `gracefulShutdown`, isolated app profile directory, and human-in-the-loop exit confirmation modal. |
+| **Verified by** | TypeScript compilation (`tsc --noEmit`); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-27 — Dedicated Desktop App Auto-Close Synchronization & Window Process Terminator Hardening
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When closing the app via "Exit App" or shutting down, the frontend window remained open displaying an orphaned shutdown overlay (*"AI Pharmacy OS Shut Down — The backend server process has terminated cleanly and port 5175 is free. You can safely close this tab or window (Ctrl+W or Alt+F4)."*). Clicking "Close Window" had no effect because the browser blocked script-initiated `window.close()`. In addition, closing the desktop window directly left the backend server running in the background. |
+| **Root cause** | 1. Browsers enforce W3C security blocking `window.close()` for windows not opened via `window.open()`, leaving the UI stranded on the fallback screen without auto-dismissal.<br>2. In `src/utils/chromeBrowser.ts`, fallback `taskkill` and PowerShell termination commands failed due to cmd.exe quote-stripping errors (`Invalid argument/option - 'WINDOWTITLE'`, and `\` path error), silently failing to terminate the browser process from the OS level.<br>3. `launchAppBrowser` in `src/server.ts` only attached the `onExit` callback when `isPackagedApp()` was true, skipping window exit hooks during development or when `AUTO_OPEN_BROWSER=true`.<br>4. Closing the app window via 'X' did not dispatch an unload beacon (`navigator.sendBeacon`) to shut down the backend server. |
+| **How it was fixed** | 1. **Encoded PowerShell Process Terminator:** In `src/utils/chromeBrowser.ts`, re-engineered `closeAppBrowser()` with a Base64 UTF-16LE encoded PowerShell script (`-EncodedCommand`) that targets all `chrome`/`msedge`/portable browser processes running with `app_browser_profile` or port `5175`/`5173`, and gracefully closes (`$_.CloseMainWindow()`) or force-stops (`Stop-Process`) any window titled `AI PHARMACY`.<br>2. **Universal Window Exit Listener:** In `src/server.ts`, updated `launchAppBrowser` to always pass `onExit`, triggering `gracefulShutdown('UI_WINDOW_CLOSED')` immediately when the desktop app window is closed.<br>3. **Frontend Clean Close Fallback & Beacon:** In `Layout.tsx`, added a redirect fallback to `about:blank` on the close button if `window.close()` is blocked, and added a `pagehide` beacon hook that signals `/api/system/shutdown` when the standalone/dedicated app window unloads. |
+| **Priority** | P1 |
+| **What not to touch** | Isolated user profile directory (`data/app_browser_profile`), shutdown backup sequence, database WAL closing, and human-in-the-loop exit confirmation modal. |
+| **Verified by** | Encoded PowerShell terminator benchmark (<650ms, 0 errors); backend TypeScript build clean; frontend build clean; `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P2-11 — Block WhatsApp Arrival Sends to Unregistered Numbers & Add "Mark Ready in Store" Fallback
 
 | Field | Content |

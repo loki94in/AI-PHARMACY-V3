@@ -247,6 +247,11 @@ const ExitAppButton = () => {
                   window.open('', '_self', '');
                   window.close();
                 } catch (_) {}
+                setTimeout(() => {
+                  try {
+                    window.location.href = 'about:blank';
+                  } catch (_) {}
+                }, 200);
               }}
               className="mt-5 px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all cursor-pointer shadow-md"
             >
@@ -4162,6 +4167,9 @@ export const Layout = ({
 
   // Intercept window close ('X' button or Alt+F4) to confirm before exiting
   useEffect(() => {
+    // Cancel any pending tab-close shutdown if this is a page reload or a new tab opened
+    fetch('/api/system/cancel-shutdown', { method: 'POST' }).catch(() => {});
+
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       // If user already initiated an intentional exit via Exit App button, don't show secondary prompt
       if ((window as any).__AI_PHARMACY_EXITING__) {
@@ -4172,9 +4180,28 @@ export const Layout = ({
       return '';
     };
 
+    const handlePageHide = () => {
+      // If user already exited intentionally, or window is navigating within app, skip
+      if ((window as any).__AI_PHARMACY_EXITING__) {
+        return;
+      }
+      // When closing the window or tab, send a graceful tab-close shutdown beacon with a grace period
+      // (If user merely refreshed the page, the newly loaded page immediately cancels it via cancel-shutdown)
+      try {
+        const url = '/api/system/shutdown?type=tab_close';
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url);
+        } else {
+          fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+        }
+      } catch (_) {}
+    };
+
     window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
     };
   }, []);
 

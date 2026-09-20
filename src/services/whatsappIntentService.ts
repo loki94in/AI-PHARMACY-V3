@@ -248,6 +248,43 @@ export function sanitizePharmarackQuery(rawName: string): string {
   return coreWords.slice(0, 3).join(' ');
 }
 
+function formatTime12h(timeStr: string): string {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  let h = parseInt(hStr, 10);
+  const m = mStr || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
+async function getStoreHoursNotice(db: any): Promise<string> {
+  try {
+    const { getPharmacyOperatingSchedule } = await import('./storeSettingsService.js');
+    const sched = await getPharmacyOperatingSchedule(db);
+    const nowIst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const curMinutes = nowIst.getHours() * 60 + nowIst.getMinutes();
+    const [openH, openM] = (sched.openTime || '09:00').split(':').map(Number);
+    const [closeH, closeM] = (sched.closeTime || '22:00').split(':').map(Number);
+    const openMinutes = (openH || 9) * 60 + (openM || 0);
+    const closeMinutes = (closeH || 22) * 60 + (closeM || 0);
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDayName = days[nowIst.getDay()];
+    const isWeeklyOff = Boolean(sched.weeklyOff && sched.weeklyOff.toLowerCase() === currentDayName.toLowerCase());
+    const isOutsideHours = isWeeklyOff || curMinutes < openMinutes || curMinutes >= closeMinutes;
+
+    if (isOutsideHours) {
+      const open12 = formatTime12h(sched.openTime || '09:00');
+      const close12 = formatTime12h(sched.closeTime || '22:00');
+      if (isWeeklyOff) {
+        return `\n\n🕒 *Note:* Today is our weekly off (Regular hours: ${open12} - ${close12}).\n✅ *You can still send your request or prescription now!* Our team will prepare it on our next working day at ${open12}.`;
+      }
+      return `\n\n🕒 *Note:* Our pharmacy is currently closed (Store hours: ${open12} - ${close12}).\n✅ *You can still send your request or prescription now!* Our team will prepare it when we open tomorrow at ${open12}.`;
+    }
+  } catch (_) {}
+  return '';
+}
+
 /**
  * Send medicine ordering guidance prompt to customer if they sent conversational chat or greeting with no medicine name.
  * Debounced per customer phone (maximum once per 12 hours) to prevent spam.
@@ -773,7 +810,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
     // Passive/waiting states: customer sends text while waiting for owner action
     if (pending.step === 'awaiting_owner_selection') {
-      const waitMsg = `Your request for *${pending.suggested_name}* × ${pending.quantity || 1} has been forwarded to our pharmacy owner for distributor confirmation.\n\nWe will send you payment details shortly.`;
+      const waitMsg = `Your request for *${pending.suggested_name}* × ${pending.quantity || 1} has been forwarded to our pharmacy for distributor confirmation.\n\nWe will send you payment details shortly.`;
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
       await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_inquiry_confirmed', activeCustomerName || customer?.name || 'Customer');
       return true;
@@ -948,9 +985,10 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
       const { getStoreMedicalName } = await import('./storeSettingsService.js');
       const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+      const hoursNotice = await getStoreHoursNotice(db);
 
       const welcomeMsg =
-        `🙏 Namaste *${formattedName}* ji! Welcome to ${storeName}.\n\n` +
+        `🙏 Namaste *${formattedName}* ji! Welcome to ${storeName}.${hoursNotice}\n\n` +
         `I can help you check medicine availability or place an order.\n\n` +
         `You can:\n` +
         `📸 Send a clear photo of your prescription or medicine strip\n` +
@@ -1483,12 +1521,12 @@ async function proceedWithConfirmedProcurement(
     });
 
     // Courtesy message to customer
-    const custWaitMsg = `Your request for *${medName}* × ${medQty} has been forwarded to our pharmacy owner for distributor confirmation.\n\nWe will send you payment details shortly.`;
+    const custWaitMsg = `Your request for *${medName}* × ${medQty} has been forwarded to our pharmacy for distributor confirmation.\n\nWe will send you payment details shortly.`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, custWaitMsg, 'customer_inquiry_confirmed', customerName);
   } else {
     // All checked distributors OOS
-    const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.\n\nOur pharmacy owner has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+    const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.\n\nOur pharmacy has been notified (Ref: ${soCode}) to arrange it for you manually.`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, noStockMsg, 'customer_inquiry_confirmed', customerName);
 
@@ -2188,12 +2226,13 @@ export async function handleInbound(msg: any): Promise<void> {
 
       const { getStoreMedicalName } = await import('./storeSettingsService.js');
       const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
+      const hoursNotice = await getStoreHoursNotice(db);
 
       const hasKnownName = isKnownCustomerName(customer?.name);
 
       if (!hasKnownName) {
         const askNameText =
-          `👋 Hello! Welcome to ${storeName}.\n\n` +
+          `👋 Hello! Welcome to ${storeName}.${hoursNotice}\n\n` +
           `Before we begin, *may I please know your name?*`;
 
         await db.run(
@@ -2209,7 +2248,7 @@ export async function handleInbound(msg: any): Promise<void> {
       }
 
       const greetingText =
-        `👋 Hello *${customer!.name}*! Welcome back to ${storeName}.\n\n` +
+        `👋 Hello *${customer!.name}*! Welcome back to ${storeName}.${hoursNotice}\n\n` +
         `I can help you check medicine availability or place an order.\n\n` +
         `You can:\n` +
         `📸 Send a clear photo of your prescription or medicine strip\n` +
@@ -2404,7 +2443,7 @@ export async function handleInbound(msg: any): Promise<void> {
 
             await db.run(
               `UPDATE wa_pending_clarifications
-               SET step = 'awaiting_owner_payment_confirmation', created_at = CURRENT_TIMESTAMP
+               SET step = 'awaiting_owner_payment_confirmation', payment_reminder_sent = 0, created_at = CURRENT_TIMESTAMP
                WHERE phone = ?`,
               [pendingPayment.phone]
             );
@@ -2417,16 +2456,10 @@ export async function handleInbound(msg: any): Promise<void> {
                 : (pendingPayment.customer_name && isKnownCustomerName(pendingPayment.customer_name) ? pendingPayment.customer_name : 'Customer');
 
               const forwardCaption =
-                `💰 *Payment Verification Required*\n\n` +
-                `🆔 *Special Order*: ${soCode}\n\n` +
-                `👤 *Customer*: ${custDisplayName}\n` +
-                `📱 +91 ${cleanPhone}\n\n` +
-                `💊 *${pendingPayment.suggested_name}*\n` +
-                `📦 *Quantity*: ${pendingPayment.quantity || 1}\n\n` +
-                `💵 *Booking Amount*: ₹50\n\n` +
-                `📸 *Customer Payment Screenshot Attached*\n\n` +
-                `Please reply:\n` +
-                `CONFIRM ${soCode}`;
+                `💰 *Payment Verification (${soCode})*\n` +
+                `👤 ${custDisplayName} (+91 ${cleanPhone})\n` +
+                `💊 ${pendingPayment.suggested_name} × ${pendingPayment.quantity || 1} | ₹50 Paid\n` +
+                `👉 Reply: *CONFIRM ${soCode}*`;
 
               const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
               await whatsappQueueWorker.enqueue(
@@ -3612,6 +3645,41 @@ export async function checkAndSendAdvancePaymentReminders(db?: any): Promise<num
       );
       sentCount++;
       console.log(`[PaymentReminder] Dispatched advance payment reminder for ${soCode} to ${item.phone}`);
+    }
+
+    // Scan orders waiting for owner payment verification >= 2 hours
+    const pendingOwnerList = await db.all(`
+      SELECT p.phone, p.suggested_name, p.quantity, p.so_code, p.customer_name, p.special_order_id, p.created_at
+      FROM wa_pending_clarifications p
+      LEFT JOIN special_orders so ON p.special_order_id = so.id
+      WHERE p.step = 'awaiting_owner_payment_confirmation'
+        AND (p.payment_reminder_sent IS NULL OR p.payment_reminder_sent = 0)
+        AND p.created_at <= datetime('now', '-2 hours')
+        AND p.created_at >= datetime('now', '-48 hours')
+        AND (so.payment_status IS NULL OR so.payment_status = 'SCREENSHOT_RECEIVED')
+      LIMIT 10
+    `).catch(() => []);
+
+    for (const item of pendingOwnerList) {
+      const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+      if (adminWhatsapp) {
+        const soCode = item.so_code || (item.special_order_id ? `SO-${item.special_order_id}` : 'SO');
+        const custName = (item.customer_name && isKnownCustomerName(item.customer_name)) ? item.customer_name.trim() : 'Customer';
+        const cleanCustDigits = String(item.phone || '').replace(/\D/g, '').slice(-10);
+        const ownerPingMsg =
+          `⏳ *Reminder: Payment Verification Needed*\n` +
+          `🆔 *Order*: ${soCode}\n` +
+          `👤 ${custName} (+91 ${cleanCustDigits})\n` +
+          `💊 *${item.suggested_name || 'Special Order'}* × ${item.quantity || 1}\n\n` +
+          `👉 Reply: *CONFIRM ${soCode}*`;
+        await whatsappQueueWorker.enqueue(adminWhatsapp, ownerPingMsg, 'admin_escalation', 'Owner');
+        await db.run(
+          `UPDATE wa_pending_clarifications SET payment_reminder_sent = 1 WHERE phone = ?`,
+          [item.phone]
+        );
+        sentCount++;
+        console.log(`[PaymentReminder] Dispatched owner payment verification reminder for ${soCode} to admin`);
+      }
     }
 
     return sentCount;
