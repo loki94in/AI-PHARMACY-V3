@@ -1227,13 +1227,24 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               const bMapped = Boolean(b.mapped);
               if (aMapped !== bMapped) return aMapped ? -1 : 1;
 
-              // 2. Exact title / core query proximity (e.g. "NICIP P" vs "NICIP PLUS")
+              // 2. Exact title / token overlap score (matching dosage/packaging modifiers like "tab", "15's", etc.)
               const aName = (a.medicine_name || a.shortName || '').toLowerCase().trim();
               const bName = (b.medicine_name || b.shortName || '').toLowerCase().trim();
               const aExact = aName === cleanQ || aName.startsWith(cleanQ + ' ');
               const bExact = bName === cleanQ || bName.startsWith(cleanQ + ' ');
               if (aExact && !bExact) return -1;
               if (!aExact && bExact) return 1;
+
+              const qWords = cleanQ.split(/\s+/).filter(w => w.length >= 2);
+              if (qWords.length > 1) {
+                let aMatches = 0;
+                let bMatches = 0;
+                for (const w of qWords) {
+                  if (aName.includes(w)) aMatches++;
+                  if (bName.includes(w)) bMatches++;
+                }
+                if (aMatches !== bMatches) return bMatches - aMatches;
+              }
 
               // 3. Stock Tier: Green (2) -> Yellow (1) -> Red (0) (High/In-stock ALWAYS above Out-of-Stock)
               const aStock = getStockTier(a.stock);
@@ -2485,6 +2496,15 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   
                   {showSuggestions && suggestions.length > 0 && (
                     <ul className="absolute z-[9999] left-0 right-0 mt-1.5 max-h-[520px] md:max-h-[calc(80vh-210px)] overflow-y-auto bg-bg2 border-2 border-primary/40 backdrop-blur-2xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] divide-y divide-border/30 py-1 scrollbar-thin">
+                      {!suggestions[0]?.isErrorMessage && (
+                        <li className="px-3.5 py-1.5 bg-bg3/90 sticky top-0 z-10 border-b border-border/40 text-[10.5px] text-muted flex items-center justify-between select-none">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <Zap size={12} className="text-primary shrink-0" />
+                            <span>Found <strong className="text-text font-bold">{suggestions.filter(s => !s.isErrorMessage).length}</strong> distributor options</span>
+                          </span>
+                          <span className="text-[9.5px] text-muted font-mono font-semibold uppercase tracking-wider">Live Distributor Data</span>
+                        </li>
+                      )}
                       {suggestions.map((med, index) => (
                         <li
                           key={index}

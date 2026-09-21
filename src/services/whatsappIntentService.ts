@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
-import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS } from './intentKeywords.js';
+import { parseMessage, isRepeatRequest, isRefillConfirmationResponse, isPlausibleMedicineName, detectDosageForm, isMedicineLikely, extractMedicineCandidates, detectNonAllopathicKind, isPromotionalOrBroadcastMessage, DOSAGE_AND_PACKAGING_NOISE_TOKENS, sanitizePharmarackQuery } from './intentKeywords.js';
 import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
@@ -218,44 +218,7 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
 }
 
 
-/**
- * Sanitize raw medicine name down to the first 2-3 core words for Pharmarack catalog/live search.
- * Strips dosage forms (TAB, CAP, SYP, SUS, CREAM, INJ, etc.), packaging forms (STRIP, BOTTLE, BOX, PACK, TUBE),
- * and measurement suffixes (MG, ML, GM, MCG) to ensure maximum API hit rate on Pharmarack.
- */
-export function sanitizePharmarackQuery(rawName: string): string {
-  if (!rawName) return '';
-  const cleaned = rawName
-    .replace(/[+/,._\-()\[\]#*]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const coreWords: string[] = [];
-
-  for (const w of words) {
-    const lower = w.toLowerCase();
-    if (DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(lower)) {
-      continue;
-    }
-    const unitMatch = w.match(/^(\d+(?:\.\d+)?)(mg|ml|gm|g|mcg|iu|%|tabs?|caps?)$/i);
-    if (unitMatch) {
-      coreWords.push(unitMatch[1]);
-    } else {
-      coreWords.push(w);
-    }
-
-    if (coreWords.length >= 3) {
-      break;
-    }
-  }
-
-  if (coreWords.length === 0) {
-    return words.slice(0, 2).join(' ');
-  }
-
-  return coreWords.slice(0, 3).join(' ');
-}
+export { sanitizePharmarackQuery };
 
 /**
  * Filters Pharmarack candidate medicines to strictly match requested formulation modifiers
@@ -276,7 +239,9 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
   const tokenize = (name: string): { brand: string; modifiers: Set<string>; strengths: Set<string> } => {
     const clean = String(name || '')
       .toLowerCase()
-      .replace(/[+/,._\-()\[\]#*]/g, ' ')
+      .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+      .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+      .replace(/[+/,._\-()\[\]#*']/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     const words = clean.split(' ').filter(w => !DOSAGE_AND_PACKAGING_NOISE_TOKENS.has(w));
@@ -289,9 +254,14 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
       if (FORMULATION_MODIFIERS.has(w)) {
         modifiers.add(w);
       }
-      const numMatch = w.match(/^(\d+(?:\.\d+)?)(?:mg|ml|gm|g|mcg|iu|%)?$/);
+      const numMatch = w.match(/^(\d+(?:\.\d+)?)$/);
       if (numMatch) {
-        strengths.add(numMatch[1]);
+        // First numeric token is the active dosage strength (e.g. 650 from dolo 650).
+        // Subsequent numbers without units (e.g. 15 from "15 tablets" or "strip of 15")
+        // are pack size quantities and must not be treated as mandatory drug strengths.
+        if (strengths.size === 0) {
+          strengths.add(numMatch[1]);
+        }
       }
     }
     return { brand, modifiers, strengths };
@@ -1680,25 +1650,49 @@ async function proceedWithConfirmedProcurement(
   const medQty = pending.quantity || 1;
   const medUnit = pending.unit || 'strip';
 
-  // Search Pharmarack for the confirmed medicine. A live-call failure
-  // (timeout/network) is NOT the same as "genuinely zero stock" — one retry
-  // before falling back, and the failure is tracked separately so a real
-  // search outage never gets reported to the customer as confirmed OOS.
+  // 2-Stage Timed Search Workflow:
+  // Step 1: Search 1st word (e.g. "dolo")
+  // Step 2: 1-second pause
+  // Step 3: Search 2nd word / 2-word core (e.g. "dolo 650")
+  // Step 4: 5-second wait to let OpenSearch index / distributor pool settle
+  // Step 5: Check & verify results before dispatching to owner
   const pharmaQuery = sanitizePharmarackQuery(medName);
+  const coreWords = (pharmaQuery || medName).split(/\s+/).filter(Boolean);
+  const word1 = coreWords[0] || medName;
+  const word2 = coreWords.length >= 2 ? coreWords.slice(0, 2).join(' ') : (pharmaQuery || medName);
+
   let rawPharmarackItems: any[] = [];
   let searchFailed = false;
   try {
     const { performPharmarackSearch } = await import('../routes/pharmarack.js');
-    let searchRes = await performPharmarackSearch(pharmaQuery || medName, null, true);
+
+    // Stage 1: Search first word (if different from word2)
+    if (word1 && word1.toLowerCase() !== word2.toLowerCase()) {
+      await performPharmarackSearch(word1, null, true).catch(() => null);
+      // 1-second pause
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Stage 2: Search 2nd word / 2-word core
+    let searchRes = await performPharmarackSearch(word2, null, true);
     if (searchRes.status === 'connection_error') {
-      // One retry — the earlier live check proved Pharmarack can fail once
-      // and succeed on the very next attempt within a second.
-      searchRes = await performPharmarackSearch(pharmaQuery || medName, null, true);
+      searchRes = await performPharmarackSearch(word2, null, true);
     }
     if (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) {
       rawPharmarackItems = searchRes.items;
-    } else {
-      searchFailed = true;
+    }
+
+    // 5-second wait to let OpenSearch distributor pool settle
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Settle check: If initial call returned 0 items, re-query to capture settled results
+    if (rawPharmarackItems.length === 0) {
+      searchRes = await performPharmarackSearch(word2, null, true);
+      if (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) {
+        rawPharmarackItems = searchRes.items;
+      } else {
+        searchFailed = true;
+      }
     }
   } catch (_) {
     searchFailed = true;

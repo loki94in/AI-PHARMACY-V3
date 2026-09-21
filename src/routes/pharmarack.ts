@@ -16,6 +16,7 @@ import { syncTodayActiveDistributors } from '../services/distributorDispatchRemi
 import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarackCatalogCache.js';
 import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
 import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProfileFolder } from '../utils/chromeBrowser.js';
+import { sanitizePharmarackQuery } from '../services/intentKeywords.js';
 
 const execAsync = promisify(exec);
 
@@ -326,17 +327,35 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       CartSource: 'MOVP'
     });
 
+    // 2-word core query derivation (Brand + Strength, e.g. "dolo 650mg tab 15's" -> "dolo 650")
+    // By searching the 2 core words, Pharmarack OpenSearch matches ALL distributors regardless of
+    // their varying nomenclature ("TAB", "STRIP", "15'S", etc.), achieving maximum stock discovery.
+    const coreTerm = sanitizePharmarackQuery(qRaw);
+    const primaryKeyword = (coreTerm && coreTerm.length >= 2) ? coreTerm : qRaw;
+
     let response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
       method: 'POST',
-      body: JSON.stringify(buildPayload(qRaw)),
+      body: JSON.stringify(buildPayload(primaryKeyword)),
       signal: AbortSignal.timeout(8000)
     });
 
     let data: any = response.ok ? await response.json().catch(() => null) : null;
 
-    // Retry 1: If raw query returned 0 items and contains hyphens/slashes, try with cleaned search term
+    // Retry 1: If primaryKeyword returned 0 items and differs from qRaw, retry with raw query
+    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && primaryKeyword !== qRaw) {
+      response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
+        method: 'POST',
+        body: JSON.stringify(buildPayload(qRaw)),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (response.ok) {
+        data = await response.json().catch(() => null);
+      }
+    }
+
+    // Retry 2: If still 0 items and contains hyphens/slashes, try with cleaned search term
     const cleanedTerm = qRaw.replace(/[-_/]/g, ' ').replace(/\s+/g, ' ').trim();
-    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm.length >= 2) {
+    if ((!data || !Array.isArray(data.data) || data.data.length === 0) && cleanedTerm !== qRaw && cleanedTerm !== primaryKeyword && cleanedTerm.length >= 2) {
       response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
         method: 'POST',
         body: JSON.stringify(buildPayload(cleanedTerm)),
@@ -394,6 +413,9 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       });
 
       searchCache.set(qRaw, storeId, isMapped, results);
+      if (primaryKeyword && primaryKeyword.toLowerCase() !== qRaw.toLowerCase()) {
+        searchCache.set(primaryKeyword, storeId, isMapped, results);
+      }
       return { status: 'ok', items: results };
     }
 
@@ -466,7 +488,13 @@ router.get('/search', async (req, res) => {
   // 1. Fresh OR stale disk-backed cache lookup (<1ms). Stale hits answer the
   // dropdown instantly (cold-boot resilience); a background single-flight
   // refresh replaces the entry for the next keystroke.
-  const cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
+  let cachedHit = searchCache.lookup(qRaw, storeId, isMapped);
+  if (!cachedHit) {
+    const coreTerm = sanitizePharmarackQuery(qRaw);
+    if (coreTerm && coreTerm.toLowerCase() !== qRaw.toLowerCase()) {
+      cachedHit = searchCache.lookup(coreTerm, storeId, isMapped);
+    }
+  }
   if (cachedHit) {
     if (cachedHit.stale) revalidateStaleSearch(qRaw, storeId, isMapped);
     return res.json(cachedHit.items);
