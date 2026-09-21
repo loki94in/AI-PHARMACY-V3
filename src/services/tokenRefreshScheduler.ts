@@ -557,8 +557,6 @@ export class TokenRefreshScheduler {
           headless: true,
           userDataDir: mainProfilePath,
           args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
             '--disable-gpu',
             '--disable-software-rasterizer',
             '--disable-dev-shm-usage',
@@ -582,8 +580,6 @@ export class TokenRefreshScheduler {
           headless: true,
           userDataDir: tempProfilePath,
           args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
             '--disable-gpu',
             '--disable-software-rasterizer',
             '--disable-dev-shm-usage',

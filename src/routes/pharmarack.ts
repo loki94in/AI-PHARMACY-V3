@@ -13,7 +13,7 @@ import { promisify } from 'util';
 import { getAppDataDir } from '../config/index.js';
 import { syncDistributorPhoneAcrossTables, resolveDistributorContact } from '../utils/distributorSyncHelper.js';
 import { syncTodayActiveDistributors } from '../services/distributorDispatchReminderWorker.js';
-import { pharmarackCatalogCache } from '../services/pharmarackCatalogCache.js';
+import { pharmarackCatalogCache, scoreProductName } from '../services/pharmarackCatalogCache.js';
 import { startupSyncCoordinator } from '../services/startupSyncCoordinator.js';
 import { findChromePath as findChromiumPath, copyProfileFolder as copyChromeProfileFolder } from '../utils/chromeBrowser.js';
 
@@ -329,7 +329,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     let response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
       method: 'POST',
       body: JSON.stringify(buildPayload(qRaw)),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(8000)
     });
 
     let data: any = response.ok ? await response.json().catch(() => null) : null;
@@ -340,7 +340,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
         method: 'POST',
         body: JSON.stringify(buildPayload(cleanedTerm)),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(5000)
       });
       if (response.ok) {
         data = await response.json().catch(() => null);
@@ -348,7 +348,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     }
 
     if (data && Array.isArray(data.data) && data.data.length > 0) {
-      const results = data.data.map((p: any) => {
+      const results = data.data.map((p: any, idx: number) => {
         const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || '';
 
         return {
@@ -365,24 +365,31 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
           productId: p.ProductId || p.PrProductId || p.ProductCode,
           productCode: p.ProductCode || '',
           company: p.Company || '',
-          storeId: p.StoreId
+          storeId: p.StoreId,
+          // Pharmarack's own native rank (their response order, IsSort:1) —
+          // captured before we touch it, so downstream matching can cross-check
+          // our own text score against Pharmarack's own ranking of the same query.
+          pharmarackRank: idx
         };
       });
 
-      const qLower = qRaw.toLowerCase().trim();
+      // Real similarity score against the typed query so the best actual
+      // match surfaces first (was: only a startsWith/alphabetical tiebreak,
+      // which left two "starts with" results ordered by name, not by how
+      // close a match they really are).
+      for (const r of results) {
+        (r as any).matchScore = scoreProductName(qRaw, String(r.name || ''));
+      }
       results.sort((a: any, b: any) => {
-        // Prioritize mapped distributors first
+        // Prioritize mapped distributors first (a business preference, not a match-quality signal)
         const aMapped = Boolean(a.mapped);
         const bMapped = Boolean(b.mapped);
         if (aMapped && !bMapped) return -1;
         if (!aMapped && bMapped) return 1;
 
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
         const nameA = String(a.name || '').toLowerCase();
         const nameB = String(b.name || '').toLowerCase();
-        const aStarts = nameA.startsWith(qLower);
-        const bStarts = nameB.startsWith(qLower);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
         return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
       });
 
@@ -393,20 +400,19 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
     // Fallback: If live OpenSearch returns 0 items, search local catalog cache
     const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
     if (offline.length > 0) {
-      const qLower = qRaw.toLowerCase().trim();
+      for (const r of offline) {
+        (r as any).matchScore = scoreProductName(qRaw, String((r as any).name || ''));
+      }
       offline.sort((a: any, b: any) => {
-        // Prioritize mapped distributors first
+        // Prioritize mapped distributors first (a business preference, not a match-quality signal)
         const aMapped = Boolean(a.mapped);
         const bMapped = Boolean(b.mapped);
         if (aMapped && !bMapped) return -1;
         if (!aMapped && bMapped) return 1;
 
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
         const nameA = String(a.name || '').toLowerCase();
         const nameB = String(b.name || '').toLowerCase();
-        const aStarts = nameA.startsWith(qLower);
-        const bStarts = nameB.startsWith(qLower);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
         return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
       });
       searchCache.set(qRaw, storeId, isMapped, offline);
@@ -425,10 +431,10 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       }
     } catch (_) {}
 
-    if (settings['combine_pharmarack_pharmacy_search'] !== 'false') {
-      return { status: 'ok', items: [] };
-    }
-
+    // The live call genuinely failed (timeout/network/server error) and the
+    // offline catalog had nothing either — surface this as a real failure,
+    // not a silent empty list. A silent [] here is indistinguishable from
+    // "this medicine doesn't exist anywhere," which misleads the owner.
     return { status: 'connection_error' };
   }
 }
@@ -634,7 +640,6 @@ router.post('/login-window', async (req, res) => {
       const chromeProc = spawnProc(chromePath, [
         `--user-data-dir=${mainProfilePath}`,
         '--start-maximized',
-        '--no-sandbox',
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--disable-dev-shm-usage',

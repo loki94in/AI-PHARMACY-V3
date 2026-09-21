@@ -539,20 +539,22 @@ export async function savePharmacyOperatingSchedule(
 
 /**
  * Checks whether automatic addition to Pharmarack Live Cart is enabled.
- * Default is true (ON) to preserve existing behavior if unset.
+ * Default is false (OFF) — an unconfirmed WhatsApp match must never write to
+ * the real distributor cart without an explicit opt-in (bug fix 2026-09-20:
+ * silent ON-by-default let mismatched bundle-order items reach the live cart).
  */
 export async function isAutoAddToLiveCartEnabled(dbInstance?: any): Promise<boolean> {
   try {
     const db = dbInstance || (await dbManager.getConnection());
     const row = await db.get("SELECT value FROM app_settings WHERE key = 'auto_add_to_live_cart'");
     if (!row || row.value === null || row.value === undefined) {
-      return true; // Default ON
+      return false; // Default OFF
     }
     const val = String(row.value).trim().toLowerCase();
     return val === 'true' || val === '1' || val === 'on';
   } catch (err) {
     console.warn('[StoreSettings] Error checking auto_add_to_live_cart:', err);
-    return true; // Safe fallback to ON
+    return false; // Safe fallback to OFF
   }
 }
 

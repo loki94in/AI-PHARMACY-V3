@@ -2,7 +2,7 @@
 // Syncs mapped + non-mapped distributors' product catalogs into local SQLite.
 // Provides offline search without hitting live Pharmarack API.
 import { dbManager } from '../database/connection.js';
-import { enhancedSimilarity } from './productNameFilterService.js';
+import { enhancedSimilarity, hasFormulationModifierConflict } from './productNameFilterService.js';
 import { tokenRefreshScheduler } from './tokenRefreshScheduler.js';
 import { runHeavyJob } from '../utils/backgroundJobLane.js';
 
@@ -85,6 +85,16 @@ export interface CatalogSearchResult {
 export function scoreProductName(query: string, productName: string): number {
   const q = query.trim();
   if (!q || !productName) return 0;
+  // A conflict on the FULL name (e.g. query "Okacet" vs "OKACET - L TAB.")
+  // must win even though the truncated "leading tokens" comparison below
+  // can push the score back up to 1 — the leading-tokens window exists only
+  // to strip trailing pack-size text (see doc comment), and for short queries
+  // it can cut the product name off before reaching a real modifier suffix
+  // like "L", hiding the exact conflict enhancedSimilarity would otherwise
+  // catch on the full name (bug found 2026-09-20: Okacet vs Okacet-L scored 1.0).
+  if (hasFormulationModifierConflict(q, productName)) {
+    return enhancedSimilarity(q, productName);
+  }
   const qTokenCount = q.split(/\s+/).filter(Boolean).length;
   const pTokens = productName.trim().split(/\s+/).filter(Boolean);
   const leading = pTokens.slice(0, qTokenCount + 1).join(' ');

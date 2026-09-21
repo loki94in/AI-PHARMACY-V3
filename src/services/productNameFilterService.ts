@@ -147,13 +147,22 @@ export function extractVolumeOrWeight(text: string): { amount: string | null; nu
   };
 }
 
+// Common English filler words that show up in packaging/label text ("solution
+// FOR injection", "tablets AND capsules") but never identify a drug — excluded
+// from the token-containment similarity boost so they can't manufacture a
+// false match between two otherwise unrelated product names.
+const FILLER_WORDS = new Set([
+  'for', 'and', 'the', 'with', 'without', 'per', 'each', 'use', 'used',
+  'only', 'not', 'are', 'was', 'were', 'has', 'have', 'from', 'into'
+]);
+
 export const FORMULATION_MODIFIERS = new Set([
   // Combinations & Active Additions
   'PLUS', 'FORTE', 'FORT', 'DS', 'DUO', 'COMBIKIT', 'COMBI', 'KIT', 'MAX', 'EXTRA',
   'DSR', 'D', 'DP', 'AP', 'SP', 'AM', 'AT', 'AZ', 'H', 'LS', 'DX', 'AX', 'CZ', 'CT',
   'LP', 'CV', 'KT', 'COLD', 'FLU', 'TZ', 'OZ', 'TG', 'CH', 'CL', 'AF', 'DF', 'DM', 'XT', 'PF', 'PD',
   'F', 'RF', 'IR', 'SITA', 'CF', 'TC', 'P', 'M', 'G',
-  'Z', 'T', 'A', 'L', 'C', 'K', 'N', 'S', 'B', 'X',
+  'Z', 'T', 'A', 'L', 'C', 'K', 'N', 'S', 'B', 'X', 'O',
   // Release Modifiers
   'SR', 'ER', 'CR', 'PR', 'MR', 'TR', 'XR', 'XL', 'LA',
   // Form / Dispersibility
@@ -597,9 +606,14 @@ export function enhancedSimilarity(s1: string, s2: string): number {
     }
   }
 
-  // Token containment boost (e.g. "baclof liquid" tokens all in "baclof liquid strawberry flav 100ml")
-  const words1 = norm1.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
-  const words2 = norm2.split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  // Token containment boost (e.g. "baclof liquid" tokens all in "baclof liquid strawberry flav 100ml").
+  // Filler words ("for", "and", "the"...) are excluded — otherwise a packaging
+  // phrase like "...SOLUTION FOR INJ" trivially satisfies containment via
+  // "for" prefix-matching a brand name like "foracort", wrongly boosting an
+  // unrelated product to a near-1.0 base score (bug found 2026-09-20: plain
+  // "Foracort 100" query matched an unrelated "Insugen R..." injection).
+  const words1 = norm1.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !FILLER_WORDS.has(w));
+  const words2 = norm2.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !FILLER_WORDS.has(w));
   if (words1.length > 0 && words2.length > 0) {
     const containedCount = words1.filter(w => words2.some(w2 => w2.startsWith(w) || w.startsWith(w2))).length;
     if (containedCount === words1.length) {
@@ -616,8 +630,17 @@ export function enhancedSimilarity(s1: string, s2: string): number {
   const str1 = extractDrugStrength(s1);
   const str2 = extractDrugStrength(s2);
 
+  // A matching strength number can only REINFORCE a name match that is
+  // already plausible on its own — it must never be what pushes two
+  // otherwise-dissimilar product names (e.g. "Foracort 100" vs an unrelated
+  // "Insugen R Refil 100 IU...") over a match threshold. Long unrelated names
+  // can accidentally share enough bigrams to sit near the boost floor by
+  // chance; requiring real pre-boost similarity closes that gap (bug found
+  // 2026-09-20 via live search on this exact pair).
+  const hasPlausibleBaseNameMatch = score >= 0.45;
+
   if (str1.strength && str2.strength) {
-    if (areStrengthsEqual(str1, str2)) {
+    if (areStrengthsEqual(str1, str2) && hasPlausibleBaseNameMatch) {
       score = Math.min(1.0, score + 0.15); // Matching active dosage strength boost
     } else if (areStrengthsConflicting(str1, str2)) {
       score = Math.max(0.0, score - 0.35); // Penalize conflicting dosage strength (e.g. 500mg vs 250mg)

@@ -268,7 +268,7 @@ export function filterCandidatesByFormulation(targetName: string, candidates: an
   }
 
   const FORMULATION_MODIFIERS = new Set([
-    'p', 'sp', 'd', 'l', 'm', 'h', 'am', 'cv', 'az', 'cl', 'plus', 'forte', 'advance',
+    'p', 'sp', 'd', 'l', 'm', 'h', 'o', 'am', 'cv', 'az', 'cl', 'plus', 'forte', 'advance',
     'max', 'super', 'gold', 'pro', 'kid', 'jr', 'junior', 'ds', 'ls', 'dx', 'cr',
     'sr', 'mr', 'xl', 'er', 'tr', 'od', 'bd', 'xt', 'ct', 'th', 'tc', 'ap', 'dp'
   ]);
@@ -812,8 +812,14 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
     const localCat = await searchCatalog(confirmedMedicine).catch(() => ({ mapped: [], nonMapped: [] }));
     const allCatalog = [...(localCat.mapped || []), ...(localCat.nonMapped || [])];
 
+    // Strict formulation/variant shield: reject mismatched single-salts or
+    // conflicting combinations/strengths (same guard proceedWithConfirmedProcurement
+    // uses) — a bundle-order item must never silently substitute a same-brand
+    // different-variant product into the live cart.
+    const formulationSafeCatalog = filterCandidatesByFormulation(confirmedMedicine, allCatalog);
+
     // Filter to distributors with available stock (excluding 0, OOS, nil)
-    const inStockCandidates = allCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+    const inStockCandidates = formulationSafeCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
 
     let selectedDistributor: { storeId: number; storeName: string } | null = null;
     let selectedProductInfo: any = null;
@@ -829,14 +835,14 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
         const distName = String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '');
         return distName === selectedDistributor?.storeName || (selectedDistributor?.storeId && Number((c as any).store_id) === selectedDistributor.storeId);
       }) || inStockCandidates[0];
-    } else if (allCatalog.length > 0) {
-      const candidateStores = allCatalog.map(c => ({
+    } else if (formulationSafeCatalog.length > 0) {
+      const candidateStores = formulationSafeCatalog.map(c => ({
         storeId: Number((c as any).store_id || (c as any).storeId || 0),
         storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
       })).filter(c => c.storeName.length > 0);
 
       selectedDistributor = await resolveCommonOrFrequentDistributor(db, candidateStores);
-      selectedProductInfo = allCatalog[0];
+      selectedProductInfo = formulationSafeCatalog[0];
     }
 
     // 3. Prepare item for Pharmarack Live Cart
@@ -1674,21 +1680,35 @@ async function proceedWithConfirmedProcurement(
   const medQty = pending.quantity || 1;
   const medUnit = pending.unit || 'strip';
 
-  // Search Pharmarack for the confirmed medicine
+  // Search Pharmarack for the confirmed medicine. A live-call failure
+  // (timeout/network) is NOT the same as "genuinely zero stock" — one retry
+  // before falling back, and the failure is tracked separately so a real
+  // search outage never gets reported to the customer as confirmed OOS.
   const pharmaQuery = sanitizePharmarackQuery(medName);
   let rawPharmarackItems: any[] = [];
+  let searchFailed = false;
   try {
     const { performPharmarackSearch } = await import('../routes/pharmarack.js');
-    const searchRes = await performPharmarackSearch(pharmaQuery || medName, null, true);
+    let searchRes = await performPharmarackSearch(pharmaQuery || medName, null, true);
+    if (searchRes.status === 'connection_error') {
+      // One retry — the earlier live check proved Pharmarack can fail once
+      // and succeed on the very next attempt within a second.
+      searchRes = await performPharmarackSearch(pharmaQuery || medName, null, true);
+    }
     if (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) {
       rawPharmarackItems = searchRes.items;
+    } else {
+      searchFailed = true;
     }
-  } catch (_) {}
+  } catch (_) {
+    searchFailed = true;
+  }
 
   if (rawPharmarackItems.length === 0) {
     try {
       const cat = await searchCatalog(pharmaQuery || medName);
       rawPharmarackItems = [...(cat.mapped || []), ...(cat.nonMapped || [])];
+      if (rawPharmarackItems.length > 0) searchFailed = false;
     } catch (_) {}
   }
 
@@ -1748,14 +1768,21 @@ async function proceedWithConfirmedProcurement(
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, custWaitMsg, 'customer_inquiry_confirmed', customerName);
   } else {
-    // All checked distributors OOS
-    const noStockMsg = `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.\n\nOur pharmacy has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+    // No valid candidates — but distinguish a genuine zero-stock result from
+    // a search that actually failed (timeout/network). Telling the customer
+    // "out of stock with all suppliers" when the search never really
+    // completed is a false claim; the owner needs the truthful state.
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-    await whatsappQueueWorker.enqueue(phone, noStockMsg, 'customer_inquiry_confirmed', customerName);
+    const custMsg = searchFailed
+      ? `Your request for *${medName}* × ${medQty} has been forwarded to our pharmacy — our distributor search is temporarily unavailable, so we'll confirm availability shortly.`
+      : `We checked our distributor network for *${medName}*, but it is currently out of stock with all suppliers.\n\nOur pharmacy has been notified (Ref: ${soCode}) to arrange it for you manually.`;
+    await whatsappQueueWorker.enqueue(phone, custMsg, 'customer_inquiry_confirmed', customerName);
 
     const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
     if (adminWhatsapp) {
-      const ownerOosMsg = `⚠️ *Special Order ${soCode} (All Distributors OOS)*\n\nCustomer: ${customerName} (+91 ${cleanDigits})\nMedicine: *${medName}* × ${medQty}\nAll checked Pharmarack distributors are currently out of stock.`;
+      const ownerOosMsg = searchFailed
+        ? `⚠️ *Special Order ${soCode} (Search Failed — Needs Manual Check)*\n\nCustomer: ${customerName} (+91 ${cleanDigits})\nMedicine: *${medName}* × ${medQty}\nPharmarack search did not complete (timeout/connection issue) — this is NOT a confirmed out-of-stock. Please check availability manually.`
+        : `⚠️ *Special Order ${soCode} (All Distributors OOS)*\n\nCustomer: ${customerName} (+91 ${cleanDigits})\nMedicine: *${medName}* × ${medQty}\nAll checked Pharmarack distributors are currently out of stock.`;
       await whatsappQueueWorker.enqueue(adminWhatsapp, ownerOosMsg, 'admin_escalation', 'Owner');
     }
   }
@@ -3384,6 +3411,14 @@ async function searchAndBroadcast(opts: {
       for (const term of searchTerms) {
         const searchRes = await performPharmarackSearch(term, null, true);
         if (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items) && searchRes.items.length > 0) {
+          // Cross-check against Pharmarack's OWN native ranking for this exact
+          // query (pharmarackRank = their response order, IsSort:1) as a second,
+          // independent signal — our text-similarity score alone missed the
+          // Zifi vs Zifi-O mismatch until a modifier-list fix; Pharmarack's own
+          // engine had already ranked "Zifi O" far behind plain "Zifi" for a
+          // "Zifi 200" query. A candidate must clear BOTH checks, so a future
+          // unknown gap in our scorer can't alone promote a weak match to top.
+          const nativeRankCutoff = Math.max(10, Math.ceil(searchRes.items.length * 0.25));
           const scored = searchRes.items
             .map((p: any) => ({
               ...p,
@@ -3394,7 +3429,7 @@ async function searchAndBroadcast(opts: {
               availability: p.stock,
               score: scoreProductName(pharmaQuery, p.name || '')
             }))
-            .filter((p: any) => p.score >= 0.50)
+            .filter((p: any) => p.score >= 0.65 && (typeof p.pharmarackRank !== 'number' || p.pharmarackRank < nativeRankCutoff))
             .sort((a: any, b: any) => b.score - a.score);
 
           if (scored.length > 0) {

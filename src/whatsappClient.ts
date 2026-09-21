@@ -889,8 +889,6 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
     }
 
     const puppeteerArgs = [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',

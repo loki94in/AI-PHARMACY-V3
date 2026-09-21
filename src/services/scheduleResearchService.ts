@@ -78,8 +78,6 @@ async function captureSerpPage(url: string, resultSelector: string[]): Promise<{
     headless: true,
     defaultViewport: { width: 1280, height: 1400 },
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--window-size=1280,1400',
       '--lang=en-IN',

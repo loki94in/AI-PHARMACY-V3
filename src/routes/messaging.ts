@@ -181,7 +181,6 @@ router.post('/login-window', async (req, res) => {
       const chromeProc = spawnProc(chromePath, [
         `--user-data-dir=${authPath}`,
         '--start-maximized',
-        '--no-sandbox',
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--disable-dev-shm-usage',
