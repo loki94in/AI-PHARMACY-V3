@@ -24,7 +24,7 @@ export interface FuzzyCartItem {
   MRP?: number;
   company?: string;
   productCode?: string;
-  productId?: number;
+  productId?: number | null;
 }
 
 export interface MatchResult {
