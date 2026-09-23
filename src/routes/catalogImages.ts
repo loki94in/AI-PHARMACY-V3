@@ -525,6 +525,39 @@ router.post('/:id/replace-candidate', async (req, res) => {
 });
 
 /**
+ * POST /api/catalog/images/:id/relink — Connect image to a different master medicine record with selected face
+ */
+router.post('/:id/relink', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const targetMedicineId = parseInt(String(req.body?.target_medicine_id), 10);
+    const imageType = req.body?.image_type || 'front';
+    const isPrimary = req.body?.is_primary !== undefined ? !!req.body.is_primary : true;
+    const verifiedBy = req.body?.verified_by || 'pharmacist';
+
+    if (!targetMedicineId || isNaN(targetMedicineId)) {
+      return res.status(400).json({ success: false, error: 'target_medicine_id is required' });
+    }
+
+    const result = await catalogImageService.relinkImage(
+      id,
+      targetMedicineId,
+      imageType,
+      isPrimary,
+      verifiedBy
+    );
+
+    res.json({
+      message: `Image successfully linked to "${result.medicine.name}" as ${imageType.toUpperCase()} packaging.`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error('[CatalogImages API] Error relinking image:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to relink image' });
+  }
+});
+
+/**
  * POST /api/catalog/images/medicine/:medicineId/approve-all — Single confirm per medicine (stream infinite-scroll)
  * Approves all downloaded images for this medicine as one logical confirm; publishes to website.
  */

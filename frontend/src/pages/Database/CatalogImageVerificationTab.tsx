@@ -5,7 +5,7 @@ import {
   Upload, ZoomIn, ZoomOut, Maximize2, RotateCw, X, ExternalLink,
   Database, Check, Sparkles, Wrench, Activity, Camera, Package,
   Pill, Layers, ChevronRight, ChevronLeft, Plus, Download, Filter,
-  History, Undo2, ArrowLeftRight, Columns, LayoutGrid
+  History, Undo2, ArrowLeftRight, Columns, LayoutGrid, Link2
 } from 'lucide-react';
 import { api } from '../../services/api';
 import type { CatalogImageItem, CatalogImageCounts } from '../../services/api';
@@ -176,6 +176,16 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
   const [scanning, setScanning] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [auditFixing, setAuditFixing] = useState(false);
+
+  // Re-link to Master Medicine Modal State
+  const [relinkModalImage, setRelinkModalImage] = useState<CatalogImageItem | null>(null);
+  const [relinkSearchQuery, setRelinkSearchQuery] = useState('');
+  const [relinkSearchResults, setRelinkSearchResults] = useState<any[]>([]);
+  const [relinkSearching, setRelinkSearching] = useState(false);
+  const [relinkSelectedMedicine, setRelinkSelectedMedicine] = useState<any | null>(null);
+  const [relinkFace, setRelinkFace] = useState<string>('front');
+  const [relinkIsPrimary, setRelinkIsPrimary] = useState<boolean>(true);
+  const [relinking, setRelinking] = useState<boolean>(false);
 
   // View mode: 'stream' = single infinite-scroll side-by-side confirm per medicine (primary workflow),
   // 'grid' = split-pane workspace, 'review' = WhatsApp flashcard one-by-one flow
@@ -658,6 +668,60 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       }
     } catch (err: any) {
       toastEvent.trigger('Failed to replace: ' + err.message, 'error');
+    }
+  };
+
+  const handleOpenRelinkModal = (item: CatalogImageItem) => {
+    setRelinkModalImage(item);
+    const initialName = item.medicine_name || item.product_name || '';
+    setRelinkSearchQuery(initialName);
+    setRelinkSelectedMedicine(null);
+    setRelinkFace(item.image_type || 'front');
+    setRelinkIsPrimary(true);
+    if (initialName.trim().length >= 2) {
+      searchMasterMedicines(initialName.trim());
+    }
+  };
+
+  const searchMasterMedicines = async (q: string) => {
+    if (!q || q.trim().length < 2) {
+      setRelinkSearchResults([]);
+      return;
+    }
+    setRelinkSearching(true);
+    try {
+      const res: any = await api.getMedicines(1, 15, q.trim());
+      const list = res?.data || res?.medicines || (Array.isArray(res) ? res : []);
+      setRelinkSearchResults(list);
+    } catch (err: any) {
+      console.error('Error searching master medicines:', err);
+    } finally {
+      setRelinkSearching(false);
+    }
+  };
+
+  const handleConfirmRelink = async () => {
+    if (!relinkModalImage || !relinkSelectedMedicine) return;
+    setRelinking(true);
+    try {
+      const res = await api.relinkCatalogImage(relinkModalImage.id, {
+        target_medicine_id: relinkSelectedMedicine.id,
+        image_type: relinkFace,
+        is_primary: relinkIsPrimary,
+        verified_by: 'pharmacist'
+      });
+      toastEvent.trigger(
+        res.message || `Successfully linked image to "${relinkSelectedMedicine.name}" as ${relinkFace.toUpperCase()}!`,
+        'success'
+      );
+      setRelinkModalImage(null);
+      loadCounts();
+      loadMedicines();
+      if (selectedMedicineId) fetchMedicineGallery(selectedMedicineId);
+    } catch (err: any) {
+      toastEvent.trigger(`Failed to connect image: ${err.message}`, 'error');
+    } finally {
+      setRelinking(false);
     }
   };
 
@@ -1307,6 +1371,14 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                         <AlertTriangle size={13} />
                         <span>Need Backside / Mark Incorrect</span>
                       </button>
+
+                      <button
+                        onClick={() => handleOpenRelinkModal(item)}
+                        className="w-full py-2 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Link2 size={13} />
+                        <span>Connect to Master Medicine (Front/Back)</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1502,7 +1574,16 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                             title="Reject all app images for this medicine and re-fetch from internet"
                           >
                             {isActing ? <RefreshCw size={14} className="animate-spin" /> : <XCircle size={16} />}
-                            <span>{isActing ? 'Rejecting…' : '✗ Reject All & Re-fetch'}</span>
+                            <span>{isActing ? 'Rejecting…' : '✗ Reject & Re-fetch'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleOpenRelinkModal(item)}
+                            disabled={isActing}
+                            className="px-3.5 py-2.5 bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                            title="Re-link / connect this packaging image to another master medicine with Front/Back face"
+                          >
+                            <Link2 size={14} />
+                            <span>Connect</span>
                           </button>
                         </div>
                         <p className="text-[10px] text-muted text-center">One tap per medicine — saves catalog recognition & confirmation time. Most images are saved correctly.</p>
@@ -1831,6 +1912,19 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                     >
                       <AlertTriangle size={13} />
                       <span>Mark Incorrect / Need Angle</span>
+                    </button>
+
+                    {/* Connect to Master Medicine */}
+                    <button
+                      onClick={() => {
+                        const targetItem = slotMap.combined || slotMap.front || slotMap.back || selectedMedicine;
+                        if (targetItem) handleOpenRelinkModal(targetItem);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Connect or re-link packaging photos to a master medicine with Front/Back face"
+                    >
+                      <Link2 size={13} />
+                      <span>Connect to Medicine</span>
                     </button>
                   </div>
 
@@ -2778,6 +2872,182 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                 className="px-4 py-2 rounded-xl bg-primary text-white font-bold text-xs disabled:opacity-40 cursor-pointer shadow"
               >
                 Save Replacement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* CONNECT TO MASTER MEDICINE MODAL */}
+      {/* ============================================================ */}
+      {relinkModalImage && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-primary">
+                <Link2 size={20} />
+                <h3 className="text-base font-bold text-text">Connect to Master Medicine</h3>
+              </div>
+              <button
+                onClick={() => setRelinkModalImage(null)}
+                className="p-1 rounded-lg text-muted hover:text-text bg-bg border border-border cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted">
+              Connect this downloaded packaging image to any medicine in your master database. Choose the packaging angle (Front, Back, Box, Side) and it will immediately activate for that medicine across POS, Inventory, and Website.
+            </p>
+
+            {/* Current Image Preview */}
+            <div className="flex items-center gap-3 p-3 bg-bg border border-border rounded-xl">
+              <div className="w-16 h-16 rounded-lg overflow-hidden bg-bg2 border border-border shrink-0 flex items-center justify-center">
+                {relinkModalImage.image_path ? (
+                  <img
+                    src={relinkModalImage.image_path}
+                    alt={relinkModalImage.product_name || 'Packaging'}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <Package size={24} className="text-muted" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-text truncate">
+                  {relinkModalImage.product_name || 'Downloaded Image'}
+                </div>
+                <div className="text-[11px] text-muted truncate">
+                  Current Link: {relinkModalImage.medicine_name || 'None'} (ID: {relinkModalImage.medicine_id})
+                </div>
+                <div className="text-[10px] text-primary font-semibold mt-0.5">
+                  Source: {relinkModalImage.image_source || 'Catalog'} • Confidence: {relinkModalImage.confidence_score || 0}%
+                </div>
+              </div>
+            </div>
+
+            {/* Master Medicine Search */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-text flex items-center justify-between">
+                <span>Search Master Medicine Database</span>
+                {relinkSearching && <span className="text-[10px] text-primary flex items-center gap-1"><RefreshCw size={10} className="animate-spin" /> Searching…</span>}
+              </label>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-3 text-muted pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Type brand name, salt, or strength (e.g. Dolo 650, Telma 40)..."
+                  value={relinkSearchQuery}
+                  onChange={(e) => {
+                    setRelinkSearchQuery(e.target.value);
+                    searchMasterMedicines(e.target.value);
+                  }}
+                  className="w-full pl-9 pr-3 py-2 bg-bg border border-border focus:border-primary rounded-xl text-xs text-text outline-none shadow-xs"
+                />
+              </div>
+
+              {/* Search Results Dropdown / List */}
+              {relinkSearchResults.length > 0 && !relinkSelectedMedicine && (
+                <div className="max-h-48 overflow-y-auto bg-bg border border-border rounded-xl p-1 space-y-1 shadow-inner">
+                  {relinkSearchResults.map((med: any) => (
+                    <div
+                      key={med.id}
+                      onClick={() => setRelinkSelectedMedicine(med)}
+                      className="p-2 rounded-lg hover:bg-bg3 cursor-pointer flex items-center justify-between transition-all"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-text truncate">{med.name}</div>
+                        <div className="text-[10px] text-muted truncate">
+                          {med.manufacturer || 'Unknown'} {med.generic_name ? `• ${med.generic_name}` : ''} {med.strength ? `• ${med.strength}` : ''}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 ml-2">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                          Select
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Selected Target Medicine Confirmation */}
+            {relinkSelectedMedicine && (
+              <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl flex items-center justify-between">
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] text-primary font-bold uppercase tracking-wider block">Selected Target Medicine</span>
+                  <div className="text-xs font-bold text-text truncate">{relinkSelectedMedicine.name}</div>
+                  <div className="text-[11px] text-muted">
+                    {relinkSelectedMedicine.manufacturer} • ID: {relinkSelectedMedicine.id} • MRP: ₹{relinkSelectedMedicine.mrp || 0}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRelinkSelectedMedicine(null)}
+                  className="text-xs font-bold text-muted hover:text-text px-2 py-1 bg-bg border border-border rounded-lg"
+                >
+                  Change
+                </button>
+              </div>
+            )}
+
+            {/* Face / Angle Selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-text block">Packaging Angle (Face)</label>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: 'front', label: '📸 Front', desc: 'Brand & Strength' },
+                  { id: 'back', label: '📸 Back', desc: 'Blister / Salts' },
+                  { id: 'box', label: '📦 Box', desc: 'Outer Carton' },
+                  { id: 'side', label: '📋 Side', desc: 'Composition' }
+                ].map((face) => (
+                  <button
+                    key={face.id}
+                    type="button"
+                    onClick={() => setRelinkFace(face.id)}
+                    className={`p-2 rounded-xl text-center border transition-all cursor-pointer ${
+                      relinkFace === face.id
+                        ? 'border-primary bg-primary/10 text-primary font-bold shadow-xs'
+                        : 'border-border bg-bg text-muted hover:text-text'
+                    }`}
+                  >
+                    <div className="text-xs font-bold">{face.label}</div>
+                    <div className="text-[9px] text-muted opacity-80 mt-0.5">{face.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Primary Toggle */}
+            <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-text pt-1">
+              <input
+                type="checkbox"
+                checked={relinkIsPrimary}
+                onChange={(e) => setRelinkIsPrimary(e.target.checked)}
+                className="rounded border-border text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+              />
+              <span className="font-semibold">Set as Primary active photo for this medicine</span>
+            </label>
+
+            {/* Action Buttons */}
+            <div className="pt-2 flex justify-end gap-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setRelinkModalImage(null)}
+                className="px-4 py-2 rounded-xl bg-bg border border-border text-muted hover:text-text text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!relinkSelectedMedicine || relinking}
+                onClick={handleConfirmRelink}
+                className="px-5 py-2 rounded-xl bg-primary hover:opacity-90 disabled:opacity-40 text-white font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-all"
+              >
+                {relinking ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                <span>{relinking ? 'Connecting…' : 'Save & Connect to Medicine'}</span>
               </button>
             </div>
           </div>

@@ -1,0 +1,96 @@
+{
+  "last_updated": "2026-09-23T16:59:08.960Z",
+  "completed_companies": [],
+  "products": {
+    "137": {
+      "status": "downloaded",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:25.808Z"
+    },
+    "216": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:28.808Z"
+    },
+    "246": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:29.875Z"
+    },
+    "416": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:31.123Z"
+    },
+    "698": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:33.859Z"
+    },
+    "803": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:34.913Z"
+    },
+    "927": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:36.133Z"
+    },
+    "947": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:36.887Z"
+    },
+    "1212": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:37.780Z"
+    },
+    "1448": {
+      "status": "already_on_disk",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:38.142Z"
+    },
+    "1801": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:39.414Z"
+    },
+    "2245": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:40.350Z"
+    },
+    "2246": {
+      "status": "downloaded",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:41.303Z"
+    },
+    "2340": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:42.755Z"
+    },
+    "2801": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:44.237Z"
+    },
+    "2836": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:44.954Z"
+    },
+    "3112": {
+      "status": "not_found",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:58:46.500Z"
+    },
+    "3411": {
+      "status": "downloaded",
+      "company": "CIPLA LIMITED",
+      "timestamp": "2026-09-23T16:59:08.959Z"
+    }
+  }
+}

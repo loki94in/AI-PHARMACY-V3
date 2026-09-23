@@ -933,6 +933,79 @@ export class CatalogImageService {
   }
 
   /**
+   * Re-link an existing image to a different master medicine record, select packaging face (front/back/etc.), and auto-approve it
+   */
+  public async relinkImage(
+    imageId: number,
+    targetMedicineId: number,
+    imageType: string = 'front',
+    isPrimary: boolean = true,
+    verifiedBy = 'pharmacist'
+  ): Promise<{ success: boolean; image: any; medicine: any }> {
+    const db = await dbManager.getConnection();
+    const image = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+    if (!image) throw new Error('Catalog image not found');
+
+    const targetMed = await db.get('SELECT * FROM medicines WHERE id = ?', [targetMedicineId]);
+    if (!targetMed) throw new Error('Target master medicine not found');
+
+    const targetType = imageType || 'front';
+    const primaryVal = isPrimary ? 1 : 0;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      // 1. Deactivate other active images of the same face for this target medicine
+      await db.run(
+        'UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?',
+        [targetMedicineId, targetType, imageId]
+      );
+
+      // 2. If primary, clear is_primary on other images for this target medicine
+      if (primaryVal === 1) {
+        await db.run(
+          'UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?',
+          [targetMedicineId, imageId]
+        );
+      }
+
+      // 3. Update the image to link to target medicine with the selected face and approve it
+      await db.run(
+        `UPDATE catalog_images
+         SET medicine_id = ?,
+             product_name = ?,
+             company_name = ?,
+             image_type = ?,
+             is_primary = ?,
+             verification_status = 'APPROVED',
+             is_active = 1,
+             verified_by = ?,
+             verified_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [targetMedicineId, targetMed.name, targetMed.manufacturer || null, targetType, primaryVal, verifiedBy, imageId]
+      );
+
+      await db.run('COMMIT');
+
+      const updatedImage = await db.get('SELECT * FROM catalog_images WHERE id = ?', [imageId]);
+
+      eventService.broadcast('catalog_image_updated', {
+        id: imageId,
+        medicine_id: targetMedicineId,
+        status: 'APPROVED',
+        image_type: targetType,
+        is_primary: primaryVal,
+        is_active: 1
+      });
+
+      return { success: true, image: updatedImage, medicine: targetMed };
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /**
    * Reject an image -> logs rejection to prevent reuse and initiates auto-redownload
    */
   public async rejectImage(imageId: number, reason = 'Incorrect product image', verifiedBy = 'pharmacist'): Promise<{
