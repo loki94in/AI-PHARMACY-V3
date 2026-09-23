@@ -38,7 +38,8 @@
     "build:all": "npm run build:client && npm run build",
     "build:all:clean": "npm run build:client:clean && npm run build",
     "build:bundle": "node scripts/buildBundle.cjs",
-    "build:exe": "npm run build:all:clean && npm run build:bundle && node scripts/buildSea.cjs",
+    "build:exe": "node scripts/bump-version.mjs && npm run build:exe:nobump",
+    "build:exe:nobump": "npm run build:all:clean && npm run build:bundle && node scripts/buildSea.cjs",
     "build:exe:clean": "npm run build:all:clean && npm run build:bundle && node scripts/buildSea.cjs",
     "release": "node scripts/release.mjs",
     "release:pilot": "node scripts/release.mjs --pilot"

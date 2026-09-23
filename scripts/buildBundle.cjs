@@ -14,10 +14,12 @@
  *      to the executable, so `require('express')` etc. resolve normally
  *      against the node_modules folder shipped alongside the exe.
  */
+const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
 
 const root = path.resolve(__dirname, '..');
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const banner = `
 const import_meta_url = require('url').pathToFileURL(__filename).href;
@@ -32,7 +34,10 @@ esbuild.buildSync({
   format: 'cjs',
   packages: 'external',
   banner: { js: banner },
-  define: { 'import.meta.url': 'import_meta_url' },
+  define: {
+    'import.meta.url': 'import_meta_url',
+    'process.env.APP_VERSION': JSON.stringify(pkg.version),
+  },
   outfile: path.join(root, 'dist-pkg', 'server.cjs'),
   logLevel: 'info',
 });

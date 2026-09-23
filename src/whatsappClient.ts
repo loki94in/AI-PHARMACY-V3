@@ -246,6 +246,7 @@ export function isWhatsAppLoginWindowActive(): boolean {
 }
 // Timestamp (ms) of the last getChats() failure — suppresses retries for 30 s
 let lastSyncFailureAt: number = 0;
+let lastSyncCooldownLoggedAt: number = 0;
 const SYNC_RETRY_COOLDOWN_MS = 30_000;
 
 // Timestamp (ms) of the last failed initialization — prevents rapid retry storms on locked/broken profiles
@@ -516,7 +517,11 @@ async function syncWhatsappData(client: WAClient) {
   const now = Date.now();
   if (lastSyncFailureAt > 0 && (now - lastSyncFailureAt) < SYNC_RETRY_COOLDOWN_MS) {
     const retryInSec = Math.ceil((SYNC_RETRY_COOLDOWN_MS - (now - lastSyncFailureAt)) / 1000);
-    console.log(`[WhatsApp] Sync skipped — last failure was recent. Retry in ${retryInSec}s.`);
+    // Rate-limit the cooldown log so it only logs once per cooldown window instead of spamming on every event
+    if (now - lastSyncCooldownLoggedAt > 15_000) {
+      lastSyncCooldownLoggedAt = now;
+      console.log(`[WhatsApp] Sync skipped — cooldown active. Retry in ${retryInSec}s.`);
+    }
     return;
   }
 
@@ -529,14 +534,20 @@ async function syncWhatsappData(client: WAClient) {
     } catch (getChatsErr: any) {
       const errMsg = getChatsErr?.message || String(getChatsErr);
       
-      // If client was just initialized, wait 3 seconds and retry getChats() once silently before logging failure
+      // If store is still hydrating, wait dynamically for store readiness and retry once
       if (errMsg === 'r' || errMsg.includes('Evaluation failed')) {
-        await new Promise(res => setTimeout(res, 3000));
-        try {
-          chats = await client.getChats();
-        } catch (retryErr: any) {
+        const storeReady = await waitForChatStoreReady(client, 6000);
+        if (storeReady) {
+          try {
+            chats = await client.getChats();
+          } catch (retryErr: any) {
+            lastSyncFailureAt = Date.now();
+            console.log('[WhatsApp] Chat sync deferred to next cycle.');
+            return;
+          }
+        } else {
           lastSyncFailureAt = Date.now();
-          console.log('[WhatsApp] Chat sync scheduled for next periodic cycle.');
+          console.log('[WhatsApp] Chat sync deferred to next cycle.');
           return;
         }
       } else {
@@ -635,6 +646,35 @@ async function syncWhatsappData(client: WAClient) {
   } finally {
     isSyncing = false;
   }
+}
+
+/**
+ * Probes WhatsApp Web's browser page until window.WWebJS and window.Store.Chat
+ * are fully injected and ready to serve getChats() calls without throwing 'Evaluation failed'.
+ */
+export async function waitForChatStoreReady(client: any, maxWaitMs: number = 15000): Promise<boolean> {
+  const page = client?.pupPage;
+  if (!page || (typeof page.isClosed === 'function' && page.isClosed())) return false;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      if (typeof page.isClosed === 'function' && page.isClosed()) return false;
+      const ready = await page.evaluate(() => {
+        try {
+          const w = window as any;
+          return !!(w.Store && w.Store.Chat && w.WWebJS && typeof w.WWebJS.getChats === 'function');
+        } catch (_) {
+          return false;
+        }
+      });
+      if (ready) return true;
+    } catch (_) {
+      // Browser context or frame might still be hydrating/navigating
+    }
+    await new Promise(res => setTimeout(res, 800));
+  }
+  return false;
 }
 
 /**
@@ -1089,15 +1129,17 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       });
 
       // Sync chats separately — failure here must not block send queue drain
-      setTimeout(() => {
-        setLifecycleProgress('syncing', 85, 'Syncing chats & contacts...');
-        syncWhatsappData(client).then(() => {
+      setTimeout(async () => {
+        try {
+          setLifecycleProgress('syncing', 85, 'Syncing chats & contacts...');
+          await waitForChatStoreReady(client, 12000);
+          await syncWhatsappData(client);
           setLifecycleProgress('ready', 100, 'WhatsApp Ready');
-        }).catch(err => {
+        } catch (err) {
           console.error('[WhatsApp] Background sync failed:', err);
           setLifecycleProgress('ready', 100, 'WhatsApp Ready');
-        });
-      }, 2500);
+        }
+      }, 5000);
     });
 
     client.on('disconnected', (reason: string) => {

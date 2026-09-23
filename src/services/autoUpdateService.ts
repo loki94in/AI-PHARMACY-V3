@@ -136,6 +136,20 @@ class AutoUpdateService {
    * PRODUCTION.md §13: every boot checks for an update in background.
    */
   start(): void {
+    // Sync current binary's APP_VERSION to update_checks so DB reflects actual running version
+    (async () => {
+      try {
+        const db = await dbManager.getConnection();
+        const { APP_VERSION } = await import('./licenseService.js');
+        if (APP_VERSION && APP_VERSION !== '1.0.0') {
+          await db.run(
+            'UPDATE update_checks SET current_version = ? WHERE id = 1 AND (current_version != ? OR current_version IS NULL)',
+            [APP_VERSION, APP_VERSION]
+          );
+        }
+      } catch (_) {}
+    })();
+
     // Delay first check so it doesn't compete with boot DB/schema work (§28)
     setTimeout(() => this.runCheck('auto'), BOOT_DELAY_MS);
 
@@ -174,7 +188,7 @@ class AutoUpdateService {
       const result = await checkForUpdate(); // returns null when offline — never throws
       if (!result) {
         // UPDATE_SERVER_UNAVAILABLE — do not freeze, do not mark license invalid
-        console.log('[AutoUpdate] UPDATE_SERVER_UNAVAILABLE — offline or server unreachable. Continuing normally.');
+        console.log('[AutoUpdate] UPDATE_SERVER_UNAVAILABLE (Offline) — update server unreachable. Continuing normally offline.');
         return;
       }
 

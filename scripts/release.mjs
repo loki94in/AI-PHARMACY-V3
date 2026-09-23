@@ -122,9 +122,10 @@ if (isPromote) {
 // NORMAL RELEASE FLOW
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ── Auto-bump version (patch by default) on every release ───────────────────
+const shouldBump = !args.includes('--no-bump') && !args.includes('--skip-bump');
 let version;
-if (isRemote) {
-  // ── Auto-bump version (patch by default) ────────────────────────────────────
+if (shouldBump) {
   const [major, minor, patch] = (pkg.version || '0.1.0').split('.').map(Number);
   let newVersion;
   if (bumpMajor)      newVersion = `${major + 1}.0.0`;
@@ -133,12 +134,11 @@ if (isRemote) {
 
   pkg.version = newVersion;
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-  console.log(`\n📝 Version bumped: ${major}.${minor}.${patch} → ${newVersion}`);
+  console.log(`\n📝 Version auto-bumped: ${major}.${minor}.${patch} → ${newVersion}`);
   version = newVersion;
 } else {
   version = pkg.version || '0.1.0';
-  console.log(`\n📦 Local Release Mode (Owner preference: skipping version bump & remote publish)`);
-  console.log(`📌 Using current version: v${version}`);
+  console.log(`\n📌 Using current version: v${version} (--no-bump)`);
 }
 
 const tagName   = `v${version}`;
@@ -155,8 +155,8 @@ const installerDir = path.join(rootDir, 'dist', 'installer');
 
 // ── Step 1: Build ────────────────────────────────────────────────────────────
 if (!skipBuild) {
-  console.log('📦 Step 1: Building application (npm run build:exe)...');
-  execSync('npm run build:exe', { stdio: 'inherit', cwd: rootDir });
+  console.log('📦 Step 1: Building application (npm run build:exe:nobump)...');
+  execSync('npm run build:exe:nobump', { stdio: 'inherit', cwd: rootDir });
 } else {
   console.log('📦 Step 1: Skipping build (--skip-build).');
 }

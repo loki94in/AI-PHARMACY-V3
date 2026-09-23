@@ -21,9 +21,8 @@ By default, when the user asks to release/build, the agent MUST:
 3. **Trigger Build**: Run `npm run release:pilot` (or `npm run release`).
 4. **Report to User**: Confirm the build succeeded and the local installer/exe path.
 
-> ⚠️ **OWNER PREFERENCE (set 2026-09-18):**
-> Skip version bumping and GitHub/Vercel publishing steps by default.
-> The release script will run locally only.
-> Do NOT bump package.json version, do NOT push a GitHub Release tag, do NOT publish to Vercel update-check server
-> **UNLESS** the user explicitly includes BOTH the words **"git"** AND **"vercel"** in their release request.
-> Example of a full release request: "npm release git vercel" or "release with git and vercel".
+> 💡 **VERSION AUTO-BUMPING (updated 2026-09-23):**
+> Every `npm run build:exe` and `npm run release` automatically increments the patch version in `package.json`
+> so that the executable and in-app update checks always reflect the newly built version.
+> To prevent bumping, pass `--no-bump` or `--skip-bump`.
+> Cloud publishing to GitHub Release tags and Vercel license server still requires BOTH words **"git"** AND **"vercel"** in the release request (e.g. `npm run release -- git vercel`).

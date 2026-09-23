@@ -15,7 +15,7 @@ import { dbManager } from '../database/connection.js';
 
 // Vercel license server URL — update after deploying
 const LICENSE_SERVER = process.env.LICENSE_SERVER_URL || 'https://ai-pharmacy-license.vercel.app';
-const APP_VERSION = process.env.APP_VERSION || '1.0.0';
+export const APP_VERSION = process.env.APP_VERSION || '0.1.5';
 
 // 1-year free testing window (ms)
 const TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
