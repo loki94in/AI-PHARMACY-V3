@@ -1,4 +1,5 @@
 import { dbManager } from '../database/connection.js';
+import { extractMultiSaltDrugStrength, areMultiSaltStrengthsEqual, areMultiSaltStrengthsConflicting } from './aiCameraRuleEngine.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -69,37 +70,31 @@ export function extractUmbrellaFormulation(name: string): { brand: string | null
   };
 }
 
-export function extractDrugStrength(text: string): { strength: string | null; numericVal: number | null; unit: string | null } {
+export function extractDrugStrength(text: string): { strength: string | null; numericVal: number | null; unit: string | null; components?: number[]; sumVal?: number | null } {
   if (!text) return { strength: null, numericVal: null, unit: null };
-  // 1. Explicit unit match (e.g. 500mg, 20mcg, 5%, 100iu)
-  const m = text.match(/\b(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)\s*(MG|MCG|IU|%)\b/i);
-  if (m) {
-    const numericVal = parseFloat(m[1]);
-    return {
-      strength: `${m[1]}${m[2].toUpperCase()}`,
-      numericVal: isNaN(numericVal) ? null : numericVal,
-      unit: m[2].toUpperCase()
-    };
-  }
-  // 2. Standalone number before dosage form (e.g. "Derinide 200 Respicaps", "Budecort 200 Rotacaps", "Foracort 400 Inhaler")
+  const res = extractMultiSaltDrugStrength(text);
+  if (res.strength) return res;
+
+  // Fallback standalone number before dosage form (e.g. "Derinide 200 Respicaps", "Budecort 200 Rotacaps", "Foracort 400 Inhaler")
   const formMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(?:RESPICAP|RESPICAPS|RESPULE|RESPULES|ROTACAP|ROTACAPS|INHALER|TRANSHALER|NEOHALER|PUFFS?|DOSE|DOSES|TABLET|TABLETS|TAB|TABS|CAPSULE|CAPSULES|CAP|CAPS|SUSPENSION|SYRUP|INJECTION|INJ|CREAM|GEL|OINTMENT|OINT)\b/i);
   if (formMatch) {
     const prevText = text.slice(Math.max(0, (formMatch.index || 0) - 12), formMatch.index || 0);
     if (!/STRIP\s+OF|PACK\s+OF|BOX\s+OF/i.test(prevText)) {
       const nVal = parseFloat(formMatch[1]);
       if (!isNaN(nVal)) {
-        return { strength: String(nVal), numericVal: nVal, unit: null };
+        return { strength: String(nVal), numericVal: nVal, unit: null, components: [nVal], sumVal: nVal };
       }
     }
   }
-  // 3. Standalone number right after brand token (e.g. "Derinide 200", "Dolo 650", "Pan 40")
+
+  // Fallback standalone number right after brand token (e.g. "Derinide 200", "Dolo 650", "Pan 40")
   const words = text.trim().split(/\s+/);
   if (words.length >= 2 && /^\d+(?:\.\d+)?$/.test(words[1])) {
     const prevWord = words[0].toUpperCase();
     if (!/^(PACK|STRIP|BOX|BOTTLE|TAB|CAP|SYP|INJ|\d+)$/i.test(prevWord)) {
       const nVal = parseFloat(words[1]);
       if (!isNaN(nVal) && nVal >= 0.5 && nVal <= 5000) {
-        return { strength: String(nVal), numericVal: nVal, unit: null };
+        return { strength: String(nVal), numericVal: nVal, unit: null, components: [nVal], sumVal: nVal };
       }
     }
   }
@@ -107,30 +102,25 @@ export function extractDrugStrength(text: string): { strength: string | null; nu
 }
 
 export function areStrengthsEqual(
-  s1: { strength: string | null; numericVal: number | null; unit: string | null },
-  s2: { strength: string | null; numericVal: number | null; unit: string | null }
+  s1: { strength: string | null; numericVal: number | null; unit: string | null; components?: number[]; sumVal?: number | null },
+  s2: { strength: string | null; numericVal: number | null; unit: string | null; components?: number[]; sumVal?: number | null }
 ): boolean {
   if (!s1.strength || !s2.strength) return false;
-  if (s1.numericVal !== null && s2.numericVal !== null) {
-    if (Math.abs(s1.numericVal - s2.numericVal) <= 0.001) {
-      if (!s1.unit || !s2.unit || s1.unit === s2.unit) return true;
-    }
-    return false;
-  }
-  return s1.strength === s2.strength;
+  return areMultiSaltStrengthsEqual(
+    { strength: s1.strength, numericVal: s1.numericVal, unit: s1.unit, components: s1.components || (s1.numericVal !== null ? [s1.numericVal] : []), sumVal: s1.sumVal ?? s1.numericVal },
+    { strength: s2.strength, numericVal: s2.numericVal, unit: s2.unit, components: s2.components || (s2.numericVal !== null ? [s2.numericVal] : []), sumVal: s2.sumVal ?? s2.numericVal }
+  );
 }
 
 export function areStrengthsConflicting(
-  s1: { strength: string | null; numericVal: number | null; unit: string | null },
-  s2: { strength: string | null; numericVal: number | null; unit: string | null }
+  s1: { strength: string | null; numericVal: number | null; unit: string | null; components?: number[]; sumVal?: number | null },
+  s2: { strength: string | null; numericVal: number | null; unit: string | null; components?: number[]; sumVal?: number | null }
 ): boolean {
   if (!s1.strength || !s2.strength) return false;
-  if (s1.numericVal !== null && s2.numericVal !== null) {
-    if (Math.abs(s1.numericVal - s2.numericVal) > 0.001) return true;
-    if (s1.unit && s2.unit && s1.unit !== s2.unit) return true;
-    return false;
-  }
-  return s1.strength !== s2.strength;
+  return areMultiSaltStrengthsConflicting(
+    { strength: s1.strength, numericVal: s1.numericVal, unit: s1.unit, components: s1.components || (s1.numericVal !== null ? [s1.numericVal] : []), sumVal: s1.sumVal ?? s1.numericVal },
+    { strength: s2.strength, numericVal: s2.numericVal, unit: s2.unit, components: s2.components || (s2.numericVal !== null ? [s2.numericVal] : []), sumVal: s2.sumVal ?? s2.numericVal }
+  );
 }
 
 export function extractVolumeOrWeight(text: string): { amount: string | null; numericVal: number | null; unit: string | null } {
@@ -881,11 +871,16 @@ export class ProductNameFilterService {
 
     const normalizedOcr = ocrText.toLowerCase().trim();
 
+    // Rule 85: Calibrate threshold for short query strings (<4 chars) to prevent random 3-letter noise traps like "FOT", "Biss"
+    const effectiveThreshold = normalizedOcr.length <= 3 
+      ? Math.max(minConfidenceThreshold, 0.80) 
+      : minConfidenceThreshold;
+
     // Cache key covers every input that can change the result. Internet-fallback lookups are
     // skipped (not cached) — that path is rare, opt-in, and time-sensitive by nature.
     const rawStrength = rawOcrText ? (extractDrugStrength(rawOcrText).strength || '') : '';
     const rawVolume = rawOcrText ? (extractVolumeOrWeight(rawOcrText).amount || '') : '';
-    const rawMods = rawOcrText ? Array.from(extractFormulationModifiers(rawOcrText)).sort().join(',') : '';
+    const rawMods = Array.from(extractFormulationModifiers(normalizedOcr)).sort().join(',');
     const cacheKey = !enableInternetFallback
       ? `${normalizedOcr}|${effectiveDosageForm || ''}|${mrp || ''}|${rawStrength}|${rawVolume}|${rawMods}|${minConfidenceThreshold}`
       : null;
@@ -914,8 +909,12 @@ export class ProductNameFilterService {
         FROM medicines_fts f JOIN medicines m ON m.id = f.rowid
         WHERE medicines_fts MATCH ?`;
       // FTS5 MATCH treats raw OCR text as boolean operators — sanitize by
-      // stripping special chars and wrapping in quotes for a safe phrase search.
-      const fts5SafeQuery = `"${normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().replace(/\s+/g, ' ')}"`;
+      // stripping special chars and wrapping in quotes. Use the primary medicine token
+      // with length >= 3 to allow trigram matching without exact phrase brittleness.
+      const cleanedWords = normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().split(/\s+/).filter(w => w.length >= 3);
+      const fts5SafeQuery = cleanedWords.length > 0
+        ? `"${cleanedWords[0]}"`
+        : `"${normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().replace(/\s+/g, ' ')}"`;
       const fts5Params: any[] = [fts5SafeQuery];
 
       if (mrp && mrp > 0) {
@@ -950,7 +949,10 @@ export class ProductNameFilterService {
           if (rawOcrText) {
             const ocrStr = extractDrugStrength(rawOcrText);
             const medStr = extractDrugStrength(row.name);
-            if (ocrStr.strength && medStr.strength) {
+            // Require explicit unit or multi-salt combination for background raw OCR strength conflict:
+            // A unitless number from raw background text (e.g. '6' from 'Biss 6') must never penalize a medicine!
+            const isReliableOcrStrength = ocrStr.unit !== null || (ocrStr.components && ocrStr.components.length > 1);
+            if (ocrStr.strength && medStr.strength && isReliableOcrStrength) {
               if (areStrengthsEqual(ocrStr, medStr)) {
                 strengthMatch = true;
               } else if (areStrengthsConflicting(ocrStr, medStr)) {
@@ -1009,13 +1011,12 @@ export class ProductNameFilterService {
           }
 
           // Formulation modifier conflict check (e.g. plain DYTOR vs DYTOR PLUS / COMBIKIT; PAN 40 vs PAN D)
-          const modifierConflict = hasFormulationModifierConflict(ocrText, row.name) ||
-            (rawOcrText ? hasFormulationModifierConflict(rawOcrText, row.name) : false);
+          const modifierConflict = hasFormulationModifierConflict(ocrText, row.name);
           if (modifierConflict) {
             combinedScore = Math.max(0.0, combinedScore - 0.45);
           }
 
-          if (combinedScore >= minConfidenceThreshold) {
+          if (combinedScore >= effectiveThreshold) {
             scoredMatches.push({ name: row.name, score: combinedScore });
           }
         }
@@ -1036,20 +1037,19 @@ export class ProductNameFilterService {
         if (rawOcrText) {
           const ocrStr = extractDrugStrength(rawOcrText);
           const medStr = extractDrugStrength(medicineName);
-          if (ocrStr.strength && medStr.strength) {
+          const isReliableOcrStrength = ocrStr.unit !== null || (ocrStr.components && ocrStr.components.length > 1);
+          if (ocrStr.strength && medStr.strength && isReliableOcrStrength) {
             if (areStrengthsEqual(ocrStr, medStr)) {
               similarityScore = Math.min(1.0, similarityScore + 0.20);
             } else if (areStrengthsConflicting(ocrStr, medStr)) {
               similarityScore = Math.max(0.0, similarityScore - 0.50);
             }
           }
-          if (hasFormulationModifierConflict(rawOcrText, medicineName)) {
-            similarityScore = Math.max(0.0, similarityScore - 0.45);
-          }
-        } else if (hasFormulationModifierConflict(normalizedOcr, medicineName)) {
+        }
+        if (hasFormulationModifierConflict(normalizedOcr, medicineName)) {
           similarityScore = Math.max(0.0, similarityScore - 0.45);
         }
-        if (similarityScore >= minConfidenceThreshold) {
+        if (similarityScore >= effectiveThreshold) {
           // Avoid duplicates from FTS5 results
           if (!scoredMatches.some(m => m.name === medicineName)) {
             scoredMatches.push({ name: medicineName, score: similarityScore });

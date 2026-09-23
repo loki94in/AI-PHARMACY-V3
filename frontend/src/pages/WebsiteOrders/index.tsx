@@ -48,6 +48,18 @@ export default function WebsiteOrders() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'ready' | 'delivered' | 'returns'>('all');
   const [selectedPrescription, setSelectedPrescription] = useState<string | null>(null);
   const [prescriptionPhotoIndex, setPrescriptionPhotoIndex] = useState(0);
+  const [selectedPrescriptionOrder, setSelectedPrescriptionOrder] = useState<any | null>(null);
+  const [prescriptionScanDetails, setPrescriptionScanDetails] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (selectedPrescriptionOrder?.prescription_scan_id) {
+      api.prescriptions.getPrescriptionScan(selectedPrescriptionOrder.prescription_scan_id)
+        .then(res => setPrescriptionScanDetails(res))
+        .catch(() => setPrescriptionScanDetails(null));
+    } else {
+      setPrescriptionScanDetails(null);
+    }
+  }, [selectedPrescriptionOrder]);
 
   const parsePrescriptionUrls = (val: string | null | undefined): string[] => {
     if (!val) return [];
@@ -706,6 +718,7 @@ export default function WebsiteOrders() {
                         type="button"
                         onClick={() => {
                           setSelectedPrescription(order.prescription_url);
+                          setSelectedPrescriptionOrder(order);
                           setPrescriptionPhotoIndex(0);
                         }}
                         className="w-full py-1.5 px-3 rounded-xl bg-bg3 hover:bg-bg3/80 border border-border text-xs font-bold text-text flex items-center justify-center gap-1.5 transition-all cursor-pointer"
@@ -936,6 +949,49 @@ export default function WebsiteOrders() {
                 </div>
               )}
 
+              {/* Scanned Prescription Items Table */}
+              {prescriptionScanDetails?.items && prescriptionScanDetails.items.length > 0 && (
+                <div className="p-3 bg-bg2 rounded-2xl border border-border space-y-2 max-h-48 overflow-y-auto text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-text flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-primary" />
+                      <span>Prescription Scan Intelligence ({prescriptionScanDetails.items.length} Medicines)</span>
+                    </span>
+                    {prescriptionScanDetails.scan?.doctor_name && (
+                      <span className="text-[10px] text-muted">
+                        Prescribed by: {prescriptionScanDetails.scan.doctor_name}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {prescriptionScanDetails.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-bg border border-border text-xs">
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-text block">
+                            {item.matched_medicine_name || item.line_text}
+                          </span>
+                          <div className="flex items-center gap-2 text-[10px] text-muted">
+                            <span>Type: {item.dosage_group || 'TAB'}</span>
+                            {item.frequency && <span>Dose: {item.frequency}</span>}
+                            {item.duration_days && <span>Duration: {item.duration_days} days</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            item.in_stock
+                              ? 'bg-green/15 text-green border-green/30'
+                              : 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+                          }`}>
+                            {item.in_stock ? 'IN STOCK' : 'ORDER REQUIRED'}
+                          </span>
+                          {item.mrp && <span className="font-mono text-muted text-[11px]">₹{item.mrp}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-between items-center border-t border-border pt-3">
                 <div className="text-xs text-muted">
                   {photos.length > 1 ? `${photos.length} photos uploaded` : '1 photo attached'}
@@ -950,7 +1006,10 @@ export default function WebsiteOrders() {
                     <ExternalLink size={13} /> Open Full Size
                   </a>
                   <button
-                    onClick={() => setSelectedPrescription(null)}
+                    onClick={() => {
+                      setSelectedPrescription(null);
+                      setSelectedPrescriptionOrder(null);
+                    }}
                     className="px-5 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-md hover:bg-primary/90"
                   >
                     Done

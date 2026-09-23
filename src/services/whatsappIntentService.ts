@@ -382,14 +382,14 @@ async function maybeSendGuidancePrompt(phone: string, customerName: string, db: 
     const guidanceMsg =
       echoLine +
       `Namaste! Welcome to *${storeName}* 🏥\n\n` +
-      `To check medicine availability or place an order, please send:\n\n` +
-      `📸 *Option 1: Prescription / Strip Photo*\n` +
-      `Send a clear photo of your doctor's prescription or medicine strip.\n\n` +
-      `✍️ *Option 2: Medicine Name(s)*\n` +
-      `Type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*).\n\n` +
-      `🔁 *Existing Regular Patients:*\n` +
-      `To repeat your regular prescription, simply reply with *Refill* or *Same*.\n\n` +
-      `Please send your prescription photo or medicine name to get started!`;
+      `*Place your order in simple steps:*\n\n` +
+      `*Step 1:* Choose your order type —\n` +
+      `  1️⃣ Single Medicine\n` +
+      `  2️⃣ Multiple Medicines\n` +
+      `  3️⃣ Refill — Repeat my regular prescription\n\n` +
+      `*Step 2:* We show you options & MRP 💰\n` +
+      `*Step 3:* You confirm & we book 🚀\n\n` +
+      `*Reply 1, 2, or 3 to begin.*`;
 
     // Initialize session state so customer's subsequent message is actively tracked
     await ensureClarificationsTable(db);
@@ -638,6 +638,7 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     unit TEXT DEFAULT 'strip',
     step TEXT DEFAULT 'awaiting_confirmation',
     customer_name TEXT DEFAULT NULL,
+    mrp REAL DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   try {
@@ -675,6 +676,9 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     }
     if (!colNames.has('payment_reminder_sent')) {
       await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN payment_reminder_sent INTEGER DEFAULT 0');
+    }
+    if (!colNames.has('mrp')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN mrp REAL DEFAULT NULL');
     }
   } catch (_) {}
   clarificationsTableEnsured = true;
@@ -979,7 +983,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
     if (!cleanDigits) return false;
 
     const pending = await db.get(
-      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name
+      `SELECT phone, suggested_name, original_query, options_json, selected_option, quantity, unit, step, items_json, special_order_id, so_code, customer_name, mrp
        FROM wa_pending_clarifications 
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
@@ -995,9 +999,24 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       ? customer.name.trim()
       : (pending.customer_name && isKnownCustomerName(pending.customer_name) ? pending.customer_name.trim() : '');
 
-    const lower = body.toLowerCase().trim();
-    const isAffirmative = isRefillConfirmationResponse(body) || /^(yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm)$/i.test(lower);
-    const isNegative = /^(no|nahi|nako|wrong|galat|cancel|n)$/i.test(lower);
+    let normalizedInput = body.trim();
+    // Normalize emoji digits 1️⃣ - 🔟 to plain numbers
+    const emojiDigits: Record<string, string> = {
+      '1️⃣': '1', '2️⃣': '2', '3️⃣': '3', '4️⃣': '4', '5️⃣': '5',
+      '6️⃣': '6', '7️⃣': '7', '8️⃣': '8', '9️⃣': '9', '🔟': '10'
+    };
+    for (const [emoji, num] of Object.entries(emojiDigits)) {
+      if (normalizedInput.includes(emoji)) {
+        normalizedInput = normalizedInput.replaceAll(emoji, num);
+      }
+    }
+    const lower = normalizedInput.toLowerCase().trim();
+    const cleanedForAffirmative = lower.replace(/[.,!?;:()_~#*`"']/g, ' ').replace(/\s+/g, ' ').trim();
+    const isAffirmative =
+      /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji)$/i.test(cleanedForAffirmative) ||
+      isRefillConfirmationResponse(body);
+    const isNegative =
+      /^(2|no|nahi|nako|wrong|galat|cancel|n|nahi chahiye|nako re)$/i.test(cleanedForAffirmative);
 
     // Passive/waiting states: customer sends text while waiting for owner action
     if (pending.step === 'awaiting_owner_selection') {
@@ -1125,6 +1144,223 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       return true;
     }
 
+    // Step: awaiting_dosage_group (Strict 1 TAB vs 2 BOTTLE selection)
+    if (pending.step === 'awaiting_dosage_group') {
+      let dosageGroup: 'TAB' | 'BOTTLE' | null = null;
+      if (/^(1|tab|tablet|capsule|cap|pills?|strip)$/i.test(lower)) {
+        dosageGroup = 'TAB';
+      } else if (/^(2|bottle|syrup|syp|suspension|susp|liquid)$/i.test(lower)) {
+        dosageGroup = 'BOTTLE';
+      }
+
+      if (!dosageGroup) {
+        const retryMsg =
+          `Please reply with:\n` +
+          `1️⃣ Tablet / Capsule (Strips)\n` +
+          `2️⃣ Syrup / Suspension (Bottles)`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, retryMsg, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+        return true;
+      }
+
+      const query = pending.original_query || pending.suggested_name || '';
+      const pharmaQuery = sanitizePharmarackQuery(query);
+      let mappedRows: Array<{ name: string; mrp: number | null }> = [];
+      try {
+        const { performPharmarackSearch } = await import('../routes/pharmarack.js');
+        const queryTerm = (pharmaQuery || query).trim();
+        let searchRes = await performPharmarackSearch(queryTerm, null, true).catch(() => null);
+        if ((!searchRes || searchRes.status !== 'ok' || !searchRes.items || searchRes.items.length === 0) && queryTerm.toLowerCase() !== query.trim().toLowerCase()) {
+          searchRes = await performPharmarackSearch(query.trim(), null, true).catch(() => null);
+        }
+
+        let rawHits: any[] = (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) ? searchRes.items : [];
+        if (rawHits.length === 0) {
+          const cat = await searchCatalog(queryTerm, dosageGroup).catch(() => null);
+          if (cat?.mapped && Array.isArray(cat.mapped)) {
+            rawHits = cat.mapped;
+          }
+        }
+
+        if (rawHits.length > 0) {
+          const seen = new Set<string>();
+          for (const item of rawHits) {
+            const isMapped = item.isMapped === true || item.mapped === true || item.IsMapped === 1 || String(item.isMapped) === '1' || String(item.mapped) === '1' || String(item.IsMapped) === '1';
+            if (!isMapped) continue;
+            if (!isItemInStock(item.stock ?? item.availability ?? item.Stock ?? item.Availability)) continue;
+
+            const cleanName = (item.name || item.productName || item.fullName || '').trim();
+            if (!cleanName || seen.has(cleanName)) continue;
+
+            // Filter by dosage group
+            if (dosageGroup === 'TAB') {
+              if (/\b(SYP|SYRUP|SUSP|SUSPENSION|DROPS?|LIQ|LIQUID|SOLN|SOLUTION)\b/i.test(cleanName)) continue;
+            } else if (dosageGroup === 'BOTTLE') {
+              if (/\b(TAB|TABLET|TABLETS|CAP|CAPSULE|CAPSULES)\b/i.test(cleanName)) continue;
+            }
+
+            seen.add(cleanName);
+            const mrpVal = (() => { const n = typeof item.mrp === 'number' ? item.mrp : typeof (item as any).MRP === 'number' ? (item as any).MRP : parseFloat(String(item.mrp ?? (item as any).MRP ?? '')); return Number.isFinite(n) && n > 0 ? n : null; })();
+
+            mappedRows.push({
+              name: cleanName,
+              mrp: mrpVal
+            });
+            if (mappedRows.length >= 40) break;
+          }
+        }
+      } catch (err) {
+        console.warn('[Intent Service] Mapped catalog query error:', err);
+      }
+
+      if (!mappedRows || mappedRows.length === 0) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_owner_selection', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const waitMsg = `Your request for *${query}* (${dosageGroup === 'TAB' ? 'Tablet/Capsule' : 'Syrup/Bottle'}) has been received and forwarded to our pharmacy team — checking availability with our partner distributors now.`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+        if (adminWhatsapp) {
+          const ownerMsg =
+            `⚠️ *Special Order Request (Manual Sourcing Needed)*\n\n` +
+            `👤 Customer: ${activeCustomerName || 'Customer'} (+91 ${cleanDigits})\n` +
+            `💊 Medicine: *${query}* (${dosageGroup})\n\n` +
+            `No mapped partner distributor stock found in Pharmarack catalog. Please check manual sources or unmapped distributors.`;
+          await whatsappQueueWorker.enqueue(adminWhatsapp, ownerMsg, 'admin_escalation', 'Owner');
+        }
+        return true;
+      }
+
+      if (mappedRows.length === 1) {
+        const singleMed = mappedRows[0];
+        const singleMrpVal = (() => { const n = typeof singleMed.mrp === 'number' ? singleMed.mrp : parseFloat(String(singleMed.mrp ?? '')); return Number.isFinite(n) && n > 0 ? n : null; })();
+        const mrpLine = singleMrpVal != null ? `\n🏷️ MRP: ₹${singleMrpVal.toFixed(2)}` : '';
+        await db.run(
+          `UPDATE wa_pending_clarifications 
+           SET options_json = ?, suggested_name = ?, selected_option = ?, mrp = ?, step = 'awaiting_final_book', created_at = CURRENT_TIMESTAMP 
+           WHERE phone = ?`,
+          [JSON.stringify(mappedRows), singleMed.name, singleMed.name, singleMrpVal, pending.phone]
+        );
+        const bookPrompt =
+          `💊 Found medicine from our partner distributors:\n*${singleMed.name}*${mrpLine}\n\n` +
+          `Would you like us to check availability & book this for you?\n\n` +
+          `1️⃣ Yes, Book Order\n` +
+          `2️⃣ Cancel`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, bookPrompt, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+        return true;
+      }
+
+      const PAGE_SIZE = 10;
+      const initialSlice = mappedRows.slice(0, PAGE_SIZE);
+      const totalCount = mappedRows.length;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+      const formatNum = (idx: number) => {
+        const emojiNums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        return idx < 10 ? emojiNums[idx] : `${idx + 1}.`;
+      };
+      const shortenForDosage = (n: string) => n.replace(/\s*\(\s*(strip|pack|alu|blister|bottle|box)\s*(of|x)?\s*\d*\s*\)?\s*$/i, '').trim();
+      const parseMrpDosage = (v: any): number | null => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) && n > 0 ? n : null; };
+
+      const optionsList = initialSlice.map((r, idx) => {
+        const m = parseMrpDosage(r.mrp);
+        const mrpStr = m != null ? `MRP: ₹${m.toFixed(2)}` : 'MRP: N/A';
+        return `${formatNum(idx)} *${shortenForDosage(r.name)}*\n   ${mrpStr}`;
+      }).join('\n\n');
+
+      const pageInfo = totalCount > PAGE_SIZE ? ` (Page 1 of ${totalPages})` : '';
+      const moreHint = totalCount > PAGE_SIZE ? `\n👉 Reply *MORE* to see more options.` : '';
+      const optionsMsg = `🔎 *${query}* — ${totalCount} in-stock ${dosageGroup === 'TAB' ? 'tablets/capsules' : 'syrups/liquids'} from partner distributors${pageInfo}:\n\n${optionsList}\n\n👉 _Reply with the number to select._${moreHint}\n👉 _Reply *0* if your medicine is not listed._`;
+
+      await db.run(
+        `UPDATE wa_pending_clarifications 
+         SET options_json = ?, suggested_name = ?, original_query = ?, mrp = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP 
+         WHERE phone = ?`,
+        [JSON.stringify({ allOptions: mappedRows, page: 0 }), mappedRows[0].name, query, mappedRows[0].mrp, pending.phone]
+      );
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, optionsMsg, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+      return true;
+    }
+
+    // Step: awaiting_variant_pick (1..N selection with MRP-only)
+    if (pending.step === 'awaiting_variant_pick') {
+      let options: any[] = [];
+      try {
+        options = JSON.parse(pending.options_json || '[]');
+      } catch (_) {}
+
+      const numMatch = lower.match(/^(?:option\s*)?(\d{1,2})$/i);
+      let pickedIndex = -1;
+      if (numMatch) {
+        pickedIndex = parseInt(numMatch[1], 10) - 1;
+      } else if (lower.length >= 3) {
+        pickedIndex = options.findIndex((opt: any) => {
+          const optName = typeof opt === 'string' ? opt : (opt?.name || '');
+          return optName.toLowerCase().includes(lower) || lower.includes(optName.toLowerCase());
+        });
+      }
+
+      if (pickedIndex < 0 || pickedIndex >= options.length) {
+        const retryMsg = `Please reply with a number between 1 and ${options.length} to select your medicine.`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, retryMsg, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+        return true;
+      }
+
+      const chosen = options[pickedIndex];
+      const chosenVariant = typeof chosen === 'string' ? chosen : (chosen?.name || '');
+      const chosenMrp = typeof chosen === 'object' && chosen?.mrp != null && chosen.mrp > 0 ? Number(chosen.mrp) : null;
+
+      await db.run(
+        `UPDATE wa_pending_clarifications 
+         SET suggested_name = ?, selected_option = ?, mrp = ?, step = 'awaiting_final_book', created_at = CURRENT_TIMESTAMP 
+         WHERE phone = ?`,
+        [chosenVariant, chosenVariant, chosenMrp, pending.phone]
+      );
+
+      const mrpLine = chosenMrp ? `\n🏷️ MRP: ₹${chosenMrp.toFixed(2)}` : '';
+      const bookPrompt =
+        `💊 Selected: *${chosenVariant}*${mrpLine}\n\n` +
+        `Would you like us to check availability & book this for you?\n\n` +
+        `1️⃣ Yes, Book Order\n` +
+        `2️⃣ Cancel`;
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, bookPrompt, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+      return true;
+    }
+
+    // Step: awaiting_final_book (1 Confirm vs 2 Cancel)
+    if (pending.step === 'awaiting_final_book') {
+      if (isNegative || /^(2|cancel|no|nahi|nako)$/i.test(lower)) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'cancelled', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const cancelMsg = `Your request for *${pending.suggested_name}* has been cancelled. Whenever you need any medicine, just send us a message!`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, cancelMsg, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+        return true;
+      }
+
+      if (isAffirmative || /^(1|yes|book|confirm|order)$/i.test(lower)) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const mrpSuffix = pending.mrp != null && pending.mrp > 0 ? ` (MRP ₹${Number(pending.mrp).toFixed(2)})` : '';
+        const qtyPrompt = `✅ Confirmed: *${pending.suggested_name}*${mrpSuffix}\n\n📦 Please enter the quantity you need (e.g. 1 strip, 2 bottles):`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, qtyPrompt, 'customer_medicine_clarification', activeCustomerName || 'Customer');
+        return true;
+      }
+    }
+
     // Step: awaiting_customer_name (Customer greeted, now providing their name)
     if (pending.step === 'awaiting_customer_name') {
       const rawName = body.trim();
@@ -1183,17 +1419,30 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';
       const hoursNotice = await getStoreHoursNotice(db);
 
+      const { getPharmacyOperatingSchedule: getSchedForWelcome } = await import('./storeSettingsService.js');
+      const schedForWelcome = await getSchedForWelcome(db);
+      const hoursLineForWelcome = `🕐 Open: ${schedForWelcome.openTime} – ${schedForWelcome.closeTime}${schedForWelcome.weeklyOff ? ` | Off: ${schedForWelcome.weeklyOff}` : ''}`;
+
       const welcomeMsg =
         `🙏 Namaste *${formattedName}* ji! Welcome to ${storeName}.${hoursNotice}\n\n` +
-        `I can help you check medicine availability or place an order.\n\n` +
-        `You can:\n` +
-        `📸 Send a clear photo of your prescription or medicine strip\n` +
-        `✍️ Or type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*)\n\n` +
-        `Please enter the medicine name or send a photo to begin.`;
+        `*Place your order in simple steps:*\n\n` +
+        `*Step 1:* Choose your order type —\n` +
+        `  1️⃣ Single Medicine\n` +
+        `  2️⃣ Multiple Medicines\n` +
+        `  3️⃣ Refill — Repeat my regular prescription\n\n` +
+        `*Step 2:* We show you options & MRP 💰\n` +
+        `*Step 3:* You confirm & we book 🚀\n\n` +
+        `${hoursLineForWelcome}\n\n` +
+        `*Reply 1, 2, or 3 to begin.*`;
+
+      await db.run(
+        `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+        [cleanDigits]
+      );
 
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
       await whatsappQueueWorker.enqueue(phone, welcomeMsg, 'customer_greeting', formattedName);
-      console.log(`[Intent Service] Registered customer name "${formattedName}" for ${cleanDigits}. Advanced to awaiting_medicine.`);
+      console.log(`[Intent Service] Registered customer name "${formattedName}" for ${cleanDigits}. Advanced to awaiting_order_type.`);
       return true;
     }
 
@@ -1252,6 +1501,257 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       return true;
     }
 
+    // Step: awaiting_order_type (Customer was greeted, now picks 1 / 2 / 3)
+    if (pending.step === 'awaiting_order_type') {
+      const picked = body.trim();
+      const isOne   = /^1$/.test(picked);
+      const isTwo   = /^2$/.test(picked);
+      const isThree = /^(3|refill|same|wahi|repeat)$/i.test(picked);
+
+      if (isOne) {
+        // Single medicine — advance to awaiting_medicine
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const askMsg = `✍️ Please type the *medicine name* (and quantity if known).\n\nExample: *Dolo 650 - 2 strips*`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      if (isTwo) {
+        // Multiple medicines — advance to awaiting_multi_medicine_list
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const askMsg =
+          `📋 Please send your *complete medicine list* with quantities.\n\n` +
+          `Example:\n` +
+          `• Dolo 650 - 2 strips\n` +
+          `• Pan D - 1 strip\n` +
+          `• Nicotex 4 - 1 pack\n\n` +
+          `_You can also send a prescription photo instead._`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, askMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      if (isThree) {
+        // Refill — look up past prescriptions for this phone
+        const last10 = cleanDigits;
+        let refillRows: any[] = [];
+        try {
+          refillRows = await db.all(
+            `SELECT m.name AS medicine_name, pr.quantity_needed, pr.refill_interval_days, pr.last_refill_date
+             FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
+             WHERE pr.patient_phone LIKE ? AND pr.is_active = 1 AND pr.status NOT IN ('completed','canceled')
+             ORDER BY pr.last_refill_date DESC LIMIT 10`,
+            [`%${last10}`]
+          );
+        } catch (_) {}
+
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+
+        if (refillRows && refillRows.length > 0) {
+          const itemListText = refillRows.map((r: any) =>
+            `• *${r.medicine_name}* × ${r.quantity_needed || 1} strip`
+          ).join('\n');
+
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_refill_choice', items_json = ?, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [JSON.stringify(refillRows), pending.phone]
+          );
+
+          const refillMsg =
+            `🔁 *Your last prescription was:*\n${itemListText}\n\n` +
+            `*Same as before or any changes?*\n` +
+            `1️⃣ Same — book exactly this\n` +
+            `2️⃣ Change quantities\n` +
+            `3️⃣ Different medicines this time\n` +
+            `4️⃣ Talk to pharmacist directly 📞`;
+          await whatsappQueueWorker.enqueue(phone, refillMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        } else {
+          // No past prescription found — offer fresh order or pharmacist
+          const { getStorePhone: getPhoneForRefill, getStoreMedicalName: getNameForRefill } = await import('./storeSettingsService.js');
+          const storePhoneForRefill = await getPhoneForRefill(db);
+          const storeNameForRefill = await getNameForRefill(db);
+
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending.phone]
+          );
+
+          const noRefillMsg =
+            `🔍 We couldn\'t find a previous prescription for your number.\n\n` +
+            `Would you like to:\n` +
+            `1️⃣ Order a new medicine\n` +
+            `2️⃣ Multiple medicines\n` +
+            (storePhoneForRefill
+              ? `3️⃣ Talk to pharmacist: ${storePhoneForRefill} 📞`
+              : `3️⃣ Talk to pharmacist directly 📞`);
+          await whatsappQueueWorker.enqueue(phone, noRefillMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        }
+        return true;
+      }
+
+      // Customer typed something else instead of 1/2/3 — re-prompt
+      const reprompt =
+        `Please reply with:\n` +
+        `1️⃣ Single Medicine\n` +
+        `2️⃣ Multiple Medicines\n` +
+        `3️⃣ Refill`;
+      const { whatsappQueueWorker: qwReprompt } = await import('./whatsappQueueWorker.js');
+      await qwReprompt.enqueue(phone, reprompt, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+      return true;
+    }
+
+    // Step: awaiting_refill_choice (Selected 1/2/3/4 from refill menu)
+    if (pending.step === 'awaiting_refill_choice') {
+      const picked = body.trim();
+      const isOne   = /^1$/.test(picked);
+      const isTwo   = /^2$/.test(picked);
+      const isThree = /^3$/.test(picked);
+      const isFour  = /^(4|pharmacist|doctor|call|phone|contact)$/i.test(picked);
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+
+      if (isOne) {
+        // Book same as before
+        let bundle: any[] = [];
+        try { bundle = JSON.parse(pending.items_json || '[]'); } catch (_) {}
+        if (bundle.length > 0) {
+          const itemListText = bundle.map((item: any, idx: number) =>
+            `${idx + 1}. *${item.medicine_name}* × ${item.quantity_needed || 1} strip`
+          ).join('\n');
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_confirmation', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending.phone]
+          );
+          const confirmMsg =
+            `✅ Please confirm your refill order:\n\n${itemListText}\n\n` +
+            `Reply *YES* to confirm or *NO* to cancel.`;
+          await whatsappQueueWorker.enqueue(phone, confirmMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        } else {
+          await db.run(
+            `UPDATE wa_pending_clarifications SET step = 'awaiting_order_type', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+            [pending.phone]
+          );
+          await whatsappQueueWorker.enqueue(phone, `Please type the medicine name to order.`, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        }
+        return true;
+      }
+
+      if (isTwo) {
+        // Change quantities — go to multi-medicine list with existing items pre-noted
+        let bundle: any[] = [];
+        try { bundle = JSON.parse(pending.items_json || '[]'); } catch (_) {}
+        const existingList = bundle.length > 0
+          ? bundle.map((r: any) => `• ${r.medicine_name}`).join('\n')
+          : '';
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const changeQtyMsg =
+          `📝 Please re-send your medicines with *updated quantities*:\n` +
+          (existingList ? `\nYour previous list was:\n${existingList}\n\n` : '\n') +
+          `Example:\n• Dolo 650 - 3 strips\n• Pan D - 2 strips`;
+        await whatsappQueueWorker.enqueue(phone, changeQtyMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      if (isThree) {
+        // Different medicines — treat like new multi-medicine order
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_multi_medicine_list', items_json = NULL, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const newListMsg =
+          `📋 Please send your *new medicine list* with quantities.\n\n` +
+          `Example:\n• Dolo 650 - 2 strips\n• Pan D - 1 strip`;
+        await whatsappQueueWorker.enqueue(phone, newListMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      if (isFour) {
+        // Talk to pharmacist — send store phone
+        const { getStorePhone: getPhoneForChat, getStoreMedicalName: getNameForChat, getPharmacyOperatingSchedule: getSchedForChat } = await import('./storeSettingsService.js');
+        const storePhoneForChat = await getPhoneForChat(db);
+        const storeNameForChat  = await getNameForChat(db);
+        const schedForChat      = await getSchedForChat(db);
+        await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
+        const pharmacistMsg =
+          `📞 *${storeNameForChat}*\n\n` +
+          `For complex orders or prescription changes,\nplease contact our pharmacist directly:\n\n` +
+          (storePhoneForChat ? `📱 *${storePhoneForChat}*\n` : '') +
+          `🕐 Available: ${schedForChat.openTime} – ${schedForChat.closeTime}${schedForChat.weeklyOff ? ` (Closed: ${schedForChat.weeklyOff})` : ''}\n\n` +
+          `Our team will be happy to assist you! 🙏`;
+        await whatsappQueueWorker.enqueue(phone, pharmacistMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+        return true;
+      }
+
+      // Invalid reply — reprompt
+      const repromptRefill =
+        `Please reply with:\n` +
+        `1️⃣ Same — book exactly this\n` +
+        `2️⃣ Change quantities\n` +
+        `3️⃣ Different medicines\n` +
+        `4️⃣ Talk to pharmacist`;
+      await whatsappQueueWorker.enqueue(phone, repromptRefill, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+      return true;
+    }
+
+    // Step: awaiting_multi_medicine_list (Customer sends their full medicine list)
+    if (pending.step === 'awaiting_multi_medicine_list') {
+      const listText = body.trim();
+      if (listText.length < 3) {
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          `Please type your medicine list (e.g. "Dolo 650 - 2 strips, Pan D - 1 strip").`,
+          'customer_medicine_clarification',
+          activeCustomerName || customer?.name || 'Customer'
+        );
+        return true;
+      }
+      // Parse the list as multi-candidate, build bundle, store in items_json and advance to awaiting_confirmation
+      let bundledItems: Array<{ requestedName: string; matchedName: string; quantity: number; unit: string }> = [];
+      try {
+        const cands = extractMedicineCandidates(listText);
+        for (const cand of cands) {
+          let matched = cand.medicineName;
+          try {
+            const res = await productNameFilterService.filterProductNames(cand.medicineName, { minConfidenceThreshold: 0.5 });
+            if (res?.matches?.[0]) matched = res.matches[0];
+          } catch (_) {}
+          bundledItems.push({ requestedName: cand.medicineName, matchedName: matched, quantity: cand.quantity || 1, unit: cand.unit || 'strip' });
+        }
+      } catch (_) {}
+
+      if (bundledItems.length === 0) {
+        // Could not parse — fall through to normal single-medicine flow by clearing step
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_medicine', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        // Fall through: let normal medicine search pick it up
+        return false;
+      }
+
+      const itemListText = bundledItems.map((item, idx) => `${idx + 1}. *${item.matchedName}* × ${item.quantity} ${item.unit}`).join('\n');
+      await db.run(
+        `UPDATE wa_pending_clarifications SET step = 'awaiting_confirmation', items_json = ?, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+        [JSON.stringify(bundledItems), pending.phone]
+      );
+      const confirmMsg =
+        `✅ Please confirm your order:\n\n${itemListText}\n\n` +
+        `Reply *YES* to confirm or *NO* to cancel.`;
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(phone, confirmMsg, 'customer_medicine_clarification', activeCustomerName || customer?.name || 'Customer');
+      return true;
+    }
+
     // Step: awaiting_medicine (Customer was greeted, now sends medicine name)
     if (pending.step === 'awaiting_medicine') {
       const medQuery = body.trim();
@@ -1295,66 +1795,159 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         }
       } catch (_) {}
 
-      let catalogMatches: string[] = [];
+      const pharmaQuery = sanitizePharmarackQuery(medQuery);
+      let mappedCatalogHits: Array<{ name: string; mrp: number | null }> = [];
+      let liveHitsForBroadcast: any[] = [];
       try {
-        const pharmaQuery = sanitizePharmarackQuery(medQuery);
-        const cat = await searchCatalog(pharmaQuery || medQuery);
-        catalogMatches = [
-          ...(cat.mapped || []).map((m: any) => m.name || m.productName),
-          ...(cat.nonMapped || []).map((m: any) => m.name || m.productName)
-        ].filter(Boolean);
-      } catch (_) {}
-
-      const combined = [...localMatches, ...catalogMatches];
-      const seenNorm = new Set<string>();
-      const allOptions: string[] = [];
-
-      for (const rawName of combined) {
-        const norm = rawName.toUpperCase().replace(/\s+/g, ' ').trim();
-        const simpleKey = norm.replace(/[^A-Z0-9]/g, '');
-        if (!seenNorm.has(simpleKey) && simpleKey.length > 2) {
-          seenNorm.add(simpleKey);
-          allOptions.push(norm);
-          if (allOptions.length >= 45) break;
+        const { performPharmarackSearch } = await import('../routes/pharmarack.js');
+        const queryTerm = (pharmaQuery || medQuery).trim();
+        let searchRes = await performPharmarackSearch(queryTerm, null, true).catch(() => null);
+        if ((!searchRes || searchRes.status !== 'ok' || !searchRes.items || searchRes.items.length === 0) && queryTerm.toLowerCase() !== medQuery.trim().toLowerCase()) {
+          searchRes = await performPharmarackSearch(medQuery.trim(), null, true).catch(() => null);
         }
+
+        let rawHits: any[] = (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) ? searchRes.items : [];
+        liveHitsForBroadcast = rawHits;
+
+        if (rawHits.length === 0) {
+          const cat = await searchCatalog(queryTerm).catch(() => null);
+          if (cat?.mapped && Array.isArray(cat.mapped)) {
+            rawHits = cat.mapped;
+          }
+        }
+
+        if (rawHits.length > 0) {
+          const seen = new Set<string>();
+          for (const item of rawHits) {
+            const isMapped = item.isMapped === true || item.mapped === true || item.IsMapped === 1 || String(item.isMapped) === '1' || String(item.mapped) === '1' || String(item.IsMapped) === '1';
+            if (!isMapped) continue;
+            if (!isItemInStock(item.stock ?? item.availability ?? item.Stock ?? item.Availability)) continue;
+
+            const cleanName = (item.name || item.productName || item.fullName || '').trim();
+            if (!cleanName || seen.has(cleanName)) continue;
+            seen.add(cleanName);
+
+            const mrpVal = (() => {
+              const raw = item.mrp ?? (item as any).MRP ?? (item as any).Mrp ?? '';
+              const n = typeof raw === 'number' ? raw : parseFloat(String(raw));
+              return Number.isFinite(n) && n > 0 ? n : null;
+            })();
+
+            mappedCatalogHits.push({
+              name: cleanName,
+              mrp: mrpVal
+            });
+            if (mappedCatalogHits.length >= 40) break;
+          }
+        }
+      } catch (err) {
+        console.warn('[Intent Service] Mapped catalog query note:', err);
       }
 
-      if (allOptions.length === 0) {
-        const notFoundMsg = `I could not find a medicine matching "${medQuery}". Please check the spelling or send a clear photo of your prescription / medicine strip.`;
+      // Broadcast live match results to admin WaRequestsPanel UI
+      if (liveHitsForBroadcast.length > 0) {
+        try {
+          eventService.broadcast('wa_medicine_match', {
+            customer,
+            isNewCustomer: false,
+            medicineName: medQuery,
+            quantity: pending.quantity ? `${pending.quantity} ${pending.unit || 'strip'}` : '1',
+            unit: pending.unit || 'strip',
+            dosageForm: pending.unit || '',
+            localMatches: localMatches.slice(0, 5),
+            inventoryStock: {},
+            availability: 'SHORTAGE',
+            catalogResults: {
+              mapped: liveHitsForBroadcast.filter((p: any) => p.mapped || p.isMapped),
+              nonMapped: liveHitsForBroadcast.filter((p: any) => !p.mapped && !p.isMapped)
+            },
+            confidence: 95,
+            isRepeat: false,
+            source: 'text',
+            messageBody: body,
+            history: [],
+            livePharmarackResults: liveHitsForBroadcast,
+            mediaId: null,
+            relatedMedicines: [],
+            isStale: false
+          });
+        } catch (_) {}
+      }
+
+      if (mappedCatalogHits.length === 0) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_owner_selection', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const waitMsg = `Your request for *${medQuery}* has been received and forwarded to our pharmacy team — checking availability with our partner distributors now.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, notFoundMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+        await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+        if (adminWhatsapp) {
+          const ownerMsg =
+            `⚠️ *Special Order Request (Manual Sourcing Needed)*\n\n` +
+            `👤 Customer: ${customer?.name || 'Customer'} (+91 ${cleanDigits})\n` +
+            `💊 Medicine: *${medQuery}*\n\n` +
+            `No mapped partner distributor stock found in Pharmarack catalog. Please check manual sources or unmapped distributors.`;
+          await whatsappQueueWorker.enqueue(adminWhatsapp, ownerMsg, 'admin_escalation', 'Owner');
+        }
         return true;
       }
 
-      if (allOptions.length === 1) {
-        const singleMedicine = allOptions[0];
+      if (mappedCatalogHits.length === 1) {
+        const singleMed = mappedCatalogHits[0];
+        const singleMrpVal2 = (() => { const n = typeof singleMed.mrp === 'number' ? singleMed.mrp : parseFloat(String(singleMed.mrp ?? '')); return Number.isFinite(n) && n > 0 ? n : null; })();
+        const mrpStr = singleMrpVal2 != null ? `\n🏷️ MRP: ₹${singleMrpVal2.toFixed(2)}` : '';
         await db.run(
           `UPDATE wa_pending_clarifications
-           SET suggested_name = ?, selected_option = ?, original_query = ?, options_json = NULL, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
+           SET suggested_name = ?, selected_option = ?, mrp = ?, original_query = ?, options_json = NULL, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP
            WHERE phone = ?`,
-          [singleMedicine, singleMedicine, medQuery, pending.phone]
+          [singleMed.name, singleMed.name, singleMrpVal2, medQuery, pending.phone]
         );
-        const confirmPrompt = `💊 Medicine selected:\n*${singleMedicine}*\n\nIs this the medicine you need?\n\nReply *YES* to confirm or *NO* to search again.`;
+        const confirmPrompt = `💊 Medicine selected:\n*${singleMed.name}*${mrpStr}\n\nIs this the medicine you need?\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
       }
 
-      const PAGE_SIZE = 15;
-      const initialSlice = allOptions.slice(0, PAGE_SIZE);
+      const PAGE_SIZE = 10;
+      const initialSlice = mappedCatalogHits.slice(0, PAGE_SIZE);
       const formatNum = (idx: number) => {
         const emojiNums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
         return idx < 10 ? emojiNums[idx] : `${idx + 1}.`;
       };
-      const optionsList = initialSlice.map((opt, i) => `${formatNum(i)} ${opt}`).join('\n');
-      const moreHint = allOptions.length > PAGE_SIZE ? `\n\n👉 Reply *MORE* to see more options.` : '';
-      const promptMsg = `🔎 I found these medicine options for *${medQuery}*:\n\n${optionsList}${moreHint}\n\nPlease reply with the number of the medicine you need.`;
+      // Helper: shorten a long catalog name to brand + strength for WhatsApp readability
+      const shortenName = (fullName: string): string => {
+        // Remove trailing noise like (PACK OF 10), (ALU-ALU), (STRIP OF 10) etc.
+        const clean = fullName
+          .replace(/\s*\(\s*(strip|pack|alu|blister|bottle|vial|box|ml|gm|mg|kg|unit|tab|cap|sachet|tube|infusion|injection)\s*(of|x)?\s*\d*\s*\)?\s*$/i, '')
+          .replace(/\s*-\s*(strip|pack|alu|box|bottle)\s*(of|x)?\s*\d*\s*$/i, '')
+          .trim();
+        // Cap at 40 chars so it fits one line on a mobile screen
+        return clean.length > 40 ? clean.slice(0, 38) + '…' : clean;
+      };
+      const parseMrp = (raw: any): number | null => {
+        const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? ''));
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+      const optionsList = initialSlice.map((opt, i) => {
+        const mrpVal = parseMrp(opt.mrp);
+        const mrpStr = mrpVal != null ? `MRP: ₹${mrpVal.toFixed(2)}` : 'MRP: N/A';
+        return `${formatNum(i)} *${shortenName(opt.name)}*\n   ${mrpStr}`;
+      }).join('\n\n');
+
+      const totalCount = mappedCatalogHits.length;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+      const pageInfo = totalCount > PAGE_SIZE ? ` (Page 1 of ${totalPages})` : '';
+      const moreHint = totalCount > PAGE_SIZE ? `\n👉 Reply *MORE* to see more options.` : '';
+      const promptMsg = `🔎 *${medQuery}* — ${totalCount} in-stock options from partner distributors${pageInfo}:\n\n${optionsList}\n\n👉 _Reply with the number to select._${moreHint}\n👉 _Reply *0* if your medicine is not listed._`;
 
       await db.run(
         `UPDATE wa_pending_clarifications
-         SET suggested_name = ?, original_query = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
+         SET suggested_name = ?, original_query = ?, mrp = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
          WHERE phone = ?`,
-        [allOptions[0], medQuery, JSON.stringify({ allOptions, page: 0 }), pending.phone]
+        [mappedCatalogHits[0].name, medQuery, mappedCatalogHits[0].mrp, JSON.stringify({ allOptions: mappedCatalogHits, page: 0 }), pending.phone]
       );
 
       const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
@@ -1364,9 +1957,9 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
 
     // Step: awaiting_selection (Customer sends number of the medicine option or MORE)
     if (pending.step === 'awaiting_selection' && pending.options_json) {
-      let options: string[] = [];
+      let options: any[] = [];
       let currentPage = 0;
-      const PAGE_SIZE = 15;
+      const PAGE_SIZE = 10;
       try {
         const parsed = JSON.parse(pending.options_json);
         if (Array.isArray(parsed)) {
@@ -1380,23 +1973,46 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         options = [];
       }
 
-      // Check if customer asked for "MORE" pagination
+      const formatNum = (idx: number) => {
+        const emojiNums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        return idx < 10 ? emojiNums[idx] : `${idx + 1}.`;
+      };
+      const shortenName = (fullName: string): string => {
+        const clean = fullName
+          .replace(/\s*\(\s*(strip|pack|alu|blister|bottle|vial|box|ml|gm|mg|kg|unit|tab|cap|sachet|tube|infusion|injection)\s*(of|x)?\s*\d*\s*\)?\s*$/i, '')
+          .replace(/\s*-\s*(strip|pack|alu|box|bottle)\s*(of|x)?\s*\d*\s*$/i, '')
+          .trim();
+        return clean.length > 40 ? clean.slice(0, 38) + '…' : clean;
+      };
+      const parseMrp = (raw: any): number | null => {
+        const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? ''));
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+
+      // Check if customer asked for "MORE" or "BACK" pagination
       const isMore = /^(more|next|aage|aur|show more)$/i.test(lower);
-      if (isMore && options.length > PAGE_SIZE) {
+      const isBack = /^(back|prev|previous|piche)$/i.test(lower);
+      if ((isMore || isBack) && options.length > PAGE_SIZE) {
         const totalPages = Math.ceil(options.length / PAGE_SIZE);
-        const nextPage = (currentPage + 1) % totalPages;
+        const nextPage = isBack
+          ? (currentPage - 1 + totalPages) % totalPages
+          : (currentPage + 1) % totalPages;
         const startIdx = nextPage * PAGE_SIZE;
         const currentSlice = options.slice(startIdx, startIdx + PAGE_SIZE);
 
-        const formatNum = (idx: number) => {
-          const displayNum = startIdx + idx + 1;
-          const emojiNums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-          return displayNum <= 10 ? emojiNums[displayNum - 1] : `${displayNum}.`;
-        };
-        const optionsList = currentSlice.map((opt, i) => `${formatNum(i)} ${opt}`).join('\n');
-        const hasMoreAfter = options.length > startIdx + PAGE_SIZE || nextPage < totalPages - 1;
-        const moreHint = hasMoreAfter ? `\n\n👉 Reply *MORE* to see more options.` : '';
-        const promptMsg = `🔎 Options (${startIdx + 1}–${startIdx + currentSlice.length} of ${options.length}) for *${pending.original_query || 'medicine'}*:\n\n${optionsList}${moreHint}\n\nPlease reply with the number of the medicine you need.`;
+        const optionsList = currentSlice.map((opt: any, i: number) => {
+          const optName = typeof opt === 'string' ? opt : (opt?.name || '');
+          const mrpVal = parseMrp(opt?.mrp);
+          const mrpStr = mrpVal != null ? `MRP: ₹${mrpVal.toFixed(2)}` : 'MRP: N/A';
+          return `${formatNum(startIdx + i)} *${shortenName(optName)}*\n   ${mrpStr}`;
+        }).join('\n\n');
+
+        const navHints: string[] = [];
+        if (nextPage < totalPages - 1) navHints.push(`Reply *MORE* for next`);
+        if (nextPage > 0) navHints.push(`Reply *BACK* for previous`);
+        const navHintStr = navHints.length > 0 ? `\n👉 ${navHints.join(' | ')}.` : '';
+
+        const promptMsg = `🔎 Options (${startIdx + 1}–${startIdx + currentSlice.length} of ${options.length}) for *${pending.original_query || 'medicine'}* (Page ${nextPage + 1} of ${totalPages}):\n\n${optionsList}\n\n👉 _Reply with the number (${startIdx + 1}–${startIdx + currentSlice.length}) to select._${navHintStr}\n👉 _Reply *0* if your medicine is not listed._`;
 
         await db.run(
           `UPDATE wa_pending_clarifications
@@ -1410,6 +2026,29 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         return true;
       }
 
+      // Check for '0' or 'not in list' escalation (Human-in-the-Loop)
+      const isEscalateToPharmacist = /^(?:option\s*)?0$|^(?:none|not\s*in\s*list|not\s*listed|nahi\s*mila|pharmacist|human|help|other)$/i.test(lower);
+      if (isEscalateToPharmacist) {
+        await db.run(
+          `UPDATE wa_pending_clarifications SET step = 'awaiting_owner_selection', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
+          [pending.phone]
+        );
+        const waitMsg = `👨‍⚕️ Got it! We've forwarded your request for *${pending.original_query || pending.suggested_name || 'your medicine'}* directly to our pharmacist. We will check offline distributor catalogs and get back to you shortly.`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, waitMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db);
+        if (adminWhatsapp) {
+          const ownerMsg =
+            `⚠️ *Special Order Request (Customer Requested Manual Sourcing)*\n\n` +
+            `👤 Customer: ${customer?.name || 'Customer'} (+91 ${cleanDigits})\n` +
+            `💊 Medicine: *${pending.original_query || pending.suggested_name || 'Medicine'}*\n\n` +
+            `Customer indicated their desired variant was not in the partner distributor options. Please check manual sources or unmapped distributors.`;
+          await whatsappQueueWorker.enqueue(adminWhatsapp, ownerMsg, 'admin_escalation', 'Owner');
+        }
+        return true;
+      }
+
       let chosenIndex = -1;
       const numMatch = lower.match(/^(?:option\s*)?(\d{1,3})$/i);
       if (numMatch) {
@@ -1420,12 +2059,14 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         } else {
           // Check if entered number matches the strength in any of the options (e.g. user typed 100 for 100mg)
           const strengthRegex = new RegExp(`\\b${enteredNum}\\s*(?:mg|ml|gm|mcg|iu)?\\b`, 'i');
-          const strengthMatchIdx = options.findIndex(opt => strengthRegex.test(opt));
+          const strengthMatchIdx = options.findIndex((opt: any) => {
+            const optName = typeof opt === 'string' ? opt : (opt?.name || '');
+            return strengthRegex.test(optName);
+          });
           if (strengthMatchIdx !== -1) {
             chosenIndex = strengthMatchIdx;
           } else {
-            const maxVisible = Math.min(options.length, (currentPage + 1) * PAGE_SIZE);
-            const outOfRangeMsg = `⚠️ Option ${enteredNum} is not on the list. Please reply with a number between 1 and ${maxVisible}${options.length > PAGE_SIZE ? ', or reply *MORE* to see more options' : ''}.`;
+            const outOfRangeMsg = `⚠️ Option ${enteredNum} is not on the list. Please reply with a number between 1 and ${options.length}${options.length > PAGE_SIZE ? ', reply *MORE* to see more options' : ''}, or reply *0* if not listed.`;
             const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
             await whatsappQueueWorker.enqueue(phone, outOfRangeMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
             return true;
@@ -1434,22 +2075,83 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       } else {
         // Match by text only if input is at least 3 letters and NOT pure numbers
         if (lower.length >= 3 && !/^\d+$/.test(lower)) {
-          const idx = options.findIndex(opt => opt.toLowerCase().includes(lower) || lower.includes(opt.toLowerCase()));
+          const idx = options.findIndex((opt: any) => {
+            const optName = typeof opt === 'string' ? opt : (opt?.name || '');
+            return optName.toLowerCase().includes(lower) || lower.includes(optName.toLowerCase());
+          });
           if (idx !== -1) {
             chosenIndex = idx;
+          } else {
+            // Smart Refine: Re-query partner distributor catalog with the new search term
+            const newQuery = body.trim();
+            const pharmaQuery = sanitizePharmarackQuery(newQuery);
+            const { performPharmarackSearch } = await import('../routes/pharmarack.js');
+            const queryTerm = (pharmaQuery || newQuery).trim();
+            let searchRes = await performPharmarackSearch(queryTerm, null, true).catch(() => null);
+            if ((!searchRes || searchRes.status !== 'ok' || !searchRes.items || searchRes.items.length === 0) && queryTerm.toLowerCase() !== newQuery.toLowerCase()) {
+              searchRes = await performPharmarackSearch(newQuery, null, true).catch(() => null);
+            }
+            let rawHits: any[] = (searchRes && searchRes.status === 'ok' && Array.isArray(searchRes.items)) ? searchRes.items : [];
+            if (rawHits.length === 0) {
+              const cat = await searchCatalog(queryTerm).catch(() => null);
+              if (cat?.mapped && Array.isArray(cat.mapped)) {
+                rawHits = cat.mapped;
+              }
+            }
+
+            const newMappedHits: Array<{ name: string; mrp: number | null }> = [];
+            const seen = new Set<string>();
+            for (const item of rawHits) {
+              const isMapped = item.isMapped === true || item.mapped === true || item.IsMapped === 1 || String(item.isMapped) === '1' || String(item.mapped) === '1' || String(item.IsMapped) === '1';
+              if (!isMapped) continue;
+              if (!isItemInStock(item.stock ?? item.availability ?? item.Stock ?? item.Availability)) continue;
+              const cleanName = (item.name || item.productName || item.fullName || '').trim();
+              if (!cleanName || seen.has(cleanName)) continue;
+              seen.add(cleanName);
+              newMappedHits.push({ name: cleanName, mrp: parseMrp(item.mrp ?? (item as any).MRP ?? (item as any).Mrp) });
+              if (newMappedHits.length >= 40) break;
+            }
+
+            if (newMappedHits.length > 0) {
+              const totalNew = newMappedHits.length;
+              const totalNewPages = Math.ceil(totalNew / PAGE_SIZE);
+              const initialSlice = newMappedHits.slice(0, PAGE_SIZE);
+              const optionsList = initialSlice.map((opt, i) => {
+                const mrpVal = parseMrp(opt.mrp);
+                const mrpStr = mrpVal != null ? `MRP: ₹${mrpVal.toFixed(2)}` : 'MRP: N/A';
+                return `${formatNum(i)} *${shortenName(opt.name)}*\n   ${mrpStr}`;
+              }).join('\n\n');
+              const pageIndicator = totalNew > PAGE_SIZE ? ` (Page 1 of ${totalNewPages})` : '';
+              const moreHint = totalNew > PAGE_SIZE ? `\n👉 Reply *MORE* to see more options.` : '';
+              const promptMsg = `🔎 *${newQuery}* — ${totalNew} in-stock options from partner distributors${pageIndicator}:\n\n${optionsList}\n\n👉 _Reply with the number to select._${moreHint}\n👉 _Reply *0* if your medicine is not listed._`;
+
+              await db.run(
+                `UPDATE wa_pending_clarifications
+                 SET suggested_name = ?, original_query = ?, mrp = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
+                 WHERE phone = ?`,
+                [newMappedHits[0].name, newQuery, newMappedHits[0].mrp, JSON.stringify({ allOptions: newMappedHits, page: 0 }), pending.phone]
+              );
+
+              const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+              await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
+              return true;
+            }
           }
         }
       }
 
       if (chosenIndex !== -1 && options[chosenIndex]) {
-        const chosenMedicine = options[chosenIndex];
+        const chosen = options[chosenIndex];
+        const chosenMedicine = typeof chosen === 'string' ? chosen : (chosen?.name || '');
+        const chosenMrp = typeof chosen === 'object' && chosen?.mrp != null && chosen.mrp > 0 ? Number(chosen.mrp) : null;
         await db.run(
           `UPDATE wa_pending_clarifications 
-           SET suggested_name = ?, selected_option = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET suggested_name = ?, selected_option = ?, mrp = ?, step = 'awaiting_medicine_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [chosenMedicine, chosenMedicine, pending.phone]
+          [chosenMedicine, chosenMedicine, chosenMrp, pending.phone]
         );
-        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*\n\nIs this the medicine you need?\n\nReply *YES* to confirm or *NO* to search again.`;
+        const mrpStr = chosenMrp ? `\n🏷️ MRP: ₹${chosenMrp.toFixed(2)}` : '';
+        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*${mrpStr}\n\nIs this the medicine you need?\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
@@ -1474,7 +2176,8 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET step = 'awaiting_qty', created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const qtyPrompt = `✅ Medicine confirmed: *${pending.suggested_name}*\n\n📦 Please enter the quantity you need.`;
+        const mrpSuffix = pending.mrp != null && pending.mrp > 0 ? ` (MRP ₹${Number(pending.mrp).toFixed(2)})` : '';
+        const qtyPrompt = `✅ Medicine confirmed: *${pending.suggested_name}*${mrpSuffix}\n\n📦 Please enter the quantity you need.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, qtyPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
@@ -1495,7 +2198,9 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
            WHERE phone = ?`,
           [finalQty, finalUnit, pending.phone]
         );
-        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}\n\nReply *YES* to confirm.`;
+        const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
+        const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${finalUnit}\n💰 Total MRP: ₹${(unitMrp * finalQty).toFixed(2)}` : '';
+        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}${mrpDetails}\n\nReply *1* (or *YES*) to confirm.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
@@ -1517,21 +2222,6 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
         const retryQtyMsg = `Understood! How many strips or units do you need?`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, retryQtyMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
-        return true;
-      }
-
-      // Quantity adjustment during confirmation (e.g. "Actually make it 3")
-      const adjustedQty = extractQuantityFromText(body);
-      if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
-        await db.run(
-          `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
-           WHERE phone = ?`,
-          [adjustedQty.quantity, adjustedQty.unit || 'strip', pending.phone]
-        );
-        const confirmPrompt = `Updated:\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}\n\nReply *YES* to confirm.`;
-        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
       }
 
@@ -1587,6 +2277,23 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           db,
           chatId
         );
+        return true;
+      }
+
+      // Quantity adjustment during confirmation (e.g. "Actually make it 3" or customer typing a different quantity)
+      const adjustedQty = extractQuantityFromText(body);
+      if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
+        await db.run(
+          `UPDATE wa_pending_clarifications 
+           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           WHERE phone = ?`,
+          [adjustedQty.quantity, adjustedQty.unit || 'strip', pending.phone]
+        );
+        const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
+        const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${adjustedQty.unit || 'strip'}\n💰 Total MRP: ₹${(unitMrp * adjustedQty.quantity).toFixed(2)}` : '';
+        const confirmPrompt = `Updated:\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}${mrpDetails}\n\nReply *1* (or *YES*) to confirm.`;
+        const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
         return true;
       }
     }
@@ -1714,8 +2421,9 @@ async function proceedWithConfirmedProcurement(
   const orderRes = await db.run(
     `INSERT INTO special_orders (
        store_id, requester, phone, medicine_name, product, qty, priority, status,
-       date, notified, customer_order_source, total_amount, advance_payment, payment_status
-     ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID')`,
+       date, notified, customer_order_source, total_amount, advance_payment, payment_status,
+       pharmarack_mrp
+     ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?)`,
     [
       1,
       customerName,
@@ -1723,7 +2431,8 @@ async function proceedWithConfirmedProcurement(
       medName,
       medName,
       medQty,
-      todayStr
+      todayStr,
+      pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null
     ]
   );
   const specialOrderId = Number(orderRes.lastID) || 0;
@@ -1758,7 +2467,8 @@ async function proceedWithConfirmedProcurement(
     });
 
     // Courtesy message to customer
-    const custWaitMsg = `Your request for *${medName}* × ${medQty} has been forwarded to our pharmacy for distributor confirmation.\n\nWe will send you payment details shortly.`;
+    const mrpSuffix = pending.mrp != null && pending.mrp > 0 ? ` (MRP ₹${Number(pending.mrp).toFixed(2)})` : '';
+    const custWaitMsg = `Your request for *${medName}* × ${medQty}${mrpSuffix} has been forwarded to our pharmacy for distributor confirmation.\n\nWe will send you payment details shortly.`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, custWaitMsg, 'customer_inquiry_confirmed', customerName);
   } else {
@@ -1923,13 +2633,28 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
   }
 
   // 1. Check for owner payment verification. Accepts "CONFIRM SO-10452", "CONFIRM 10452", "CONFIRM PAYMENT SO-10452", etc.
+  // Also accepts bare "CONFIRM", "YES", "PAID" if there is an active order waiting for payment verification.
   const confirmPaymentMatch =
     cleanBody.match(/^CONFIRM(?:ED)?(?:\s+PAYMENT)?[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)$/i) ||
     cleanBody.match(/^PAYMENT\s+CONFIRM(?:ED)?[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)$/i) ||
     cleanBody.match(/^(?:SO-)?([A-Z0-9\-]*\d+)\s+CONFIRM(?:ED)?$/i);
+
+  let paymentOrderIdToConfirm: number | null = null;
   if (confirmPaymentMatch) {
     const rawDigits = confirmPaymentMatch[1].replace(/\D/g, '');
-    const orderId = parseInt(rawDigits, 10);
+    paymentOrderIdToConfirm = parseInt(rawDigits, 10);
+  } else if (/^(CONFIRM|APPROVE|YES|OK|ACCEPT|PAID|CONFIRMED)$/i.test(cleanBody)) {
+    // Check if an order is awaiting payment verification
+    const pendingPaymentOrder = await db.get(
+      `SELECT id FROM special_orders WHERE payment_status = 'SCREENSHOT_RECEIVED' ORDER BY id DESC LIMIT 1`
+    );
+    if (pendingPaymentOrder?.id) {
+      paymentOrderIdToConfirm = pendingPaymentOrder.id;
+    }
+  }
+
+  if (paymentOrderIdToConfirm) {
+    const orderId = paymentOrderIdToConfirm;
     const order = await db.get('SELECT * FROM special_orders WHERE id = ?', [orderId]);
     const soCode = order ? await generateStoreSpecialOrderCode(db, order.store_id || 1, orderId) : `SO-TMSA-${orderId}`;
 
@@ -2095,12 +2820,39 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     return true;
   }
 
-  // 2. Check for owner selecting distributor for special order: "SO-TMSA-10452 2", "SO-TMSA-10452-2", "SO-TMSA-104522", "10452-2", or digit 1..10
+  // 1b. Check for owner rejecting special order: "REJECT SO-10452", "WRONG", "REJECT", "CANCEL"
+  const rejectSoMatch = cleanBody.match(/^(REJECT|WRONG|CANCEL|DECLINE)[\s\-:]*(?:SO-)?([A-Z0-9\-]*\d+)?$/i);
+  if (rejectSoMatch) {
+    const rawOrderDigits = rejectSoMatch[2] ? rejectSoMatch[2].replace(/\D/g, '') : '';
+    await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
+    const targetRejectRow = rawOrderDigits
+      ? await db.get(`SELECT * FROM wa_owner_pending_requests WHERE (req_code LIKE ? OR id = ?) AND status = 'pending'`, [`%${rawOrderDigits}`, parseInt(rawOrderDigits, 10)])
+      : await db.get(`SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`);
+    if (targetRejectRow) {
+      await db.run(`UPDATE wa_owner_pending_requests SET status = 'rejected' WHERE id = ?`, [targetRejectRow.id]);
+      const orderId = parseInt(String(targetRejectRow.req_code).replace(/\D/g, ''), 10);
+      if (orderId > 0) {
+        await db.run(`UPDATE special_orders SET status = 'Cancelled', updated_at = datetime('now') WHERE id = ?`, [orderId]);
+        await db.run(`UPDATE wa_pending_clarifications SET step = 'cancelled' WHERE special_order_id = ?`, [orderId]);
+      }
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(
+        phone,
+        `🛑 Special Order *#${targetRejectRow.req_code}* cancelled/flagged for manual review. Customer notification paused.`,
+        'admin_escalation',
+        'Owner'
+      );
+      return true;
+    }
+  }
+
+  // 2. Check for owner selecting distributor for special order: "SO-TMSA-10452 2", "SO-TMSA-10452-2", "SO-TMSA-104522", "10452-2", or digit 1..10, or bare "CONFIRM" / "1" / "YES"
   const soSupplierMatch =
     normalizedBody.match(/^(?:SO-)?(?:[A-Z0-9]+-)?(\d+)[\s\-:]*(10|[1-9])$/i) ||
     normalizedBody.match(/^(SO-[A-Z0-9]+-\d+)[\s\-:]*(10|[1-9])$/i) ||
     normalizedBody.match(/^(SO-\d+)[\s\-:]*(10|[1-9])$/i);
   const singleDigitMatch = normalizedBody.match(/^(10|[1-9])$/);
+  const isBareConfirmSupplier = /^(CONFIRM|APPROVE|YES|OK|ACCEPT|1)$/i.test(normalizedBody);
 
   let soCode: string | null = null;
   let chosenOptionIdx = -1;
@@ -2120,14 +2872,14 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
     } else {
       soCode = await generateStoreSpecialOrderCode(db, 1, parseInt(rawOrderDigits, 10));
     }
-  } else if (singleDigitMatch) {
+  } else if (singleDigitMatch || isBareConfirmSupplier) {
     await waAdminEscalationService.ensureOwnerPendingRequestsTable?.(db);
     const latest = await db.get(
       `SELECT * FROM wa_owner_pending_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 1`
     );
     if (latest && (String(latest.req_code).startsWith('SO-') || String(latest.req_code).includes('-'))) {
       soCode = latest.req_code;
-      chosenOptionIdx = parseInt(singleDigitMatch[1], 10) - 1;
+      chosenOptionIdx = singleDigitMatch ? parseInt(singleDigitMatch[1], 10) - 1 : 0; // Default to Option 1 for bare CONFIRM
       targetRow = latest;
     }
   }
@@ -2491,8 +3243,27 @@ export async function handleInbound(msg: any): Promise<void> {
     const isNewCustomer = !customer;
 
     // 2b. REFILL CONFIRMATION CHECK — "refill", "yes", "confirm", "haan", "ho", "bhej do", etc.
-    if (isRefillConfirmationResponse(body)) {
-      const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
+    // Guard: Only check refills if customer does NOT have an active medicine order clarification in progress
+    const cleanDigitsForRefill = (phone || '').replace(/\D/g, '').slice(-10);
+    let hasActiveClarification = false;
+    if (cleanDigitsForRefill) {
+      try {
+        await ensureClarificationsTable(db);
+        const activeClarification = await db.get(
+          `SELECT 1 FROM wa_pending_clarifications 
+           WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
+             AND created_at > datetime('now', '-45 minutes')
+           LIMIT 1`,
+          [`%${cleanDigitsForRefill}`, `%${cleanDigitsForRefill}%`, cleanDigitsForRefill]
+        );
+        if (activeClarification) {
+          hasActiveClarification = true;
+        }
+      } catch (_) {}
+    }
+
+    if (!hasActiveClarification && isRefillConfirmationResponse(body)) {
+      const cleanDigits = cleanDigitsForRefill;
       if (cleanDigits) {
         const db = await dbManager.getConnection();
         const pendingRefills = await db.all(
@@ -2632,17 +3403,25 @@ export async function handleInbound(msg: any): Promise<void> {
         return;
       }
 
+      const { getPharmacyOperatingSchedule: getSchedForGreet } = await import('./storeSettingsService.js');
+      const schedForGreet = await getSchedForGreet(db);
+      const hoursLineForGreet = `🕐 Open: ${schedForGreet.openTime} – ${schedForGreet.closeTime}${schedForGreet.weeklyOff ? ` | Off: ${schedForGreet.weeklyOff}` : ''}`;
+
       const greetingText =
         `👋 Hello *${customer!.name}*! Welcome back to ${storeName}.${hoursNotice}\n\n` +
-        `I can help you check medicine availability or place an order.\n\n` +
-        `You can:\n` +
-        `📸 Send a clear photo of your prescription or medicine strip\n` +
-        `✍️ Or type the medicine name and quantity (e.g. *Dolo 650 - 1 strip*)\n\n` +
-        `Please enter the medicine name or send a photo to begin.`;
+        `*Place your order in simple steps:*\n\n` +
+        `*Step 1:* Choose your order type —\n` +
+        `  1️⃣ Single Medicine\n` +
+        `  2️⃣ Multiple Medicines\n` +
+        `  3️⃣ Refill — Repeat my regular prescription\n\n` +
+        `*Step 2:* We show you options & MRP 💰\n` +
+        `*Step 3:* You confirm & we book 🚀\n\n` +
+        `${hoursLineForGreet}\n\n` +
+        `*Reply 1, 2, or 3 to begin.*`;
 
       await db.run(
         `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, step, customer_name, created_at)
-         VALUES (?, '', ?, 'awaiting_medicine', ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, '', ?, 'awaiting_order_type', ?, CURRENT_TIMESTAMP)`,
         [cleanDigits, body, customer!.name]
       );
 
@@ -2849,7 +3628,12 @@ export async function handleInbound(msg: any): Promise<void> {
         return;
       }
       // serializedId hoisted before try so the catch block (Fix 2 deferred retry) can access it
-      const serializedId = typeof msg?.id?._serialized === 'string' ? msg.id._serialized : '';
+      const rawMsgId = typeof msg?.id?._serialized === 'string'
+        ? msg.id._serialized
+        : (typeof msg?.id === 'string' ? msg.id : (typeof msg?.id?.id === 'string' ? msg.id.id : (msgId || '')));
+      const serializedId = (rawMsgId && !rawMsgId.includes('_') && chatId)
+        ? `false_${chatId}_${rawMsgId}`
+        : rawMsgId;
       try {
         // Media decryption requires a READY client. Images arriving during the
         // boot session-restore window (T+45s+) or right after an idle-sleep
@@ -2877,7 +3661,7 @@ export async function handleInbound(msg: any): Promise<void> {
           }
         }
 
-        if (!media?.data) {
+        if (!media?.data && typeof msg.downloadMedia === 'function') {
           try {
             media = await downloadMediaWithRetry(() => msg.downloadMedia(), { maxAttempts: 3, delayMs: 1500 });
           } catch (primaryErr) {
@@ -2996,7 +3780,13 @@ export async function handleInbound(msg: any): Promise<void> {
           setTimeout(async () => {
             try {
               const waClient = await import('../whatsappClient.js');
-              const deferred = await waClient.downloadMessageMediaById(serializedId);
+              let deferred: any = null;
+              if (typeof (waClient as any).downloadMessageMediaReliably === 'function') {
+                deferred = await (waClient as any).downloadMessageMediaReliably(serializedId, { chatId, maxWaitMs: 15000, rawMsg: msg });
+              }
+              if (!deferred?.data && typeof waClient.downloadMessageMediaById === 'function') {
+                deferred = await waClient.downloadMessageMediaById(serializedId);
+              }
               if (deferred?.data) {
                 console.log(`[Intent Service] Deferred 30s retry succeeded for msgId=${serializedId}`);
                 const buffer = Buffer.from(deferred.data, 'base64');
@@ -3119,6 +3909,65 @@ export async function handleInbound(msg: any): Promise<void> {
     }
 
     if (candidates.length > 0) {
+      // Guided Workflow Pre-Flight Gate:
+      // If the customer sent random text that is NOT in an active medicine step ("awaiting_medicine"),
+      // has no medicine intent words, and matches NO medicine in the local database,
+      // do NOT treat it as a medicine name! Route to guided workflow menu instead.
+      let isLegitimateMedicineOrder = Boolean(
+        resolvedMedFromId ||
+        parsed.rawIntentWords.length > 0 ||
+        candidates.some(c => c.fromScispacy)
+      );
+
+      if (!isLegitimateMedicineOrder) {
+        // Check active clarification step
+        const cleanCustPhone = (phone || '').replace(/\D/g, '').slice(-10);
+        if (cleanCustPhone) {
+          try {
+            await ensureClarificationsTable(db);
+            const activeStepRow = await db.get(
+              `SELECT step FROM wa_pending_clarifications
+               WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
+                 AND created_at > datetime('now', '-45 minutes')
+               ORDER BY created_at DESC LIMIT 1`,
+              [`%${cleanCustPhone}`, `%${cleanCustPhone}%`, cleanCustPhone]
+            );
+            if (activeStepRow && ['awaiting_medicine', 'awaiting_multi_medicine_list'].includes(activeStepRow.step)) {
+              isLegitimateMedicineOrder = true;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!isLegitimateMedicineOrder) {
+        // Fast index scan on Master DB to see if any candidate is a real medicine
+        for (const cand of candidates) {
+          const brandClean = cand.name.replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
+          const firstWord = brandClean.split(/\s+/)[0] || '';
+          if (firstWord.length >= 3) {
+            const localHit = await db.get(
+              `SELECT 1 FROM medicines WHERE name LIKE ? LIMIT 1`,
+              [`${firstWord}%`]
+            );
+            if (localHit) {
+              isLegitimateMedicineOrder = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!isLegitimateMedicineOrder) {
+        console.log(`[Intent Service] Pre-flight gate: message "${body.slice(0, 60)}" from ${phone || chatId} has no active medicine session, intent words, or local DB match. Diverting to guided menu.`);
+        if (!hasMedia && !isStale && phone && !isManualSession) {
+          const cleanBody = body.trim();
+          if (cleanBody.length >= 2) {
+            await maybeSendGuidancePrompt(phone, customer?.name || 'Customer', db, cleanBody);
+          }
+        }
+        return;
+      }
+
       const textForm = detectDosageForm(body);
       if (candidates.some(c => c.fromScispacy)) {
         console.log(`[Intent Service] scispaCy rescued medicine name(s): ${candidates.filter(c => c.fromScispacy).map(c => `"${c.name}"`).join(', ')} (regex missed them)`);
@@ -3388,10 +4237,18 @@ async function searchAndBroadcast(opts: {
     catalogResults?.nonMapped?.[0]?.score ?? 0
   );
 
-  // Live Pharmarack search — ALWAYS query distributor network using sanitized 2-3 word term
+  // Live Pharmarack search — query distributor network using sanitized 2-3 word term
   let livePharmarackResults: any[] | null = null;
   const isPlausible = isPlausibleMedicineName(pharmaQuery || medicineName);
-  if (pharmaQuery && (hasIntentWords || source !== 'text' || isPlausible)) {
+  const hasLocalOrCatalogPresence =
+    (filterResult.matches && filterResult.matches.length > 0) ||
+    (catalogResults?.mapped && catalogResults.mapped.length > 0) ||
+    (catalogResults?.nonMapped && catalogResults.nonMapped.length > 0);
+  const shouldQueryLivePharmarack =
+    Boolean(pharmaQuery) &&
+    (source !== 'text' || hasIntentWords || hasLocalOrCatalogPresence);
+
+  if (shouldQueryLivePharmarack) {
     try {
       const { performPharmarackSearch } = await import('../routes/pharmarack.js');
       const searchTerms = [pharmaQuery];
@@ -3627,6 +4484,8 @@ async function searchAndBroadcast(opts: {
         const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
         await ensureClarificationsTable(db);
 
+        const isFromPhoto = source === 'ocr' || source === 'both' || !!opts.imagePath;
+
         if (deduplicated.length > 1) {
           const PAGE_SIZE = 15;
           const initialSlice = deduplicated.slice(0, PAGE_SIZE);
@@ -3636,7 +4495,9 @@ async function searchAndBroadcast(opts: {
           };
           const optionsList = initialSlice.map((opt, i) => `${formatNum(i)} *${opt}*`).join('\n');
           const moreHint = deduplicated.length > PAGE_SIZE ? `\n\n👉 Reply *MORE* to see more options.` : '';
-          const promptMsg = `🔎 I found these medicine options for *${medicineName}*:\n\n${optionsList}${moreHint}\n\nPlease reply with the number of the medicine you need.`;
+          const promptMsg = isFromPhoto
+            ? `📸 *Medicine Photo Scanned!*\n\n🔍 *Detected from photo:* ${medicineName}\nWe found these matching options in our catalog:\n\n${optionsList}${moreHint}\n\n👉 Please reply with the number of the medicine you need.`
+            : `🔎 I found these medicine options for *${medicineName}*:\n\n${optionsList}${moreHint}\n\nPlease reply with the number of the medicine you need.`;
 
           await db.run(
             `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
@@ -3658,10 +4519,13 @@ async function searchAndBroadcast(opts: {
           console.log(`[Intent Service] Sent medicine options prompt (1..${initialSlice.length}) for "${medicineName}" to ${cleanPhone}.`);
         } else if (deduplicated.length === 1 || filterResult.matches[0]) {
           const topMatched = deduplicated[0] || filterResult.matches[0];
-          const promptMsg = `💊 I found *${topMatched}*.\nIs this the medicine you want?\n\nReply *YES* to confirm or *NO* to cancel.`;
+          const matchedMrp = mrp || catalogResults?.mapped?.[0]?.mrp || null;
+          const promptMsg = isFromPhoto
+            ? `📸 *Medicine Photo Scanned!*\n\n🔍 *Detected from photo:* ${medicineName}\n💊 *Matched Product:* *${topMatched}*\n\nIs this the medicine you want?\n👉 Reply *YES* to confirm or *NO* to cancel.`
+            : `💊 I found *${topMatched}*.\nIs this the medicine you want?\n\nReply *YES* to confirm or *NO* to cancel.`;
           await db.run(
-            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'awaiting_medicine_confirmation', CURRENT_TIMESTAMP)
+            `INSERT INTO wa_pending_clarifications (phone, suggested_name, original_query, options_json, quantity, unit, step, mrp, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'awaiting_medicine_confirmation', ?, CURRENT_TIMESTAMP)
              ON CONFLICT(phone) DO UPDATE SET
                suggested_name = excluded.suggested_name,
                original_query = excluded.original_query,
@@ -3670,8 +4534,9 @@ async function searchAndBroadcast(opts: {
                quantity = excluded.quantity,
                unit = excluded.unit,
                step = 'awaiting_medicine_confirmation',
+               mrp = COALESCE(excluded.mrp, wa_pending_clarifications.mrp),
                created_at = CURRENT_TIMESTAMP`,
-            [cleanPhone, topMatched, medicineName, null, quantity || 1, unit || 'strip']
+            [cleanPhone, topMatched, medicineName, null, quantity || 1, unit || 'strip', matchedMrp]
           );
           const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
           await whatsappQueueWorker.enqueue(phone, promptMsg, 'customer_medicine_clarification', customer?.name || 'Customer');
@@ -3818,7 +4683,9 @@ export async function handleOcrComplete(data: any): Promise<void> {
   if (ocrResult.isPrescription) {
     try {
       const rxData = ocrResult.prescriptionData || {};
-      const rxItems = Array.isArray(rxData.items) ? rxData.items : [];
+      const rxItems = Array.isArray(ocrResult.prescriptionItems) && ocrResult.prescriptionItems.length > 0
+        ? ocrResult.prescriptionItems
+        : (Array.isArray(rxData.items) ? rxData.items : []);
 
       if (rxItems.length > 0) {
         console.log(`[Intent Service] Doctor prescription detected with ${rxItems.length} items for ${phone || chatId}. Initiating Human-in-the-Loop review.`);
@@ -3828,25 +4695,29 @@ export async function handleOcrComplete(data: any): Promise<void> {
         // Resolve inventory stock for each prescribed item
         const enrichedItems: any[] = [];
         for (const item of rxItems) {
-          let stockQty = 0;
-          let inStock = false;
-          try {
-            const fr = await productNameFilterService.filterProductNames(item.medicineName, { minConfidenceThreshold: 0.6 });
-            const matches: string[] = Array.isArray(fr.matches) ? fr.matches : [];
-            if (matches.length > 0) {
-              const stockMap = await resolveInventoryStock([matches[0]], db);
-              stockQty = stockMap[matches[0].toLowerCase()] ?? 0;
-              inStock = stockQty > 0;
-            }
-          } catch (_) {}
+          const medName = item.brandHint || item.brandName || item.medicineName || item.name || item.rawText || '';
+          let stockQty = item.inventoryQty ?? 0;
+          let inStock = item.availability === 'IN_STOCK' || stockQty > 0;
+
+          if (stockQty === 0 && !item.availability && medName) {
+            try {
+              const fr = await productNameFilterService.filterProductNames(medName, { minConfidenceThreshold: 0.6 });
+              const matches: string[] = Array.isArray(fr.matches) ? fr.matches : [];
+              if (matches.length > 0) {
+                const stockMap = await resolveInventoryStock([matches[0]], db);
+                stockQty = stockMap[matches[0].toLowerCase()] ?? 0;
+                inStock = stockQty > 0;
+              }
+            } catch (_) {}
+          }
 
           enrichedItems.push({
-            medicineName: item.medicineName,
+            medicineName: medName,
             strength: item.strength,
-            dosage: item.dosage,
-            frequency: item.frequency,
+            dosage: item.dosageForm || item.dosage,
+            frequency: item.frequency || item.timing,
             duration: item.duration,
-            quantity: item.quantity,
+            quantity: item.prescribedQuantity || item.quantity || 1,
             instructions: item.instructions,
             handwrittenNotes: item.handwrittenNotes,
             stockQty,
@@ -3858,9 +4729,9 @@ export async function handleOcrComplete(data: any): Promise<void> {
           customerPhone: phone || '',
           customerName: customer?.name,
           chatId,
-          patientName: rxData.patientName,
-          doctorName: rxData.doctorName,
-          clinicHospital: rxData.clinicHospital,
+          patientName: rxData.patientName || ocrResult.patientName,
+          doctorName: rxData.doctorName || ocrResult.doctorName,
+          clinicHospital: rxData.clinicHospital || ocrResult.clinicName,
           date: rxData.date,
           items: enrichedItems,
           notes: rxData.notes,

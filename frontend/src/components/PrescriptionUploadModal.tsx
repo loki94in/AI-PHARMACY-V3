@@ -77,6 +77,13 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     strength?: string;
     confidence?: number;
   } | null>(null);
+  const [prescriptionScanId, setPrescriptionScanId] = useState<number | null>(null);
+  const [detectedItems, setDetectedItems] = useState<Array<{
+    name: string;
+    dosageGroup: string;
+    inStock: boolean;
+    mrp?: number;
+  }>>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [successResult, setSuccessResult] = useState<{
@@ -96,6 +103,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
       setPackSize('');
       setEstimatedMrp('');
       setAiDetectedCard(null);
+      setPrescriptionScanId(null);
+      setDetectedItems([]);
       setIsScanningPhoto(false);
       if (prefillCustomerName) setPatientName(prefillCustomerName);
       if (prefillCustomerPhone) setPhone(prefillCustomerPhone);
@@ -165,18 +174,21 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     }
 
     setErrorMessage(null);
+    let combinedToScan: PhotoItem[] = [];
     setSelectedPhotos(prev => {
       const combined = [...prev, ...validPhotos];
       if (combined.length > 10) {
         setErrorMessage('Maximum 10 photos can be attached per prescription order.');
-        return combined.slice(0, 10);
+        combinedToScan = combined.slice(0, 10);
+        return combinedToScan;
       }
+      combinedToScan = combined;
       return combined;
     });
 
-    // Auto-scan first uploaded photo with AI Camera using pre-compressed base64
-    if (validPhotos.length > 0) {
-      autoScanFirstPhoto(validPhotos[0]);
+    // Auto-scan uploaded photos with unified prescription OCR
+    if (combinedToScan.length > 0) {
+      autoScanPhotos(combinedToScan);
     }
 
     if (fileInputRef.current) {
@@ -184,46 +196,63 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     }
   };
 
-  const autoScanFirstPhoto = async (photoItem: PhotoItem) => {
+  const autoScanPhotos = async (photos: PhotoItem[]) => {
     try {
       setIsScanningPhoto(true);
-      const b64 = photoItem.base64 || await fileToBase64(photoItem.file);
-      // Try fast offline prescription scanner first, fallback to analyzeImage
+      const b64List = await Promise.all(
+        photos.map(p => (p.base64 ? Promise.resolve(p.base64) : fileToBase64(p.file)))
+      );
+
       let res: any;
       try {
-        res = await api.scanPrescription(b64);
+        if (b64List.length > 1) {
+          res = await api.prescriptions.scanPrescriptionBundle(b64List, 'website');
+        } else {
+          res = await api.prescriptions.scanPrescription(b64List[0], 'website');
+        }
       } catch {
-        res = await api.analyzeImage(b64);
+        try {
+          res = await api.scanPrescription(b64List[0]);
+        } catch {
+          res = await api.analyzeImage(b64List[0]);
+        }
+      }
+
+      if (res?.scanId || res?.scan?.id) {
+        setPrescriptionScanId(res.scanId || res.scan?.id);
       }
 
       if (res?.items && res.items.length > 0) {
-        const first = res.items[0];
-        const topMatch = first.matchedMedicines?.[0];
-        const detectedName = topMatch?.name || first.brandName || '';
-        const detectedForm = first.dosageForm || 'TABLET';
-        const detectedStr = first.strength || '';
-        const detectedComp = topMatch?.manufacturer || '';
+        const parsedItems = res.items.map((it: any) => ({
+          name: it.brandHint || it.matched_medicine_name || it.brandName || it.name || it.rawText || it.line_text,
+          dosageGroup: it.dosageForm || it.dosage_group || 'TABLET',
+          inStock: it.availability === 'IN_STOCK' || Boolean(it.in_stock) || ((it.inventoryQty || 0) > 0),
+          mrp: it.matches?.[0]?.mrp || it.mrp
+        }));
+        setDetectedItems(parsedItems);
+
+        const first = parsedItems[0];
+        const detectedName = first.name || '';
+        const detectedForm = (first.dosageGroup || '').toUpperCase().includes('SYRUP') || (first.dosageGroup || '').toUpperCase().includes('BOTTLE') ? 'SYRUP' : 'TABLET';
 
         setAiDetectedCard({
-          name: detectedName || first.brandName || 'Prescription Medicines',
+          name: detectedName || 'Prescription Medicines',
           dosageForm: detectedForm,
-          company: detectedComp,
-          strength: detectedStr,
-          confidence: 95
+          company: res.items[0]?.manufacturer || res.items[0]?.matches?.[0]?.manufacturer || '',
+          strength: res.items[0]?.strength || '',
+          confidence: Math.round(((res.items[0]?.topScore || res.scan?.confidence || 0.9) * 100))
         });
 
         if (detectedName) {
           setMedicineName(detectedName);
         }
-        setDosageForm(detectedForm === 'CAPSULE' ? 'TABLET' : detectedForm);
-        if (detectedComp) setCompanyName(detectedComp);
-        if (detectedStr) setPackSize(detectedStr);
+        setDosageForm(detectedForm);
 
-        // Prepend notes with all detected medicines and doctor if multiple items found
-        if (res.items.length > 1) {
-          const summary = `Detected Prescribed Medicines:\n` + res.items.map((it: any, idx: number) => {
-            const m = it.matchedMedicines?.[0];
-            return `${idx + 1}. ${m?.name || it.brandName} (${it.dosageForm}) - Qty: ${it.prescribedQuantity}`;
+        // Prepend notes with detected medicines
+        if (parsedItems.length > 1) {
+          const summary = `Detected Prescribed Medicines:\n` + parsedItems.map((it: any, idx: number) => {
+            const stockTag = it.inStock ? '[IN STOCK]' : '[ORDER REQUIRED]';
+            return `${idx + 1}. ${it.name} (${it.dosageGroup}) - ${stockTag}${it.mrp ? ` ₹${it.mrp}` : ''}`;
           }).join('\n');
           setNotes(prev => prev ? `${prev}\n\n${summary}` : summary);
         }
@@ -253,15 +282,11 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
           else if (upper.includes('INJ') || upper.includes('VIAL')) setDosageForm('INJECTION');
           else setDosageForm('OTHER');
         }
-        if (detectedComp) {
-          setCompanyName(detectedComp);
-        }
-        if (detectedStr) {
-          setPackSize(detectedStr);
-        }
+        if (detectedComp) setCompanyName(detectedComp);
+        if (detectedStr) setPackSize(detectedStr);
       }
     } catch (scanErr) {
-      console.warn('[PrescriptionUploadModal] AI auto-scan notification:', scanErr);
+      console.warn('[PrescriptionUploadModal] AI auto-scan error:', scanErr);
     } finally {
       setIsScanningPhoto(false);
     }
@@ -303,6 +328,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     });
     setSelectedPhotos([]);
     setAiDetectedCard(null);
+    setPrescriptionScanId(null);
+    setDetectedItems([]);
     setIsScanningPhoto(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -366,7 +393,8 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
         notes: notes.trim() || undefined,
         images: base64Images.length > 0 ? base64Images : undefined,
         image: base64Images.length === 1 ? base64Images[0] : undefined,
-        store_id: targetStoreId
+        store_id: targetStoreId,
+        prescription_scan_id: prescriptionScanId || undefined
       });
 
       if (res.success) {
@@ -711,6 +739,44 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                   <p className="text-[11px] text-muted pt-0.5">
                     Fields below have been auto-filled. You can adjust them anytime.
                   </p>
+                </div>
+              )}
+
+              {/* Prescription Items Suggestion Chips */}
+              {detectedItems.length > 1 && (
+                <div className="p-3 rounded-2xl bg-bg2 border border-border space-y-2">
+                  <span className="text-[11px] font-bold text-text flex items-center gap-1.5">
+                    <Pill className="w-3.5 h-3.5 text-primary" />
+                    <span>Prescription Items Found ({detectedItems.length}) - Tap to select:</span>
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detectedItems.map((item, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setMedicineName(item.name);
+                          setDosageForm(item.dosageGroup === 'BOTTLE' ? 'SYRUP' : 'TABLET');
+                          if (item.mrp) setEstimatedMrp(String(item.mrp));
+                        }}
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer ${
+                          medicineName === item.name
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-bg border-border text-text hover:border-primary/50'
+                        }`}
+                      >
+                        <span>{item.name}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          item.inStock
+                            ? 'bg-green/15 text-green border border-green/30'
+                            : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+                        }`}>
+                          {item.inStock ? 'IN STOCK' : 'ORDER REQUIRED'}
+                        </span>
+                        {item.mrp && <span className="text-muted font-mono text-[11px]">₹{item.mrp}</span>}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 

@@ -37,6 +37,8 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   stores_updated: [['stores'], ['stores-list']],
   settings_updated: [['settings'], ['store-settings'], ['pharmacy-details'], ['storage-locations'], ['registered-devices']],
   audit_updated: [['audit-latest'], ['audit-history'], ['audit-mutations']],
+  prescription_scan_complete: [['prescription-scans'], ['prescription-detail']],
+  enquiry_updated: [['enquiries'], ['enquiry-panel'], ['medicine-enquiries']],
 };
 
 // SSE event type -> DOM CustomEvents dispatched for non-react-query consumers
@@ -46,6 +48,8 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   website_order_created: ['sse-website-order-created', 'refresh-special-orders'],
   customers_changed: ['app-customers-updated', 'refresh-special-orders'],
   refill_updated: ['app-refills-updated'],
+  enquiry_updated: ['sse-enquiry-updated', 'app-enquiries-updated'],
+  prescription_scan_complete: ['sse-prescription-scan-complete'],
   return_created: ['sse-return-created'],
   wa_status_changed: ['sse-wa-status-changed'],
   wa_readiness_progress: ['sse-wa-readiness-progress', 'sse-wa-status-changed'],

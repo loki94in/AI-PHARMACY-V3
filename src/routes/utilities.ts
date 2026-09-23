@@ -24,6 +24,8 @@ import {
   restoreBackup,
   getScheduleConfig,
   setScheduleConfig,
+  getPreupdateBackupsInfo,
+  cleanOldPreupdateBackups,
 } from '../services/backupService.js';
 import { backupRecoveryService } from '../services/backupRecoveryService.js';
 import { closeMessageDAO } from '../database/messageDAO.js';
@@ -335,6 +337,10 @@ router.get('/backup/status', async (req, res) => {
     calculateFolderSize(SNAPSHOTS_DIR);
     calculateFolderSize(ARCHIVES_DIR);
 
+    // Scan for pre-update rollback safety backups
+    const preupdateBackups = getPreupdateBackupsInfo();
+    totalSize += preupdateBackups.totalSizeBytes;
+
     // Next scheduled backup
     const frequency = await getScheduleConfig();
     let nextScheduledBackup = 'N/A';
@@ -353,6 +359,7 @@ router.get('/backup/status', async (req, res) => {
       lastUploadDate,
       nextScheduledBackup,
       totalBackupSize: totalSize,
+      preupdateBackups,
       backupStorageLocations: {
         local: 'backup/archives',
         gdrive: gdriveEnabled ? 'Google Drive Cloud Storage' : 'Not Configured',
@@ -363,6 +370,18 @@ router.get('/backup/status', async (req, res) => {
   } catch (err: any) {
     console.error('[Backup] Status API failed:', err);
     res.status(500).json({ error: 'Failed to retrieve backup status: ' + err.message });
+  }
+});
+
+// POST /api/utilities/backup/clean-preupdate (Human-in-the-loop rollback copies cleanup)
+router.post('/backup/clean-preupdate', async (req, res) => {
+  try {
+    const keepCount = typeof req.body?.keepCount === 'number' ? Math.max(1, req.body.keepCount) : 2;
+    const result = await cleanOldPreupdateBackups(keepCount);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error('[Backup] Clean preupdate backups failed:', error);
+    res.status(500).json({ error: error.message || 'Failed to clean old pre-update backups' });
   }
 });
 

@@ -296,7 +296,65 @@ app.use('/api/refills', lazyRoute(() => import('./routes/refills.js')));
 app.use('/api/wa-business', lazyRoute(() => import('./routes/whatsappBusiness.js')));
 app.use('/api/automation', lazyRoute(() => import('./routes/automation.js')));
 app.use('/api/triggers', lazyRoute(() => import('./routes/triggers.js')));
+app.use('/api/prescriptions', lazyRoute(() => import('./routes/prescriptions.js'), 'heavy'));
+app.use('/api/enquiries', lazyRoute(() => import('./routes/enquiries.js')));
 app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
+
+// Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)
+let pendingShutdownTimer: NodeJS.Timeout | null = null;
+
+// Client-initiated cancellation of pending tab-close shutdown
+app.post('/api/system/cancel-shutdown', (req, res) => {
+  if (pendingShutdownTimer) {
+    clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = null;
+    console.log('[System] Pending tab-close shutdown cancelled (client reconnected or refreshed).');
+  }
+  res.json({ success: true, message: 'Pending shutdown cancelled.' });
+});
+
+// Client-initiated clean application exit: releases port, runs backup, and closes DB
+app.post('/api/system/shutdown', (req, res) => {
+  const isTabClose = req.query.type === 'tab_close';
+
+  if (isTabClose) {
+    console.log('[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...');
+    if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = setTimeout(() => {
+      console.log('[System] No active client reconnected within grace period. Terminating server...');
+      void gracefulShutdown('TAB_CLOSED');
+    }, 3500);
+    res.json({ success: true, message: 'Tab-close graceful shutdown scheduled.' });
+    return;
+  }
+
+  console.log('[System] Received direct client exit request. Terminating server...');
+  if (pendingShutdownTimer) {
+    clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = null;
+  }
+  res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
+  setTimeout(() => {
+    void gracefulShutdown('CLIENT_EXIT');
+  }, 100);
+});
+
+// Client-initiated 1-click silent update install and auto-restart
+app.post('/api/system/apply-update', async (req, res) => {
+  console.log('[System] Received apply-update request. Installing update and restarting...');
+  try {
+    const { autoUpdateService } = await import('./services/autoUpdateService.js');
+    const result = await autoUpdateService.applyUpdate();
+    res.json(result);
+    setTimeout(() => {
+      void gracefulShutdown('APPLY_UPDATE');
+    }, 600);
+  } catch (err: any) {
+    console.error('[System] Failed to apply update:', err.message);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 app.use('/api/auth', lazyRoute(() => import('./routes/auth.js'), 'hot'));
 app.use('/api/stores', lazyRoute(() => import('./routes/stores.js'), 'hot'));
 app.use('/api/website/owner', lazyRoute(() => import('./routes/websiteOwner.js'), 'hot'));
@@ -907,60 +965,7 @@ async function setupCrons(db: any) {
   }
 }
 
-// Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)
-let pendingShutdownTimer: NodeJS.Timeout | null = null;
 
-// Client-initiated cancellation of pending tab-close shutdown
-app.post('/api/system/cancel-shutdown', (req, res) => {
-  if (pendingShutdownTimer) {
-    clearTimeout(pendingShutdownTimer);
-    pendingShutdownTimer = null;
-    console.log('[System] Pending tab-close shutdown cancelled (client reconnected or refreshed).');
-  }
-  res.json({ success: true, message: 'Pending shutdown cancelled.' });
-});
-
-// Client-initiated clean application exit: releases port, runs backup, and closes DB
-app.post('/api/system/shutdown', (req, res) => {
-  const isTabClose = req.query.type === 'tab_close';
-
-  if (isTabClose) {
-    console.log('[System] Tab/window close event received. Scheduling graceful shutdown in 3500ms...');
-    if (pendingShutdownTimer) clearTimeout(pendingShutdownTimer);
-    pendingShutdownTimer = setTimeout(() => {
-      console.log('[System] No active client reconnected within grace period. Terminating server...');
-      void gracefulShutdown('TAB_CLOSED');
-    }, 3500);
-    res.json({ success: true, message: 'Tab-close graceful shutdown scheduled.' });
-    return;
-  }
-
-  console.log('[System] Received direct client exit request. Terminating server...');
-  if (pendingShutdownTimer) {
-    clearTimeout(pendingShutdownTimer);
-    pendingShutdownTimer = null;
-  }
-  res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
-  setTimeout(() => {
-    void gracefulShutdown('CLIENT_EXIT');
-  }, 100);
-});
-
-// Client-initiated 1-click silent update install and auto-restart
-app.post('/api/system/apply-update', async (req, res) => {
-  console.log('[System] Received apply-update request. Installing update and restarting...');
-  try {
-    const { autoUpdateService } = await import('./services/autoUpdateService.js');
-    const result = await autoUpdateService.applyUpdate();
-    res.json(result);
-    setTimeout(() => {
-      void gracefulShutdown('APPLY_UPDATE');
-    }, 600);
-  } catch (err: any) {
-    console.error('[System] Failed to apply update:', err.message);
-    res.status(400).json({ success: false, error: err.message });
-  }
-});
 
 let isShuttingDown = false;
 

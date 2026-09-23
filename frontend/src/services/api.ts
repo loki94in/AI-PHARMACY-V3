@@ -1833,6 +1833,7 @@ export const api = {
     image?: string;
     images?: string[];
     store_id?: number;
+    prescription_scan_id?: number;
   }) =>
     apiClient.post<{
       success: boolean;
@@ -2049,6 +2050,38 @@ export const api = {
   // Application lifecycle & process shutdown
   shutdownSystem: () =>
     apiClient.post<{ success: boolean; message: string }>('/system/shutdown').then(res => res.data),
+
+  // Enquiries & Dosage Browsing
+  getEnquiries: (status?: string) =>
+    apiClient.get('/enquiries', { params: { status } }).then(res => res.data),
+  getEnquiriesPanel: () =>
+    apiClient.get<{ success: boolean; patients: any[] }>('/enquiries/panel').then(res => res.data),
+  createEnquiry: (data: any) =>
+    apiClient.post('/enquiries', data).then(res => res.data),
+  browseMedicines: (group: 'TAB' | 'BOTTLE' | 'ALL', q?: string, page?: number, limit?: number) =>
+    apiClient.get<{ success: boolean; group: string; page: number; items: any[] }>('/enquiries/browse', { params: { group, q, page, limit } }).then(res => res.data),
+  answerEnquiry: (id: number) =>
+    apiClient.post<{ success: boolean; message: string }>(`/enquiries/${id}/answer`).then(res => res.data),
+  convertEnquiryToOrder: (id: number) =>
+    apiClient.post<{ success: boolean; orderId: number; message: string }>(`/enquiries/${id}/convert-to-order`).then(res => res.data),
+  convertEnquiryToRefill: (id: number, payload?: any) =>
+    apiClient.post<{ success: boolean; refillId: number; message: string }>(`/enquiries/${id}/convert-to-refill`, payload || {}).then(res => res.data),
+  closeEnquiry: (id: number) =>
+    apiClient.post<{ success: boolean; message: string }>(`/enquiries/${id}/close`).then(res => res.data),
+  cancelEnquiry: (id: number) =>
+    apiClient.post<{ success: boolean; message: string }>(`/enquiries/${id}/cancel`).then(res => res.data),
+
+  // Unified Prescription OCR Orchestrator (both modular namespace and flat methods for full compatibility)
+  prescriptions: {
+    scanPrescription: (imageBase64: string, source: string = 'website') =>
+      apiClient.post<{ success: boolean; scanId: number; items: any[]; doctorName?: string; patientName?: string }>('/prescriptions/scan', { imageBase64, source }).then(res => res.data),
+    scanPrescriptionBundle: (images: string[], source: string = 'website') =>
+      apiClient.post<{ success: boolean; scanId: number; items: any[]; doctorName?: string; patientName?: string }>('/prescriptions/scan-bundle', { images, source }).then(res => res.data),
+    getPrescriptionScan: (scanId: number) =>
+      apiClient.get<{ success: boolean; scan: any; items?: any[] }>(`/prescriptions/${scanId}`).then(res => res.data),
+    updatePrescriptionItem: (itemId: number, data: { matchedMedicineId?: number; prescribedQty?: number; dosageGroup?: string; notes?: string }) =>
+      apiClient.put<{ success: boolean; item: any }>(`/prescriptions/items/${itemId}`, data).then(res => res.data),
+  },
 };
 
 export interface CatalogImageItem {

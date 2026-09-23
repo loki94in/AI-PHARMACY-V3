@@ -42,14 +42,31 @@ const CDN_HOSTS = [
  * - MacKey: next 32 bytes (48..80)
  */
 export function deriveMediaKeys(
-  mediaKey: string | Buffer | Uint8Array,
+  mediaKey: any,
   mediaType: string = 'image'
 ): { iv: Buffer; cipherKey: Buffer; macKey: Buffer } {
-  const keyBuffer = Buffer.isBuffer(mediaKey)
-    ? mediaKey
-    : typeof mediaKey === 'string'
-    ? Buffer.from(mediaKey, 'base64')
-    : Buffer.from(mediaKey);
+  let keyBuffer: Buffer;
+  if (Buffer.isBuffer(mediaKey)) {
+    keyBuffer = mediaKey;
+  } else if (mediaKey instanceof Uint8Array) {
+    keyBuffer = Buffer.from(mediaKey);
+  } else if (typeof mediaKey === 'string') {
+    const fromB64 = Buffer.from(mediaKey, 'base64');
+    keyBuffer = fromB64.length === 32 ? fromB64 : Buffer.from(mediaKey);
+  } else if (typeof mediaKey === 'object' && mediaKey !== null) {
+    if (Array.isArray(mediaKey.data)) {
+      keyBuffer = Buffer.from(mediaKey.data);
+    } else {
+      const vals = Object.values(mediaKey);
+      if (vals.length === 32 && typeof vals[0] === 'number') {
+        keyBuffer = Buffer.from(vals as number[]);
+      } else {
+        keyBuffer = Buffer.from(mediaKey);
+      }
+    }
+  } else {
+    keyBuffer = Buffer.from(mediaKey || '');
+  }
 
   if (keyBuffer.length !== 32) {
     throw new Error(`Invalid mediaKey length: ${keyBuffer.length} bytes (expected 32)`);

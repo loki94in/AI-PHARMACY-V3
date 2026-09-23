@@ -101,6 +101,58 @@ class PrescriptionScannerService {
   public async scanPrescription(imageInput: string | Buffer): Promise<PrescriptionScanResult> {
     const startTime = Date.now();
 
+    // Prefer unified prescription orchestrator
+    try {
+      let rawBuffer: Buffer;
+      if (typeof imageInput === 'string') {
+        if (imageInput.startsWith('data:')) {
+          const base64Data = imageInput.split(',')[1];
+          rawBuffer = Buffer.from(base64Data, 'base64');
+        } else if (fs.existsSync(imageInput)) {
+          rawBuffer = await fs.promises.readFile(imageInput);
+        } else {
+          rawBuffer = Buffer.from(imageInput, 'base64');
+        }
+      } else {
+        rawBuffer = imageInput;
+      }
+
+      const { prescriptionOrchestratorService } = await import('./prescriptionOrchestratorService.js');
+      const orchestratorResult = await prescriptionOrchestratorService.scanPrescriptionImage({
+        buffer: rawBuffer,
+        source: 'pos'
+      });
+
+      if (orchestratorResult && orchestratorResult.items && orchestratorResult.items.length > 0) {
+        return {
+          success: true,
+          scanTimeMs: Date.now() - startTime,
+          doctorName: orchestratorResult.doctorName,
+          clinicName: orchestratorResult.clinicName,
+          patientName: orchestratorResult.patientName,
+          patientAge: orchestratorResult.patientAge,
+          items: orchestratorResult.items.map(it => ({
+            rawText: it.rawText,
+            brandName: it.brandHint,
+            dosageForm: (it.dosageForm as any) || 'TABLET',
+            strength: it.strength || '',
+            prescribedQuantity: it.prescribedQuantity || 1,
+            matchedMedicines: (it.matches || []).map(m => ({
+              id: m.medicineId,
+              name: m.name,
+              packaging: m.packaging || '',
+              manufacturer: m.manufacturer || '',
+              mrp: m.mrp || null
+            }))
+          })),
+          rawOcrText: orchestratorResult.rawOcrText,
+          offlineMode: false as any
+        };
+      }
+    } catch (orchErr) {
+      console.warn('[PrescriptionScanner] Orchestrator fallback to local scan:', orchErr);
+    }
+
     // 5-minute timeout guard to guarantee completion
     const timeoutPromise = new Promise<never>((_, reject) => {
       const timeoutId = setTimeout(() => {
@@ -184,7 +236,7 @@ class PrescriptionScannerService {
   private async extractWithGeminiVision(buffer: Buffer, apiKey: string): Promise<string | null> {
     try {
       const base64Data = buffer.toString('base64');
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
       const payload = {
         contents: [
           {

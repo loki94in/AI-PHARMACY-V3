@@ -152,11 +152,14 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
 
     // Ensure unique legacy_id index exists for idempotent inserts
     try {
-      await db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id 
-        ON medicines(legacy_id) 
-        WHERE legacy_id IS NOT NULL
-      `);
+      const idxList: any[] = await db.all("PRAGMA index_list('medicines')");
+      const legacyIdx = idxList.find((i: any) => i.name === 'idx_medicines_legacy_id');
+      if (legacyIdx && Number(legacyIdx.partial) === 1) {
+        await db.run('DROP INDEX IF EXISTS idx_medicines_legacy_id');
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+      } else if (!legacyIdx) {
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+      }
     } catch (_) {}
 
     let loaded = 0;
@@ -461,11 +464,14 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
 
   // Ensure legacy_id unique index exists for conflict resolution
   try {
-    await db.run(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id
-      ON medicines(legacy_id)
-      WHERE legacy_id IS NOT NULL
-    `);
+    const idxList: any[] = await db.all("PRAGMA index_list('medicines')");
+    const legacyIdx = idxList.find((i: any) => i.name === 'idx_medicines_legacy_id');
+    if (legacyIdx && Number(legacyIdx.partial) === 1) {
+      await db.run('DROP INDEX IF EXISTS idx_medicines_legacy_id');
+      await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+    } else if (!legacyIdx) {
+      await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+    }
   } catch (_) {}
 
   const fileStream = fs.createReadStream(csvPath, { encoding: 'utf8' });
@@ -496,7 +502,7 @@ export async function enrichMasterMedicinesFromCsv(): Promise<{ enriched: number
           ?, ?, ?, ?, ?,
           'master_reference', 'ACTIVE'
         )
-        ON CONFLICT(legacy_id) DO UPDATE SET
+        ON CONFLICT(legacy_id) WHERE legacy_id IS NOT NULL DO UPDATE SET
           packaging      = CASE WHEN COALESCE(medicines.packaging,   '') = '' THEN excluded.packaging      ELSE medicines.packaging      END,
           manufacturer   = CASE WHEN COALESCE(medicines.manufacturer,'') = '' THEN excluded.manufacturer   ELSE medicines.manufacturer   END,
           marketed_by    = CASE WHEN COALESCE(medicines.marketed_by, '') = '' THEN excluded.marketed_by    ELSE medicines.marketed_by    END,

@@ -562,6 +562,30 @@ router.post('/chats/:chatId/messages/:messageId/scan', async (req, res) => {
             return { mimetype, data };
           }
         }
+
+        // Also check data/inbound_media
+        const inboundDir = path.resolve(process.cwd(), 'data', 'inbound_media');
+        const safeId = String(messageId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (fs.existsSync(inboundDir)) {
+          for (const ext of ['.jpg', '.jpeg', '.png', '.pdf']) {
+            const p = path.join(inboundDir, `${safeId}${ext}`);
+            if (fs.existsSync(p)) {
+              const data = fs.readFileSync(p).toString('base64');
+              const mimetype = ext === '.png' ? 'image/png' : ext === '.pdf' ? 'application/pdf' : 'image/jpeg';
+              return { mimetype, data };
+            }
+          }
+        }
+
+        // On-demand fetch from WhatsApp if not yet saved to disk
+        try {
+          const { downloadMessageMediaReliably } = await import('../whatsappClient.js');
+          const dl = await downloadMessageMediaReliably(messageId, { chatId: row.chat_id, maxWaitMs: 15000 });
+          if (dl?.data) {
+            return { mimetype: dl.mimetype || 'image/jpeg', data: dl.data };
+          }
+        } catch (_) {}
+
         return null;
       }
     };

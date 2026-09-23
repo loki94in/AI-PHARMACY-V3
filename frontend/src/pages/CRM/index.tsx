@@ -17,6 +17,7 @@ import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalMo
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
+import { EnquiriesSection } from './EnquiriesSection';
 const PortalAccountsManager = React.lazy(() => import('../../components/PortalAccountsManager').then(m => ({ default: m.PortalAccountsManager })));
 
 // ─── Module-level Cache (SPA Performance Contract) ──────────────────────
@@ -191,6 +192,7 @@ function formatDate(dateStr: string | undefined) {
 
 const TABS = [
   { key: 'refills', label: 'Refills', icon: <Repeat2 size={15} /> },
+  { key: 'enquiries', label: 'Enquiries', icon: <MessageSquare size={15} /> },
   { key: 'special_orders', label: 'Special Requests', icon: <ClipboardList size={15} /> },
   { key: 'credit', label: 'Customer Credit', icon: <Users size={15} /> },
   { key: 'portal_logins', label: 'Web Logins & PINs', icon: <Globe size={15} /> },
@@ -6627,6 +6629,7 @@ const CRM: React.FC = () => {
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'refills' && <RefillsSection />}
+        {activeTab === 'enquiries' && <EnquiriesSection />}
         {activeTab === 'special_orders' && <SpecialOrdersSection />}
         {activeTab === 'credit' && <CustomerCreditSection />}
         {activeTab === 'portal_logins' && (

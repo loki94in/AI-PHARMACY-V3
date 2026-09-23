@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 67;
+const CURRENT_SCHEMA_VERSION = 68;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -1094,6 +1094,17 @@ export async function ensureSchema(dbPath: string) {
           if (orderCols.length > 0 && !orderNames.has('total_amount')) {
             await db.run('ALTER TABLE special_orders ADD COLUMN total_amount REAL DEFAULT 0');
           }
+          if (orderCols.length > 0 && !orderNames.has('pharmarack_mrp')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN pharmarack_mrp REAL DEFAULT NULL');
+          }
+        } catch (_) { }
+
+        try {
+          const waClarCols = await db.all('PRAGMA table_info(wa_pending_clarifications)');
+          const waClarNames = new Set(waClarCols.map((c: any) => c.name));
+          if (waClarCols.length > 0 && !waClarNames.has('mrp')) {
+            await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN mrp REAL DEFAULT NULL');
+          }
         } catch (_) { }
 
         try {
@@ -1215,6 +1226,96 @@ export async function ensureSchema(dbPath: string) {
             if (!chatNames.has('session_status')) {
               await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
             }
+          }
+        } catch (_) { }
+
+        // Schema v68: Prescription Scans & Medicine Enquiries Fast-Boot
+        await db.exec(`
+          CREATE TABLE IF NOT EXISTS prescription_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL CHECK (source IN ('whatsapp','website','mobile','pos','telegram')),
+            source_msg_id TEXT,
+            source_url TEXT,
+            image_path TEXT NOT NULL,
+            image_paths_json TEXT,
+            raw_ocr_text TEXT,
+            doctor_name TEXT,
+            clinic_name TEXT,
+            patient_name TEXT,
+            patient_age TEXT,
+            is_prescription INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'scanned' CHECK (status IN ('scanned','reviewed','converted')),
+            confidence REAL,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            store_id INTEGER REFERENCES stores(id)
+          );
+          CREATE TABLE IF NOT EXISTS prescription_scan_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER NOT NULL REFERENCES prescription_scans(id) ON DELETE CASCADE,
+            line_index INTEGER NOT NULL,
+            raw_text TEXT NOT NULL,
+            brand_hint TEXT,
+            strength TEXT,
+            dosage_form TEXT,
+            prescribed_qty REAL DEFAULT 1,
+            matched_medicine_id INTEGER REFERENCES medicines(id),
+            match_score REAL,
+            match_type TEXT,
+            availability TEXT,
+            inventory_qty REAL DEFAULT 0,
+            catalog_hit_json TEXT,
+            pharmarack_hit_json TEXT,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+          );
+          CREATE TABLE IF NOT EXISTS medicine_enquiries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            store_id INTEGER DEFAULT 1,
+            customer_id INTEGER REFERENCES customers(id),
+            patient_name TEXT,
+            patient_phone TEXT,
+            medicine_id INTEGER REFERENCES medicines(id),
+            medicine_name TEXT NOT NULL,
+            dosage_group TEXT CHECK (dosage_group IN ('TAB','BOTTLE','ALL')) DEFAULT 'ALL',
+            dosage_form TEXT,
+            qty INTEGER DEFAULT 1,
+            mrp REAL,
+            enquiry_type TEXT CHECK (enquiry_type IN ('medicine_info','new_order','repeat_order')) DEFAULT 'medicine_info',
+            source TEXT CHECK (source IN ('manual','whatsapp','phone','walkin','website')) DEFAULT 'manual',
+            status TEXT CHECK (status IN ('open','answered','converted','closed','cancelled')) DEFAULT 'open',
+            repeat_source_invoice_id INTEGER REFERENCES sales_invoices(id),
+            converted_order_id INTEGER REFERENCES special_orders(id),
+            converted_refill_ids TEXT,
+            notes TEXT,
+            answered_at TEXT,
+            converted_at TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_prescription_scans_msg ON prescription_scans(source_msg_id);
+          CREATE INDEX IF NOT EXISTS idx_prescription_scans_created ON prescription_scans(created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_prescription_scan_items_scan ON prescription_scan_items(scan_id, line_index);
+          CREATE INDEX IF NOT EXISTS idx_prescription_scan_items_medicine ON prescription_scan_items(matched_medicine_id);
+          CREATE INDEX IF NOT EXISTS idx_enquiries_status_date ON medicine_enquiries (status, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_enquiries_phone ON medicine_enquiries (patient_phone);
+          CREATE INDEX IF NOT EXISTS idx_enquiries_customer ON medicine_enquiries (customer_id);
+          CREATE INDEX IF NOT EXISTS idx_medicines_dosage_form ON medicines (dosage_form);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines (legacy_id);
+        `);
+
+        try {
+          const medIdxList: any[] = await db.all("PRAGMA index_list('medicines')");
+          const legacyIdx = medIdxList.find((i: any) => i.name === 'idx_medicines_legacy_id');
+          if (legacyIdx && Number(legacyIdx.partial) === 1) {
+            await db.run('DROP INDEX IF EXISTS idx_medicines_legacy_id');
+            await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+          }
+        } catch (_) { }
+
+        try {
+          const spCols = await db.all('PRAGMA table_info(special_orders)');
+          const spNames = new Set(spCols.map((c: any) => c.name));
+          if (spCols.length > 0 && !spNames.has('prescription_scan_id')) {
+            await db.run('ALTER TABLE special_orders ADD COLUMN prescription_scan_id INTEGER REFERENCES prescription_scans(id)');
           }
         } catch (_) { }
 
@@ -4214,6 +4315,96 @@ export async function ensureSchema(dbPath: string) {
         if (!chatNames.has('session_status')) {
           await db.run("ALTER TABLE whatsapp_chats ADD COLUMN session_status TEXT DEFAULT 'idle'");
         }
+      }
+    } catch (_) { }
+
+    // Schema v68: Prescription Scans & Medicine Enquiries DDL Wall
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS prescription_scans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL CHECK (source IN ('whatsapp','website','mobile','pos','telegram')),
+        source_msg_id TEXT,
+        source_url TEXT,
+        image_path TEXT NOT NULL,
+        image_paths_json TEXT,
+        raw_ocr_text TEXT,
+        doctor_name TEXT,
+        clinic_name TEXT,
+        patient_name TEXT,
+        patient_age TEXT,
+        is_prescription INTEGER DEFAULT 1,
+        status TEXT DEFAULT 'scanned' CHECK (status IN ('scanned','reviewed','converted')),
+        confidence REAL,
+        created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        store_id INTEGER REFERENCES stores(id)
+      );
+      CREATE TABLE IF NOT EXISTS prescription_scan_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id INTEGER NOT NULL REFERENCES prescription_scans(id) ON DELETE CASCADE,
+        line_index INTEGER NOT NULL,
+        raw_text TEXT NOT NULL,
+        brand_hint TEXT,
+        strength TEXT,
+        dosage_form TEXT,
+        prescribed_qty REAL DEFAULT 1,
+        matched_medicine_id INTEGER REFERENCES medicines(id),
+        match_score REAL,
+        match_type TEXT,
+        availability TEXT,
+        inventory_qty REAL DEFAULT 0,
+        catalog_hit_json TEXT,
+        pharmarack_hit_json TEXT,
+        created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
+      CREATE TABLE IF NOT EXISTS medicine_enquiries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        store_id INTEGER DEFAULT 1,
+        customer_id INTEGER REFERENCES customers(id),
+        patient_name TEXT,
+        patient_phone TEXT,
+        medicine_id INTEGER REFERENCES medicines(id),
+        medicine_name TEXT NOT NULL,
+        dosage_group TEXT CHECK (dosage_group IN ('TAB','BOTTLE','ALL')) DEFAULT 'ALL',
+        dosage_form TEXT,
+        qty INTEGER DEFAULT 1,
+        mrp REAL,
+        enquiry_type TEXT CHECK (enquiry_type IN ('medicine_info','new_order','repeat_order')) DEFAULT 'medicine_info',
+        source TEXT CHECK (source IN ('manual','whatsapp','phone','walkin','website')) DEFAULT 'manual',
+        status TEXT CHECK (status IN ('open','answered','converted','closed','cancelled')) DEFAULT 'open',
+        repeat_source_invoice_id INTEGER REFERENCES sales_invoices(id),
+        converted_order_id INTEGER REFERENCES special_orders(id),
+        converted_refill_ids TEXT,
+        notes TEXT,
+        answered_at TEXT,
+        converted_at TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_prescription_scans_msg ON prescription_scans(source_msg_id);
+      CREATE INDEX IF NOT EXISTS idx_prescription_scans_created ON prescription_scans(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_prescription_scan_items_scan ON prescription_scan_items(scan_id, line_index);
+      CREATE INDEX IF NOT EXISTS idx_prescription_scan_items_medicine ON prescription_scan_items(matched_medicine_id);
+      CREATE INDEX IF NOT EXISTS idx_enquiries_status_date ON medicine_enquiries (status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_enquiries_phone ON medicine_enquiries (patient_phone);
+      CREATE INDEX IF NOT EXISTS idx_enquiries_customer ON medicine_enquiries (customer_id);
+      CREATE INDEX IF NOT EXISTS idx_medicines_dosage_form ON medicines (dosage_form);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines (legacy_id);
+    `);
+
+    try {
+      const medIdxList: any[] = await db.all("PRAGMA index_list('medicines')");
+      const legacyIdx = medIdxList.find((i: any) => i.name === 'idx_medicines_legacy_id');
+      if (legacyIdx && Number(legacyIdx.partial) === 1) {
+        await db.run('DROP INDEX IF EXISTS idx_medicines_legacy_id');
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id ON medicines(legacy_id)');
+      }
+    } catch (_) { }
+
+    try {
+      const spCols = await db.all('PRAGMA table_info(special_orders)');
+      const spNames = new Set(spCols.map((c: any) => c.name));
+      if (spCols.length > 0 && !spNames.has('prescription_scan_id')) {
+        await db.run('ALTER TABLE special_orders ADD COLUMN prescription_scan_id INTEGER REFERENCES prescription_scans(id)');
       }
     } catch (_) { }
 

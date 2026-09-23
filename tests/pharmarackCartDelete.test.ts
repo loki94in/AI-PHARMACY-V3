@@ -24,7 +24,10 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   getMessageMedia: jest.fn(() => Promise.resolve({ mimetype: 'image/jpeg', data: '' })),
   ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
   isWhatsAppAutoConnectAllowed: jest.fn(() => true),
-  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined))
+  downloadMessageMediaById: jest.fn(() => Promise.resolve(undefined)),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE')),
+  ensureSessionHealth: jest.fn(() => Promise.resolve(true)),
+  downloadMessageMediaReliably: jest.fn(() => Promise.resolve(null))
 }));
 
 import fs from 'fs';

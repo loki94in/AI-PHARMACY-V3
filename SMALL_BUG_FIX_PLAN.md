@@ -7,6 +7,17 @@
 
 ## Fixed
 
+### [Fixed] P2-12 — Route Ordering: POST /api/system/cancel-shutdown 404 on App Mount (Shadowed by notFoundHandler)
+
+| Field | Content |
+|---|---|
+| **What the user saw** | Browser developer console logged `Layout.tsx:4190 POST http://localhost:5173/api/system/cancel-shutdown 404 (Not Found)` on every application launch, initial page visit, or page refresh. |
+| **Root cause** | In `src/server.ts`, `app.use(notFoundHandler)` and `app.use(errorHandler)` were registered at line 411, whereas `app.post('/api/system/cancel-shutdown')`, `app.post('/api/system/shutdown')`, and `app.post('/api/system/apply-update')` were registered downstream at line 914. Because Express middleware executes FIFO, any request to `/api/system/cancel-shutdown` was intercepted by `notFoundHandler` and returned a 404 response before reaching the route handler. |
+| **How it was fixed** | Relocated `pendingShutdownTimer` and the `/api/system/cancel-shutdown`, `/api/system/shutdown`, and `/api/system/apply-update` route handlers in `src/server.ts` to the core API routes registration block before line 350, ahead of `app.use(notFoundHandler)`. |
+| **Priority** | P2 |
+| **What not to touch** | `gracefulShutdown()` lifecycle implementation, `Layout.tsx` beforeunload/pagehide beacon handlers, and existing service status router. |
+| **Verified by** | TypeScript compilation (`tsc --noEmit`); `npm run guardrails` PASS (0 violations); `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-28 — Clean Process Tree & Terminal Termination on App Exit (Dev & Standalone)
 
 | Field | Content |

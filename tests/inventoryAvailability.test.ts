@@ -24,7 +24,12 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   hashMessageBody: (msg: string) => String(msg).length,
   getChats: jest.fn(() => Promise.resolve([])),
   getChatMessages: jest.fn(() => Promise.resolve([])),
-  getMessageMedia: jest.fn(() => Promise.resolve(undefined))
+  getMessageMedia: jest.fn(() => Promise.resolve(undefined)),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE')),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => true),
+  ensureSessionHealth: jest.fn(() => Promise.resolve(true)),
+  downloadMessageMediaReliably: jest.fn(() => Promise.resolve(null))
 }));
 
 describe('Inventory availability classification (stock vs master-DB vs external-only)', () => {

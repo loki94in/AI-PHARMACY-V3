@@ -139,23 +139,43 @@ export async function processPrescriptionAndNotifyPharmacy(input: PrescriptionOr
     let clinicName: string | undefined;
     let rawItems: Array<{ brandName: string; dosageForm?: string; strength?: string }> = [];
 
-    // Step 1: Extract medicines via PrescriptionScannerService (Local Tesseract + Gemini fallback)
-    if (primaryImagePath && fs.existsSync(primaryImagePath)) {
+    // Step 1: Extract medicines via Unified Prescription Orchestrator (Multi-page bundle or single photo)
+    if (imagePaths && imagePaths.length > 0) {
       try {
-        console.log(`[PrescriptionIntel] Scanning prescription photo for Order #${orderId}...`);
-        const scanResult = await prescriptionScannerService.scanPrescription(primaryImagePath);
-        doctorName = scanResult.doctorName;
-        clinicName = scanResult.clinicName;
+        console.log(`[PrescriptionIntel] Scanning ${imagePaths.length} prescription photo(s) for Order #${orderId}...`);
+        const { prescriptionOrchestratorService } = await import('./prescriptionOrchestratorService.js');
+        const existingPaths = imagePaths.filter(p => fs.existsSync(p));
+        const buffers = await Promise.all(existingPaths.map(p => fs.promises.readFile(p)));
 
-        if (scanResult.items && scanResult.items.length > 0) {
-          rawItems = scanResult.items.map(it => ({
-            brandName: it.brandName,
-            dosageForm: it.dosageForm,
-            strength: it.strength
-          }));
+        if (buffers.length > 0) {
+          const scanResult = buffers.length > 1
+            ? await prescriptionOrchestratorService.scanPrescriptionBundle(buffers, { source: 'website' })
+            : await prescriptionOrchestratorService.scanPrescriptionImage({
+                buffer: buffers[0],
+                source: 'website',
+                imagePath: existingPaths[0]
+              });
+
+          doctorName = scanResult.doctorName;
+          clinicName = scanResult.clinicName;
+
+          if (scanResult.items && scanResult.items.length > 0) {
+            rawItems = scanResult.items.map(it => ({
+              brandName: it.brandHint || it.rawText,
+              dosageForm: it.dosageForm,
+              strength: it.strength
+            }));
+          }
+
+          if (scanResult.scanId) {
+            await db.run(
+              'UPDATE special_orders SET prescription_scan_id = COALESCE(prescription_scan_id, ?) WHERE id = ?',
+              [scanResult.scanId, orderId]
+            ).catch(() => {});
+          }
         }
       } catch (scanErr: any) {
-        console.warn(`[PrescriptionIntel] OCR extraction note for Order #${orderId}:`, scanErr.message || scanErr);
+        console.warn(`[PrescriptionIntel] Unified prescription scan note for Order #${orderId}:`, scanErr.message || scanErr);
       }
     }
 

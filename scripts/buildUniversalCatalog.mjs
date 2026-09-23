@@ -131,8 +131,7 @@ async function main() {
   // Ensure necessary schema elements exist
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id 
-    ON medicines(legacy_id) 
-    WHERE legacy_id IS NOT NULL;
+    ON medicines(legacy_id);
 
     CREATE INDEX IF NOT EXISTS idx_medicines_barcode 
     ON medicines(barcode) 

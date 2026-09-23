@@ -539,11 +539,41 @@ const WaRequestsPanel: React.FC = () => {
       }
     };
 
+    const onRxScan = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && detail.items && detail.items.length > 0) {
+        const first = detail.items[0];
+        const primaryName = first.brandHint || first.matched_medicine_name || first.brandName || first.name || first.line_text || first.rawText || '';
+        const rawConf = first.topScore || detail.confidence || detail.scan?.confidence || 0.88;
+        const normalizedConf = rawConf > 1 ? Math.round(rawConf) : Math.round(rawConf * 100);
+
+        recordIncomingMatch({
+          customer: { name: detail.patientName || detail.scan?.patient_name || 'Prescription Scan', phone: '' },
+          medicineName: primaryName,
+          quantity: String(first.prescribedQuantity || first.prescribed_quantity || '1'),
+          dosageForm: first.dosageForm || first.dosage_group || 'TAB',
+          localMatches: detail.items.map((it: any) => it.brandHint || it.matched_medicine_name || it.brandName || it.name || it.line_text || it.rawText).filter(Boolean),
+          availability: first.availability || (first.inventoryQty > 0 || first.in_stock ? 'IN_STOCK' : 'REGISTERED_NO_STOCK'),
+          confidence: normalizedConf,
+          source: 'image',
+          messageBody: `Prescription Scan #${detail.scanId || detail.scan?.id || ''} (${detail.items.length} items)`,
+          relatedMedicines: detail.items.slice(1).map((it: any) => ({
+            name: it.brandHint || it.matched_medicine_name || it.brandName || it.name || it.line_text || it.rawText || '',
+            registered: true,
+            inventoryStock: it.inventoryQty ?? (it.in_stock ? 1 : 0)
+          }))
+        });
+        setRows(feedCache.slice());
+      }
+    };
+
     window.addEventListener('sse-wa-medicine-match', onMatch);
+    window.addEventListener('sse-prescription-scan-complete', onRxScan);
     window.addEventListener('sse-wa-session-updated', onSessionUpdated);
     window.addEventListener('sse-wa-new-message', refreshSessions);
     return () => {
       window.removeEventListener('sse-wa-medicine-match', onMatch);
+      window.removeEventListener('sse-prescription-scan-complete', onRxScan);
       window.removeEventListener('sse-wa-session-updated', onSessionUpdated);
       window.removeEventListener('sse-wa-new-message', refreshSessions);
     };

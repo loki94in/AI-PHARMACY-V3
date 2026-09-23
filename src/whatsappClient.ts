@@ -2495,17 +2495,19 @@ export async function downloadMessageMediaReliably(
 
   // ── Tier 1: Direct Node.js CDN Decryption (Pure Node, Zero Browser UI dependency) ──
   const rawData = rawMsg?._data;
-  if (rawData && rawData.directPath && rawData.mediaKey) {
+  const directPath = rawData?.directPath || rawMsg?.directPath;
+  const mediaKey = rawData?.mediaKey || rawMsg?.mediaKey;
+  if (directPath && mediaKey) {
     try {
       const { extractWhatsAppMedia } = await import('./utils/whatsappMediaDecryptor.js');
       const cdnResult = await extractWhatsAppMedia({
-        directPath: rawData.directPath,
-        mediaKey: rawData.mediaKey,
-        mimetype: rawData.mimetype || rawMsg.mimetype || 'image/jpeg',
-        type: rawData.type || rawMsg.type || 'image',
-        encFilehash: rawData.encFilehash,
-        filehash: rawData.filehash,
-        preview: rawData.body || rawMsg.body
+        directPath,
+        mediaKey,
+        mimetype: rawData?.mimetype || rawMsg?.mimetype || 'image/jpeg',
+        type: rawData?.type || rawMsg?.type || 'image',
+        encFilehash: rawData?.encFilehash || rawMsg?.encFilehash,
+        filehash: rawData?.filehash || rawMsg?.filehash,
+        preview: rawData?.body || rawMsg?.body
       }, 10000);
 
       if (cdnResult?.data) {
@@ -2522,6 +2524,7 @@ export async function downloadMessageMediaReliably(
   }
 
   // ── Tier 2 & 3: Browser evaluate with blob URL fetch + downloadManager + metadata extraction ──
+  let downloaded: any = null;
   if ((clientInstance as any).pupPage) {
     try {
       // Log WA Web version so we can correlate API failures with WhatsApp Web updates
@@ -2530,7 +2533,12 @@ export async function downloadMessageMediaReliably(
         console.log(`[WhatsApp Client] downloadMessageMediaReliably — msgId=${serializedId} waVersion=${waVersion}`);
       } catch (_) {}
 
-      const downloaded = await (clientInstance as any).pupPage.evaluate(async (msgId: string, waitLimit: number, targetChatId?: string, bareId?: string) => {
+      // Ensure esbuild/tsx __name helper is defined in browser context
+      try {
+        await (clientInstance as any).pupPage.evaluate('window.__name = window.__name || function(fn) { return fn; };');
+      } catch (_) {}
+
+      downloaded = await (clientInstance as any).pupPage.evaluate(async (msgId: string, waitLimit: number, targetChatId?: string, bareId?: string) => {
         try {
           const wCollections = (window as any).require ? (window as any).require('WAWebCollections') : null;
           const store = (window as any).Store;
@@ -2721,15 +2729,24 @@ export async function downloadMessageMediaReliably(
   }
 
   // ── Tier 4: Fallback to fresh getMessageById ──
-  const storeFresh = await downloadMessageMediaById(serializedId);
-  if (storeFresh?.data) return storeFresh;
+  try {
+    const storeFresh = await downloadMessageMediaById(serializedId);
+    if (storeFresh?.data) return storeFresh;
+  } catch (freshErr) {
+    console.warn(`[WhatsApp Client] Tier 4 downloadMessageMediaById failed for ${serializedId}:`, freshErr instanceof Error ? freshErr.message : String(freshErr));
+  }
 
   // ── Tier 5: Fallback to raw preview thumbnail if available ──
-  if (rawData?.body && typeof rawData.body === 'string' && rawData.body.length > 50) {
+  const previewData =
+    (rawData?.body && typeof rawData.body === 'string' && rawData.body.length > 50 ? rawData.body : null) ||
+    (rawMsg?.body && typeof rawMsg.body === 'string' && rawMsg.body.length > 50 ? rawMsg.body : null) ||
+    (downloaded?.msgMeta?.preview && typeof downloaded.msgMeta.preview === 'string' && downloaded.msgMeta.preview.length > 50 ? downloaded.msgMeta.preview : null);
+
+  if (previewData) {
     console.log(`[WhatsApp Client] Using raw preview thumbnail as final fallback for ${serializedId}`);
     return {
-      data: rawData.body.replace(/^data:image\/[a-z]+;base64,/, ''),
-      mimetype: rawData.mimetype || 'image/jpeg',
+      data: previewData.replace(/^data:image\/[a-z]+;base64,/, ''),
+      mimetype: rawData?.mimetype || rawMsg?.mimetype || 'image/jpeg',
       filename: `${serializedId}_thumb.jpg`
     };
   }

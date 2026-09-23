@@ -366,6 +366,21 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       }
     }
 
+    // Retry 3: Casing fallback — ensure search is never blocked by strict capital or lowercase font rules
+    if (!data || !Array.isArray(data.data) || data.data.length === 0) {
+      const altCase = qRaw === qRaw.toUpperCase() ? qRaw.toLowerCase().trim() : qRaw.toUpperCase().trim();
+      if (altCase !== qRaw && altCase !== primaryKeyword && altCase !== cleanedTerm && altCase.length >= 2) {
+        response = await fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
+          method: 'POST',
+          body: JSON.stringify(buildPayload(altCase)),
+          signal: AbortSignal.timeout(5000)
+        });
+        if (response.ok) {
+          data = await response.json().catch(() => null);
+        }
+      }
+    }
+
     if (data && Array.isArray(data.data) && data.data.length > 0) {
       const results = data.data.map((p: any, idx: number) => {
         const rawName = p.ProductFullName || p.MasterProductName || p.BrandName || p.ProductName || '';

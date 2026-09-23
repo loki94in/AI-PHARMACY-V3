@@ -30,8 +30,30 @@ function processNext(): void {
 
 async function runScan(item: QueueItem): Promise<void> {
   try {
-    console.log(`[OCR Queue] Scanning message ${item.msgId} from ${item.meta.phone}`);
-    const result = await aiCameraService.processImage(item.buffer, true /* skipEnrichment */);
+    const displayMsgId = typeof item.msgId === 'object' && item.msgId !== null
+      ? ((item.msgId as any)._serialized || (item.msgId as any).id || String(item.msgId))
+      : String(item.msgId);
+    console.log(`[OCR Queue] Scanning message ${displayMsgId} from ${item.meta.phone}`);
+    const result = await aiCameraService.processImage(item.buffer, true /* skipEnrichment */, true /* offlineOnly */);
+
+    // If prescription detected, run unified prescription orchestrator to populate prescription_scans & items
+    if (result && result.isPrescription) {
+      try {
+        const { prescriptionOrchestratorService } = await import('./prescriptionOrchestratorService.js');
+        const rxScan = await prescriptionOrchestratorService.scanPrescriptionImage({
+          buffer: item.buffer,
+          source: 'whatsapp',
+          msgId: item.msgId,
+          imagePath: item.meta.imagePath
+        });
+        if (rxScan?.scanId) {
+          result.prescriptionScanId = rxScan.scanId;
+          result.prescriptionItems = rxScan.items;
+        }
+      } catch (rxErr) {
+        console.warn('[OCR Queue] Prescription orchestrator run note:', rxErr);
+      }
+    }
 
     // Cache result in scanned_messages table
     const db = await dbManager.getConnection();
@@ -84,6 +106,16 @@ export function enqueue(msgId: string, buffer: Buffer, meta: { phone: string; ch
     return; // Already handled
   }
   queue.push({ msgId, buffer, meta });
+
+  // Immediately acknowledge receipt — fire-and-forget, never blocks OCR
+  import('../whatsappClient.js').then(({ sendMessage }) => {
+    sendMessage(
+      meta.phone,
+      undefined,
+      '📷 We have received your image and are processing it. Please wait a moment...'
+    ).catch(() => {/* silent — ack failure must never crash the OCR pipeline */});
+  }).catch(() => {});
+
   processNext();
 }
 

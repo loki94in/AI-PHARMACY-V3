@@ -83,8 +83,7 @@ async function main() {
   // Ensure unique index on legacy_id for fast idempotent deduplication
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_legacy_id 
-    ON medicines(legacy_id) 
-    WHERE legacy_id IS NOT NULL;
+    ON medicines(legacy_id);
   `);
 
   const initialCount = db.prepare('SELECT COUNT(*) as c FROM medicines').get().c;

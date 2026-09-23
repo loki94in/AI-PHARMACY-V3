@@ -1161,7 +1161,8 @@ router.post('/prescription-request', async (req, res) => {
       notes,
       image,
       images,
-      store_id = 1
+      store_id = 1,
+      prescription_scan_id
     } = req.body;
 
     if (!customer_name || !String(customer_name).trim()) {
@@ -1247,8 +1248,8 @@ router.post('/prescription-request', async (req, res) => {
     const result = await db.run(
       `INSERT INTO special_orders (
         store_id, medicine_id, requester, phone, medicine_name, product, qty, notes,
-        status, customer_order_source, source, prescription_url, total_amount, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        status, customer_order_source, source, prescription_url, total_amount, prescription_scan_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'Pending', 'website', 'website', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         targetStoreId,
         resolvedMedicineId,
@@ -1258,7 +1259,8 @@ router.post('/prescription-request', async (req, res) => {
         medRequested,
         finalNotes,
         prescriptionUrl || null,
-        parsedMrp || 0
+        parsedMrp || 0,
+        prescription_scan_id ? Number(prescription_scan_id) : null
       ]
     );
 

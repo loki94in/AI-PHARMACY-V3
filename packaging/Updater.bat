@@ -171,6 +171,10 @@ call :LOG "Update v%TARGET_VERSION% applied successfully."
 del /f /q "%ZIP_PATH%" >nul 2>&1
 call :CLEANUP_LOCK
 
+:: ── 8b. Prune older pre-update rollback backups (keep latest 2) ──
+call :LOG "Pruning older pre-update rollback backups (keeping latest 2)..."
+powershell -NoProfile -Command "$bRoot = Join-Path '%INSTALL_DIR%' 'backup'; if (Test-Path $bRoot) { Get-ChildItem -Path $bRoot -Directory -Filter 'preupdate-*' | Sort-Object CreationTime -Descending | Select-Object -Skip 2 | ForEach-Object { Remove-Item $_.FullName -Recurse -Force; Write-Host ('Pruned: ' + $_.Name) } }" >> "%LOG_PATH%" 2>&1
+
 :: ── 9. Start new version ──────────────────────────────────
 call :LOG "Starting new PharmacyOS.exe..."
 timeout /t 2 /nobreak >nul

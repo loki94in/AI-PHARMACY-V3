@@ -23,7 +23,12 @@ jest.unstable_mockModule('../src/whatsappClient.js', () => ({
   currentQr: null,
   isReady: true,
   setCurrentQr: jest.fn(),
-  setIsReady: jest.fn()
+  setIsReady: jest.fn(),
+  checkPhoneWhatsAppRegistered: jest.fn(() => Promise.resolve('AVAILABLE')),
+  ensureWhatsAppReady: jest.fn(() => Promise.resolve(true)),
+  isWhatsAppAutoConnectAllowed: jest.fn(() => true),
+  ensureSessionHealth: jest.fn(() => Promise.resolve(true)),
+  downloadMessageMediaReliably: jest.fn(() => Promise.resolve(null))
 }));
 
 import fs from 'fs';

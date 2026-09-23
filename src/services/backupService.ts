@@ -489,3 +489,128 @@ export async function initBackupScheduler(): Promise<void> {
   const freq = await getScheduleConfig();
   startScheduler(freq);
 }
+
+/** Helper to recursively calculate folder size */
+function getDirectorySize(dirPath: string): number {
+  let total = 0;
+  try {
+    if (fs.existsSync(dirPath)) {
+      const items = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const item of items) {
+        const itemPath = path.join(dirPath, item.name);
+        if (item.isDirectory()) {
+          total += getDirectorySize(itemPath);
+        } else if (item.isFile()) {
+          total += fs.statSync(itemPath).size;
+        }
+      }
+    }
+  } catch (_) {}
+  return total;
+}
+
+export interface PreupdateFolderInfo {
+  name: string;
+  fullPath: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface PreupdateBackupsSummary {
+  count: number;
+  totalSizeBytes: number;
+  folders: PreupdateFolderInfo[];
+}
+
+/**
+ * Scan for pre-update rollback safety backups created by Updater.bat
+ */
+export function getPreupdateBackupsInfo(): PreupdateBackupsSummary {
+  const folders: PreupdateFolderInfo[] = [];
+  const searchDirs = new Set<string>();
+  if (BACKUP_DIR) searchDirs.add(BACKUP_DIR);
+  const exeBackup = path.join(path.dirname(process.execPath), 'backup');
+  if (fs.existsSync(exeBackup)) searchDirs.add(exeBackup);
+
+  for (const dir of searchDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('preupdate-')) {
+          const fullPath = path.join(dir, entry.name);
+          if (folders.some(f => f.fullPath === fullPath)) continue;
+          try {
+            const stats = fs.statSync(fullPath);
+            const sizeBytes = getDirectorySize(fullPath);
+            folders.push({
+              name: entry.name,
+              fullPath,
+              sizeBytes,
+              createdAt: stats.mtime.toISOString(),
+            });
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Sort newest first by name (preupdate-YYYYMMDDHHmmss)
+  folders.sort((a, b) => b.name.localeCompare(a.name));
+  const totalSizeBytes = folders.reduce((acc, f) => acc + f.sizeBytes, 0);
+
+  return {
+    count: folders.length,
+    totalSizeBytes,
+    folders,
+  };
+}
+
+/**
+ * Clean older pre-update rollback safety folders, keeping the newest `keepCount` copies.
+ */
+export async function cleanOldPreupdateBackups(keepCount: number = 2): Promise<{
+  freedBytes: number;
+  deletedCount: number;
+  remainingCount: number;
+}> {
+  const info = getPreupdateBackupsInfo();
+  let freedBytes = 0;
+  let deletedCount = 0;
+
+  if (info.folders.length > keepCount) {
+    const toDelete = info.folders.slice(keepCount);
+    for (const folder of toDelete) {
+      const safeName = path.basename(folder.fullPath);
+      if (!safeName.startsWith('preupdate-')) continue;
+
+      try {
+        if (fs.existsSync(folder.fullPath)) {
+          fs.rmSync(folder.fullPath, { recursive: true, force: true });
+          freedBytes += folder.sizeBytes;
+          deletedCount++;
+          console.log(`[Backup] Pruned old pre-update backup: ${safeName} (${Math.round(folder.sizeBytes / (1024 * 1024))} MB)`);
+        }
+      } catch (err: any) {
+        console.error(`[Backup] Failed to remove preupdate folder ${safeName}:`, err?.message);
+      }
+    }
+  }
+
+  if (deletedCount > 0) {
+    try {
+      const db = await dbManager.getConnection();
+      await db.run(
+        'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+        ['BACKUP', `Pruned ${deletedCount} old pre-update rollback backup(s), freed ${Math.round(freedBytes / (1024 * 1024))} MB (kept latest ${keepCount})`]
+      );
+    } catch (_) {}
+  }
+
+  return {
+    freedBytes,
+    deletedCount,
+    remainingCount: Math.min(info.folders.length - deletedCount, keepCount),
+  };
+}
+

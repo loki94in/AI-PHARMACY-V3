@@ -4,6 +4,8 @@ import { PageActiveProvider } from './PageActiveContext';
 import { PageQueryTracker } from './PageQueryTracker';
 import { PageErrorBoundary } from './PageErrorBoundary';
 
+export { usePageActive } from './PageActiveContext';
+
 export interface KeepAliveRoute {
   path: string;
   element: ReactNode;

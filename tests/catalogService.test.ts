@@ -68,8 +68,16 @@ describe('CatalogService Centralized Engine', () => {
     await db.run(`
       INSERT INTO medicines (id, name, manufacturer, category, mrp, schedule_type, packaging, therapeutic)
       VALUES (99991, 'Dolo 650mg Tablet', 'Micro Labs', 'Analgesics', 30.50, 'OTC', '15 Tablets', 'Paracetamol')
-      ON CONFLICT(id) DO UPDATE SET name = 'Dolo 650mg Tablet'
+      ON CONFLICT(id) DO UPDATE SET 
+        name = excluded.name, 
+        mrp = excluded.mrp,
+        manufacturer = excluded.manufacturer,
+        category = excluded.category,
+        schedule_type = excluded.schedule_type,
+        packaging = excluded.packaging,
+        therapeutic = excluded.therapeutic
     `);
+    await db.run('DELETE FROM inventory_master WHERE medicine_id = 99991');
     await db.run(`
       INSERT INTO inventory_master (medicine_id, store_id, quantity, mrp)
       VALUES (99991, 1, 50, 30.50)

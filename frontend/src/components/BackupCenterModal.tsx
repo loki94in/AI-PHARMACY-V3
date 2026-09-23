@@ -31,6 +31,19 @@ interface Archive {
   source: string;
 }
 
+interface PreupdateFolder {
+  name: string;
+  fullPath: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+interface PreupdateBackupsSummary {
+  count: number;
+  totalSizeBytes: number;
+  folders: PreupdateFolder[];
+}
+
 interface BackupStatus {
   showRestorePopup: boolean;
   availableArchives: Archive[];
@@ -41,6 +54,7 @@ interface BackupStatus {
   lastUploadDate: string;
   nextScheduledBackup: string;
   totalBackupSize: number;
+  preupdateBackups?: PreupdateBackupsSummary;
   backupStorageLocations: {
     local: string;
     gdrive: string;
@@ -72,6 +86,7 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmCleanPreupdate, setConfirmCleanPreupdate] = useState(false);
   const [lastBackupError, setLastBackupError] = useState<string | null>(null);
 
   // Core loader (no sync setState before the await); the mount path relies on
@@ -190,6 +205,24 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
       }
     } catch {
       toastEvent.trigger('Failed to initialize fresh install', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCleanPreupdate = async () => {
+    setActionLoading(true);
+    try {
+      const { data } = await apiClient.post('/utilities/backup/clean-preupdate', { keepCount: 2 });
+      if (data.success) {
+        const freedMB = (data.freedBytes / (1024 * 1024)).toFixed(1);
+        toastEvent.trigger(`Cleaned ${data.deletedCount} old update backup(s) and freed ${freedMB} MB!`, 'success');
+        setConfirmCleanPreupdate(false);
+        refreshStatus();
+      }
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiErrorShape;
+      toastEvent.trigger(apiErr.response?.data?.error || apiErr.message || 'Failed to clean old update backups', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -353,6 +386,86 @@ export const BackupCenterContent: React.FC<BackupCenterContentProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Update Rollback Safety Backups & Disk Hygiene */}
+          {status.preupdateBackups && status.preupdateBackups.count > 0 && (
+            <div className="bg-bg3 border border-glass-border rounded-xl p-4 space-y-3 text-left">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-glass-border/40 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-sky/10 border border-sky/20 flex items-center justify-center text-sky shrink-0">
+                    <RotateCcw size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-text flex items-center gap-2">
+                      App Update Rollback Snapshots
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-bg border border-glass-border font-mono text-muted">
+                        {status.preupdateBackups.count} {status.preupdateBackups.count === 1 ? 'copy' : 'copies'} ({formatFileSize(status.preupdateBackups.totalSizeBytes)})
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-muted leading-relaxed">
+                      Pre-update safety copies for automatic rollback if an update fails.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action buttons (human-in-the-loop) */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {status.preupdateBackups.count > 2 ? (
+                    confirmCleanPreupdate ? (
+                      <div className="flex items-center gap-1.5 bg-bg2 p-1 rounded-lg border border-glass-border">
+                        <span className="text-[10px] text-amber font-bold px-1">Prune to latest 2?</span>
+                        <button
+                          onClick={handleCleanPreupdate}
+                          disabled={actionLoading}
+                          className="px-2.5 py-1 bg-amber text-white hover:bg-amber-600 rounded text-[10px] font-bold uppercase transition-all disabled:opacity-50"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmCleanPreupdate(false)}
+                          className="px-2 py-1 bg-bg3 text-muted hover:text-text rounded text-[10px] font-bold transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmCleanPreupdate(true)}
+                        disabled={actionLoading}
+                        className="px-3 py-1.5 bg-sky/10 hover:bg-sky/20 text-sky border border-sky/30 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Trash2 size={12} />
+                        Prune Older Copies (Free Space)
+                      </button>
+                    )
+                  ) : (
+                    <span className="text-[10px] px-2.5 py-1 rounded-lg bg-green/10 text-green border border-green/20 font-bold">
+                      Storage Optimal (Keeps latest 2)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* List of rollback folders */}
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                {status.preupdateBackups.folders.map((f, idx) => (
+                  <div
+                    key={f.name}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-bg border border-glass-border/30 font-mono text-muted"
+                    title={f.fullPath}
+                  >
+                    <span className={idx < 2 ? 'text-sky font-semibold' : 'text-muted'}>{f.name}</span>
+                    <span className="text-[9px] text-muted/80">({formatFileSize(f.sizeBytes)})</span>
+                    {idx < 2 && (
+                      <span className="text-[8px] uppercase tracking-wider px-1 py-0.2 rounded bg-sky/15 text-sky font-bold">
+                        Keep
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Archives List */}
           <div className="border border-glass-border/40 rounded-xl overflow-hidden text-left bg-bg3">

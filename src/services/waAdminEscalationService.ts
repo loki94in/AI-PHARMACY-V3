@@ -898,16 +898,17 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
     }).join('\n');
 
     const messageText =
-      `🔔 *New Special Order Request*\n\n` +
-      `🆔 *Special Order ID*: ${payload.soCode}\n\n` +
-      `👤 *Customer*: ${payload.customerName}\n` +
-      `📱 *WhatsApp*: ${payload.customerPhone}\n\n` +
-      `💊 *${payload.medicineName}*\n` +
+      `🔍 *Order Verification & Distributor Mapping*\n\n` +
+      `🆔 *Order*: ${payload.soCode}\n` +
+      `👤 *Customer*: ${payload.customerName} (+91 ${payload.customerPhone})\n` +
+      `💊 *Medicine*: ${payload.medicineName}\n` +
       `📦 *Quantity*: ${payload.quantity} ${payload.unit}\n\n` +
-      `🔎 *Pharmarack Search Results*\n\n` +
+      `🤖 *Mapped Distributor Options:*\n\n` +
       `${resultsList}\n\n` +
-      `Please reply with:\n` +
-      `${payload.soCode} 1`;
+      `⚖️ *Verification Check:*\n` +
+      `👉 Reply *CONFIRM* (or *1*) to approve & send payment QR to customer\n` +
+      `👉 Reply *${payload.soCode} [Number]* to choose another distributor\n` +
+      `👉 Reply *REJECT* if bot made a mistake`;
 
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation', 'Admin / Store Owner');
     console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);

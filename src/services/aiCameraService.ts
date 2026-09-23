@@ -14,6 +14,21 @@ import {
   isItemTypeConflicting
 } from './productNameFilterService.js';
 import { isPlausibleMedicineName } from './intentKeywords.js';
+import {
+  isDisqualifiedPackagingLine,
+  cleanBrandToken,
+  isPureDosageOrPackLine,
+  getLineTypographyMetrics,
+  extractMultiSaltDrugStrength,
+  areMultiSaltStrengthsEqual,
+  areMultiSaltStrengthsConflicting,
+  deduplicateBlisterPocketLines,
+  calculateSpatialLayoutScore,
+  classifyImageContent,
+  generatePharmacistReviewCard,
+  checkLasaConflict,
+  extractPureMedicineName
+} from './aiCameraRuleEngine.js';
 import { onnxOcrService } from './onnxOcrService.js';
 import { onlineDataEnricher } from './onlineDataEnricher.js';
 import { visualIndexService } from './visualIndexService.js';
@@ -45,29 +60,57 @@ class AICameraService {
   private initialized: boolean = false;
   private ignoreListLoaded: boolean = false;
 
-  private async preprocess(buffer: Buffer): Promise<Buffer> {
+  /**
+   * Preprocessing for ONNX PaddleOCR — keep colour (RGB), only resize.
+   * PaddleOCR's detection model is trained on RGB; greyscaling hurts accuracy.
+   */
+  private async preprocessForOnnx(buffer: Buffer): Promise<Buffer> {
     try {
       const image = await Jimp.read(buffer);
-      let width = image.bitmap.width;
-      let height = image.bitmap.height;
-      const maxDim = 1200;
-
+      const maxDim = 960;
+      let { width, height } = image.bitmap;
       if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = Math.round((height * maxDim) / width);
-          width = maxDim;
+        if (width >= height) {
+          image.resize({ w: maxDim });
         } else {
-          width = Math.round((width * maxDim) / height);
-          height = maxDim;
+          image.resize({ h: maxDim });
         }
-        image.resize({ w: width, h: height });
       }
-      image.greyscale().contrast(0.25);
       return await image.getBuffer('image/jpeg');
     } catch (err) {
-      console.error('Preprocessing failed, using original:', err);
+      console.error('[preprocess-onnx] failed, using original:', err);
       return buffer;
     }
+  }
+
+  /**
+   * Preprocessing for Tesseract — greyscale → normalize → contrast boost → sharpen.
+   * High-contrast binarised images dramatically improve Tesseract accuracy on
+   * medicine strip photos which are often glossy, low-contrast or blurry.
+   */
+  private async preprocessForTesseract(buffer: Buffer): Promise<Buffer> {
+    try {
+      const image = await Jimp.read(buffer);
+      const maxDim = 1200;
+      let { width, height } = image.bitmap;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) {
+          image.resize({ w: maxDim });
+        } else {
+          image.resize({ h: maxDim });
+        }
+      }
+      image.greyscale().normalize().contrast(0.45).blur(0);
+      return await image.getBuffer('image/jpeg');
+    } catch (err) {
+      console.error('[preprocess-tesseract] failed, using original:', err);
+      return buffer;
+    }
+  }
+
+  /** @deprecated Use preprocessForOnnx or preprocessForTesseract. Kept for extractRawText compatibility. */
+  private async preprocess(buffer: Buffer): Promise<Buffer> {
+    return this.preprocessForTesseract(buffer);
   }
 
   /**
@@ -249,6 +292,10 @@ class AICameraService {
    * Such lines must NEVER be used as the brand name search query.
    */
   public isPackagingOrCompositionLine(line: string): boolean {
+    if (!line) return true;
+    // Rule Engine: Evaluates Rules 1-50 (Statutory, Storage, Chemistry, Commercial, Corporate, Pure Pack Math)
+    if (isDisqualifiedPackagingLine(line)) return true;
+
     const l = line.toLowerCase();
     // 1. Pharmacopoeia standards & chemical salt markers (I.P., B.P., U.S.P.)
     if (/\b(i\.?p\.?|b\.?p\.?|u\.?s\.?p\.?|1\.?p\.?)\b/i.test(l)) return true;
@@ -271,14 +318,32 @@ class AICameraService {
 
   /**
    * Returns candidate search tokens from an OCR text line by:
-   * 1. Splitting into words
-   * 2. Stripping leading/trailing punctuation and non-alphanumeric noise (e.g. 3%% -> 3, (baclof) -> baclof)
-   * 3. Removing stop words, single-char tokens, pure-numeric tokens, pharmacopoeia markers, and active chemical ingredients (KNOWN_APIS)
-   * Only the remaining "uncertain" / brand words are worth fuzzy-matching.
+   * 1. Cleaning trademark symbols (®, ™, ©) and splitting glued strength/pharmacopoeia
+   * 2. Splitting into words
+   * 3. Disqualifying pure dosage / pack count math tokens (e.g. 500mg+125mg, 3x10tablets)
+   * 4. Stripping leading/trailing punctuation and non-alphanumeric noise
+   * 5. Removing stop words, single-char tokens, pure-numeric tokens, pharmacopoeia markers, and active chemical ingredients
    */
   private extractCandidateTokens(line: string): string[] {
-    return line
-      .split(/[\s,;:|()\[\]{}\/\\]+/)
+    if (!line || isDisqualifiedPackagingLine(line)) return [];
+
+    // Fix 2: Strip known noise suffixes BEFORE discarding the whole line.
+    // e.g. "AMOXIL 500 I.P." → strip " 500 I.P." → keep "AMOXIL".
+    // Strips trailing pharmacopoeia markers, strengths and dosage forms so the
+    // brand portion of lines like "DOLO 650 Tablet I.P." survives filtering.
+    let lineToProcess = line
+      .replace(/\b(i\.?p\.?|b\.?p\.?|u\.?s\.?p\.?|1\.?p\.?)\b/gi, ' ')
+      .replace(/\b\d+\s*(?:mg|g|ml|mcg|iu|%|μg)(?:\s*\+\s*\d+\s*(?:mg|g|ml|mcg|iu|%|μg))*\b/gi, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    // After stripping, re-check the disqualified packaging gate on the cleaned version
+    if (isDisqualifiedPackagingLine(lineToProcess)) return [];
+
+    // Rules 81, 82, 87, 88: Clean trademark symbols (®), split glued strength/pharmacopoeia
+    const cleanedLine = cleanBrandToken(lineToProcess);
+    return cleanedLine
+      .split(/[\s,;:|()[\]{}\/\\]+/)
       .map(w => w.trim().toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, ''))
       .filter(w => {
         if (w.length < 2) return false;
@@ -287,12 +352,15 @@ class AICameraService {
         if (this.KNOWN_COMPANIES.has(w)) return false; // company name is not a product name
         if (this.KNOWN_APIS.has(w)) return false;     // active pharmaceutical ingredient (chemical salt) is NOT a brand name!
         if (/^\d+[%a-z]*$/i.test(w)) return false;
+        // Rule 41: Disqualify pure dosage or packaging math tokens (e.g. 500+125, 3x10, 500mg)
+        if (/^[\d\s\+\-\*\/xXmgklutiop%]+$/i.test(w)) return false;
         if (/^(ip|bp|usp|1p|i\.p|b\.p|u\.s\.p|1\.p)$/i.test(w)) return false;
         // filter pure company alias singletons (e.g. cipla, sun) even if not in KNOWN_COMPANIES due to casing
         if (this.companyAliasMap.has(w)) return false;
         return true;
       });
   }
+
 
   /**
    * If the OCR text already contains a recognizable API / composition pattern
@@ -544,7 +612,7 @@ If PACKAGING, return ONLY valid JSON matching:
   "allReadableText": "..."
 }`;
 
-      const modelName = 'gemini-2.0-flash';
+      const modelName = 'gemini-3.6-flash';
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
       const controller = new AbortController();
@@ -592,7 +660,35 @@ If PACKAGING, return ONLY valid JSON matching:
     }
   }
 
-  async processImage(imageData: string | Buffer, skipEnrichment: boolean = false): Promise<any> {
+  /**
+   * Calculate typography font metrics (max and average font height in pixels)
+   * for a specific line based on OCR bounding boxes.
+   */
+  private getLineFontMetrics(line: string, words: OCRResult['words']): { maxHeight: number; avgHeight: number } {
+    if (!words || words.length === 0 || !line) return { maxHeight: 0, avgHeight: 0 };
+    const lineTokens = line.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 0);
+    if (lineTokens.length === 0) return { maxHeight: 0, avgHeight: 0 };
+
+    const matchingHeights: number[] = [];
+    for (const w of words) {
+      if (!w.bbox || !w.text) continue;
+      const wClean = w.text.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!wClean) continue;
+      if (lineTokens.some(tok => tok === wClean || tok.includes(wClean) || wClean.includes(tok))) {
+        const height = Math.abs(w.bbox.y1 - w.bbox.y0);
+        if (height > 0) {
+          matchingHeights.push(height);
+        }
+      }
+    }
+
+    if (matchingHeights.length === 0) return { maxHeight: 0, avgHeight: 0 };
+    const maxHeight = Math.max(...matchingHeights);
+    const avgHeight = Math.round(matchingHeights.reduce((a, b) => a + b, 0) / matchingHeights.length);
+    return { maxHeight, avgHeight };
+  }
+
+  async processImage(imageData: string | Buffer, skipEnrichment: boolean = false, offlineOnly: boolean = false): Promise<any> {
     let buffer: Buffer;
     if (typeof imageData === 'string') {
       if (imageData.startsWith('data:')) {
@@ -605,87 +701,39 @@ If PACKAGING, return ONLY valid JSON matching:
       buffer = imageData;
     }
 
-    // Apply preprocessing
-    const processedBuffer = await this.preprocess(buffer);
+    // Fix 1: Use separate preprocessed buffers for each engine.
+    // ONNX PaddleOCR: colour RGB at 960px — greyscale breaks its detector.
+    // Tesseract: binarized/normalized at 1200px for character recognition.
+    const onnxBuffer = await this.preprocessForOnnx(buffer);
+    const tessBuffer = await this.preprocessForTesseract(buffer);
 
     let localOcrResult: OCRResult = { text: '', confidence: 0, words: [] };
     let fallbackUsed = false;
-    let geminiVisionData: any = null;
+    // Fix 4: Gemini Vision removed — 100% offline mode.
+    const geminiVisionData: any = null;
 
-    // 0. High-Precision Gemini 2.0 Flash Vision (if key configured)
-    const geminiKey = await this.getGeminiKey();
-    if (geminiKey) {
+    // Fix 1: ONNX runs on colour buffer; Tesseract on binarized buffer.
+    const isONNXAvailable = await onnxOcrService.checkAvailability();
+    if (isONNXAvailable) {
       try {
-        console.log('[AiCamera] Attempting high-precision Gemini 2.0 Flash Vision extraction...');
-        geminiVisionData = await this.extractWithGeminiVision(buffer, geminiKey);
-        if (geminiVisionData?.isPrescription && Array.isArray(geminiVisionData.items) && geminiVisionData.items.length > 0) {
-          const medText = geminiVisionData.items
-            .map((it: any) => `${it.brandName || ''} ${it.strength || ''} ${it.dosageForm || ''} ${it.handwrittenNotes ? `(${it.handwrittenNotes})` : ''}`.trim())
-            .filter(Boolean)
-            .join('\n');
-
-          const readableText = [
-            geminiVisionData.patientName ? `Patient: ${geminiVisionData.patientName}` : '',
-            geminiVisionData.patientPhone ? `Phone: ${geminiVisionData.patientPhone}` : '',
-            geminiVisionData.doctorName ? `Doctor: ${geminiVisionData.doctorName}` : '',
-            medText,
-            geminiVisionData.allReadableText || ''
-          ].filter(Boolean).join('\n');
-
+        const ocrResult = await onnxOcrService.scanImage(onnxBuffer);
+        if (ocrResult && ocrResult.success && ocrResult.text && ocrResult.text.trim().length > 0) {
           localOcrResult = {
-            text: readableText,
-            confidence: 95,
-            words: []
+            text: ocrResult.text || '',
+            confidence: ocrResult.confidence || 0,
+            words: ocrResult.words || []
           };
           fallbackUsed = false;
-          console.log(`[AiCamera] Gemini Vision detected PRESCRIPTION with ${geminiVisionData.items.length} prescribed items (Patient: ${geminiVisionData.patientName || 'N/A'})`);
-        } else if (geminiVisionData?.brandName) {
-          const readableText = [
-            geminiVisionData.brandName,
-            geminiVisionData.flavour,
-            geminiVisionData.genericName,
-            geminiVisionData.manufacturer,
-            geminiVisionData.dosageForm,
-            geminiVisionData.packaging,
-            geminiVisionData.allReadableText
-          ].filter(Boolean).join('\n');
-
-          localOcrResult = {
-            text: readableText,
-            confidence: 95,
-            words: []
-          };
-          fallbackUsed = false;
-          console.log(`[AiCamera] Gemini Vision successfully extracted: "${geminiVisionData.brandName}" (${geminiVisionData.flavour ? 'Flavour: ' + geminiVisionData.flavour + ', ' : ''}${geminiVisionData.manufacturer || ''})`);
-        }
-      } catch (geminiErr: any) {
-        console.warn('[AiCamera] Gemini Vision call failed, falling back to local OCR:', geminiErr?.message || geminiErr);
-      }
-    }
-
-    if (!geminiVisionData?.brandName && !geminiVisionData?.isPrescription) {
-      const isONNXAvailable = await onnxOcrService.checkAvailability();
-      if (isONNXAvailable) {
-        try {
-          const ocrResult = await onnxOcrService.scanImage(processedBuffer);
-          if (ocrResult && ocrResult.success && ocrResult.text && ocrResult.text.trim().length > 0) {
-            localOcrResult = {
-              text: ocrResult.text || '',
-              confidence: ocrResult.confidence || 0,
-              words: ocrResult.words || []
-            };
-            fallbackUsed = false;
-          } else {
-            console.warn('ONNX OCR returned empty or failed result:', ocrResult?.error);
-            fallbackUsed = true;
-          }
-        } catch (err) {
-          console.error('Error executing ONNX OCR:', err);
+        } else {
+          console.warn('[AiCamera] ONNX OCR returned empty or failed result:', ocrResult?.error);
           fallbackUsed = true;
         }
-      } else {
+      } catch (err) {
+        console.error('[AiCamera] Error executing ONNX OCR:', err);
         fallbackUsed = true;
       }
+    } else {
+      fallbackUsed = true;
     }
 
     if (fallbackUsed) {
@@ -694,8 +742,8 @@ If PACKAGING, return ONLY valid JSON matching:
       }
 
       try {
-        // 1. Run local Tesseract OCR
-        const { data } = await this.worker.recognize(processedBuffer);
+        // Fix 1: Tesseract uses the binarized buffer for better character recognition
+        const { data } = await this.worker.recognize(tessBuffer);
         const words = data.words ? data.words.map((word: any) => ({
           text: word.text,
           confidence: word.confidence,
@@ -713,14 +761,14 @@ If PACKAGING, return ONLY valid JSON matching:
           words: words
         };
       } catch (ocrError: any) {
-        console.error('Local Tesseract OCR failed:', ocrError);
+        console.error('[AiCamera] Local Tesseract OCR failed:', ocrError);
       }
     }
 
     // Visual pre-check against the 11,661 verified catalog images (pHash Hamming <= 10)
     let visualHitName: string | null = null;
     try {
-      const queryPhash = await visualIndexService.computePhashFromBuffer(processedBuffer);
+      const queryPhash = await visualIndexService.computePhashFromBuffer(onnxBuffer);
       if (queryPhash) {
         const visualHits = await visualIndexService.searchByPhash(queryPhash, 1, 10);
         if (visualHits.length > 0) {
@@ -734,6 +782,8 @@ If PACKAGING, return ONLY valid JSON matching:
 
     // --- Step 1: Detect known API/composition for medical intelligence (NOT as the search query!) ---
     let matches: string[] = [];
+    let bestLineScore = 0;
+    let candidateLines: Array<{ original: string; tokens: string[]; fontMetrics: any; spatialScore: number }> = [];
     const detectedApiText = await this.detectKnownApi(localOcrResult.text);
     if (detectedApiText) {
       console.log(`[AiCamera] Active ingredient detected in OCR ("${detectedApiText}") — saved as composition metadata.`);
@@ -754,18 +804,36 @@ If PACKAGING, return ONLY valid JSON matching:
 
       // Filter lines down to only those containing actual candidate (brand name) tokens.
       // Exclude composition lines, pharmacopoeia lines, storage/warnings, and promo lines.
-      const candidateLines = localOcrResult.text
-        .split('\n')
+      // Rule 42: Deduplicate repeated blister pocket lines
+      const rawLines = deduplicateBlisterPocketLines(localOcrResult.text.split('\n'));
+      candidateLines = rawLines
         .map(l => l.trim())
         .filter(l => l.length > 2 && l.length < 100)
         .filter(l => !/\b(free\b|buy\s+\d+\s+get|special\s+offer|promo\s+pack|extra\s+\d+|save\s+rs)/i.test(l))
         .filter(l => !this.isPackagingOrCompositionLine(l))
-        .map(line => ({ original: line, tokens: this.extractCandidateTokens(line) }))
+        .map(line => ({
+          original: line,
+          tokens: this.extractCandidateTokens(line),
+          fontMetrics: this.getLineFontMetrics(line, localOcrResult.words),
+          spatialScore: calculateSpatialLayoutScore(line, localOcrResult.words)
+        }))
         .filter(item => item.tokens.length > 0);
+
+      // Prioritize candidate lines by typography & spatial layout score (Rules 71–79):
+      // Real medicine brand names are virtually always printed in 2x to 5x larger font than
+      // composition, instructions, or subheaders, and reside in the upper prominent packaging zone.
+      candidateLines.sort((a, b) => {
+        const scoreDiff = b.spatialScore - a.spatialScore;
+        if (Math.abs(scoreDiff) >= 1) return scoreDiff;
+        const heightDiff = (b.fontMetrics.maxHeight || 0) - (a.fontMetrics.maxHeight || 0);
+        if (Math.abs(heightDiff) >= 5) {
+          return heightDiff;
+        }
+        return 0; // preserve original sequence if heights are similar
+      });
 
       const detectedDosageForm = this.detectDosageForm(localOcrResult.text);
       let bestLineMatches: string[] = [];
-      let bestLineScore = 0;
 
       // Prioritize Gemini Vision candidates (brand + flavour / brand name) if available
       if (geminiVisionData?.brandName) {
@@ -868,40 +936,94 @@ If PACKAGING, return ONLY valid JSON matching:
     // company/function stop words), so only a real medicine name survives.
     let brandName = '';
     if (matches.length === 0) {
-      const cands = lines
-        .map(line => {
-          const toks = this.extractCandidateTokens(line);
-          return { line, joined: toks.join(' ') };
-        })
-        .filter(c => c.joined.length > 0 && isPlausibleMedicineName(c.joined))
-        .filter(c => !this.isPackagingOrCompositionLine(c.line))
-        .filter(c => !/\b(free\b|offer\b|bogo|combo|promo|extra\s+\d+|save\s+rs|special\s+offer)/i.test(c.line));
-      if (cands.length > 0) {
-        // Score each candidate line. A real brand name is usually a single
-        // coherent capitalized word. OCR noise tends to be short fragments
-        // (<=3 chars), generic/API words (end in -fenac/-statin/…), or several
-        // broken tokens. Penalize those so the brand wins.
-        const isGeneric = (t: string) =>
-          /(fenac|cin|mycin|olol|statin|prazole|sartan|dine|pine|pram|xacin|azole|gest|dron|vir|phen|mab|tide|oxacin)$/i.test(t) ||
-          t.length > 11;
-        const scoreOf = (c: { line: string; joined: string }) => {
-          const tokens = c.joined.split(' ');
-          let s = /[A-Z]/.test(c.line) ? 2 : 0;
-          if (tokens.some(t => t.length <= 3)) s -= 1;   // likely OCR fragment
-          if (tokens.some(isGeneric)) s -= 1;             // generic / API word
-          s -= (tokens.length - 1) * 0.5;                 // prefer one coherent word
-          return s;
-        };
-        cands.sort((a, b) => scoreOf(b) - scoreOf(a));
-        brandName = cands[0].joined;
+      // Fix 3: Spatial-aware brand name extraction from ONNX word bounding boxes.
+      // The brand name on a medicine strip is always the LARGEST text in the TOP portion.
+      // When ONNX gives us bbox data, use it directly — it is far more reliable than
+      // pure token scoring on noisy OCR lines.
+      if (localOcrResult.words && localOcrResult.words.length > 0) {
+        const imgWords = localOcrResult.words.filter(w => {
+          if (!w.text || w.text.trim().length < 2) return false;
+          if (!/[a-zA-Z]/.test(w.text)) return false; // must have at least one letter
+          const wLow = w.text.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (this.STOP_WORDS.has(wLow)) return false;
+          if (this.KNOWN_APIS.has(wLow)) return false;
+          if (/^\d+$/.test(wLow)) return false;
+          if (/^(ip|bp|usp|1p)$/.test(wLow)) return false;
+          return true;
+        });
+
+        if (imgWords.length > 0) {
+          // Compute image height from bbox extremes
+          const maxY = Math.max(...imgWords.map(w => w.bbox.y1));
+          // Only consider words in the top 50% of the image
+          const topWords = imgWords.filter(w => w.bbox.y0 < maxY * 0.50);
+          const sourceWords = topWords.length > 0 ? topWords : imgWords;
+
+          // Find the tallest word height — that is the brand name's font size
+          const heights = sourceWords.map(w => Math.abs(w.bbox.y1 - w.bbox.y0));
+          const maxH = Math.max(...heights);
+          // Accept words whose height is at least 60% of the tallest word
+          const prominentWords = sourceWords.filter(
+            w => Math.abs(w.bbox.y1 - w.bbox.y0) >= maxH * 0.60
+          );
+
+          if (prominentWords.length > 0) {
+            // Sort by x position to reconstruct left-to-right reading order
+            prominentWords.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+            const candidate = prominentWords
+              .map(w => w.text.trim())
+              .filter(t => t.length >= 2)
+              .join(' ')
+              .trim();
+
+            if (candidate.length >= 2 && isPlausibleMedicineName(candidate)) {
+              brandName = extractPureMedicineName(candidate, {
+                detectedCompany: this.detectCompanyName(localOcrResult.text)
+              });
+              console.log(`[AiCamera] Spatial bbox brand extraction: "${brandName}" (from ${prominentWords.length} prominent words)`);
+            }
+          }
+        }
+      }
+
+      // Fallback: line-level scoring if no spatial result
+      if (!brandName) {
+        const cands = lines
+          .map(line => {
+            const toks = this.extractCandidateTokens(line);
+            const fontMetrics = this.getLineFontMetrics(line, localOcrResult.words);
+            return { line, joined: toks.join(' '), fontHeight: fontMetrics.maxHeight || 0 };
+          })
+          .filter(c => c.joined.length > 0 && isPlausibleMedicineName(c.joined))
+          .filter(c => !this.isPackagingOrCompositionLine(c.line))
+          .filter(c => !/\b(free\b|offer\b|bogo|combo|promo|extra\s+\d+|save\s+rs|special\s+offer)/i.test(c.line));
+        if (cands.length > 0) {
+          const isGeneric = (t: string) =>
+            /(fenac|cin|mycin|olol|statin|prazole|sartan|dine|pine|pram|xacin|azole|gest|dron|vir|phen|mab|tide|oxacin)$/i.test(t) ||
+            t.length > 11;
+          const scoreOf = (c: { line: string; joined: string; fontHeight: number }) => {
+            const tokens = c.joined.split(' ');
+            let s = /[A-Z]/.test(c.line) ? 2 : 0;
+            if (tokens.some(t => t.length <= 3)) s -= 1;
+            if (tokens.some(isGeneric)) s -= 1;
+            s -= (tokens.length - 1) * 0.5;
+            if (c.fontHeight > 0) s += Math.round(c.fontHeight / 10);
+            return s;
+          };
+          cands.sort((a, b) => scoreOf(b) - scoreOf(a));
+          brandName = extractPureMedicineName(cands[0].joined, {
+            detectedCompany: this.detectCompanyName(localOcrResult.text)
+          });
+        }
       }
     }
-    // Packaging cross-check and confirmation gate
-    const detectedDrugStrength = extractDrugStrength(localOcrResult.text);
+    // Packaging cross-check and confirmation gate (Rules 61–70)
+    const detectedDrugStrength = extractMultiSaltDrugStrength(localOcrResult.text);
     const detectedVolume = extractVolumeOrWeight(localOcrResult.text);
     const detectedDosageForm = detectDosageFormFromText(localOcrResult.text);
 
     if (matches.length > 0) {
+      const brandForModCheck = (candidateLines.length > 0 ? candidateLines[0].tokens.join(' ') : '') || brandName || matches[0];
       // Re-sort matches to ensure exact packaging dosage form, strength match AND formulation alignment is #1
       matches.sort((a, b) => {
         const aDosageConflict = detectedDosageForm && isItemTypeConflicting(detectedDosageForm, a) ? 1 : 0;
@@ -910,16 +1032,16 @@ If PACKAGING, return ONLY valid JSON matching:
           return aDosageConflict - bDosageConflict; // non-conflicting candidates come first!
         }
 
-        const aStr = extractDrugStrength(a);
-        const bStr = extractDrugStrength(b);
-        const aStrengthMatch = areStrengthsEqual(detectedDrugStrength, aStr) ? 1 : 0;
-        const bStrengthMatch = areStrengthsEqual(detectedDrugStrength, bStr) ? 1 : 0;
+        const aStr = extractMultiSaltDrugStrength(a);
+        const bStr = extractMultiSaltDrugStrength(b);
+        const aStrengthMatch = areMultiSaltStrengthsEqual(detectedDrugStrength, aStr) ? 1 : 0;
+        const bStrengthMatch = areMultiSaltStrengthsEqual(detectedDrugStrength, bStr) ? 1 : 0;
         if (aStrengthMatch !== bStrengthMatch) {
           return bStrengthMatch - aStrengthMatch;
         }
 
-        const aModConflict = hasFormulationModifierConflict(localOcrResult.text, a) ? 1 : 0;
-        const bModConflict = hasFormulationModifierConflict(localOcrResult.text, b) ? 1 : 0;
+        const aModConflict = hasFormulationModifierConflict(brandForModCheck, a) ? 1 : 0;
+        const bModConflict = hasFormulationModifierConflict(brandForModCheck, b) ? 1 : 0;
         if (aModConflict !== bModConflict) {
           return aModConflict - bModConflict; // non-conflicting comes first
         }
@@ -932,8 +1054,8 @@ If PACKAGING, return ONLY valid JSON matching:
       });
 
       const topMed = matches[0];
-      const topMedStrength = extractDrugStrength(topMed);
-      const topMedModConflict = hasFormulationModifierConflict(localOcrResult.text, topMed);
+      const topMedStrength = extractMultiSaltDrugStrength(topMed);
+      const topMedModConflict = hasFormulationModifierConflict(brandForModCheck, topMed);
       const topMedDosageConflict = detectedDosageForm ? isItemTypeConflicting(detectedDosageForm, topMed) : false;
 
       if (topMedDosageConflict) {
@@ -941,10 +1063,10 @@ If PACKAGING, return ONLY valid JSON matching:
         finalInfo.dosageConflict = true;
         finalInfo.confirmationNote = `Dosage Form Conflict: Scanned packaging shows ${detectedDosageForm}, but candidate is ${topMed}.`;
       } else if (detectedDrugStrength.strength) {
-        if (areStrengthsEqual(detectedDrugStrength, topMedStrength) && !topMedModConflict) {
+        if (areMultiSaltStrengthsEqual(detectedDrugStrength, topMedStrength) && !topMedModConflict) {
           finalInfo.strengthConfirmed = true;
           finalInfo.confirmationNote = `Verified: packaging strength (${detectedDrugStrength.strength}) confirmed.`;
-        } else if (areStrengthsConflicting(detectedDrugStrength, topMedStrength)) {
+        } else if (areMultiSaltStrengthsConflicting(detectedDrugStrength, topMedStrength)) {
           finalInfo.strengthConfirmed = false;
           finalInfo.strengthConflict = true;
           finalInfo.confirmationNote = `Packaging shows ${detectedDrugStrength.strength}, candidate is ${topMedStrength.strength || 'unspecified'}.`;
@@ -969,18 +1091,32 @@ If PACKAGING, return ONLY valid JSON matching:
       }
     }
 
+    const detectedCompany = this.detectCompanyName(localOcrResult.text);
+    if (detectedCompany && !finalInfo.companyDetected) {
+      finalInfo.companyDetected = detectedCompany;
+      if (!finalInfo.manufacturer) finalInfo.manufacturer = detectedCompany;
+    }
+
     const rawName = visualHitName || (matches.length > 0 ? matches[0] : brandName);
+    const cleanMedicineName = extractPureMedicineName(rawName, {
+      detectedCompany: finalInfo.companyDetected || detectedCompany,
+      dosageForm: detectedDosageForm
+    });
+
     // Resolve chemical API/salt for composition intelligence while keeping potentialName as the UNIQUE BRAND NAME
     await this.ensureApiMap();
-    const resolvedGeneric = rawName ? this.resolveGenericName(rawName) : null;
+    const resolvedGeneric = cleanMedicineName ? this.resolveGenericName(cleanMedicineName) : null;
     if (detectedApiText) {
       finalInfo.composition = detectedApiText;
     }
     finalInfo.apiName = detectedApiText || resolvedGeneric || undefined;
     finalInfo.genericName = resolvedGeneric || detectedApiText || undefined;
-    finalInfo.brandName = rawName;
+    finalInfo.brandName = cleanMedicineName;
     // potentialName MUST BE THE UNIQUE BRAND NAME for Pharmarack and Inventory search!
-    finalInfo.potentialName = rawName;
+    finalInfo.potentialName = cleanMedicineName;
+    if (matches.length > 0) {
+      matches[0] = cleanMedicineName;
+    }
 
     if (geminiVisionData) {
       finalInfo.cloudDetails = geminiVisionData;
@@ -1103,6 +1239,30 @@ If PACKAGING, return ONLY valid JSON matching:
       }
     }
 
+    // Rule 91: Content classification (Packaging vs Doctor Prescription)
+    finalInfo.imageType = classifyImageContent(localOcrResult.text);
+
+    // Rule 98: Check LASA conflict against 2nd candidate if present
+    if (matches.length >= 2) {
+      const lasaCheck = checkLasaConflict(matches[0], matches[1]);
+      if (lasaCheck.isLasa) {
+        finalInfo.lasaWarning = lasaCheck.warning;
+      }
+    }
+
+    // Rule 99: Human-in-the-Loop Pharmacist Review Card
+    finalInfo.reviewCard = generatePharmacistReviewCard({
+      brandName: finalInfo.potentialName || finalInfo.brandName || 'Unidentified Medicine',
+      strength: detectedDrugStrength.strength,
+      dosageForm: detectedDosageForm,
+      composition: finalInfo.composition,
+      stockQty: 0,
+      mrp: finalInfo.mrp,
+      isScheduleH: /\bschedule\s+[h1x]\b/i.test(localOcrResult.text),
+      confidenceScore: bestLineScore || (matches.length > 0 ? 0.90 : 0.40),
+      confirmationNote: finalInfo.confirmationNote
+    });
+
     const ocrResult = {
       text: localOcrResult.text,
       confidence: localOcrResult.confidence,
@@ -1112,7 +1272,8 @@ If PACKAGING, return ONLY valid JSON matching:
       fallbackUsed: fallbackUsed,
       auditLogged: matches.length === 0,
       isPrescription: isPrescription,
-      prescriptionData: prescriptionData
+      prescriptionData: prescriptionData,
+      reviewCard: finalInfo.reviewCard
     };
 
     if (skipEnrichment) {
