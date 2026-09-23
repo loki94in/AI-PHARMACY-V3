@@ -37113,6 +37113,7 @@ __export(whatsappClient_exports, {
   setLifecycleProgress: () => setLifecycleProgress,
   setLoginWindowActive: () => setLoginWindowActive,
   shouldRouteToBusiness: () => shouldRouteToBusiness,
+  waitForChatStoreReady: () => waitForChatStoreReady,
   waitForWhatsAppReady: () => waitForWhatsAppReady
 });
 function hasSavedSession() {
@@ -37429,7 +37430,10 @@ async function syncWhatsappData(client) {
   const now = Date.now();
   if (lastSyncFailureAt > 0 && now - lastSyncFailureAt < SYNC_RETRY_COOLDOWN_MS) {
     const retryInSec = Math.ceil((SYNC_RETRY_COOLDOWN_MS - (now - lastSyncFailureAt)) / 1e3);
-    console.log(`[WhatsApp] Sync skipped \u2014 last failure was recent. Retry in ${retryInSec}s.`);
+    if (now - lastSyncCooldownLoggedAt > 15e3) {
+      lastSyncCooldownLoggedAt = now;
+      console.log(`[WhatsApp] Sync skipped \u2014 cooldown active. Retry in ${retryInSec}s.`);
+    }
     return;
   }
   isSyncing = true;
@@ -37441,12 +37445,18 @@ async function syncWhatsappData(client) {
     } catch (getChatsErr) {
       const errMsg = getChatsErr?.message || String(getChatsErr);
       if (errMsg === "r" || errMsg.includes("Evaluation failed")) {
-        await new Promise((res) => setTimeout(res, 3e3));
-        try {
-          chats = await client.getChats();
-        } catch (retryErr) {
+        const storeReady = await waitForChatStoreReady(client, 6e3);
+        if (storeReady) {
+          try {
+            chats = await client.getChats();
+          } catch (retryErr) {
+            lastSyncFailureAt = Date.now();
+            console.log("[WhatsApp] Chat sync deferred to next cycle.");
+            return;
+          }
+        } else {
           lastSyncFailureAt = Date.now();
-          console.log("[WhatsApp] Chat sync scheduled for next periodic cycle.");
+          console.log("[WhatsApp] Chat sync deferred to next cycle.");
           return;
         }
       } else {
@@ -37541,6 +37551,28 @@ async function syncWhatsappData(client) {
   } finally {
     isSyncing = false;
   }
+}
+async function waitForChatStoreReady(client, maxWaitMs = 15e3) {
+  const page = client?.pupPage;
+  if (!page || typeof page.isClosed === "function" && page.isClosed()) return false;
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      if (typeof page.isClosed === "function" && page.isClosed()) return false;
+      const ready = await page.evaluate(() => {
+        try {
+          const w = window;
+          return !!(w.Store && w.Store.Chat && w.WWebJS && typeof w.WWebJS.getChats === "function");
+        } catch (_) {
+          return false;
+        }
+      });
+      if (ready) return true;
+    } catch (_) {
+    }
+    await new Promise((res) => setTimeout(res, 800));
+  }
+  return false;
 }
 async function patchWWebJSInternals(pupPage) {
   if (!pupPage || pupPage.isClosed()) return;
@@ -37939,15 +37971,17 @@ function launchClientInstance(forceQr) {
       }).catch((err) => {
         console.warn("[WhatsApp] Could not trigger queue worker on ready:", err);
       });
-      setTimeout(() => {
-        setLifecycleProgress("syncing", 85, "Syncing chats & contacts...");
-        syncWhatsappData(client).then(() => {
+      setTimeout(async () => {
+        try {
+          setLifecycleProgress("syncing", 85, "Syncing chats & contacts...");
+          await waitForChatStoreReady(client, 12e3);
+          await syncWhatsappData(client);
           setLifecycleProgress("ready", 100, "WhatsApp Ready");
-        }).catch((err) => {
+        } catch (err) {
           console.error("[WhatsApp] Background sync failed:", err);
           setLifecycleProgress("ready", 100, "WhatsApp Ready");
-        });
-      }, 2500);
+        }
+      }, 5e3);
     });
     client.on("disconnected", (reason) => {
       console.log("WhatsApp client disconnected:", reason);
@@ -39375,7 +39409,7 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_whatsapp_web, import_fs22, import_path23, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
+var import_whatsapp_web, import_fs22, import_path23, import_url16, import_child_process5, import_util3, Client, LocalAuth, MessageMedia, execAsync3, __filename15, __dirname15, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
@@ -39423,6 +39457,7 @@ var init_whatsappClient = __esm({
     qrTimeout = null;
     isLoginWindowActive = false;
     lastSyncFailureAt = 0;
+    lastSyncCooldownLoggedAt = 0;
     SYNC_RETRY_COOLDOWN_MS = 3e4;
     lastInitFailureAt = 0;
     INIT_FAILURE_COOLDOWN_MS = 6e4;
@@ -48792,6 +48827,7 @@ var init_notFoundHandler = __esm({
 // src/services/licenseService.ts
 var licenseService_exports = {};
 __export(licenseService_exports, {
+  APP_VERSION: () => APP_VERSION,
   activateLicense: () => activateLicense,
   checkForUpdate: () => checkForUpdate,
   checkLicense: () => checkLicense,
@@ -49061,7 +49097,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = process.env.APP_VERSION || "1.0.0";
+    APP_VERSION = "0.1.6";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -68283,6 +68319,19 @@ var init_autoUpdateService = __esm({
        * PRODUCTION.md §13: every boot checks for an update in background.
        */
       start() {
+        (async () => {
+          try {
+            const db2 = await dbManager.getConnection();
+            const { APP_VERSION: APP_VERSION2 } = await Promise.resolve().then(() => (init_licenseService(), licenseService_exports));
+            if (APP_VERSION2 && APP_VERSION2 !== "1.0.0") {
+              await db2.run(
+                "UPDATE update_checks SET current_version = ? WHERE id = 1 AND (current_version != ? OR current_version IS NULL)",
+                [APP_VERSION2, APP_VERSION2]
+              );
+            }
+          } catch (_) {
+          }
+        })();
         setTimeout(() => this.runCheck("auto"), BOOT_DELAY_MS);
         this.intervalHandle = setInterval(async () => {
           if (!activityTracker.isIdle(30 * 60 * 1e3)) return;
@@ -68312,7 +68361,7 @@ var init_autoUpdateService = __esm({
           }
           const result = await checkForUpdate();
           if (!result) {
-            console.log("[AutoUpdate] UPDATE_SERVER_UNAVAILABLE \u2014 offline or server unreachable. Continuing normally.");
+            console.log("[AutoUpdate] UPDATE_SERVER_UNAVAILABLE (Offline) \u2014 update server unreachable. Continuing normally offline.");
             return;
           }
           const stagingDir = getStagingDir();
