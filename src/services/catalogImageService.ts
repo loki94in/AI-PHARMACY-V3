@@ -1642,6 +1642,21 @@ export class CatalogImageService {
   }
 
   /**
+   * Resolve physical disk path for a relative image path
+   */
+  public getDiskPath(imagePath: string | null): string | null {
+    if (!imagePath) return null;
+    const cleanPath = imagePath.split('?')[0].replace(/^\/+/, '');
+    const p1 = path.resolve(process.cwd(), 'frontend/public', cleanPath);
+    if (fs.existsSync(p1)) return p1;
+    const p2 = path.resolve(process.cwd(), cleanPath);
+    if (fs.existsSync(p2)) return p2;
+    const p3 = path.resolve(process.cwd(), 'uploads', cleanPath.replace(/^uploads\//, ''));
+    if (fs.existsSync(p3)) return p3;
+    return null;
+  }
+
+  /**
    * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
    * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
    */
@@ -1714,6 +1729,88 @@ export class CatalogImageService {
       status: row.verification_status,
       id: row.id
     };
+  }
+
+  /**
+   * Resolve or on-demand download verified medicine image file for WhatsApp visual confirmation
+   * Returns base64 file payload for WhatsApp Web media dispatch
+   */
+  public async getProductImageFileForWhatsApp(medicineIdOrName: number | string): Promise<{
+    mimetype: string;
+    data: string;
+    filename: string;
+  } | null> {
+    const db = await dbManager.getConnection();
+    let medicineId: number | null = null;
+    let medicineName = '';
+
+    if (typeof medicineIdOrName === 'number') {
+      medicineId = medicineIdOrName;
+      const med = await db.get('SELECT name FROM medicines WHERE id = ?', [medicineId]).catch(() => null);
+      medicineName = med?.name || '';
+    } else {
+      medicineName = String(medicineIdOrName || '').trim();
+      const med = await db.get(
+        'SELECT id, name FROM medicines WHERE name = ? OR LOWER(name) = LOWER(?) ORDER BY id ASC LIMIT 1',
+        [medicineName, medicineName]
+      ).catch(() => null);
+      if (med) {
+        medicineId = med.id;
+        medicineName = med.name;
+      }
+    }
+
+    if (!medicineId && medicineName) {
+      // Clean brand word for prefix search
+      const brandWord = medicineName.replace(/[^a-zA-Z0-9\s]/g, ' ').trim().split(/\s+/)[0] || '';
+      if (brandWord.length >= 3) {
+        const prefixMed = await db.get(
+          'SELECT id, name FROM medicines WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 1',
+          [`${brandWord}%`]
+        ).catch(() => null);
+        if (prefixMed) {
+          medicineId = prefixMed.id;
+          medicineName = prefixMed.name;
+        }
+      }
+    }
+
+    let resolved = medicineId ? await this.resolveProductImage(medicineId).catch(() => null) : null;
+
+    // If missing from local storage, attempt on-demand CDN search & download!
+    if (!resolved && medicineId) {
+      try {
+        console.log(`[CatalogImageService] Visual reference image missing for ${medicineName} (ID: ${medicineId}). Triggering on-demand harvest...`);
+        const downloaded = await this.searchAndDownloadCandidate(medicineId, 1);
+        if (downloaded) {
+          resolved = await this.resolveProductImage(medicineId).catch(() => null);
+        }
+      } catch (err: any) {
+        console.warn(`[CatalogImageService] On-demand CDN download attempt note for ${medicineName}:`, err?.message || err);
+      }
+    }
+
+    if (!resolved || !resolved.url) {
+      return null;
+    }
+
+    const diskPath = this.getDiskPath(resolved.url);
+    if (!diskPath || !fs.existsSync(diskPath)) {
+      return null;
+    }
+
+    try {
+      const buf = fs.readFileSync(diskPath);
+      const ext = path.extname(diskPath).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      return {
+        mimetype: mime,
+        data: buf.toString('base64'),
+        filename: path.basename(diskPath)
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
   /**

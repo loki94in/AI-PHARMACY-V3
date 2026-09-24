@@ -680,6 +680,15 @@ async function ensureClarificationsTable(db: any): Promise<void> {
     if (!colNames.has('mrp')) {
       await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN mrp REAL DEFAULT NULL');
     }
+    if (!colNames.has('selected_distributor')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN selected_distributor TEXT DEFAULT NULL');
+    }
+    if (!colNames.has('distributor_store_id')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN distributor_store_id INTEGER DEFAULT NULL');
+    }
+    if (!colNames.has('distributor_eta')) {
+      await db.run('ALTER TABLE wa_pending_clarifications ADD COLUMN distributor_eta TEXT DEFAULT NULL');
+    }
   } catch (_) {}
   clarificationsTableEnsured = true;
 }
@@ -750,6 +759,80 @@ function extractQuantityFromText(text: string): { quantity: number; unit: string
     }
   }
   return null;
+}
+
+/**
+ * Pre-resolve single best fulfillment distributor for patient order confirmation
+ */
+export async function resolveSingleDistributorForMedicine(
+  db: any,
+  medicineName: string
+): Promise<{ name: string; storeId?: number; eta?: string } | null> {
+  try {
+    const cleanMed = String(medicineName || '').trim();
+    if (!cleanMed) return null;
+
+    // Search Pharmarack / distributor catalog cache
+    const localCat = await searchCatalog(cleanMed).catch(() => ({ mapped: [], nonMapped: [] }));
+    const allCatalog = [...(localCat.mapped || []), ...(localCat.nonMapped || [])];
+
+    const formulationSafeCatalog = filterCandidatesByFormulation(cleanMed, allCatalog);
+    const inStockCandidates = formulationSafeCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+    const pool = inStockCandidates.length > 0 ? inStockCandidates : formulationSafeCatalog;
+
+    let selectedDistName = '';
+    let selectedStoreId: number | undefined = undefined;
+
+    if (pool.length > 0) {
+      const candidateStores = pool.map(c => ({
+        storeId: Number((c as any).store_id || (c as any).storeId || 0),
+        storeName: String((c as any).distributor || (c as any).supplier_name || (c as any).distributor_name || '')
+      })).filter(c => c.storeName.length > 0);
+
+      const resolved = await resolveCommonOrFrequentDistributor(db, candidateStores);
+      if (resolved?.storeName) {
+        selectedDistName = resolved.storeName;
+        selectedStoreId = resolved.storeId;
+      }
+    }
+
+    // Fallback: check registered distributors or active purchase suppliers if no Pharmarack catalog match
+    if (!selectedDistName) {
+      const frequentDist = await db.get(`
+        SELECT d.name, d.id 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY COUNT(p.id) DESC 
+        LIMIT 1
+      `).catch(() => null);
+      if (frequentDist?.name) {
+        selectedDistName = frequentDist.name;
+        selectedStoreId = frequentDist.id;
+      }
+    }
+
+    // Calculate delivery ETA / timing window
+    let etaStr = '';
+    try {
+      const { orderScheduleService } = await import('./orderScheduleService.js');
+      const sched = await orderScheduleService.calculateOrderSchedule(new Date(), 1, db).catch(() => null);
+      if (sched?.estimatedDeliveryWindowFormatted) {
+        etaStr = `ETA: ${sched.estimatedDeliveryWindowFormatted}`;
+      } else if (sched?.isNextDayCutoff) {
+        etaStr = 'ETA: Tomorrow morning';
+      } else {
+        etaStr = 'ETA: Today by evening';
+      }
+    } catch (_) {
+      etaStr = 'ETA: Today by evening';
+    }
+
+    return selectedDistName ? { name: selectedDistName, storeId: selectedStoreId, eta: etaStr } : (etaStr ? { name: 'Partner Distributor', eta: etaStr } : null);
+  } catch (err) {
+    console.warn('[Intent Service] resolveSingleDistributorForMedicine note:', err);
+    return null;
+  }
 }
 
 export interface ConfirmedProcurementParams {
@@ -988,7 +1071,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
            (step IN ('awaiting_owner_selection', 'awaiting_payment', 'awaiting_owner_payment_confirmation') AND created_at > datetime('now', '-72 hours'))
-           OR created_at > datetime('now', '-45 minutes')
+           OR created_at > datetime('now', '-10 minutes')
          )
        ORDER BY created_at DESC LIMIT 1`,
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
@@ -1905,9 +1988,24 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
            WHERE phone = ?`,
           [singleMed.name, singleMed.name, singleMrpVal2, medQuery, pending.phone]
         );
-        const confirmPrompt = `💊 Medicine selected:\n*${singleMed.name}*${mrpStr}\n\nIs this the medicine you need?\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
+        const confirmPrompt = `💊 Medicine selected:\n*${singleMed.name}*${mrpStr}\n\n👉 *Please check the photo above to verify this is the exact product you need.*\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
+        
+        let imageFile: { mimetype: string; data: string; filename: string } | null = null;
+        try {
+          const { catalogImageService } = await import('./catalogImageService.js');
+          imageFile = await catalogImageService.getProductImageFileForWhatsApp(singleMed.name);
+        } catch (_) {}
+
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          confirmPrompt,
+          'customer_medicine_clarification',
+          customer?.name || 'Customer',
+          undefined,
+          undefined,
+          imageFile || undefined
+        );
         return true;
       }
 
@@ -2151,9 +2249,24 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           [chosenMedicine, chosenMedicine, chosenMrp, pending.phone]
         );
         const mrpStr = chosenMrp ? `\n🏷️ MRP: ₹${chosenMrp.toFixed(2)}` : '';
-        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*${mrpStr}\n\nIs this the medicine you need?\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
+        const confirmPrompt = `💊 Medicine selected:\n*${chosenMedicine}*${mrpStr}\n\n👉 *Please check the photo above to verify this is the exact product you need.*\n\nReply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
+
+        let imageFile: { mimetype: string; data: string; filename: string } | null = null;
+        try {
+          const { catalogImageService } = await import('./catalogImageService.js');
+          imageFile = await catalogImageService.getProductImageFileForWhatsApp(chosenMedicine);
+        } catch (_) {}
+
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          confirmPrompt,
+          'customer_medicine_clarification',
+          customer?.name || 'Customer',
+          undefined,
+          undefined,
+          imageFile || undefined
+        );
         return true;
       }
     }
@@ -2192,17 +2305,39 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       const finalUnit = (parsedQty && parsedQty.unit) ? parsedQty.unit : 'strip';
 
       if (finalQty > 0) {
+        // Pre-resolve single best distributor & schedule
+        const distInfo = await resolveSingleDistributorForMedicine(db, pending.suggested_name);
+        const distLine = distInfo?.name ? `\n🚚 Sourced via: *${distInfo.name}*${distInfo.eta ? ` (${distInfo.eta})` : ''}` : '';
+
         await db.run(
           `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET quantity = ?, unit = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [finalQty, finalUnit, pending.phone]
+          [finalQty, finalUnit, distInfo?.name || null, distInfo?.storeId || null, distInfo?.eta || null, pending.phone]
         );
         const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
         const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${finalUnit}\n💰 Total MRP: ₹${(unitMrp * finalQty).toFixed(2)}` : '';
-        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}${mrpDetails}\n\nReply *1* (or *YES*) to confirm.`;
+        const confirmPrompt = `Please confirm your request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${finalQty} ${finalUnit}${mrpDetails}${distLine}\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*\nReply *1* (or *YES*) to confirm.`;
+
+        // Pre-resolve product image file (local or on-demand CDN harvest)
+        let imageFile: { mimetype: string; data: string; filename: string } | null = null;
+        try {
+          const { catalogImageService } = await import('./catalogImageService.js');
+          imageFile = await catalogImageService.getProductImageFileForWhatsApp(pending.suggested_name);
+        } catch (imgErr) {
+          console.warn('[Intent Service] Image lookup for confirmation prompt note:', imgErr);
+        }
+
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          confirmPrompt,
+          'customer_medicine_clarification',
+          customer?.name || 'Customer',
+          undefined,
+          undefined,
+          imageFile || undefined
+        );
         return true;
       } else {
         const retryMsg = `Please enter a valid quantity number (e.g. 1, 2, 5).`;
@@ -2283,17 +2418,35 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       // Quantity adjustment during confirmation (e.g. "Actually make it 3" or customer typing a different quantity)
       const adjustedQty = extractQuantityFromText(body);
       if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
+        const distInfo = await resolveSingleDistributorForMedicine(db, pending.suggested_name);
+        const distLine = distInfo?.name ? `\n🚚 Sourced via: *${distInfo.name}*${distInfo.eta ? ` (${distInfo.eta})` : ''}` : '';
+
         await db.run(
           `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET quantity = ?, unit = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [adjustedQty.quantity, adjustedQty.unit || 'strip', pending.phone]
+          [adjustedQty.quantity, adjustedQty.unit || 'strip', distInfo?.name || null, distInfo?.storeId || null, distInfo?.eta || null, pending.phone]
         );
         const unitMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
         const mrpDetails = unitMrp ? `\n🏷️ MRP: ₹${unitMrp.toFixed(2)} per ${adjustedQty.unit || 'strip'}\n💰 Total MRP: ₹${(unitMrp * adjustedQty.quantity).toFixed(2)}` : '';
-        const confirmPrompt = `Updated:\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}${mrpDetails}\n\nReply *1* (or *YES*) to confirm.`;
+        const confirmPrompt = `Updated request:\n\n💊 Medicine: *${pending.suggested_name}*\n📦 Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || 'strip'}${mrpDetails}${distLine}\n\n👉 *Please check the photo above to verify this is the exact packaging you need.*\nReply *1* (or *YES*) to confirm.`;
+
+        let imageFile: { mimetype: string; data: string; filename: string } | null = null;
+        try {
+          const { catalogImageService } = await import('./catalogImageService.js');
+          imageFile = await catalogImageService.getProductImageFileForWhatsApp(pending.suggested_name);
+        } catch (_) {}
+
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-        await whatsappQueueWorker.enqueue(phone, confirmPrompt, 'customer_medicine_clarification', customer?.name || 'Customer');
+        await whatsappQueueWorker.enqueue(
+          phone,
+          confirmPrompt,
+          'customer_medicine_clarification',
+          customer?.name || 'Customer',
+          undefined,
+          undefined,
+          imageFile || undefined
+        );
         return true;
       }
     }
@@ -2468,7 +2621,8 @@ async function proceedWithConfirmedProcurement(
 
     // Courtesy message to customer
     const mrpSuffix = pending.mrp != null && pending.mrp > 0 ? ` (MRP ₹${Number(pending.mrp).toFixed(2)})` : '';
-    const custWaitMsg = `Your request for *${medName}* × ${medQty}${mrpSuffix} has been forwarded to our pharmacy for distributor confirmation.\n\nWe will send you payment details shortly.`;
+    const distMention = pending.selected_distributor ? ` with *${pending.selected_distributor}*` : ' with our distributor network';
+    const custWaitMsg = `Your request for *${medName}* × ${medQty}${mrpSuffix} has been forwarded to our pharmacy for confirmation${distMention}.\n\nWe will send you payment details shortly.`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
     await whatsappQueueWorker.enqueue(phone, custWaitMsg, 'customer_inquiry_confirmed', customerName);
   } else {
@@ -3252,7 +3406,7 @@ export async function handleInbound(msg: any): Promise<void> {
         const activeClarification = await db.get(
           `SELECT 1 FROM wa_pending_clarifications 
            WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
-             AND created_at > datetime('now', '-45 minutes')
+             AND created_at > datetime('now', '-10 minutes')
            LIMIT 1`,
           [`%${cleanDigitsForRefill}`, `%${cleanDigitsForRefill}%`, cleanDigitsForRefill]
         );
@@ -3928,7 +4082,7 @@ export async function handleInbound(msg: any): Promise<void> {
             const activeStepRow = await db.get(
               `SELECT step FROM wa_pending_clarifications
                WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
-                 AND created_at > datetime('now', '-45 minutes')
+                 AND created_at > datetime('now', '-10 minutes')
                ORDER BY created_at DESC LIMIT 1`,
               [`%${cleanCustPhone}`, `%${cleanCustPhone}%`, cleanCustPhone]
             );

@@ -1269,7 +1269,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
 
         const isFromMe = !!msg.fromMe;
         const nowMs = Date.now();
-        const manualTimeoutMs = 45 * 60 * 1000;
+        const manualTimeoutMs = 5 * 60 * 1000;
 
         // Fetch existing session state to evaluate Human Takeover
         const existingChatRow = await db.get(
@@ -1294,7 +1294,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
             (sendKey3 ? recentSendsCache.has(sendKey3) : false) ||
             (sendKey4 ? recentSendsCache.has(sendKey4) : false);
           if (!isAutomatedSend) {
-            // Pharmacist sent a manual reply from actual WhatsApp phone/web -> activate Human Takeover
+            // Pharmacist sent a manual reply from actual WhatsApp phone/web -> activate Human Takeover (5 min silence)
             sessionMode = 'manual';
             manualUntil = nowMs + manualTimeoutMs;
             sessionStatus = 'active';
@@ -1304,6 +1304,7 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           if (sessionMode === 'manual') {
             if (manualUntil > nowMs) {
               sessionStatus = 'waiting'; // Patient replied, waiting for pharmacist review
+              manualUntil = nowMs + (10 * 60 * 1000); // Customer replied during manual takeover -> wait 10 min for pharmacist
             } else {
               // Inactivity timeout expired -> revert to auto
               sessionMode = 'auto';
@@ -2115,7 +2116,7 @@ export async function sendMessage(
             resolved_number: cleanPhone,
             session_mode: 'manual',
             session_status: 'active',
-            manual_active_until: nowProv + (45 * 60 * 1000)
+            manual_active_until: nowProv + (5 * 60 * 1000)
           });
 
           import('./services/whatsappDeliveryRegister.js')
@@ -2219,7 +2220,7 @@ export async function sendMessage(
         resolved_number: cleanPhone,
         session_mode: 'manual',
         session_status: 'active',
-        manual_active_until: nowFinal + (45 * 60 * 1000)
+        manual_active_until: nowFinal + (5 * 60 * 1000)
       });
 
       import('./services/whatsappDeliveryRegister.js')
