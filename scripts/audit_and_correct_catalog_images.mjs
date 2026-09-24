@@ -39,7 +39,7 @@ const rows = db.prepare(`
          m.name as med_name, m.manufacturer as med_mfg, m.strength as med_strength, m.packaging as med_packaging
   FROM catalog_images ci
   JOIN medicines m ON m.id = ci.medicine_id
-  WHERE ci.verification_status != 'REJECTED'
+  WHERE ci.verification_status NOT IN ('REJECTED', 'APPROVED', 'VERIFIED')
 `).all();
 
 console.log(`Found ${rows.length} candidate/active images in database to evaluate.`);

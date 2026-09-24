@@ -166,7 +166,8 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
     let headerParsed = false;
     let isFullMedicinesCsv = false;
     const col: Record<string, number> = {};
-    const batchSize = 1000;
+    // Micro-batching (100 rows) prevents holding SQLite write lock for long periods
+    const batchSize = 100;
     let csvBatch: any[][] = [];
     let simpleBatch: Array<[string, string | null, string | null, string]> = [];
 
@@ -284,50 +285,58 @@ export async function seedMasterMedicines(force = false): Promise<{ loaded: numb
 }
 
 async function insertMedicinesCsvBatch(db: any, rows: any[][]) {
-  await db.run('BEGIN TRANSACTION');
-  try {
-    const stmt = await db.prepare(`
-      INSERT OR IGNORE INTO medicines (
-        name, canonical_name, normalized_name, manufacturer, marketed_by,
-        packaging, pack_size, item_type, hsn_code, cgst_per,
-        sgst_per, igst_per, sell_price, barcode, rack,
-        therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
-        source, status
-      ) VALUES (
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        'master_reference', 'ACTIVE'
-      )
-    `);
-    for (const row of rows) {
-      await stmt.run(...row);
+  await dbManager.runWithPriority('BACKGROUND', async () => {
+    await db.run('BEGIN TRANSACTION');
+    try {
+      const stmt = await db.prepare(`
+        INSERT OR IGNORE INTO medicines (
+          name, canonical_name, normalized_name, manufacturer, marketed_by,
+          packaging, pack_size, item_type, hsn_code, cgst_per,
+          sgst_per, igst_per, sell_price, barcode, rack,
+          therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
+          source, status
+        ) VALUES (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          'master_reference', 'ACTIVE'
+        )
+      `);
+      for (const row of rows) {
+        await stmt.run(...row);
+      }
+      await stmt.finalize();
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
     }
-    await stmt.finalize();
-    await db.run('COMMIT');
-  } catch (err) {
-    await db.run('ROLLBACK');
-    throw err;
-  }
+  });
+  // Cooperative yield so POS billing transactions can slip in
+  await new Promise(resolve => setTimeout(resolve, 15));
 }
 
 async function insertSimpleBatch(db: any, rows: Array<[string, string | null, string | null, string]>) {
-  await db.run('BEGIN TRANSACTION');
-  try {
-    const stmt = await db.prepare(
-      `INSERT OR IGNORE INTO medicines (name, generic_name, manufacturer, source, mrp, cgst_per, sgst_per)
-       VALUES (?, ?, ?, ?, 0, 6, 6)`
-    );
-    for (const row of rows) {
-      await stmt.run(row[0], row[1], row[2], row[3]);
+  await dbManager.runWithPriority('BACKGROUND', async () => {
+    await db.run('BEGIN TRANSACTION');
+    try {
+      const stmt = await db.prepare(
+        `INSERT OR IGNORE INTO medicines (name, generic_name, manufacturer, source, mrp, cgst_per, sgst_per)
+         VALUES (?, ?, ?, ?, 0, 6, 6)`
+      );
+      for (const row of rows) {
+        await stmt.run(row[0], row[1], row[2], row[3]);
+      }
+      await stmt.finalize();
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
     }
-    await stmt.finalize();
-    await db.run('COMMIT');
-  } catch (err) {
-    await db.run('ROLLBACK');
-    throw err;
-  }
+  });
+  // Cooperative yield so POS billing transactions can slip in
+  await new Promise(resolve => setTimeout(resolve, 15));
 }
 
 /**

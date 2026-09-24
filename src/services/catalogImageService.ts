@@ -3309,6 +3309,63 @@ export class CatalogImageService {
       });
     }
 
+    // Secondary Source Fallback: Tata 1mg Clean CDN Search
+    // If PharmEasy has no candidates or for additional high-quality angles
+    if (candidates.length === 0 || candidates.every(c => c.verificationStatus === 'REJECTED')) {
+      try {
+        const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(cleanQuery)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+        const mgResp = await fetch(mgUrl, {
+          headers: {
+            'accept': 'application/vnd.healthkartplus.v4+json',
+            'x-access-key': '1mg_client_access_key',
+            'x-platform': 'desktop-0.0.1',
+            'x-city': 'Gurgaon',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+          },
+          signal: AbortSignal.timeout(8000)
+        });
+
+        if (mgResp.ok) {
+          const mgJson: any = await mgResp.json();
+          const prods = mgJson?.data?.search_results || [];
+
+          for (const p of prods) {
+            const rawUrls = p.cropped_image_urls || (p.image_url ? [p.image_url] : []);
+            if (!rawUrls || rawUrls.length === 0) continue;
+
+            let chosenUrl = rawUrls[0];
+            if (imageType === 'back' && rawUrls.length > 1) chosenUrl = rawUrls[1];
+
+            const cleanUrl = chosenUrl
+              .replace(/l_watermark_[^/]+\//g, '')
+              .replace(/w_\d+,h_\d+/g, 'w_800,h_800')
+              .split('?')[0];
+
+            if (rejectedUrls.has(cleanUrl)) continue;
+
+            const scoreResult = this.computeConfidence(med, {
+              name: p.name,
+              manufacturer: p.manufacturer_name || p.company_name
+            });
+
+            candidates.push({
+              id: String(p.id || p.sku_id || cleanUrl),
+              name: p.name,
+              manufacturer: p.manufacturer_name || p.company_name || 'Unknown',
+              imageUrl: cleanUrl,
+              source: '1mg',
+              confidenceScore: scoreResult.confidenceScore,
+              verificationStatus: scoreResult.verificationStatus,
+              reason: scoreResult.reason,
+              signals: scoreResult.signals
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[CatalogImageService] 1mg online search error for "${cleanQuery}":`, err.message);
+      }
+    }
+
     // Sort descending by confidence
     candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
     return candidates;

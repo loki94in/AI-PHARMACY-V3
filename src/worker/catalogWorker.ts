@@ -800,7 +800,8 @@ export async function runCatalogImport(jobId: number) {
       console.warn('Failed to load medicine aliases during import:', e);
     }
 
-    const batchSize = 1000;
+    // Micro-batching (100 items instead of 1000) prevents monopolizing SQLite write lock
+    const batchSize = 100;
     let batch: any[] = [];
     let processedCount = job.processed_count || 0;
     let newCount = job.new_count || 0;
@@ -810,8 +811,9 @@ export async function runCatalogImport(jobId: number) {
 
     const insertBatch = async (items: any[]) => {
       await activityTracker.waitUntilIdle();
-      await db.run('BEGIN TRANSACTION');
-      for (const item of items) {
+      await dbManager.runWithPriority('BACKGROUND', async () => {
+        await db.run('BEGIN TRANSACTION');
+        for (const item of items) {
         const key = item.name.toLowerCase().trim();
         if (addedNames.has(key)) {
           duplicateCount++;
@@ -916,8 +918,10 @@ export async function runCatalogImport(jobId: number) {
         }
         // Catalog workers import medicines into master catalog; inventory is never created without purchase
       }
-      await db.run('COMMIT');
-      await new Promise(resolve => setImmediate(resolve));
+        await db.run('COMMIT');
+      });
+      // Cooperative yield: release lock & event loop so POS billing checkouts slip in instantly
+      await new Promise(resolve => setTimeout(resolve, activityTracker.isAppInUse() ? 30 : 10));
     };
 
     const processRowObject = (row: any) => {

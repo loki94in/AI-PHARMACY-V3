@@ -588,6 +588,7 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
       });
       if (res.success) {
         toastEvent.trigger(`Assigned candidate to ${slotId.toUpperCase()} slot!`, 'success');
+        setCandidateTrayOpen(false);
         fetchMedicineGallery(selectedMedicine.medicine_id);
         loadCounts();
       }
@@ -2271,94 +2272,6 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                       </div>
                     </div>
                   )}
-
-                  {/* INLINE ONLINE CANDIDATES DRAWER */}
-                  {candidateTrayOpen && (
-                    <div id="candidate-online-tray" className="p-4 rounded-2xl bg-bg2 border border-sky/40 space-y-3 shadow-md animate-in slide-in-from-bottom-2 scroll-mt-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sparkles size={16} className="text-sky" />
-                          <h4 className="text-xs font-bold text-text">
-                            Online Candidates for {selectedMedicine.medicine_name || selectedMedicine.product_name}
-                            <span className="text-muted font-normal ml-1">
-                              (Target Slot: <strong className="text-sky uppercase">{targetSlotForCandidate}</strong>)
-                            </span>
-                          </h4>
-                        </div>
-                        <button
-                          onClick={() => setCandidateTrayOpen(false)}
-                          className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 cursor-pointer"
-                        >
-                          <X size={15} />
-                        </button>
-                      </div>
-
-                      {searchingCandidates ? (
-                        <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-muted">
-                          <RefreshCw size={18} className="animate-spin text-sky" />
-                          <span>Querying verified pharmaceutical repositories...</span>
-                        </div>
-                      ) : candidates.length === 0 ? (
-                        <div className="py-6 text-center text-xs text-muted">
-                          No online candidates found matching "{selectedMedicine.medicine_name}". You can use the Replace button to enter a direct packaging URL.
-                        </div>
-                      ) : (
-                        <div className="flex items-stretch gap-3 overflow-x-auto pb-2">
-                          {candidates.map((cand, idx) => (
-                            <div
-                              key={cand.id || idx}
-                              className="w-56 bg-bg border border-border rounded-xl p-2.5 flex flex-col justify-between gap-2 shrink-0 hover:border-primary/50 transition-all shadow-xs"
-                            >
-                              <div className="space-y-2">
-                                <div className="relative w-full h-32 bg-bg3/30 rounded-lg overflow-hidden flex items-center justify-center p-1 border border-border/60">
-                                  <img
-                                    src={cand.imageUrl}
-                                    alt={cand.name}
-                                    className="max-h-full max-w-full object-contain"
-                                    onError={(e: any) => { e.currentTarget.style.display = 'none'; }}
-                                  />
-                                  <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold">
-                                    {cand.confidenceScore}% Match
-                                  </span>
-                                </div>
-
-                                <div>
-                                  <h5 className="text-[11px] font-bold text-text line-clamp-2 leading-tight" title={cand.name}>
-                                    {cand.name}
-                                  </h5>
-                                  <p className="text-[10px] text-muted truncate mt-0.5">
-                                    {cand.manufacturer || cand.source}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="pt-2 border-t border-border space-y-1">
-                                <button
-                                  onClick={() => handleAssignCandidate(cand, targetSlotForCandidate)}
-                                  className="w-full py-1.5 rounded-lg bg-primary text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow-xs hover:opacity-90 cursor-pointer"
-                                >
-                                  <Check size={11} />
-                                  <span>Assign to {targetSlotForCandidate.toUpperCase()}</span>
-                                </button>
-                                <div className="grid grid-cols-3 gap-1 text-[9px]">
-                                  {STANDARD_SLOTS.filter(s => s.id !== targetSlotForCandidate).map(s => (
-                                    <button
-                                      key={s.id}
-                                      onClick={() => handleAssignCandidate(cand, s.id)}
-                                      className="py-1 rounded bg-bg2 hover:bg-bg3 border border-border text-muted hover:text-text font-semibold truncate cursor-pointer"
-                                      title={`Assign to ${s.label}`}
-                                    >
-                                      {s.shortLabel}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -2884,6 +2797,147 @@ export const CatalogImageVerificationTab: React.FC<Props> = ({ initialFilter = '
                 Save Replacement
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* ONLINE PACKAGING CANDIDATES MODAL (PharmEasy + Tata 1mg) */}
+      {/* ============================================================ */}
+      {candidateTrayOpen && selectedMedicine && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-border rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-2xl animate-in zoom-in-95 max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-border shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-sky-500/10 text-sky">
+                  <Sparkles size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-text">
+                    Online Packaging Candidates
+                  </h3>
+                  <p className="text-[11px] text-muted">
+                    {selectedMedicine.medicine_name || selectedMedicine.product_name} • Slot: <strong className="text-sky uppercase">{targetSlotForCandidate}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCandidateTrayOpen(false)}
+                className="p-1.5 rounded-lg text-muted hover:text-text bg-bg border border-border cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {searchingCandidates ? (
+              <div className="py-16 flex flex-col items-center justify-center gap-3 text-xs text-muted">
+                <RefreshCw size={26} className="animate-spin text-sky" />
+                <span className="font-semibold text-text">Searching verified repositories (PharmEasy & Tata 1mg)...</span>
+                <span className="text-[11px] text-muted">Cross-validating brands, active strengths, and dosage forms</span>
+              </div>
+            ) : candidates.length === 0 ? (
+              <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+                <Package size={42} className="text-muted/40" />
+                <div className="max-w-md">
+                  <h4 className="text-xs font-bold text-text">No Online Candidates Found</h4>
+                  <p className="text-[11px] text-muted mt-1">
+                    No verified studio packaging was found on PharmEasy or Tata 1mg for "{selectedMedicine.medicine_name}".
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    onClick={() => {
+                      setCandidateTrayOpen(false);
+                      setReplacingSlot({ slotId: targetSlotForCandidate, imageId: selectedMedicine.id });
+                    }}
+                    className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-xs hover:opacity-90 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Upload size={13} />
+                    <span>Upload Image / Paste URL</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCandidateTrayOpen(false);
+                      handleOpenRelinkModal(selectedMedicine);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-bg border border-border text-muted hover:text-text text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Link2 size={13} />
+                    <span>Connect Existing Medicine</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {candidates.map((cand, idx) => (
+                    <div
+                      key={cand.id || idx}
+                      className="bg-bg border border-border hover:border-primary/50 rounded-xl p-3 flex flex-col justify-between gap-2.5 transition-all shadow-xs"
+                    >
+                      <div className="space-y-2">
+                        <div className="relative w-full h-36 bg-bg2 rounded-lg overflow-hidden flex items-center justify-center p-2 border border-border/60">
+                          <img
+                            src={cand.imageUrl}
+                            alt={cand.name}
+                            className="max-h-full max-w-full object-contain"
+                            onError={(e: any) => { e.currentTarget.style.display = 'none'; }}
+                          />
+                          <span className={`absolute top-1.5 right-1.5 px-2 py-0.5 rounded text-[10px] font-bold ${
+                            cand.confidenceScore >= 75
+                              ? 'bg-emerald-600 text-white'
+                              : cand.confidenceScore >= 50
+                              ? 'bg-amber-500 text-white'
+                              : 'bg-red-600 text-white'
+                          }`}>
+                            {cand.confidenceScore}% Match
+                          </span>
+                          <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-bg/90 border border-border text-[9px] font-bold text-muted uppercase">
+                            {cand.source}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h5 className="text-xs font-bold text-text line-clamp-2 leading-tight" title={cand.name}>
+                            {cand.name}
+                          </h5>
+                          <p className="text-[10px] text-muted truncate mt-0.5">
+                            {cand.manufacturer || cand.source}
+                          </p>
+                          {cand.reason && (
+                            <p className="text-[10px] text-sky mt-1 line-clamp-1">
+                              {cand.reason}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-border space-y-1.5">
+                        <button
+                          onClick={() => handleAssignCandidate(cand, targetSlotForCandidate)}
+                          className="w-full py-1.5 rounded-lg bg-primary hover:opacity-90 text-white text-xs font-bold flex items-center justify-center gap-1 shadow-xs cursor-pointer transition-all"
+                        >
+                          <Check size={12} />
+                          <span>Assign to {targetSlotForCandidate.toUpperCase()}</span>
+                        </button>
+                        <div className="grid grid-cols-3 gap-1 text-[10px]">
+                          {STANDARD_SLOTS.filter(s => s.id !== targetSlotForCandidate).map(s => (
+                            <button
+                              key={s.id}
+                              onClick={() => handleAssignCandidate(cand, s.id)}
+                              className="py-1 rounded bg-bg2 hover:bg-bg3 border border-border text-muted hover:text-text font-semibold truncate cursor-pointer"
+                              title={`Assign to ${s.label}`}
+                            >
+                              {s.shortLabel}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

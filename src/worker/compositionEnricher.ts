@@ -128,30 +128,34 @@ export async function loadReferenceData({ force }: { force?: boolean } = {}): Pr
       .on('error', reject);
   });
 
-  // Bulk insert in batches of 500
-  const BATCH = 500;
+  // Bulk insert in micro-batches (100 items) with cooperative yield to prevent SQLite lock starvation
+  const BATCH = 100;
   let loaded = 0;
 
-  await db.run('BEGIN TRANSACTION');
-  try {
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const batch = rows.slice(i, i + BATCH);
-      for (const r of batch) {
-        try {
-          await db.run(
-            'INSERT OR IGNORE INTO medicine_reference (name, composition1, composition2, manufacturer) VALUES (?, ?, ?, ?)',
-            r.name, r.composition1 || null, r.composition2 || null, r.manufacturer || null
-          );
-          loaded++;
-        } catch {
-          // Skip duplicates silently
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    await dbManager.runWithPriority('BACKGROUND', async () => {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const r of batch) {
+          try {
+            await db.run(
+              'INSERT OR IGNORE INTO medicine_reference (name, composition1, composition2, manufacturer) VALUES (?, ?, ?, ?)',
+              r.name, r.composition1 || null, r.composition2 || null, r.manufacturer || null
+            );
+            loaded++;
+          } catch {
+            // Skip duplicates silently
+          }
         }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK');
+        throw err;
       }
-    }
-    await db.run('COMMIT');
-  } catch (err) {
-    await db.run('ROLLBACK');
-    throw err;
+    });
+    // Cooperative yield: yields event loop and DB lock to allow POS checkout to slip in
+    await new Promise(resolve => setTimeout(resolve, 15));
   }
 
   await dbManager.close();
@@ -658,14 +662,15 @@ export async function runEnrichment(
     const total = medicines.length;
     console.log(`Enrichment starting: ${total} medicines to process against ${refs.length} references`);
 
-    // Process in batches
-    const BATCH = 200;
+    // Process in micro-batches (50 items) so POS billing checkouts are never blocked
+    const BATCH = 50;
     for (let i = 0; i < medicines.length; i += BATCH) {
       const batch = medicines.slice(i, i + BATCH);
 
       await activityTracker.waitUntilIdle();
 
-      await db.run('BEGIN TRANSACTION');
+      await dbManager.runWithPriority('BACKGROUND', async () => {
+        await db.run('BEGIN TRANSACTION');
       for (const med of batch) {
         const cleanedName = cleanMedicineName(med.name);
         if (!cleanedName) {
@@ -728,7 +733,11 @@ export async function runEnrichment(
           // );
         }
       }
-      await db.run('COMMIT');
+        await db.run('COMMIT');
+      });
+
+      // Cooperative yield between micro-batches
+      await new Promise(resolve => setTimeout(resolve, 20));
 
       // Report progress
       const pct = Math.min(100, Math.round(((i + batch.length) / total) * 100));

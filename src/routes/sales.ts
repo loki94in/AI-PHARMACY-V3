@@ -25,6 +25,9 @@ import { imageCompressionService } from '../services/imageCompressionService.js'
 
 const router = express.Router();
 router.use(tenantAuthMiddleware);
+router.use((_req, _res, next) => {
+  dbManager.runWithPriority('VIP', () => next());
+});
 
 // Helper to normalize numeric search terms (e.g., stripping trailing decimal zeros like "31.00" -> "31")
 // to align with SQLite CAST(value AS TEXT) representations.

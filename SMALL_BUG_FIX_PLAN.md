@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P1-32 — Zero-Download Local Packaging Disk Linker (22,700+ Images) & Human-Approval Immunity Shield
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 24,900+ genuine multi-angle medicine packaging photos (3.4 GB) across 56 pharmaceutical companies were already stored on local disk under `frontend/public/products/<company>/`, but only ~3,400 images were mapped into the database. Furthermore, user inquired whether human-approved images in the UI would stay permanently approved across future builds, migrations, and automated audit scripts. |
+| **Root cause** | 1. `fast_image_downloader.ts` processed companies one-by-one sequentially, leaving finished company folders on disk unindexed.<br>2. `scan_all_downloaded_images.ts` only scanned the top-level `frontend/public/products` directory without recursing into the 56 company subdirectories.<br>3. `audit_and_correct_catalog_images.mjs` lacked an explicit immunity clause for `verification_status = 'APPROVED'`, creating risk of automated string-heuristic deactivation overriding human judgment. |
+| **How it was fixed** | 1. **High-Speed Zero-Download Local Disk Linker:** Created `scripts/link_all_disk_images.ts` which indexes all 56 company subdirectories in `frontend/public/products`, validates packaging files with `catalogImageService.computeConfidence()`, and maps 22,701 genuine images to medicines in SQLite `catalog_images` in 659ms.<br>2. **Human-in-the-Loop Immunity Shield:** Added `verification_status NOT IN ('APPROVED', 'VERIFIED')` immunity across `scripts/audit_and_correct_catalog_images.mjs` and `scripts/scan_all_downloaded_images.ts`. Human approval is the final authority and is 100% immune from automated audit deletions or deactivations.<br>3. **Recursive Full Audit & Auto-Clean:** Updated `scripts/scan_all_downloaded_images.ts` to scan all 30,800+ files across root and company subdirectories, purging 40 suffix-bleed/dosage conflicts while verifying 27,179 clean active images (100.0% clean).<br>4. **Pipeline Launcher Integration:** Added options `[7] Zero-Download Fast Linker` and `[8] Full Packaging Audit & Clean` to `scripts/launch_harvest_pipeline.bat`. |
+| **Priority** | P1 |
+| **What not to touch** | Human approval audit records, canonical image serving priority, and multi-angle slot assignment. |
+| **Verified by** | `scripts/link_all_disk_images.ts` inserted 22,701 records in 659ms; `scripts/scan_all_downloaded_images.ts --clean` verified 27,179 clean images (100.0%); `npm run guardrails` PASS; `node scripts/quick-update.mjs` synced. |
+
+### [Fixed] P1-31 — Database Lock Contention Elimination: Prioritized VIP Transaction Queue & Worker Micro-Batching
+
+| Field | Content |
+|---|---|
+| **What the user saw** | When running heavy background data operations (e.g. bulk catalog import, reference composition loading, or master seed), POS counter billing checkouts and user queries experienced noticeable delays, sluggish UI response, or potential `SQLITE_BUSY` ("database is locked") errors caused by long monolithic transactions holding SQLite's single write pen. |
+| **Root cause** | 1. In `src/database/connection.ts`, `txMutexTail` was a flat FIFO promise chain where all transactions waited in strict queue order regardless of urgency; POS checkouts waited behind heavy background jobs.<br>2. Background workers (`catalogWorker.ts`, `compositionEnricher.ts`, `masterMedicinesSeedService.ts`) used monolithic transactions with batch sizes of 500–1000 items (or up to 50,000 rows in a single `BEGIN..COMMIT` block) without cooperative event loop yields between batches, monopolizing the write lock for seconds at a time.<br>3. Lack of priority tiers prevented POS billing routes from signaling immediate write urgency. |
+| **How it was fixed** | 1. **Prioritized VIP Transaction Mutex:** Upgraded `DatabaseManager` in `src/database/connection.ts` with tiered wait queues (`VIP`, `NORMAL`, `BACKGROUND`) using `AsyncLocalStorage` and automatic `BEGIN IMMEDIATE` detection. POS counter sales (`/api/sales`) run with `VIP` priority and jump ahead of background jobs.<br>2. **Safety Deadlock Watchdog:** Added a 60-second transaction duration watchdog in `DatabaseManager` that automatically logs and frees unreleased locks to prevent permanent system freezes.<br>3. **Worker Micro-Batching & Cooperative Yields:** Reduced batch sizes in `catalogWorker.ts` (100 rows), `compositionEnricher.ts` (100 rows in loader, 50 rows in enricher), and `masterMedicinesSeedService.ts` (100 rows). Each batch runs under `BACKGROUND` priority with cooperative micro-pauses (`setTimeout(15-20ms)`) between commits to allow POS transactions to slip in with sub-5ms latency.<br>4. **Human-in-the-Loop Control & Live Stats:** Added manual pause/resume control to `ActivityTracker` and exposed live transaction/lock metrics via `/api/system/services-status`. |
+| **Priority** | P1 |
+| **What not to touch** | Fast-boot schema path, WAL mode, synchronous NORMAL pragma, and transactional stock rebuild triggers. |
+| **Verified by** | Priority unit test (`test_priority_queue.ts`: VIP transaction queued after background transaction jumped ahead and executed first); `tsc --noEmit` clean; `npm run guardrails` PASS (0 violations across 7 files); `node scripts/quick-update.mjs` synced. |
+
 ### [Fixed] P1-30 — Catalog Image Mismatch Conflict (HB VAC showing Hb Set) & Re-Fetch Visibility
 
 | Field | Content |

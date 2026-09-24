@@ -87,31 +87,71 @@ async function runFullScan() {
   // 2. Query catalog_images table to match files to medicine records
   console.log('Loading all catalog_images from database...');
   const dbImages = db.prepare(`
-    SELECT id, medicine_id, product_name, image_path, image_type, is_primary, is_active
+    SELECT id, medicine_id, product_name, image_path, image_type, is_primary, is_active, verification_status
     FROM catalog_images
   `).all() as any[];
 
   const fileToImageMap = new Map<string, any>();
   for (const img of dbImages) {
     const fn = path.basename(img.image_path || '').toLowerCase();
+    const rel = (img.image_path || '').replace(/^\/+/, '').toLowerCase();
     if (fn) fileToImageMap.set(fn, img);
+    if (rel) fileToImageMap.set(rel, img);
   }
   console.log(`Indexed ${dbImages.length} database image mappings.\n`);
 
-  // 3. Scan all physical files in products directory
-  const files = fs.readdirSync(PRODUCTS_DIR).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
-  console.log(`Found ${files.length} total image files in frontend/public/products.\n`);
+  // 3. Scan all physical files in products directory (including 56 company subdirectories)
+  interface ScannedFile {
+    filename: string;
+    relPath: string;
+    fullPath: string;
+  }
+  const files: ScannedFile[] = [];
+  const rootEntries = fs.readdirSync(PRODUCTS_DIR, { withFileTypes: true });
+  for (const entry of rootEntries) {
+    if (entry.isFile() && /\.(jpg|jpeg|png|webp)$/i.test(entry.name)) {
+      files.push({
+        filename: entry.name,
+        relPath: entry.name,
+        fullPath: path.join(PRODUCTS_DIR, entry.name)
+      });
+    } else if (entry.isDirectory()) {
+      try {
+        const subFiles = fs.readdirSync(path.join(PRODUCTS_DIR, entry.name));
+        for (const sf of subFiles) {
+          if (/\.(jpg|jpeg|png|webp)$/i.test(sf)) {
+            files.push({
+              filename: sf,
+              relPath: `${entry.name}/${sf}`,
+              fullPath: path.join(PRODUCTS_DIR, entry.name, sf)
+            });
+          }
+        }
+      } catch {}
+    }
+  }
+  console.log(`Found ${files.length} total image files across frontend/public/products (root + subdirectories).\n`);
 
   let scannedCount = 0;
   let passedCount = 0;
   let unmappedCount = 0;
+  let approvedProtectedCount = 0;
   const conflicts: any[] = [];
 
   for (let i = 0; i < files.length; i++) {
-    const filename = files[i];
+    const fileObj = files[i];
+    const filename = fileObj.filename;
     scannedCount++;
 
-    const dbImg = fileToImageMap.get(filename.toLowerCase());
+    const dbImg = fileToImageMap.get(fileObj.relPath.toLowerCase()) || fileToImageMap.get(filename.toLowerCase());
+
+    // 🔒 Human-in-the-loop protection: never flag or purge human-approved images
+    if (dbImg?.verification_status === 'APPROVED' || dbImg?.verification_status === 'VERIFIED') {
+      approvedProtectedCount++;
+      passedCount++;
+      continue;
+    }
+
     let med: any = null;
 
     if (dbImg) {
@@ -180,6 +220,7 @@ async function runFullScan() {
     if (reasons.length > 0) {
       conflicts.push({
         filename,
+        fullPath: fileObj.fullPath,
         imageId: dbImg?.id || null,
         medicineId: med.id,
         medicineName: med.name,
@@ -198,6 +239,7 @@ async function runFullScan() {
   console.log('                      ALL IMAGES AUDIT RESULTS');
   console.log('======================================================================');
   console.log(`Total Downloaded Files Scanned: ${scannedCount}`);
+  console.log(`Human Approved Protected:       ${approvedProtectedCount}`);
   console.log(`Resolved to Medicine Record:    ${scannedCount - unmappedCount} (${(((scannedCount - unmappedCount) / scannedCount) * 100).toFixed(1)}%)`);
   console.log(`Verified Clean & Accurate:      ${passedCount} (${((passedCount / (scannedCount - unmappedCount || 1)) * 100).toFixed(1)}%)`);
   console.log(`Flagged with Rule Conflicts:    ${conflicts.length}`);
@@ -236,7 +278,7 @@ async function runFullScan() {
           deleteStmt.run(c.imageId);
           dbDeleted++;
         }
-        const p1 = path.join(PRODUCTS_DIR, c.filename);
+        const p1 = c.fullPath || path.join(PRODUCTS_DIR, c.filename);
         const p2 = path.join(UPLOADS_DIR, c.filename);
         if (fs.existsSync(p1)) {
           try { fs.unlinkSync(p1); filesDeleted++; } catch {}

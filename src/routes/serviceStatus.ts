@@ -69,6 +69,12 @@ router.get('/services-status', async (_req, res) => {
           whatsapp: whatsappEnabled,
           telegram: telegramEnabled,
           email: emailConfigured,
+        },
+        database: {
+          journalMode: 'WAL',
+          synchronous: 'NORMAL',
+          antiLockCoordinator: 'ACTIVE',
+          stats: dbManager.getLockStats()
         }
       }
     });

@@ -7,7 +7,11 @@ import fs from 'fs';
 import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { config, getAppDataDir, isPackagedApp } from '../config/index.js';
+
+export type TxPriority = 'VIP' | 'NORMAL' | 'BACKGROUND';
+export const txPriorityStorage = new AsyncLocalStorage<TxPriority>();
 
 const DB_PATH = config.dbPath;
 
@@ -24,21 +28,134 @@ class DatabaseManager {
   private suspendedUntil: Promise<void> | null = null;
   private resumeFn: (() => void) | null = null;
 
-  // Serializes BEGIN..COMMIT/ROLLBACK on the shared singleton connection. node-sqlite3
-  // does not queue statements against SQLite's own transaction state — two concurrent
-  // requests both issuing 'BEGIN IMMEDIATE TRANSACTION' on this same connection object
-  // collide with "cannot start a transaction within a transaction" (confirmed under a
-  // 20-concurrent POS load test: 0/260 sale requests succeeded). Every BEGIN now waits
-  // its turn in this FIFO chain; COMMIT/ROLLBACK releases it for the next caller.
-  private txMutexTail: Promise<void> = Promise.resolve();
+  // Prioritized transaction mutex (VIP for POS sales, NORMAL for interactive requests, BACKGROUND for workers).
+  // node-sqlite3 does not queue statements against SQLite's own transaction state — two concurrent
+  // requests both issuing 'BEGIN IMMEDIATE TRANSACTION' on this same connection object collide with
+  // "cannot start a transaction within a transaction". This prioritized queue guarantees POS checkouts
+  // jump ahead of background workers while preventing collision crashes.
+  private isTxLocked = false;
+  private activeTxPriority: TxPriority | null = null;
   private activeTxRelease: (() => void) | null = null;
+  private activeTxTimer: NodeJS.Timeout | null = null;
 
-  private acquireTxLock(): Promise<() => void> {
-    let release!: () => void;
-    const nextTail = new Promise<void>(resolve => { release = resolve; });
-    const acquired = this.txMutexTail.then(() => release);
-    this.txMutexTail = this.txMutexTail.then(() => nextTail);
-    return acquired;
+  private txWaiters: {
+    VIP: Array<{ priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number }>;
+    NORMAL: Array<{ priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number }>;
+    BACKGROUND: Array<{ priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number }>;
+  } = {
+    VIP: [],
+    NORMAL: [],
+    BACKGROUND: []
+  };
+
+  private lockStats = {
+    totalAcquisitions: 0,
+    vipCount: 0,
+    normalCount: 0,
+    backgroundCount: 0,
+    lastAcquiredAt: 0
+  };
+
+  public getLockStats() {
+    return {
+      totalAcquisitions: this.lockStats.totalAcquisitions,
+      vipCount: this.lockStats.vipCount,
+      normalCount: this.lockStats.normalCount,
+      backgroundCount: this.lockStats.backgroundCount,
+      isTxLocked: this.isTxLocked,
+      activeTxPriority: this.activeTxPriority,
+      currentWaiters: {
+        VIP: this.txWaiters.VIP.length,
+        NORMAL: this.txWaiters.NORMAL.length,
+        BACKGROUND: this.txWaiters.BACKGROUND.length
+      }
+    };
+  }
+
+  public runWithPriority<T>(priority: TxPriority, fn: () => T): T {
+    return txPriorityStorage.run(priority, fn);
+  }
+
+  private popNextWaiter(): { priority: TxPriority; resolve: (release: () => void) => void; enqueuedAt: number } | null {
+    // 1. VIP waiters (POS checkout, billing) ALWAYS jump ahead
+    if (this.txWaiters.VIP.length > 0) {
+      return this.txWaiters.VIP.shift()!;
+    }
+    // 2. Interactive user operations
+    if (this.txWaiters.NORMAL.length > 0) {
+      return this.txWaiters.NORMAL.shift()!;
+    }
+    // 3. Background workers (catalog import, composition, migration)
+    if (this.txWaiters.BACKGROUND.length > 0) {
+      return this.txWaiters.BACKGROUND.shift()!;
+    }
+    return null;
+  }
+
+  private releaseTxLock(): void {
+    if (this.activeTxTimer) {
+      clearTimeout(this.activeTxTimer);
+      this.activeTxTimer = null;
+    }
+
+    const next = this.popNextWaiter();
+    if (next) {
+      this.activeTxPriority = next.priority;
+      this.lockStats.totalAcquisitions++;
+      if (next.priority === 'VIP') this.lockStats.vipCount++;
+      else if (next.priority === 'NORMAL') this.lockStats.normalCount++;
+      else this.lockStats.backgroundCount++;
+      this.lockStats.lastAcquiredAt = Date.now();
+
+      // Arm safety watchdog for next holder (max 60s transaction duration)
+      this.activeTxTimer = setTimeout(() => {
+        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Forcing release to prevent deadlock.`);
+        this.releaseTxLock();
+      }, 60000);
+      this.activeTxTimer.unref();
+
+      const releaseFn = () => this.releaseTxLock();
+      this.activeTxRelease = releaseFn;
+      next.resolve(releaseFn);
+    } else {
+      this.isTxLocked = false;
+      this.activeTxPriority = null;
+      this.activeTxRelease = null;
+    }
+  }
+
+  public acquireTxLock(hintPriority?: TxPriority): Promise<() => void> {
+    const priority: TxPriority = hintPriority || txPriorityStorage.getStore() || 'NORMAL';
+    const releaseFn = () => this.releaseTxLock();
+
+    if (!this.isTxLocked) {
+      this.isTxLocked = true;
+      this.activeTxPriority = priority;
+      this.activeTxRelease = releaseFn;
+      this.lockStats.totalAcquisitions++;
+      if (priority === 'VIP') this.lockStats.vipCount++;
+      else if (priority === 'NORMAL') this.lockStats.normalCount++;
+      else this.lockStats.backgroundCount++;
+      this.lockStats.lastAcquiredAt = Date.now();
+
+      // Arm safety watchdog (max 60s transaction duration)
+      this.activeTxTimer = setTimeout(() => {
+        console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Forcing release to prevent deadlock.`);
+        this.releaseTxLock();
+      }, 60000);
+      this.activeTxTimer.unref();
+
+      return Promise.resolve(releaseFn);
+    }
+
+    // Queue waiter in prioritized bucket
+    return new Promise<() => void>((resolve) => {
+      this.txWaiters[priority].push({
+        priority,
+        resolve,
+        enqueuedAt: Date.now()
+      });
+    });
   }
 
   public isBooting = false;
@@ -157,12 +274,20 @@ class DatabaseManager {
     const originalExec = db.exec.bind(db);
     const self = this;
 
-    // Classify BEGIN/COMMIT/ROLLBACK so the transaction mutex above can serialize them.
-    const txPhase = (sql: string): 'begin' | 'end' | null => {
+    // Classify BEGIN/COMMIT/ROLLBACK and detect transaction priority (VIP, NORMAL, BACKGROUND)
+    const txPhase = (sql: string): { phase: 'begin' | 'end' | null; priority: TxPriority } => {
       const trimmed = sql.trim().toUpperCase();
-      if (trimmed.startsWith('BEGIN')) return 'begin';
-      if (trimmed === 'COMMIT' || trimmed.startsWith('ROLLBACK')) return 'end';
-      return null;
+      let priority: TxPriority = txPriorityStorage.getStore() || 'NORMAL';
+
+      if (trimmed.includes('IMMEDIATE') || trimmed.includes('/* VIP */')) {
+        priority = 'VIP';
+      } else if (trimmed.includes('/* BACKGROUND */')) {
+        priority = 'BACKGROUND';
+      }
+
+      if (trimmed.startsWith('BEGIN')) return { phase: 'begin', priority };
+      if (trimmed === 'COMMIT' || trimmed.startsWith('ROLLBACK')) return { phase: 'end', priority };
+      return { phase: null, priority };
     };
 
     const releaseIfHeld = () => {
@@ -193,9 +318,9 @@ class DatabaseManager {
 
     db.run = async function (sql: any, ...params: any[]) {
       if (typeof sql === 'string') {
-        const phase = txPhase(sql);
+        const { phase, priority } = txPhase(sql);
         if (phase === 'begin') {
-          const release = await self.acquireTxLock();
+          const release = await self.acquireTxLock(priority);
           self.activeTxRelease = release;
           try {
             return await originalRun(sql, ...params);
@@ -253,9 +378,9 @@ class DatabaseManager {
     } as any;
 
     db.exec = async function (sql: string) {
-      const phase = txPhase(sql);
+      const { phase, priority } = txPhase(sql);
       if (phase === 'begin') {
-        const release = await self.acquireTxLock();
+        const release = await self.acquireTxLock(priority);
         self.activeTxRelease = release;
         try {
           return await originalExec(sql);
