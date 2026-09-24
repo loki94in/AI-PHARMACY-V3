@@ -810,8 +810,11 @@ export interface OwnerSpecialOrderResultsPayload {
   customerName: string;
   customerPhone: string;
   medicineName: string;
+  productName?: string;
   quantity: number;
   unit: string;
+  mrp?: number | null;
+  totalAmount?: number | null;
   pharmarackOptions: any[];
 }
 
@@ -856,12 +859,18 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
       return symbols[n] || `${n + 1}️⃣`;
     };
 
+    const customerMrp = payload.mrp != null && payload.mrp > 0 ? Number(payload.mrp) : null;
+    const totalOrderVal = payload.totalAmount != null && payload.totalAmount > 0
+      ? Number(payload.totalAmount)
+      : (customerMrp ? customerMrp * payload.quantity : null);
+
     const resultsList = payload.pharmarackOptions.map((opt, i) => {
       const dist = opt.distributor || opt.supplier_name || opt.storeName || opt.distributor_name || 'Distributor';
-      const rate = opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? 0;
-      const mrp = opt.mrp ?? 0;
+      const rate = Number(opt.distributorPrice ?? opt.ptr ?? opt.PTR ?? opt.rate ?? 0);
+      const optMrp = Number(opt.mrp ?? 0);
       const isUnmapped = opt.mapped === false || opt.isMapped === false || opt.is_mapped === 0 || String(opt.IsMapped) === '0' || String(opt.Ismapped) === '0';
       const tag = isUnmapped ? ' [Unmapped]' : '';
+      const refBadge = i === 0 ? ' [Best Rate]' : (i === 1 ? ' [High Stock]' : '');
 
       // Stock indicator: 🟢 (QTY) / 🟢 High, 🟡 (QTY) / 🟡 Low, 🔴 (0)
       let stockIndicator = '🟢 High';
@@ -881,34 +890,47 @@ export async function notifyOwnerOfSpecialOrderPharmarackResults(payload: OwnerS
         stockIndicator = `🟢 (${opt.stock})`;
       }
 
-      // Price line: Rate: ₹{rate} (MRP: ₹{mrp})
+      // Calculate margin against customer confirmed MRP (or distributor catalog MRP)
+      const effectiveMrp = customerMrp || (optMrp > 0 ? optMrp : 0);
+      let marginLine = '';
+      if (rate > 0 && effectiveMrp > rate) {
+        const marginVal = effectiveMrp - rate;
+        const marginPct = ((marginVal / effectiveMrp) * 100).toFixed(1);
+        marginLine = ` | Margin: ₹${marginVal.toFixed(2)} (${marginPct}%)`;
+      }
+
+      // Price line: Wholesale PTR: ₹{rate}
       let priceLine = '';
-      if (rate > 0 && mrp > 0) {
-        priceLine = `Rate: ₹${Number(rate).toFixed(2)} (MRP: ₹${Number(mrp).toFixed(2)})`;
-      } else if (rate > 0) {
-        priceLine = `Rate: ₹${Number(rate).toFixed(2)}`;
-      } else if (mrp > 0) {
-        priceLine = `Rate: Available (MRP: ₹${Number(mrp).toFixed(2)})`;
+      if (rate > 0) {
+        priceLine = `Wholesale PTR: ₹${rate.toFixed(2)}${marginLine}`;
+      } else if (effectiveMrp > 0) {
+        priceLine = `Rate: Available (MRP: ₹${effectiveMrp.toFixed(2)})`;
       } else {
         priceLine = `Rate: Available`;
       }
 
       const medLine = (opt.name || opt.shortName || '').trim();
-      return `${formatNum(i)} ${dist}${tag} | ${stockIndicator} |\n${medLine ? medLine + '\n' : ''}${priceLine}`;
-    }).join('\n');
+      return `${formatNum(i)}${refBadge} *${dist}*${tag} | ${stockIndicator}\n${medLine ? '   ' + medLine + '\n' : ''}   ${priceLine}`;
+    }).join('\n\n');
+
+    const confirmedProductTitle = payload.productName || payload.medicineName;
+    const mrpLine = customerMrp != null ? `\n🏷️ *Customer MRP*: ₹${customerMrp.toFixed(2)} / ${payload.unit || 'strip'}` : '';
+    const totalLine = totalOrderVal != null ? `\n💰 *Total Order Value*: ₹${totalOrderVal.toFixed(2)}` : '';
 
     const messageText =
-      `🔍 *Order Verification & Distributor Mapping*\n\n` +
+      `🔍 *Special Order Verification & Sourcing*\n\n` +
       `🆔 *Order*: ${payload.soCode}\n` +
-      `👤 *Customer*: ${payload.customerName} (+91 ${payload.customerPhone})\n` +
-      `💊 *Medicine*: ${payload.medicineName}\n` +
-      `📦 *Quantity*: ${payload.quantity} ${payload.unit}\n\n` +
-      `🤖 *Mapped Distributor Options:*\n\n` +
+      `👤 *Customer*: ${payload.customerName} (+91 ${payload.customerPhone})\n\n` +
+      `💊 *Confirmed Product*: *${confirmedProductTitle}*\n` +
+      `📦 *Quantity*: ${payload.quantity} ${payload.unit || 'strip'}` +
+      `${mrpLine}` +
+      `${totalLine}\n\n` +
+      `🤖 *Top ${payload.pharmarackOptions.length} Sourcing References:*\n\n` +
       `${resultsList}\n\n` +
       `⚖️ *Verification Check:*\n` +
-      `👉 Reply *CONFIRM* (or *1*) to approve & send payment QR to customer\n` +
-      `👉 Reply *${payload.soCode} [Number]* to choose another distributor\n` +
-      `👉 Reply *REJECT* if bot made a mistake`;
+      `👉 Reply *CONFIRM* (or *1*) to approve Option 1 & send payment QR to customer\n` +
+      (payload.pharmarackOptions.length > 1 ? `👉 Reply *2* to choose Option 2\n` : '') +
+      `👉 Reply *REJECT* to cancel`;
 
     await whatsappQueueWorker.enqueue(adminWhatsapp, messageText, 'admin_escalation', 'Admin / Store Owner');
     console.log(`[Admin Escalation] Special Order ${payload.soCode} results dispatched to owner.`);

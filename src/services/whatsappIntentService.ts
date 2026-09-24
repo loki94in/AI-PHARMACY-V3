@@ -2653,6 +2653,10 @@ async function proceedWithConfirmedProcurement(
 
   // Create Special Order
   const todayStr = new Date().toISOString().split('T')[0];
+  const confirmedPackaging = pending.suggested_name || medName;
+  const confirmedMrp = pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null;
+  const totalOrderVal = confirmedMrp ? confirmedMrp * medQty : null;
+
   const orderRes = await db.run(
     `INSERT INTO special_orders (
        store_id, requester, phone, medicine_name, product, qty, priority, status,
@@ -2664,10 +2668,10 @@ async function proceedWithConfirmedProcurement(
       customerName,
       cleanDigits,
       medName,
-      medName,
+      confirmedPackaging,
       medQty,
       todayStr,
-      pending.mrp != null && pending.mrp > 0 ? Number(pending.mrp) : null
+      confirmedMrp
     ]
   );
   const specialOrderId = Number(orderRes.lastID) || 0;
@@ -2686,8 +2690,8 @@ async function proceedWithConfirmedProcurement(
 
   if (validCandidates.length > 0) {
     const { rankSpecialOrderDistributorCandidates } = await import('../routes/pharmarack.js');
-    const rankedOptions = await rankSpecialOrderDistributorCandidates(db, validCandidates, 10, 2, medName);
-    const finalOptions = rankedOptions.length > 0 ? rankedOptions : validCandidates.slice(0, 10);
+    const rankedOptions = await rankSpecialOrderDistributorCandidates(db, validCandidates, 2, 1, medName);
+    const finalOptions = rankedOptions.length > 0 ? rankedOptions.slice(0, 2) : validCandidates.slice(0, 2);
 
     // Notify owner with in-stock results
     await waAdminEscalationService.notifyOwnerOfSpecialOrderPharmarackResults({
@@ -2696,13 +2700,16 @@ async function proceedWithConfirmedProcurement(
       customerName,
       customerPhone: cleanDigits,
       medicineName: medName,
+      productName: confirmedPackaging,
       quantity: medQty,
       unit: medUnit,
+      mrp: confirmedMrp,
+      totalAmount: totalOrderVal,
       pharmarackOptions: finalOptions
     });
 
     // Courtesy message to customer
-    const mrpSuffix = pending.mrp != null && pending.mrp > 0 ? ` (MRP ₹${Number(pending.mrp).toFixed(2)})` : '';
+    const mrpSuffix = confirmedMrp != null && confirmedMrp > 0 ? ` (MRP ₹${confirmedMrp.toFixed(2)})` : '';
     const distMention = pending.selected_distributor ? ` with *${pending.selected_distributor}*` : ' with our distributor network';
     const custWaitMsg = `Your request for *${medName}* × ${medQty}${mrpSuffix} has been forwarded to our pharmacy for confirmation${distMention}.\n\nWe will send you payment details shortly.`;
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');

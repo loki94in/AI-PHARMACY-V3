@@ -1528,15 +1528,23 @@ var init_activityTracker = __esm({
       isIdle(thresholdMs = 30 * 60 * 1e3) {
         return Date.now() - this.lastActivity > thresholdMs;
       }
+      manuallyPaused = false;
+      setManuallyPaused(paused) {
+        this.manuallyPaused = paused;
+        console.log(`[ActivityTracker] Background worker manual pause set to: ${paused}`);
+      }
+      isManuallyPaused() {
+        return this.manuallyPaused;
+      }
       /**
-       * Blocks execution by sleeping in intervals if the app is currently in use.
-       * Resumes automatically once the user has been idle for the threshold duration.
+       * Blocks execution by sleeping in intervals if the app is currently in use or manually paused by human.
+       * Resumes automatically once the user has been idle for the threshold duration and unpaused.
        */
       async waitUntilIdle(checkIntervalMs = 2e3) {
-        if (this.isAppInUse()) {
-          console.log(`[ActivityTracker] App is active (last request: ${Math.round((Date.now() - this.lastActivity) / 1e3)}s ago). Pausing background process...`);
+        if (this.isAppInUse() || this.manuallyPaused) {
+          console.log(`[ActivityTracker] Background process paused (${this.manuallyPaused ? "manually paused by human operator" : `app active: ${Math.round((Date.now() - this.lastActivity) / 1e3)}s ago`})...`);
         }
-        while (this.isAppInUse()) {
+        while (this.isAppInUse() || this.manuallyPaused) {
           await new Promise((resolve) => setTimeout(resolve, checkIntervalMs));
         }
       }
@@ -6927,6 +6935,11 @@ var init_onlineDataEnricher = __esm({
 });
 
 // src/services/catalogImageService.ts
+var catalogImageService_exports = {};
+__export(catalogImageService_exports, {
+  CatalogImageService: () => CatalogImageService,
+  catalogImageService: () => catalogImageService
+});
 var import_fs9, import_path10, import_crypto, import_jimp2, DOSAGE_FORMS, PACKAGING_CONTAINERS, GENERIC_CATEGORY_WORDS, UMBRELLA_PHARMA_BRANDS2, CatalogImageService, catalogImageService;
 var init_catalogImageService = __esm({
   "src/services/catalogImageService.ts"() {
@@ -6956,6 +6969,11 @@ var init_catalogImageService = __esm({
       "INJ",
       "IV",
       "IM",
+      "VACCINE",
+      "AMPOULE",
+      "AMP",
+      "VIAL",
+      "INFUSION",
       "CREAM",
       "GEL",
       "OINTMENT",
@@ -7109,13 +7127,16 @@ var init_catalogImageService = __esm({
       extractDosageForm(text) {
         if (!text) return null;
         const upper = text.replace(/[-_.]/g, " ").toUpperCase();
+        if (/\b(VACCINE|VAC|AMPOULE|AMP|VIAL|INFUSION)\b/i.test(upper)) {
+          return "INJECTION";
+        }
         for (const form of DOSAGE_FORMS) {
           const regex = new RegExp(`\\b${form}\\b`, "i");
           if (regex.test(upper)) {
             if (form.startsWith("TAB") || form === "DT") return "TABLET";
             if (form.startsWith("CAP")) return "CAPSULE";
             if (form.startsWith("SYP") || form.startsWith("SYRUP") || form.startsWith("SUSP")) return "SYRUP";
-            if (form.startsWith("INJ") || form === "IV" || form === "IM") return "INJECTION";
+            if (form.startsWith("INJ") || form === "IV" || form === "IM" || form === "VACCINE" || form === "AMPOULE" || form === "AMP" || form === "VIAL" || form === "INFUSION") return "INJECTION";
             if (form === "GEL" || form === "CREAM" || form.startsWith("OINT")) return "TOPICAL";
             if (form.startsWith("DROP")) return "DROPS";
             if (form.startsWith("INH") || form.startsWith("ROTA") || form.startsWith("RESP")) return "INHALER";
@@ -7174,6 +7195,10 @@ var init_catalogImageService = __esm({
           }
           return "";
         }
+        const SHORT_ACRONYMS = /* @__PURE__ */ new Set(["HB", "TT", "DPT", "BCG", "MMR", "OPV", "IPV", "OR", "BT", "DT"]);
+        if (SHORT_ACRONYMS.has(words[0].toUpperCase()) && words.length > 1) {
+          return `${words[0].toUpperCase()} ${words[1].toUpperCase()}`;
+        }
         if (UMBRELLA_PHARMA_BRANDS2.has(words[0].toUpperCase()) && words.length > 1) {
           if (words[0].toUpperCase() === "FLAMINGO") {
             const flamingoDevice = words.slice(1).find((w) => /^(ELBOW|KNEE|ANKLE|WRIST|WAIST|LUMBAR|ABDOMINAL|CERVICAL|HEAT|HEATING|CREPE|FLAMICREPE|COLLAR|SLING|BANDAGE|SPLINT|BRACE)$/i.test(w));
@@ -7190,6 +7215,24 @@ var init_catalogImageService = __esm({
           if (nonGeneric) return nonGeneric.toUpperCase();
         }
         return words[0].toUpperCase();
+      }
+      /**
+       * Sanitizes and cleans CDN URLs to guarantee 100% watermark-free, high-resolution original packaging photography.
+       * Strips dynamic Cloudinary / Gumlet watermark transformations and e-commerce thumbnail cropping.
+       */
+      cleanseCdnImageUrl(rawUrl) {
+        if (!rawUrl) return "";
+        let clean2 = rawUrl.trim();
+        if (clean2.includes("onemg.gumlet.io") || clean2.includes("cloudinary.com")) {
+          clean2 = clean2.replace(/l_watermark_[^/]+\//g, "").replace(/w_\d+,h_\d+/g, "w_800,h_800");
+        }
+        if (clean2.includes("pharmeasy.in")) {
+          clean2 = clean2.replace(/\?.*$/, "");
+        }
+        if (clean2.includes("davaindia.com")) {
+          clean2 = clean2.split("?")[0];
+        }
+        return clean2;
       }
       /**
        * Smart face prioritization:
@@ -7456,10 +7499,13 @@ var init_catalogImageService = __esm({
             dosageFormScore = -40;
           } else if (candNameForm && candNameForm !== medForm) {
             dosageFormConflict = true;
-            dosageFormScore = -40;
+            dosageFormScore = -50;
           } else if (candPathForm && candPathForm !== medForm) {
             dosageFormConflict = true;
-            dosageFormScore = -40;
+            dosageFormScore = -50;
+          } else if (candForm && candForm !== medForm) {
+            dosageFormConflict = true;
+            dosageFormScore = -50;
           } else if (candForm === medForm) {
             dosageFormMatch = true;
             dosageFormScore = 15;
@@ -7714,6 +7760,60 @@ var init_catalogImageService = __esm({
         } catch (e) {
           await db2.run("ROLLBACK");
           throw e;
+        }
+      }
+      /**
+       * Re-link an existing image to a different master medicine record, select packaging face (front/back/etc.), and auto-approve it
+       */
+      async relinkImage(imageId, targetMedicineId, imageType = "front", isPrimary = true, verifiedBy = "pharmacist") {
+        const db2 = await dbManager.getConnection();
+        const image = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+        if (!image) throw new Error("Catalog image not found");
+        const targetMed = await db2.get("SELECT * FROM medicines WHERE id = ?", [targetMedicineId]);
+        if (!targetMed) throw new Error("Target master medicine not found");
+        const targetType = imageType || "front";
+        const primaryVal = isPrimary ? 1 : 0;
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run(
+            "UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ? AND image_type = ? AND id != ?",
+            [targetMedicineId, targetType, imageId]
+          );
+          if (primaryVal === 1) {
+            await db2.run(
+              "UPDATE catalog_images SET is_primary = 0 WHERE medicine_id = ? AND id != ?",
+              [targetMedicineId, imageId]
+            );
+          }
+          await db2.run(
+            `UPDATE catalog_images
+         SET medicine_id = ?,
+             product_name = ?,
+             company_name = ?,
+             image_type = ?,
+             is_primary = ?,
+             verification_status = 'APPROVED',
+             is_active = 1,
+             verified_by = ?,
+             verified_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [targetMedicineId, targetMed.name, targetMed.manufacturer || null, targetType, primaryVal, verifiedBy, imageId]
+          );
+          await db2.run("COMMIT");
+          const updatedImage = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+          eventService.broadcast("catalog_image_updated", {
+            id: imageId,
+            medicine_id: targetMedicineId,
+            status: "APPROVED",
+            image_type: targetType,
+            is_primary: primaryVal,
+            is_active: 1
+          });
+          return { success: true, image: updatedImage, medicine: targetMed };
+        } catch (err) {
+          await db2.run("ROLLBACK");
+          throw err;
         }
       }
       /**
@@ -7999,51 +8099,162 @@ var init_catalogImageService = __esm({
             cleanQuery = `DISPOVAN ${cleanQuery}`;
           }
         }
-        const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(cleanQuery)}&page=1`;
-        let products = [];
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            },
-            signal: AbortSignal.timeout(8e3)
-          });
-          if (resp.ok) {
-            const json = await resp.json();
-            products = json?.data?.products || [];
-          }
-        } catch (err) {
-          console.warn(`[CatalogImageService] Online search error for "${cleanQuery}":`, err.message);
-          return null;
+        const queryVariants = this.generateAccurateQueries(med.name, med.manufacturer);
+        if (cleanQuery && !queryVariants.includes(cleanQuery)) {
+          queryVariants.unshift(cleanQuery);
         }
-        if (products.length === 0) return null;
+        if (med.generic_name && med.generic_name.trim().length > 3) {
+          const genericClean = med.generic_name.replace(/\[.*?\]/g, "").trim();
+          const genericQuery = strength ? `${genericClean} ${strength}` : genericClean;
+          if (!queryVariants.includes(genericQuery)) {
+            queryVariants.push(genericQuery);
+          }
+        }
         let selectedCandidate = null;
         let selectedImageUrl = null;
         let selectedFace = "combined";
         let selectedStitchSecondaryUrl = void 0;
-        for (const prod of products) {
-          const matchCheck = this.computeConfidence(med, {
-            name: prod.name,
-            manufacturer: prod.manufacturer
-          });
-          if (matchCheck.verificationStatus === "REJECTED" || matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch || matchCheck.signals.modifierConflict || matchCheck.signals.dosageFormConflict) {
-            continue;
+        let selectedSource = "pharmeasy";
+        for (const q of queryVariants) {
+          if (selectedCandidate) break;
+          const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(q)}&page=1`;
+          try {
+            const resp = await fetch(url, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              },
+              signal: AbortSignal.timeout(6e3)
+            });
+            if (!resp.ok) continue;
+            const json = await resp.json();
+            const products = json?.data?.products || [];
+            for (const prod of products) {
+              const matchCheck = this.computeConfidence(med, {
+                name: prod.name,
+                manufacturer: prod.manufacturer
+              });
+              if (matchCheck.verificationStatus === "REJECTED" || matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch || matchCheck.signals.modifierConflict || matchCheck.signals.dosageFormConflict) {
+                continue;
+              }
+              const damImages = prod.damImages || [];
+              const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
+              if (!bestFace || !bestFace.url) continue;
+              const candidateUrl = this.cleanseCdnImageUrl(bestFace.url);
+              if (rejectedUrls.has(candidateUrl)) continue;
+              selectedCandidate = prod;
+              selectedImageUrl = candidateUrl;
+              selectedFace = bestFace.face;
+              selectedStitchSecondaryUrl = bestFace.stitchSecondaryUrl ? this.cleanseCdnImageUrl(bestFace.stitchSecondaryUrl) : void 0;
+              selectedSource = "pharmeasy";
+              break;
+            }
+          } catch (err) {
+            console.warn(`[CatalogImageService] PharmEasy online search error for "${q}":`, err.message);
           }
-          const damImages = prod.damImages || [];
-          const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
-          if (!bestFace || !bestFace.url) continue;
-          const candidateUrl = bestFace.url.split("?")[0];
-          if (rejectedUrls.has(candidateUrl)) {
-            continue;
+        }
+        if (!selectedCandidate) {
+          for (const q of queryVariants) {
+            if (selectedCandidate) break;
+            try {
+              const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(q)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+              const mgResp = await fetch(mgUrl, {
+                headers: {
+                  "accept": "application/vnd.healthkartplus.v4+json",
+                  "x-access-key": "1mg_client_access_key",
+                  "x-platform": "desktop-0.0.1",
+                  "x-city": "Gurgaon",
+                  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                },
+                signal: AbortSignal.timeout(7e3)
+              });
+              if (!mgResp.ok) continue;
+              const mgJson = await mgResp.json();
+              const prods = mgJson?.data?.search_results || [];
+              for (const p of prods) {
+                const rawUrls = p.cropped_image_urls || (p.image ? [p.image] : p.image_url ? [p.image_url] : []);
+                if (!rawUrls || rawUrls.length === 0) continue;
+                const cleanPrimary = this.cleanseCdnImageUrl(rawUrls[0]);
+                if (rejectedUrls.has(cleanPrimary)) continue;
+                const matchCheck = this.computeConfidence(med, {
+                  name: p.name,
+                  manufacturer: p.manufacturer_name || p.company_name
+                });
+                if (matchCheck.verificationStatus === "REJECTED" || matchCheck.signals.strengthConflict || !matchCheck.signals.brandMatch || matchCheck.signals.modifierConflict || matchCheck.signals.dosageFormConflict) {
+                  continue;
+                }
+                let secondaryUrl = void 0;
+                if (rawUrls.length > 1) {
+                  const cleanSecondary = this.cleanseCdnImageUrl(rawUrls[1]);
+                  if (!rejectedUrls.has(cleanSecondary) && cleanSecondary !== cleanPrimary) {
+                    secondaryUrl = cleanSecondary;
+                  }
+                }
+                selectedCandidate = {
+                  name: p.name,
+                  manufacturer: p.manufacturer_name || p.company_name || "Tata 1mg"
+                };
+                selectedImageUrl = cleanPrimary;
+                selectedFace = secondaryUrl ? "combo-stitched" : "front";
+                selectedStitchSecondaryUrl = secondaryUrl;
+                selectedSource = "1mg";
+                break;
+              }
+            } catch (err) {
+              console.warn(`[CatalogImageService] 1mg online search error for "${q}":`, err.message);
+            }
           }
-          selectedCandidate = prod;
-          selectedImageUrl = candidateUrl;
-          selectedFace = bestFace.face;
-          selectedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
-          break;
+        }
+        if (!selectedCandidate) {
+          for (const q of queryVariants) {
+            if (selectedCandidate) break;
+            try {
+              const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(q)}`;
+              const davaResp = await fetch(davaUrl, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                  "Referer": "https://www.davaindia.com/"
+                },
+                signal: AbortSignal.timeout(7e3)
+              });
+              if (!davaResp.ok) continue;
+              const davaJson = await davaResp.json();
+              const prods = davaJson?.data || [];
+              for (const p of prods) {
+                const rawImgs = Array.isArray(p.images) ? p.images.map((im) => im.objectUrl || im.preSignedUrl).filter(Boolean) : p.thumbnail ? [p.thumbnail] : [];
+                if (rawImgs.length === 0) continue;
+                const cleanPrimary = this.cleanseCdnImageUrl(rawImgs[0]);
+                if (rejectedUrls.has(cleanPrimary)) continue;
+                const matchCheck = this.computeConfidence(med, {
+                  name: p.title || p.name,
+                  manufacturer: "Dawa India"
+                });
+                if (matchCheck.verificationStatus === "REJECTED" || matchCheck.signals.strengthConflict || matchCheck.signals.modifierConflict || matchCheck.signals.dosageFormConflict) {
+                  continue;
+                }
+                let secondaryUrl = void 0;
+                if (rawImgs.length > 1) {
+                  const cleanSecondary = this.cleanseCdnImageUrl(rawImgs[1]);
+                  if (!rejectedUrls.has(cleanSecondary) && cleanSecondary !== cleanPrimary) {
+                    secondaryUrl = cleanSecondary;
+                  }
+                }
+                selectedCandidate = {
+                  name: p.title || p.name,
+                  manufacturer: "Dawa India"
+                };
+                selectedImageUrl = cleanPrimary;
+                selectedFace = secondaryUrl ? "combo-stitched" : "front";
+                selectedStitchSecondaryUrl = secondaryUrl;
+                selectedSource = "davaindia";
+                break;
+              }
+            } catch (err) {
+              console.warn(`[CatalogImageService] Dawa India search error for "${q}":`, err.message);
+            }
+          }
         }
         if (!selectedCandidate || !selectedImageUrl) {
-          console.log(`[CatalogImageService] No un-rejected candidate found for medicine ${med.name}`);
+          console.log(`[CatalogImageService] No un-rejected candidate found across PharmEasy, 1mg, or Dawa India for medicine ${med.name}`);
           return null;
         }
         const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60);
@@ -8056,15 +8267,21 @@ var init_catalogImageService = __esm({
         const uploadsPath = import_path10.default.join(uploadsDir, filename);
         try {
           let buffer;
+          const fetchHeaders = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          };
+          if (selectedImageUrl.includes("davaindia.com")) {
+            fetchHeaders["Referer"] = "https://www.davaindia.com/";
+          }
           if (selectedStitchSecondaryUrl) {
             try {
               const [res1, res2] = await Promise.all([
                 fetch(selectedImageUrl, {
-                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+                  headers: fetchHeaders,
                   signal: AbortSignal.timeout(1e4)
                 }),
                 fetch(selectedStitchSecondaryUrl, {
-                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+                  headers: fetchHeaders,
                   signal: AbortSignal.timeout(1e4)
                 })
               ]);
@@ -8081,7 +8298,7 @@ var init_catalogImageService = __esm({
             } catch (e) {
               console.warn("[CatalogImageService] Error stitching dual packaging images, using primary:", e.message);
               const fallbackRes = await fetch(selectedImageUrl, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+                headers: fetchHeaders,
                 signal: AbortSignal.timeout(1e4)
               });
               if (!fallbackRes.ok) return null;
@@ -8089,7 +8306,7 @@ var init_catalogImageService = __esm({
             }
           } else {
             const imgRes = await fetch(selectedImageUrl, {
-              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+              headers: fetchHeaders,
               signal: AbortSignal.timeout(1e4)
             });
             if (!imgRes.ok) return null;
@@ -8128,7 +8345,7 @@ var init_catalogImageService = __esm({
               selectedCandidate.name,
               relPath,
               relPath,
-              "pharmeasy",
+              selectedSource,
               selectedImageUrl,
               hash,
               matchResult.confidenceScore,
@@ -8250,6 +8467,20 @@ var init_catalogImageService = __esm({
         return import_fs9.default.existsSync(p1) || import_fs9.default.existsSync(p2) || import_fs9.default.existsSync(p3);
       }
       /**
+       * Resolve physical disk path for a relative image path
+       */
+      getDiskPath(imagePath) {
+        if (!imagePath) return null;
+        const cleanPath = imagePath.split("?")[0].replace(/^\/+/, "");
+        const p1 = import_path10.default.resolve(process.cwd(), "frontend/public", cleanPath);
+        if (import_fs9.default.existsSync(p1)) return p1;
+        const p2 = import_path10.default.resolve(process.cwd(), cleanPath);
+        if (import_fs9.default.existsSync(p2)) return p2;
+        const p3 = import_path10.default.resolve(process.cwd(), "uploads", cleanPath.replace(/^uploads\//, ""));
+        if (import_fs9.default.existsSync(p3)) return p3;
+        return null;
+      }
+      /**
        * Canonical Image Resolver (Section 15 of PRODUCT IMAGE MISSING.MD)
        * Single source of truth for all application surfaces (Portal, Website Orders, POS, CRM)
        */
@@ -8311,6 +8542,125 @@ var init_catalogImageService = __esm({
           status: row.verification_status,
           id: row.id
         };
+      }
+      /**
+       * Resolve or on-demand download verified medicine image file for WhatsApp visual confirmation
+       * Returns base64 file payload for WhatsApp Web media dispatch
+       */
+      async getProductImageFileForWhatsApp(medicineIdOrName) {
+        const db2 = await dbManager.getConnection();
+        let medicineId = null;
+        let medicineName = "";
+        if (typeof medicineIdOrName === "number") {
+          medicineId = medicineIdOrName;
+          const med = await db2.get("SELECT name FROM medicines WHERE id = ?", [medicineId]).catch(() => null);
+          medicineName = med?.name || "";
+        } else {
+          medicineName = String(medicineIdOrName || "").trim();
+          const med = await db2.get(
+            "SELECT id, name FROM medicines WHERE name = ? OR LOWER(name) = LOWER(?) ORDER BY id ASC LIMIT 1",
+            [medicineName, medicineName]
+          ).catch(() => null);
+          if (med) {
+            medicineId = med.id;
+            medicineName = med.name;
+          }
+        }
+        if (!medicineId && medicineName) {
+          const normQuery = medicineName.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2").toUpperCase();
+          const reqNumbers = normQuery.match(/\b\d+(?:\.\d+)?\b/g) || [];
+          const reqModifiers = normQuery.match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+          const brandWord = medicineName.replace(/[^a-zA-Z0-9\s]/g, " ").trim().split(/\s+/)[0] || "";
+          if (brandWord.length >= 3) {
+            const candidates = await db2.all(
+              "SELECT id, name FROM medicines WHERE name LIKE ? ORDER BY LENGTH(name) ASC LIMIT 60",
+              [`${brandWord}%`]
+            ).catch(() => []);
+            let bestCandidate = null;
+            let bestScore = -1;
+            for (const cand of candidates) {
+              const normCand = cand.name.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2").toUpperCase();
+              const candNumbers = normCand.match(/\b\d+(?:\.\d+)?\b/g) || [];
+              const candModifiers = normCand.match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+              if (reqNumbers.length > 0) {
+                const matchesAllReq = reqNumbers.every((n) => candNumbers.includes(n));
+                if (!matchesAllReq) continue;
+                const standardStrengths = ["5", "10", "20", "25", "40", "50", "80", "100", "150", "200", "250", "300", "400", "500", "650", "800", "1000"];
+                const hasConflict = candNumbers.some((cn) => standardStrengths.includes(cn) && !reqNumbers.includes(cn));
+                if (hasConflict) continue;
+              }
+              const missingMod = reqModifiers.some((m) => !candModifiers.includes(m));
+              if (missingMod) continue;
+              if (reqModifiers.length === 0 && candModifiers.length > 0) continue;
+              let score = 10;
+              if (reqModifiers.length === candModifiers.length) score += 20;
+              if (reqNumbers.length === candNumbers.length) score += 20;
+              if (score > bestScore) {
+                bestScore = score;
+                bestCandidate = cand;
+              }
+            }
+            if (bestCandidate) {
+              medicineId = bestCandidate.id;
+              medicineName = bestCandidate.name;
+            }
+          }
+        }
+        if (!medicineId) {
+          return null;
+        }
+        let row = await db2.get(
+          `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+       FROM catalog_images 
+       WHERE medicine_id = ? AND is_active = 1 AND verification_status IN ('APPROVED', 'VERIFIED')
+       ORDER BY is_primary DESC, id DESC LIMIT 1`,
+          [medicineId]
+        ).catch(() => null);
+        if (!row && medicineName) {
+          row = await db2.get(
+            `SELECT id, image_path, thumbnail_path, verification_status, updated_at 
+         FROM catalog_images 
+         WHERE (product_name = ? OR LOWER(product_name) = LOWER(?)) AND is_active = 1 AND verification_status IN ('APPROVED', 'VERIFIED')
+         ORDER BY is_primary DESC, id DESC LIMIT 1`,
+            [medicineName, medicineName]
+          ).catch(() => null);
+        }
+        if (!row && medicineName) {
+          const cleanSlug = medicineName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+          const candidates = [`${cleanSlug}-combo.jpg`, `${cleanSlug}-front.jpg`, `${cleanSlug}.jpg`, `${cleanSlug}.webp`];
+          for (const cand of candidates) {
+            const diskPath2 = import_path10.default.join(process.cwd(), "frontend", "public", "products", cand);
+            if (import_fs9.default.existsSync(diskPath2) && import_fs9.default.statSync(diskPath2).size > 1e3) {
+              row = {
+                id: 0,
+                image_path: `/products/${cand}`,
+                thumbnail_path: `/products/${cand}`,
+                verification_status: "APPROVED",
+                updated_at: (/* @__PURE__ */ new Date()).toISOString()
+              };
+              break;
+            }
+          }
+        }
+        if (!row || !row.image_path) {
+          return null;
+        }
+        const diskPath = this.getDiskPath(row.image_path);
+        if (!diskPath || !import_fs9.default.existsSync(diskPath)) {
+          return null;
+        }
+        try {
+          const buf = import_fs9.default.readFileSync(diskPath);
+          const ext = import_path10.default.extname(diskPath).toLowerCase();
+          const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+          return {
+            mimetype: mime,
+            data: buf.toString("base64"),
+            filename: import_path10.default.basename(diskPath)
+          };
+        } catch (_) {
+          return null;
+        }
       }
       /**
        * Multi-Angle Gallery Resolver for Customer Portal & Website Shop
@@ -8796,188 +9146,35 @@ var init_catalogImageService = __esm({
         let failed = 0;
         for (const med of targetMeds) {
           try {
-            const queries = this.generateAccurateQueries(med.name, med.manufacturer);
-            let matchedCandidate = null;
-            let matchedImageUrl = null;
-            let matchedStitchSecondaryUrl = void 0;
-            let bestScoreResult = null;
-            const rejections = await db2.all(
-              "SELECT rejected_image_url, rejected_image_hash FROM catalog_image_rejections WHERE medicine_id = ?",
-              [med.id]
-            );
-            const rejectedUrls = new Set(rejections.map((r) => r.rejected_image_url).filter(Boolean));
-            const rejectedHashes = new Set(rejections.map((r) => r.rejected_image_hash).filter(Boolean));
-            for (const query of queries) {
-              const url = `https://pharmeasy.in/api/search/search/?q=${encodeURIComponent(query)}&page=1`;
-              try {
-                const resp = await fetch(url, {
-                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-                  signal: AbortSignal.timeout(6e3)
-                });
-                if (!resp.ok) continue;
-                const json = await resp.json();
-                const products = json?.data?.products || [];
-                for (const prod of products) {
-                  const matchRes = this.computeConfidence(med, {
-                    name: prod.name,
-                    manufacturer: prod.manufacturer
-                  });
-                  if (matchRes.verificationStatus === "REJECTED" || !matchRes.signals.brandMatch || matchRes.signals.strengthConflict || matchRes.signals.modifierConflict) {
-                    continue;
-                  }
-                  const damImages = prod.damImages || [];
-                  const bestFace = this.pickBestPackagingFace(med.name, med.packaging, damImages, prod.image, prod.name);
-                  if (!bestFace || !bestFace.url) continue;
-                  const candidateUrl = bestFace.url.split("?")[0];
-                  if (rejectedUrls.has(candidateUrl)) continue;
-                  if (matchRes.confidenceScore >= 75) {
-                    matchedCandidate = prod;
-                    matchedImageUrl = candidateUrl;
-                    matchedStitchSecondaryUrl = bestFace.stitchSecondaryUrl;
-                    bestScoreResult = matchRes;
-                    break;
-                  }
-                }
-              } catch (_) {
-              }
-              if (matchedCandidate) break;
-              await new Promise((r) => setTimeout(r, 100));
-            }
-            if (!matchedCandidate || !matchedImageUrl || !bestScoreResult) {
+            const record = await this.searchAndDownloadCandidate(med.id);
+            if (record) {
+              repaired++;
+              results.push({
+                medicine_id: med.id,
+                name: med.name,
+                status: record.verification_status || "REPAIRED",
+                matched_name: record.product_name,
+                reason: record.verification_reason || "Multi-source candidate verified and saved"
+              });
+            } else {
               failed++;
               results.push({
                 medicine_id: med.id,
                 name: med.name,
                 status: "NOT_FOUND",
-                reason: "No high-confidence non-conflicting online image candidate found"
+                reason: "No high-confidence non-conflicting online image candidate found across PharmEasy, 1mg, or Dawa India"
               });
-              continue;
             }
-            const slug = med.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 50);
-            const filename = `${slug}-${Date.now()}.jpg`;
-            const frontendDir = import_path10.default.resolve(process.cwd(), "frontend/public/products");
-            const uploadsDir = import_path10.default.resolve(process.cwd(), "uploads/products");
-            import_fs9.default.mkdirSync(frontendDir, { recursive: true });
-            import_fs9.default.mkdirSync(uploadsDir, { recursive: true });
-            const frontendPath = import_path10.default.join(frontendDir, filename);
-            const uploadsPath = import_path10.default.join(uploadsDir, filename);
-            let buffer;
-            if (matchedStitchSecondaryUrl) {
-              try {
-                const [res1, res2] = await Promise.all([
-                  fetch(matchedImageUrl, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8e3) }),
-                  fetch(matchedStitchSecondaryUrl, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8e3) })
-                ]);
-                if (res1.ok && res2.ok) {
-                  const [b1, b2] = [Buffer.from(await res1.arrayBuffer()), Buffer.from(await res2.arrayBuffer())];
-                  buffer = await this.stitchImagesSideBySide(b1, b2);
-                } else if (res1.ok) {
-                  buffer = Buffer.from(await res1.arrayBuffer());
-                } else {
-                  failed++;
-                  results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
-                  continue;
-                }
-              } catch (_) {
-                const res1 = await fetch(matchedImageUrl, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8e3) });
-                if (!res1.ok) {
-                  failed++;
-                  results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
-                  continue;
-                }
-                buffer = Buffer.from(await res1.arrayBuffer());
-              }
-            } else {
-              const imgRes = await fetch(matchedImageUrl, {
-                headers: { "User-Agent": "Mozilla/5.0" },
-                signal: AbortSignal.timeout(8e3)
-              });
-              if (!imgRes.ok) {
-                failed++;
-                results.push({ medicine_id: med.id, name: med.name, status: "DOWNLOAD_FAILED" });
-                continue;
-              }
-              buffer = Buffer.from(await imgRes.arrayBuffer());
-            }
-            const hash = import_crypto.default.createHash("sha256").update(buffer).digest("hex");
-            if (rejectedHashes.has(hash)) {
-              failed++;
-              results.push({ medicine_id: med.id, name: med.name, status: "HASH_BLACKLISTED" });
-              continue;
-            }
-            import_fs9.default.writeFileSync(frontendPath, buffer);
-            import_fs9.default.writeFileSync(uploadsPath, buffer);
-            const relPath = `/products/${filename}`;
-            const isHighConfidence = bestScoreResult.verificationStatus === "HIGH_CONFIDENCE" || bestScoreResult.confidenceScore >= 80;
-            const status = isHighConfidence ? "HIGH_CONFIDENCE" : "PENDING_REVIEW";
-            const isActive = isHighConfidence ? 1 : 0;
-            await db2.run("BEGIN TRANSACTION");
-            if (isActive === 1) {
-              await db2.run("UPDATE catalog_images SET is_active = 0 WHERE medicine_id = ?", [med.id]);
-            }
-            await db2.run(
-              `INSERT INTO catalog_images (
-             medicine_id, company_name, product_name, image_path, thumbnail_path,
-             image_source, source_url, image_hash, confidence_score, matching_method,
-             verification_status, verification_reason, is_active
-           ) VALUES (?, ?, ?, ?, ?, 'pharmeasy', ?, ?, ?, 'ai_multi_signal', ?, ?, ?)`,
-              [
-                med.id,
-                med.manufacturer || null,
-                matchedCandidate.name,
-                relPath,
-                relPath,
-                matchedImageUrl,
-                hash,
-                bestScoreResult.confidenceScore,
-                status,
-                bestScoreResult.reason,
-                isActive
-              ]
-            );
-            await db2.run("COMMIT");
-            try {
-              const stateFile = import_path10.default.resolve(process.cwd(), "data/image_download_state.json");
-              if (import_fs9.default.existsSync(stateFile)) {
-                const state = JSON.parse(import_fs9.default.readFileSync(stateFile, "utf-8"));
-                if (!state.products) state.products = {};
-                state.products[med.name] = {
-                  status: "success",
-                  matched_name: matchedCandidate.name,
-                  slug,
-                  images: {
-                    front: {
-                      fileName: filename,
-                      url: relPath,
-                      uploadsUrl: `/uploads/products/${filename}`,
-                      bytes: buffer.length
-                    }
-                  },
-                  verified: isHighConfidence,
-                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
-                };
-                state.last_updated = (/* @__PURE__ */ new Date()).toISOString();
-                import_fs9.default.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
-              }
-            } catch (_) {
-            }
-            repaired++;
-            results.push({
-              medicine_id: med.id,
-              name: med.name,
-              status,
-              matched_name: matchedCandidate.name,
-              reason: bestScoreResult.reason
-            });
           } catch (err) {
             failed++;
             results.push({
               medicine_id: med.id,
               name: med.name,
               status: "ERROR",
-              reason: err.message
+              reason: err?.message || "Download error"
             });
           }
+          await new Promise((r) => setTimeout(r, 100));
         }
         eventService.broadcast("catalog_image_updated", {
           action: "repair_batch_completed",
@@ -9482,6 +9679,91 @@ var init_catalogImageService = __esm({
             signals: scoreResult.signals
           });
         }
+        if (candidates.length === 0 || candidates.every((c) => c.verificationStatus === "REJECTED")) {
+          try {
+            const mgUrl = `https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q=${encodeURIComponent(cleanQuery)}&city=Gurgaon&page_number=0&per_page=5&types=sku,allopathy&sort=relevance`;
+            const mgResp = await fetch(mgUrl, {
+              headers: {
+                "accept": "application/vnd.healthkartplus.v4+json",
+                "x-access-key": "1mg_client_access_key",
+                "x-platform": "desktop-0.0.1",
+                "x-city": "Gurgaon",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+              },
+              signal: AbortSignal.timeout(8e3)
+            });
+            if (mgResp.ok) {
+              const mgJson = await mgResp.json();
+              const prods = mgJson?.data?.search_results || [];
+              for (const p of prods) {
+                const rawUrls = p.cropped_image_urls || (p.image_url ? [p.image_url] : []);
+                if (!rawUrls || rawUrls.length === 0) continue;
+                let chosenUrl = rawUrls[0];
+                if (imageType === "back" && rawUrls.length > 1) chosenUrl = rawUrls[1];
+                const cleanUrl = this.cleanseCdnImageUrl(chosenUrl);
+                if (rejectedUrls.has(cleanUrl)) continue;
+                const scoreResult = this.computeConfidence(med, {
+                  name: p.name,
+                  manufacturer: p.manufacturer_name || p.company_name
+                });
+                candidates.push({
+                  id: String(p.id || p.sku_id || cleanUrl),
+                  name: p.name,
+                  manufacturer: p.manufacturer_name || p.company_name || "Unknown",
+                  imageUrl: cleanUrl,
+                  source: "1mg",
+                  confidenceScore: scoreResult.confidenceScore,
+                  verificationStatus: scoreResult.verificationStatus,
+                  reason: scoreResult.reason,
+                  signals: scoreResult.signals
+                });
+              }
+            }
+          } catch (err) {
+            console.warn(`[CatalogImageService] 1mg online search error for "${cleanQuery}":`, err.message);
+          }
+        }
+        if (candidates.length === 0 || candidates.every((c) => c.verificationStatus === "REJECTED")) {
+          try {
+            const davaUrl = `https://api.davaindia.com/products?search=${encodeURIComponent(cleanQuery)}`;
+            const davaResp = await fetch(davaUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://www.davaindia.com/"
+              },
+              signal: AbortSignal.timeout(8e3)
+            });
+            if (davaResp.ok) {
+              const davaJson = await davaResp.json();
+              const prods = davaJson?.data || [];
+              for (const p of prods) {
+                const rawImgs = Array.isArray(p.images) ? p.images.map((im) => im.objectUrl || im.preSignedUrl).filter(Boolean) : p.thumbnail ? [p.thumbnail] : [];
+                if (rawImgs.length === 0) continue;
+                let chosenUrl = rawImgs[0];
+                if (imageType === "back" && rawImgs.length > 1) chosenUrl = rawImgs[1];
+                const cleanUrl = this.cleanseCdnImageUrl(chosenUrl);
+                if (rejectedUrls.has(cleanUrl)) continue;
+                const scoreResult = this.computeConfidence(med, {
+                  name: p.title || p.name,
+                  manufacturer: "Dawa India"
+                });
+                candidates.push({
+                  id: String(p._id || cleanUrl),
+                  name: p.title || p.name,
+                  manufacturer: "Dawa India",
+                  imageUrl: cleanUrl,
+                  source: "davaindia",
+                  confidenceScore: scoreResult.confidenceScore,
+                  verificationStatus: scoreResult.verificationStatus,
+                  reason: scoreResult.reason,
+                  signals: scoreResult.signals
+                });
+              }
+            }
+          } catch (err) {
+            console.warn(`[CatalogImageService] Dawa India search error for "${cleanQuery}":`, err.message);
+          }
+        }
         candidates.sort((a, b) => b.confidenceScore - a.confidenceScore);
         return candidates;
       }
@@ -9515,8 +9797,15 @@ var init_catalogImageService = __esm({
         import_fs9.default.mkdirSync(uploadsDir, { recursive: true });
         const frontendPath = import_path10.default.join(frontendDir, filename);
         const uploadsPath = import_path10.default.join(uploadsDir, filename);
-        const imgRes = await fetch(candidateUrl, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+        const cleanCandidateUrl = this.cleanseCdnImageUrl(candidateUrl);
+        const downloadHeaders = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        };
+        if (cleanCandidateUrl.includes("davaindia.com")) {
+          downloadHeaders["Referer"] = "https://www.davaindia.com/";
+        }
+        const imgRes = await fetch(cleanCandidateUrl, {
+          headers: downloadHeaders,
           signal: AbortSignal.timeout(1e4)
         });
         if (!imgRes.ok) {
@@ -15736,13 +16025,13 @@ async function ensureSchema(dbPath) {
             if (unpopulated.length > 0) {
               console.log(`[Database Migration] Populating medicine names for ${unpopulated.length} emails in background...`);
               const { emailService: emailService2, isNonMedicineNoise: isNonMedicineNoise2, cleanMedicineName: cleanMedicineName3 } = await Promise.resolve().then(() => (init_emailService(), emailService_exports));
-              const fs64 = await import("fs");
+              const fs65 = await import("fs");
               for (const email of unpopulated) {
                 try {
                   const attachments = await backgroundDb.all("SELECT local_path, filename FROM email_attachments WHERE uid = ?", [email.uid]);
                   const parsedItems = [];
                   for (const att of attachments) {
-                    if (att.local_path && fs64.existsSync(att.local_path)) {
+                    if (att.local_path && fs65.existsSync(att.local_path)) {
                       try {
                         const resParse = await emailService2.parseAndImportAttachment(att.local_path, false);
                         if (resParse && resParse.success && resParse.items) {
@@ -16462,30 +16751,33 @@ async function loadReferenceData({ force } = {}) {
       }
     }).on("end", resolve).on("error", reject);
   });
-  const BATCH = 500;
+  const BATCH = 100;
   let loaded = 0;
-  await db2.run("BEGIN TRANSACTION");
-  try {
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const batch = rows.slice(i, i + BATCH);
-      for (const r of batch) {
-        try {
-          await db2.run(
-            "INSERT OR IGNORE INTO medicine_reference (name, composition1, composition2, manufacturer) VALUES (?, ?, ?, ?)",
-            r.name,
-            r.composition1 || null,
-            r.composition2 || null,
-            r.manufacturer || null
-          );
-          loaded++;
-        } catch {
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    await dbManager.runWithPriority("BACKGROUND", async () => {
+      await db2.run("BEGIN TRANSACTION");
+      try {
+        for (const r of batch) {
+          try {
+            await db2.run(
+              "INSERT OR IGNORE INTO medicine_reference (name, composition1, composition2, manufacturer) VALUES (?, ?, ?, ?)",
+              r.name,
+              r.composition1 || null,
+              r.composition2 || null,
+              r.manufacturer || null
+            );
+            loaded++;
+          } catch {
+          }
         }
+        await db2.run("COMMIT");
+      } catch (err) {
+        await db2.run("ROLLBACK");
+        throw err;
       }
-    }
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK");
-    throw err;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
   }
   await dbManager.close();
   console.log(`Reference data loaded: ${loaded} medicines`);
@@ -16813,61 +17105,64 @@ async function runEnrichment(onProgress, opts) {
     );
     const total = medicines.length;
     console.log(`Enrichment starting: ${total} medicines to process against ${refs.length} references`);
-    const BATCH = 200;
+    const BATCH = 50;
     for (let i = 0; i < medicines.length; i += BATCH) {
       const batch = medicines.slice(i, i + BATCH);
       await activityTracker.waitUntilIdle();
-      await db2.run("BEGIN TRANSACTION");
-      for (const med of batch) {
-        const cleanedName = cleanMedicineName(med.name);
-        if (!cleanedName) {
-          await db2.run(
-            "UPDATE medicines SET enrichment_status = 'unmatched', enrichment_confidence = 0 WHERE id = ?",
-            med.id
-          );
-          unmatched++;
-          continue;
+      await dbManager.runWithPriority("BACKGROUND", async () => {
+        await db2.run("BEGIN TRANSACTION");
+        for (const med of batch) {
+          const cleanedName = cleanMedicineName(med.name);
+          if (!cleanedName) {
+            await db2.run(
+              "UPDATE medicines SET enrichment_status = 'unmatched', enrichment_confidence = 0 WHERE id = ?",
+              med.id
+            );
+            unmatched++;
+            continue;
+          }
+          const { bestRef, bestScore } = matchBest(cleanedName, exactMap, tokenIndex);
+          if (bestRef && isNonPharmaCategory(bestRef.composition1, bestRef.composition2)) {
+            await db2.run(
+              "UPDATE medicines SET enrichment_status = 'non_pharma', enrichment_confidence = ?, suggested_composition = ? WHERE id = ?",
+              bestScore,
+              formatComposition(bestRef) || null,
+              med.id
+            );
+            nonPharma++;
+            continue;
+          }
+          if (bestRef && bestScore >= 0.85) {
+            const composition = formatComposition(bestRef);
+            await db2.run(
+              "UPDATE medicines SET api_reference = ?, enrichment_status = 'matched', enrichment_confidence = ?, therapeutic = COALESCE(therapeutic, ?) WHERE id = ?",
+              composition,
+              bestScore,
+              bestRef.therapeutic || null,
+              med.id
+            );
+            matched++;
+          } else if (bestRef && bestScore >= 0.6) {
+            const composition = formatComposition(bestRef);
+            await db2.run(
+              "UPDATE medicines SET enrichment_status = 'needs_review', enrichment_confidence = ?, suggested_composition = ? WHERE id = ?",
+              bestScore,
+              composition || null,
+              med.id
+            );
+            needsReview++;
+          } else {
+            await db2.run(
+              "UPDATE medicines SET enrichment_status = 'unmatched', enrichment_confidence = ? WHERE id = ?",
+              bestScore,
+              med.id
+            );
+            unmatched++;
+          }
         }
-        const { bestRef, bestScore } = matchBest(cleanedName, exactMap, tokenIndex);
-        if (bestRef && isNonPharmaCategory(bestRef.composition1, bestRef.composition2)) {
-          await db2.run(
-            "UPDATE medicines SET enrichment_status = 'non_pharma', enrichment_confidence = ?, suggested_composition = ? WHERE id = ?",
-            bestScore,
-            formatComposition(bestRef) || null,
-            med.id
-          );
-          nonPharma++;
-          continue;
-        }
-        if (bestRef && bestScore >= 0.85) {
-          const composition = formatComposition(bestRef);
-          await db2.run(
-            "UPDATE medicines SET api_reference = ?, enrichment_status = 'matched', enrichment_confidence = ?, therapeutic = COALESCE(therapeutic, ?) WHERE id = ?",
-            composition,
-            bestScore,
-            bestRef.therapeutic || null,
-            med.id
-          );
-          matched++;
-        } else if (bestRef && bestScore >= 0.6) {
-          const composition = formatComposition(bestRef);
-          await db2.run(
-            "UPDATE medicines SET enrichment_status = 'needs_review', enrichment_confidence = ?, suggested_composition = ? WHERE id = ?",
-            bestScore,
-            composition || null,
-            med.id
-          );
-          needsReview++;
-        } else {
-          await db2.run(
-            "UPDATE medicines SET enrichment_status = 'unmatched', enrichment_confidence = ? WHERE id = ?",
-            bestScore,
-            med.id
-          );
-          unmatched++;
-        }
-      }
-      await db2.run("COMMIT");
+        await db2.run("COMMIT");
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
       const pct = Math.min(100, Math.round((i + batch.length) / total * 100));
       if (onProgress) onProgress(pct, matched);
       if (i / BATCH % 10 === 0) {
@@ -32255,9 +32550,11 @@ __export(whatsappIntentService_exports, {
   passesGate: () => passesGate,
   resolveInventoryStock: () => resolveInventoryStock,
   resolveOcrGateDecision: () => resolveOcrGateDecision,
+  resolveSingleDistributorForMedicine: () => resolveSingleDistributorForMedicine,
   sanitizePharmarackQuery: () => sanitizePharmarackQuery,
   saveInboundMedia: () => saveInboundMedia,
   selectFormDiverseMatches: () => selectFormDiverseMatches,
+  sortAndFilterByRequestedStrength: () => sortAndFilterByRequestedStrength,
   whatsappIntentService: () => whatsappIntentService
 });
 function passesGate(bestScore, hasIntentWords, source, hasConfirmedMatch = false) {
@@ -32388,6 +32685,7 @@ function filterCandidatesByFormulation(targetName, candidates) {
     "sp",
     "d",
     "l",
+    "la",
     "m",
     "h",
     "o",
@@ -32421,7 +32719,8 @@ function filterCandidatesByFormulation(targetName, candidates) {
     "th",
     "tc",
     "ap",
-    "dp"
+    "dp",
+    "f"
   ]);
   const tokenize = (name) => {
     const clean2 = String(name || "").toLowerCase().replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2").replace(/[+/,._\-()\[\]#*']/g, " ").replace(/\s+/g, " ").trim();
@@ -32489,6 +32788,49 @@ function filterCandidatesByFormulation(targetName, candidates) {
     }
   }
   return candidates;
+}
+function sortAndFilterByRequestedStrength(items, query) {
+  if (!items || items.length <= 1 || !query) return items;
+  const formulationFiltered = filterCandidatesByFormulation(query, items);
+  if (formulationFiltered && formulationFiltered.length > 0) {
+    items = formulationFiltered;
+  }
+  const cleanQuery = query.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
+  const queryNumbers = cleanQuery.match(/\b\d+(?:\.\d+)?\b/g) || [];
+  const queryModifiers = query.toUpperCase().match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+  if (queryNumbers.length === 0 && queryModifiers.length === 0) return items;
+  const scored = items.map((item) => {
+    const cleanItemName = item.name.replace(/([a-zA-Z])(\d)/g, "$1 $2").replace(/(\d)([a-zA-Z])/g, "$1 $2");
+    const itemNumbers = cleanItemName.match(/\b\d+(?:\.\d+)?\b/g) || [];
+    const itemModifiers = item.name.toUpperCase().match(/\b(LA|SR|ER|CR|XR|PR|D|PLUS|FORTE|H|AM|AZ|LS|M|SP|F)\b/g) || [];
+    let score = 0;
+    if (queryNumbers.length > 0) {
+      const matchesAllNumbers = queryNumbers.every((qn) => itemNumbers.includes(qn));
+      if (matchesAllNumbers) {
+        score += 100;
+        if (itemNumbers.length === queryNumbers.length) {
+          score += 40;
+        }
+      } else {
+        score -= 80;
+      }
+    }
+    if (queryModifiers.length > 0) {
+      const matchesAllModifiers = queryModifiers.every((qm) => itemModifiers.includes(qm));
+      if (matchesAllModifiers) {
+        score += 60;
+      } else {
+        score -= 40;
+      }
+    } else {
+      if (itemModifiers.length > 0) {
+        score -= 20;
+      }
+    }
+    return { item, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((s) => s.item);
 }
 function formatTime12h(timeStr) {
   if (!timeStr) return "";
@@ -32793,6 +33135,15 @@ async function ensureClarificationsTable(db2) {
     if (!colNames.has("mrp")) {
       await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN mrp REAL DEFAULT NULL");
     }
+    if (!colNames.has("selected_distributor")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN selected_distributor TEXT DEFAULT NULL");
+    }
+    if (!colNames.has("distributor_store_id")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN distributor_store_id INTEGER DEFAULT NULL");
+    }
+    if (!colNames.has("distributor_eta")) {
+      await db2.run("ALTER TABLE wa_pending_clarifications ADD COLUMN distributor_eta TEXT DEFAULT NULL");
+    }
   } catch (_) {
   }
   clarificationsTableEnsured = true;
@@ -32857,6 +33208,62 @@ function extractQuantityFromText(text) {
     }
   }
   return null;
+}
+async function resolveSingleDistributorForMedicine(db2, medicineName) {
+  try {
+    const cleanMed = String(medicineName || "").trim();
+    if (!cleanMed) return null;
+    const localCat = await searchCatalog(cleanMed).catch(() => ({ mapped: [], nonMapped: [] }));
+    const allCatalog = [...localCat.mapped || [], ...localCat.nonMapped || []];
+    const formulationSafeCatalog = filterCandidatesByFormulation(cleanMed, allCatalog);
+    const inStockCandidates = formulationSafeCatalog.filter((c) => isItemInStock(c.availability ?? c.stock));
+    const pool = inStockCandidates.length > 0 ? inStockCandidates : formulationSafeCatalog;
+    let selectedDistName = "";
+    let selectedStoreId = void 0;
+    if (pool.length > 0) {
+      const candidateStores = pool.map((c) => ({
+        storeId: Number(c.store_id || c.storeId || 0),
+        storeName: String(c.distributor || c.supplier_name || c.distributor_name || "")
+      })).filter((c) => c.storeName.length > 0);
+      const resolved = await resolveCommonOrFrequentDistributor(db2, candidateStores);
+      if (resolved?.storeName) {
+        selectedDistName = resolved.storeName;
+        selectedStoreId = resolved.storeId;
+      }
+    }
+    if (!selectedDistName) {
+      const frequentDist = await db2.get(`
+        SELECT d.name, d.id 
+        FROM distributors d 
+        JOIN purchases p ON d.id = p.distributor_id 
+        GROUP BY d.id 
+        ORDER BY COUNT(p.id) DESC 
+        LIMIT 1
+      `).catch(() => null);
+      if (frequentDist?.name) {
+        selectedDistName = frequentDist.name;
+        selectedStoreId = frequentDist.id;
+      }
+    }
+    let etaStr = "";
+    try {
+      const { orderScheduleService: orderScheduleService2 } = await Promise.resolve().then(() => (init_orderScheduleService(), orderScheduleService_exports));
+      const sched = await orderScheduleService2.calculateOrderSchedule(/* @__PURE__ */ new Date(), 1, db2).catch(() => null);
+      if (sched?.estimatedDeliveryWindowFormatted) {
+        etaStr = `ETA: ${sched.estimatedDeliveryWindowFormatted}`;
+      } else if (sched?.isNextDayCutoff) {
+        etaStr = "ETA: Tomorrow morning";
+      } else {
+        etaStr = "ETA: Today by evening";
+      }
+    } catch (_) {
+      etaStr = "ETA: Today by evening";
+    }
+    return selectedDistName ? { name: selectedDistName, storeId: selectedStoreId, eta: etaStr } : etaStr ? { name: "Partner Distributor", eta: etaStr } : null;
+  } catch (err) {
+    console.warn("[Intent Service] resolveSingleDistributorForMedicine note:", err);
+    return null;
+  }
 }
 async function executeConfirmedProcurementFlow(params) {
   const { phone, chatId, confirmedMedicine, quantity, unit, customer } = params;
@@ -33041,7 +33448,7 @@ async function checkMedicineClarificationResponse(phone, body, customer, chatId)
        WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
          AND (
            (step IN ('awaiting_owner_selection', 'awaiting_payment', 'awaiting_owner_payment_confirmation') AND created_at > datetime('now', '-72 hours'))
-           OR created_at > datetime('now', '-45 minutes')
+           OR created_at > datetime('now', '-10 minutes')
          )
        ORDER BY created_at DESC LIMIT 1`,
       [`%${cleanDigits}`, `%${cleanDigits}%`, cleanDigits]
@@ -33243,6 +33650,9 @@ Whenever you need any other medicine, just reply with the medicine name here!`;
         }
       } catch (err) {
         console.warn("[Intent Service] Mapped catalog query error:", err);
+      }
+      if (mappedRows && mappedRows.length > 0) {
+        mappedRows = sortAndFilterByRequestedStrength(mappedRows, query);
       }
       if (!mappedRows || mappedRows.length === 0) {
         await db2.run(
@@ -33819,6 +34229,9 @@ Reply *YES* to confirm or *NO* to cancel.`;
       } catch (err) {
         console.warn("[Intent Service] Mapped catalog query note:", err);
       }
+      if (mappedCatalogHits && mappedCatalogHits.length > 0) {
+        mappedCatalogHits = sortAndFilterByRequestedStrength(mappedCatalogHits, medQuery);
+      }
       if (liveHitsForBroadcast.length > 0) {
         try {
           eventService.broadcast("wa_medicine_match", {
@@ -33882,14 +34295,29 @@ No mapped partner distributor stock found in Pharmarack catalog. Please check ma
            WHERE phone = ?`,
           [singleMed.name, singleMed.name, singleMrpVal2, medQuery, pending2.phone]
         );
-        const confirmPrompt = `\u{1F48A} Medicine selected:
-*${singleMed.name}*${mrpStr}
+        let imageFile = null;
+        try {
+          const { catalogImageService: catalogImageService2 } = await Promise.resolve().then(() => (init_catalogImageService(), catalogImageService_exports));
+          imageFile = await catalogImageService2.getProductImageFileForWhatsApp(singleMed.name);
+        } catch (_) {
+        }
+        const photoPrompt = imageFile ? `
 
-Is this the medicine you need?
+\u{1F449} *Please check the photo above to verify this is the exact product you need.*` : "";
+        const confirmPrompt = `\u{1F48A} Medicine selected:
+*${singleMed.name}*${mrpStr}${photoPrompt}
 
 Reply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
         const { whatsappQueueWorker: whatsappQueueWorker3 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker3.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        await whatsappQueueWorker3.enqueue(
+          phone,
+          confirmPrompt,
+          "customer_medicine_clarification",
+          customer?.name || "Customer",
+          void 0,
+          void 0,
+          imageFile || void 0
+        );
         return true;
       }
       const PAGE_SIZE = 10;
@@ -34076,9 +34504,10 @@ Customer indicated their desired variant was not in the partner distributor opti
               if (newMappedHits.length >= 40) break;
             }
             if (newMappedHits.length > 0) {
-              const totalNew = newMappedHits.length;
+              const sortedHits = sortAndFilterByRequestedStrength(newMappedHits, newQuery);
+              const totalNew = sortedHits.length;
               const totalNewPages = Math.ceil(totalNew / PAGE_SIZE);
-              const initialSlice = newMappedHits.slice(0, PAGE_SIZE);
+              const initialSlice = sortedHits.slice(0, PAGE_SIZE);
               const optionsList = initialSlice.map((opt, i) => {
                 const mrpVal = parseMrp(opt.mrp);
                 const mrpStr = mrpVal != null ? `MRP: \u20B9${mrpVal.toFixed(2)}` : "MRP: N/A";
@@ -34098,7 +34527,7 @@ ${optionsList}
                 `UPDATE wa_pending_clarifications
                  SET suggested_name = ?, original_query = ?, mrp = ?, options_json = ?, step = 'awaiting_selection', created_at = CURRENT_TIMESTAMP
                  WHERE phone = ?`,
-                [newMappedHits[0].name, newQuery, newMappedHits[0].mrp, JSON.stringify({ allOptions: newMappedHits, page: 0 }), pending2.phone]
+                [sortedHits[0].name, newQuery, sortedHits[0].mrp, JSON.stringify({ allOptions: sortedHits, page: 0 }), pending2.phone]
               );
               const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
               await whatsappQueueWorker2.enqueue(phone, promptMsg, "customer_medicine_clarification", customer?.name || "Customer");
@@ -34119,14 +34548,29 @@ ${optionsList}
         );
         const mrpStr = chosenMrp ? `
 \u{1F3F7}\uFE0F MRP: \u20B9${chosenMrp.toFixed(2)}` : "";
-        const confirmPrompt = `\u{1F48A} Medicine selected:
-*${chosenMedicine}*${mrpStr}
+        let imageFile = null;
+        try {
+          const { catalogImageService: catalogImageService2 } = await Promise.resolve().then(() => (init_catalogImageService(), catalogImageService_exports));
+          imageFile = await catalogImageService2.getProductImageFileForWhatsApp(chosenMedicine);
+        } catch (_) {
+        }
+        const photoPrompt = imageFile ? `
 
-Is this the medicine you need?
+\u{1F449} *Please check the photo above to verify this is the exact product you need.*` : "";
+        const confirmPrompt = `\u{1F48A} Medicine selected:
+*${chosenMedicine}*${mrpStr}${photoPrompt}
 
 Reply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        await whatsappQueueWorker2.enqueue(
+          phone,
+          confirmPrompt,
+          "customer_medicine_clarification",
+          customer?.name || "Customer",
+          void 0,
+          void 0,
+          imageFile || void 0
+        );
         return true;
       }
     }
@@ -34161,24 +34605,45 @@ Reply *1* (or *YES*) to confirm or *2* (or *NO*) to search again.`;
       const finalQty = parsedQty && parsedQty.quantity > 0 ? parsedQty.quantity : rawNumMatch ? parseInt(rawNumMatch[1], 10) : 0;
       const finalUnit = parsedQty && parsedQty.unit ? parsedQty.unit : "strip";
       if (finalQty > 0) {
+        const distInfo = await resolveSingleDistributorForMedicine(db2, pending2.suggested_name);
+        const distLine = distInfo?.name ? `
+\u{1F69A} Sourced via: *${distInfo.name}*${distInfo.eta ? ` (${distInfo.eta})` : ""}` : "";
         await db2.run(
           `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET quantity = ?, unit = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [finalQty, finalUnit, pending2.phone]
+          [finalQty, finalUnit, distInfo?.name || null, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
         );
         const unitMrp = pending2.mrp != null && pending2.mrp > 0 ? Number(pending2.mrp) : null;
         const mrpDetails = unitMrp ? `
 \u{1F3F7}\uFE0F MRP: \u20B9${unitMrp.toFixed(2)} per ${finalUnit}
 \u{1F4B0} Total MRP: \u20B9${(unitMrp * finalQty).toFixed(2)}` : "";
+        let imageFile = null;
+        try {
+          const { catalogImageService: catalogImageService2 } = await Promise.resolve().then(() => (init_catalogImageService(), catalogImageService_exports));
+          imageFile = await catalogImageService2.getProductImageFileForWhatsApp(pending2.suggested_name);
+        } catch (imgErr) {
+          console.warn("[Intent Service] Image lookup for confirmation prompt note:", imgErr);
+        }
+        const photoPrompt = imageFile ? `
+
+\u{1F449} *Please check the photo above to verify this is the exact packaging you need.*` : "";
         const confirmPrompt = `Please confirm your request:
 
 \u{1F48A} Medicine: *${pending2.suggested_name}*
-\u{1F4E6} Quantity: ${finalQty} ${finalUnit}${mrpDetails}
+\u{1F4E6} Quantity: ${finalQty} ${finalUnit}${mrpDetails}${distLine}${photoPrompt}
 
 Reply *1* (or *YES*) to confirm.`;
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        await whatsappQueueWorker2.enqueue(
+          phone,
+          confirmPrompt,
+          "customer_medicine_clarification",
+          customer?.name || "Customer",
+          void 0,
+          void 0,
+          imageFile || void 0
+        );
         return true;
       } else {
         const retryMsg = `Please enter a valid quantity number (e.g. 1, 2, 5).`;
@@ -34250,23 +34715,44 @@ Reply *1* (or *YES*) to confirm.`;
       }
       const adjustedQty = extractQuantityFromText(body);
       if (adjustedQty && adjustedQty.quantity > 0 && !isAffirmative) {
+        const distInfo = await resolveSingleDistributorForMedicine(db2, pending2.suggested_name);
+        const distLine = distInfo?.name ? `
+\u{1F69A} Sourced via: *${distInfo.name}*${distInfo.eta ? ` (${distInfo.eta})` : ""}` : "";
         await db2.run(
           `UPDATE wa_pending_clarifications 
-           SET quantity = ?, unit = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
+           SET quantity = ?, unit = ?, selected_distributor = ?, distributor_store_id = ?, distributor_eta = ?, step = 'awaiting_qty_confirmation', created_at = CURRENT_TIMESTAMP 
            WHERE phone = ?`,
-          [adjustedQty.quantity, adjustedQty.unit || "strip", pending2.phone]
+          [adjustedQty.quantity, adjustedQty.unit || "strip", distInfo?.name || null, distInfo?.storeId || null, distInfo?.eta || null, pending2.phone]
         );
         const unitMrp = pending2.mrp != null && pending2.mrp > 0 ? Number(pending2.mrp) : null;
         const mrpDetails = unitMrp ? `
 \u{1F3F7}\uFE0F MRP: \u20B9${unitMrp.toFixed(2)} per ${adjustedQty.unit || "strip"}
 \u{1F4B0} Total MRP: \u20B9${(unitMrp * adjustedQty.quantity).toFixed(2)}` : "";
-        const confirmPrompt = `Updated:
+        let imageFile = null;
+        try {
+          const { catalogImageService: catalogImageService2 } = await Promise.resolve().then(() => (init_catalogImageService(), catalogImageService_exports));
+          imageFile = await catalogImageService2.getProductImageFileForWhatsApp(pending2.suggested_name);
+        } catch (_) {
+        }
+        const photoPrompt = imageFile ? `
+
+\u{1F449} *Please check the photo above to verify this is the exact packaging you need.*` : "";
+        const confirmPrompt = `Updated request:
+
 \u{1F48A} Medicine: *${pending2.suggested_name}*
-\u{1F4E6} Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || "strip"}${mrpDetails}
+\u{1F4E6} Quantity: ${adjustedQty.quantity} ${adjustedQty.unit || "strip"}${mrpDetails}${distLine}${photoPrompt}
 
 Reply *1* (or *YES*) to confirm.`;
         const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
-        await whatsappQueueWorker2.enqueue(phone, confirmPrompt, "customer_medicine_clarification", customer?.name || "Customer");
+        await whatsappQueueWorker2.enqueue(
+          phone,
+          confirmPrompt,
+          "customer_medicine_clarification",
+          customer?.name || "Customer",
+          void 0,
+          void 0,
+          imageFile || void 0
+        );
         return true;
       }
     }
@@ -34389,7 +34875,8 @@ async function proceedWithConfirmedProcurement(phone, cleanDigits, pending2, cus
       pharmarackOptions: finalOptions
     });
     const mrpSuffix = pending2.mrp != null && pending2.mrp > 0 ? ` (MRP \u20B9${Number(pending2.mrp).toFixed(2)})` : "";
-    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty}${mrpSuffix} has been forwarded to our pharmacy for distributor confirmation.
+    const distMention = pending2.selected_distributor ? ` with *${pending2.selected_distributor}*` : " with our distributor network";
+    const custWaitMsg = `Your request for *${medName}* \xD7 ${medQty}${mrpSuffix} has been forwarded to our pharmacy for confirmation${distMention}.
 
 We will send you payment details shortly.`;
     const { whatsappQueueWorker: whatsappQueueWorker2 } = await Promise.resolve().then(() => (init_whatsappQueueWorker(), whatsappQueueWorker_exports));
@@ -35080,7 +35567,7 @@ async function handleInbound(msg) {
         const activeClarification = await db2.get(
           `SELECT 1 FROM wa_pending_clarifications 
            WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?) 
-             AND created_at > datetime('now', '-45 minutes')
+             AND created_at > datetime('now', '-10 minutes')
            LIMIT 1`,
           [`%${cleanDigitsForRefill}`, `%${cleanDigitsForRefill}%`, cleanDigitsForRefill]
         );
@@ -35654,7 +36141,7 @@ We received your photo, but the image is taking longer to process.
             const activeStepRow = await db2.get(
               `SELECT step FROM wa_pending_clarifications
                WHERE (phone LIKE ? OR phone LIKE ? OR phone = ?)
-                 AND created_at > datetime('now', '-45 minutes')
+                 AND created_at > datetime('now', '-10 minutes')
                ORDER BY created_at DESC LIMIT 1`,
               [`%${cleanCustPhone}`, `%${cleanCustPhone}%`, cleanCustPhone]
             );
@@ -38097,7 +38584,7 @@ function launchClientInstance(forceQr) {
         }
         const isFromMe = !!msg.fromMe;
         const nowMs = Date.now();
-        const manualTimeoutMs = 45 * 60 * 1e3;
+        const manualTimeoutMs = 5 * 60 * 1e3;
         const existingChatRow = await db2.get(
           "SELECT session_mode, manual_active_until, last_pharmacist_message_at, resolved_number FROM whatsapp_chats WHERE id = ?",
           [chatId]
@@ -38123,6 +38610,7 @@ function launchClientInstance(forceQr) {
           if (sessionMode === "manual") {
             if (manualUntil > nowMs) {
               sessionStatus = "waiting";
+              manualUntil = nowMs + 10 * 60 * 1e3;
             } else {
               sessionMode = "auto";
               manualUntil = 0;
@@ -38807,7 +39295,7 @@ async function sendMessage(to, mediaPath, caption, file) {
             resolved_number: cleanPhone,
             session_mode: "manual",
             session_status: "active",
-            manual_active_until: nowProv + 45 * 60 * 1e3
+            manual_active_until: nowProv + 5 * 60 * 1e3
           });
           Promise.resolve().then(() => (init_whatsappDeliveryRegister(), whatsappDeliveryRegister_exports)).then((m) => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, provisionalBody, file || mediaPath ? "media" : "text", void 0, void 0, messageId)).catch(() => {
           });
@@ -38896,7 +39384,7 @@ async function sendMessage(to, mediaPath, caption, file) {
         resolved_number: cleanPhone,
         session_mode: "manual",
         session_status: "active",
-        manual_active_until: nowFinal + 45 * 60 * 1e3
+        manual_active_until: nowFinal + 5 * 60 * 1e3
       });
       Promise.resolve().then(() => (init_whatsappDeliveryRegister(), whatsappDeliveryRegister_exports)).then((m) => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, bodyText, file || mediaPath ? "media" : "text", void 0, void 0, messageId)).catch(() => {
       });
@@ -47126,9 +47614,10 @@ var init_reports = __esm({
 // src/database/connection.ts
 var connection_exports = {};
 __export(connection_exports, {
-  dbManager: () => dbManager
+  dbManager: () => dbManager,
+  txPriorityStorage: () => txPriorityStorage
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path28, import_fs26, import_zlib, import_promises, DB_PATH8, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path28, import_fs26, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, DB_PATH8, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -47140,7 +47629,9 @@ var init_connection = __esm({
     import_fs26 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
+    import_node_async_hooks = require("node:async_hooks");
     init_config();
+    txPriorityStorage = new import_node_async_hooks.AsyncLocalStorage();
     DB_PATH8 = config.dbPath;
     DatabaseManager = class _DatabaseManager {
       static instance;
@@ -47154,22 +47645,110 @@ var init_connection = __esm({
       // fs.copyFileSync just replaced underneath it.
       suspendedUntil = null;
       resumeFn = null;
-      // Serializes BEGIN..COMMIT/ROLLBACK on the shared singleton connection. node-sqlite3
-      // does not queue statements against SQLite's own transaction state — two concurrent
-      // requests both issuing 'BEGIN IMMEDIATE TRANSACTION' on this same connection object
-      // collide with "cannot start a transaction within a transaction" (confirmed under a
-      // 20-concurrent POS load test: 0/260 sale requests succeeded). Every BEGIN now waits
-      // its turn in this FIFO chain; COMMIT/ROLLBACK releases it for the next caller.
-      txMutexTail = Promise.resolve();
+      // Prioritized transaction mutex (VIP for POS sales, NORMAL for interactive requests, BACKGROUND for workers).
+      // node-sqlite3 does not queue statements against SQLite's own transaction state — two concurrent
+      // requests both issuing 'BEGIN IMMEDIATE TRANSACTION' on this same connection object collide with
+      // "cannot start a transaction within a transaction". This prioritized queue guarantees POS checkouts
+      // jump ahead of background workers while preventing collision crashes.
+      isTxLocked = false;
+      activeTxPriority = null;
       activeTxRelease = null;
-      acquireTxLock() {
-        let release;
-        const nextTail = new Promise((resolve) => {
-          release = resolve;
+      activeTxTimer = null;
+      txWaiters = {
+        VIP: [],
+        NORMAL: [],
+        BACKGROUND: []
+      };
+      lockStats = {
+        totalAcquisitions: 0,
+        vipCount: 0,
+        normalCount: 0,
+        backgroundCount: 0,
+        lastAcquiredAt: 0
+      };
+      getLockStats() {
+        return {
+          totalAcquisitions: this.lockStats.totalAcquisitions,
+          vipCount: this.lockStats.vipCount,
+          normalCount: this.lockStats.normalCount,
+          backgroundCount: this.lockStats.backgroundCount,
+          isTxLocked: this.isTxLocked,
+          activeTxPriority: this.activeTxPriority,
+          currentWaiters: {
+            VIP: this.txWaiters.VIP.length,
+            NORMAL: this.txWaiters.NORMAL.length,
+            BACKGROUND: this.txWaiters.BACKGROUND.length
+          }
+        };
+      }
+      runWithPriority(priority, fn) {
+        return txPriorityStorage.run(priority, fn);
+      }
+      popNextWaiter() {
+        if (this.txWaiters.VIP.length > 0) {
+          return this.txWaiters.VIP.shift();
+        }
+        if (this.txWaiters.NORMAL.length > 0) {
+          return this.txWaiters.NORMAL.shift();
+        }
+        if (this.txWaiters.BACKGROUND.length > 0) {
+          return this.txWaiters.BACKGROUND.shift();
+        }
+        return null;
+      }
+      releaseTxLock() {
+        if (this.activeTxTimer) {
+          clearTimeout(this.activeTxTimer);
+          this.activeTxTimer = null;
+        }
+        const next = this.popNextWaiter();
+        if (next) {
+          this.activeTxPriority = next.priority;
+          this.lockStats.totalAcquisitions++;
+          if (next.priority === "VIP") this.lockStats.vipCount++;
+          else if (next.priority === "NORMAL") this.lockStats.normalCount++;
+          else this.lockStats.backgroundCount++;
+          this.lockStats.lastAcquiredAt = Date.now();
+          this.activeTxTimer = setTimeout(() => {
+            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${next.priority}]. Forcing release to prevent deadlock.`);
+            this.releaseTxLock();
+          }, 6e4);
+          this.activeTxTimer.unref();
+          const releaseFn = () => this.releaseTxLock();
+          this.activeTxRelease = releaseFn;
+          next.resolve(releaseFn);
+        } else {
+          this.isTxLocked = false;
+          this.activeTxPriority = null;
+          this.activeTxRelease = null;
+        }
+      }
+      acquireTxLock(hintPriority) {
+        const priority = hintPriority || txPriorityStorage.getStore() || "NORMAL";
+        const releaseFn = () => this.releaseTxLock();
+        if (!this.isTxLocked) {
+          this.isTxLocked = true;
+          this.activeTxPriority = priority;
+          this.activeTxRelease = releaseFn;
+          this.lockStats.totalAcquisitions++;
+          if (priority === "VIP") this.lockStats.vipCount++;
+          else if (priority === "NORMAL") this.lockStats.normalCount++;
+          else this.lockStats.backgroundCount++;
+          this.lockStats.lastAcquiredAt = Date.now();
+          this.activeTxTimer = setTimeout(() => {
+            console.warn(`[DB-MUTEX] Transaction held for >60s by priority [${priority}]. Forcing release to prevent deadlock.`);
+            this.releaseTxLock();
+          }, 6e4);
+          this.activeTxTimer.unref();
+          return Promise.resolve(releaseFn);
+        }
+        return new Promise((resolve) => {
+          this.txWaiters[priority].push({
+            priority,
+            resolve,
+            enqueuedAt: Date.now()
+          });
         });
-        const acquired = this.txMutexTail.then(() => release);
-        this.txMutexTail = this.txMutexTail.then(() => nextTail);
-        return acquired;
       }
       isBooting = false;
       constructor() {
@@ -47277,9 +47856,15 @@ var init_connection = __esm({
         const self = this;
         const txPhase = (sql) => {
           const trimmed = sql.trim().toUpperCase();
-          if (trimmed.startsWith("BEGIN")) return "begin";
-          if (trimmed === "COMMIT" || trimmed.startsWith("ROLLBACK")) return "end";
-          return null;
+          let priority = txPriorityStorage.getStore() || "NORMAL";
+          if (trimmed.includes("IMMEDIATE") || trimmed.includes("/* VIP */")) {
+            priority = "VIP";
+          } else if (trimmed.includes("/* BACKGROUND */")) {
+            priority = "BACKGROUND";
+          }
+          if (trimmed.startsWith("BEGIN")) return { phase: "begin", priority };
+          if (trimmed === "COMMIT" || trimmed.startsWith("ROLLBACK")) return { phase: "end", priority };
+          return { phase: null, priority };
         };
         const releaseIfHeld = () => {
           if (self.activeTxRelease) {
@@ -47301,9 +47886,9 @@ var init_connection = __esm({
         };
         db2.run = async function(sql, ...params) {
           if (typeof sql === "string") {
-            const phase = txPhase(sql);
+            const { phase, priority } = txPhase(sql);
             if (phase === "begin") {
-              const release = await self.acquireTxLock();
+              const release = await self.acquireTxLock(priority);
               self.activeTxRelease = release;
               try {
                 return await originalRun(sql, ...params);
@@ -47347,9 +47932,9 @@ var init_connection = __esm({
           return originalRun(sql, ...params);
         };
         db2.exec = async function(sql) {
-          const phase = txPhase(sql);
+          const { phase, priority } = txPhase(sql);
           if (phase === "begin") {
-            const release = await self.acquireTxLock();
+            const release = await self.acquireTxLock(priority);
             self.activeTxRelease = release;
             try {
               return await originalExec(sql);
@@ -48324,7 +48909,7 @@ async function runCatalogImport(jobId) {
     } catch (e) {
       console.warn("Failed to load medicine aliases during import:", e);
     }
-    const batchSize = 1e3;
+    const batchSize = 100;
     let batch = [];
     let processedCount = job.processed_count || 0;
     let newCount = job.new_count || 0;
@@ -48333,147 +48918,149 @@ async function runCatalogImport(jobId) {
     const addedNames = /* @__PURE__ */ new Set();
     const insertBatch = async (items) => {
       await activityTracker.waitUntilIdle();
-      await db2.run("BEGIN TRANSACTION");
-      for (const item of items) {
-        const key = item.name.toLowerCase().trim();
-        if (addedNames.has(key)) {
-          duplicateCount++;
-          continue;
-        }
-        addedNames.add(key);
-        let medId = existingMedicinesMap.get(key);
-        const isApiMissing = !item.api_reference || item.api_reference.trim() === "";
-        if (isApiMissing) {
-          let dbHasApi = false;
-          if (medId) {
-            const dbMed = await db2.get("SELECT api_reference FROM medicines WHERE id = ?", medId);
-            if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== "") {
-              dbHasApi = true;
-            }
-          }
-          if (!dbHasApi) {
-            await db2.run(
-              "INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)",
-              [jobId, item.name, "pending", JSON.stringify(item)]
-            );
+      await dbManager.runWithPriority("BACKGROUND", async () => {
+        await db2.run("BEGIN TRANSACTION");
+        for (const item of items) {
+          const key = item.name.toLowerCase().trim();
+          if (addedNames.has(key)) {
+            duplicateCount++;
             continue;
           }
-        }
-        if (medId) {
-          existingCount++;
-          const updates = [];
-          const params = [];
-          if (item.api_reference !== void 0) {
-            updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)");
-            params.push(item.api_reference);
-          }
-          if (item.strength !== void 0) {
-            updates.push("strength = COALESCE(NULLIF(strength, ''), ?)");
-            params.push(item.strength);
-          }
-          if (item.packaging !== void 0) {
-            updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)");
-            params.push(item.packaging);
-          }
-          if (item.manufacturer !== void 0) {
-            updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)");
-            params.push(item.manufacturer);
-          }
-          if (item.marketed_by !== void 0) {
-            updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)");
-            params.push(item.marketed_by);
-          }
-          if (item.hsn_code !== void 0) {
-            updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)");
-            params.push(item.hsn_code);
-          }
-          if (item.schedule_type !== void 0) {
-            updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)");
-            params.push(item.schedule_type);
-          }
-          if (item.therapeutic !== void 0) {
-            updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)");
-            params.push(item.therapeutic);
-          }
-          if (item.sub_therapeutic !== void 0) {
-            updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)");
-            params.push(item.sub_therapeutic);
-          }
-          if (item.short_code !== void 0) {
-            updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)");
-            params.push(item.short_code);
-          }
-          if (item.ucode !== void 0) {
-            updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)");
-            params.push(item.ucode);
-          }
-          if (item.mrp !== void 0) {
-            updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)");
-            params.push(item.mrp);
-          }
-          if (item.cgst !== void 0) {
-            updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)");
-            params.push(item.cgst);
-          }
-          if (item.sgst !== void 0) {
-            updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)");
-            params.push(item.sgst);
-          }
-          if (item.rack !== void 0) {
-            updates.push("rack = COALESCE(NULLIF(rack, ''), ?)");
-            params.push(item.rack);
-          }
-          if (item.metadata !== void 0) {
-            updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)");
-            params.push(item.metadata);
-          }
-          for (const cm of customMappings) {
-            if (item[cm.dbCol] !== void 0) {
-              updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
-              params.push(item[cm.dbCol]);
+          addedNames.add(key);
+          let medId = existingMedicinesMap.get(key);
+          const isApiMissing = !item.api_reference || item.api_reference.trim() === "";
+          if (isApiMissing) {
+            let dbHasApi = false;
+            if (medId) {
+              const dbMed = await db2.get("SELECT api_reference FROM medicines WHERE id = ?", medId);
+              if (dbMed && dbMed.api_reference && dbMed.api_reference.trim() !== "") {
+                dbHasApi = true;
+              }
+            }
+            if (!dbHasApi) {
+              await db2.run(
+                "INSERT INTO staged_medicine_reviews (job_id, medicine_name, status, original_row_data) VALUES (?, ?, ?, ?)",
+                [jobId, item.name, "pending", JSON.stringify(item)]
+              );
+              continue;
             }
           }
-          if (updates.length > 0) {
-            params.push(medId);
-            await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, ...params);
+          if (medId) {
+            existingCount++;
+            const updates = [];
+            const params = [];
+            if (item.api_reference !== void 0) {
+              updates.push("api_reference = COALESCE(NULLIF(api_reference, ''), ?)");
+              params.push(item.api_reference);
+            }
+            if (item.strength !== void 0) {
+              updates.push("strength = COALESCE(NULLIF(strength, ''), ?)");
+              params.push(item.strength);
+            }
+            if (item.packaging !== void 0) {
+              updates.push("packaging = COALESCE(NULLIF(packaging, ''), ?)");
+              params.push(item.packaging);
+            }
+            if (item.manufacturer !== void 0) {
+              updates.push("manufacturer = COALESCE(NULLIF(manufacturer, ''), ?)");
+              params.push(item.manufacturer);
+            }
+            if (item.marketed_by !== void 0) {
+              updates.push("marketed_by = COALESCE(NULLIF(marketed_by, ''), ?)");
+              params.push(item.marketed_by);
+            }
+            if (item.hsn_code !== void 0) {
+              updates.push("hsn_code = COALESCE(NULLIF(hsn_code, ''), ?)");
+              params.push(item.hsn_code);
+            }
+            if (item.schedule_type !== void 0) {
+              updates.push("schedule_type = COALESCE(NULLIF(schedule_type, ''), ?)");
+              params.push(item.schedule_type);
+            }
+            if (item.therapeutic !== void 0) {
+              updates.push("therapeutic = COALESCE(NULLIF(therapeutic, ''), ?)");
+              params.push(item.therapeutic);
+            }
+            if (item.sub_therapeutic !== void 0) {
+              updates.push("sub_therapeutic = COALESCE(NULLIF(sub_therapeutic, ''), ?)");
+              params.push(item.sub_therapeutic);
+            }
+            if (item.short_code !== void 0) {
+              updates.push("short_code = COALESCE(NULLIF(short_code, ''), ?)");
+              params.push(item.short_code);
+            }
+            if (item.ucode !== void 0) {
+              updates.push("ucode = COALESCE(NULLIF(ucode, ''), ?)");
+              params.push(item.ucode);
+            }
+            if (item.mrp !== void 0) {
+              updates.push("mrp = COALESCE(NULLIF(mrp, 0), ?)");
+              params.push(item.mrp);
+            }
+            if (item.cgst !== void 0) {
+              updates.push("cgst_per = COALESCE(NULLIF(cgst_per, 0), ?)");
+              params.push(item.cgst);
+            }
+            if (item.sgst !== void 0) {
+              updates.push("sgst_per = COALESCE(NULLIF(sgst_per, 0), ?)");
+              params.push(item.sgst);
+            }
+            if (item.rack !== void 0) {
+              updates.push("rack = COALESCE(NULLIF(rack, ''), ?)");
+              params.push(item.rack);
+            }
+            if (item.metadata !== void 0) {
+              updates.push("metadata = COALESCE(NULLIF(metadata, ''), ?)");
+              params.push(item.metadata);
+            }
+            for (const cm of customMappings) {
+              if (item[cm.dbCol] !== void 0) {
+                updates.push(`"${cm.dbCol}" = COALESCE(NULLIF("${cm.dbCol}", ''), ?)`);
+                params.push(item[cm.dbCol]);
+              }
+            }
+            if (updates.length > 0) {
+              params.push(medId);
+              await db2.run(`UPDATE medicines SET ${updates.join(", ")} WHERE id = ?`, ...params);
+            }
+          } else {
+            newCount++;
+            const columns = ["name", "api_reference", "packaging", "manufacturer", "marketed_by", "hsn_code", "schedule_type", "therapeutic", "sub_therapeutic", "short_code", "ucode", "mrp", "cgst_per", "sgst_per", "rack", "metadata"];
+            const placeholders = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+            const params = [
+              item.name,
+              item.api_reference || null,
+              item.packaging || null,
+              item.manufacturer || null,
+              item.marketed_by || null,
+              item.hsn_code || null,
+              item.schedule_type || null,
+              item.therapeutic || null,
+              item.sub_therapeutic || null,
+              item.short_code || null,
+              item.ucode || null,
+              item.mrp || 0,
+              item.cgst || 0,
+              item.sgst || 0,
+              item.rack || null,
+              item.metadata || null
+            ];
+            for (const cm of customMappings) {
+              columns.push(`"${cm.dbCol}"`);
+              placeholders.push("?");
+              params.push(item[cm.dbCol] !== void 0 ? item[cm.dbCol] : null);
+            }
+            const insertRes = await db2.run(
+              `INSERT INTO medicines (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
+              params
+            );
+            medId = insertRes.lastID;
+            existingMedicinesMap.set(key, medId);
           }
-        } else {
-          newCount++;
-          const columns = ["name", "api_reference", "packaging", "manufacturer", "marketed_by", "hsn_code", "schedule_type", "therapeutic", "sub_therapeutic", "short_code", "ucode", "mrp", "cgst_per", "sgst_per", "rack", "metadata"];
-          const placeholders = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
-          const params = [
-            item.name,
-            item.api_reference || null,
-            item.packaging || null,
-            item.manufacturer || null,
-            item.marketed_by || null,
-            item.hsn_code || null,
-            item.schedule_type || null,
-            item.therapeutic || null,
-            item.sub_therapeutic || null,
-            item.short_code || null,
-            item.ucode || null,
-            item.mrp || 0,
-            item.cgst || 0,
-            item.sgst || 0,
-            item.rack || null,
-            item.metadata || null
-          ];
-          for (const cm of customMappings) {
-            columns.push(`"${cm.dbCol}"`);
-            placeholders.push("?");
-            params.push(item[cm.dbCol] !== void 0 ? item[cm.dbCol] : null);
-          }
-          const insertRes = await db2.run(
-            `INSERT INTO medicines (${columns.join(", ")}) VALUES (${placeholders.join(", ")})`,
-            params
-          );
-          medId = insertRes.lastID;
-          existingMedicinesMap.set(key, medId);
         }
-      }
-      await db2.run("COMMIT");
-      await new Promise((resolve) => setImmediate(resolve));
+        await db2.run("COMMIT");
+      });
+      await new Promise((resolve) => setTimeout(resolve, activityTracker.isAppInUse() ? 30 : 10));
     };
     const processRowObject = (row) => {
       if (!nameCol) return null;
@@ -49097,7 +49684,7 @@ var init_licenseService = __esm({
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://ai-pharmacy-license.vercel.app";
-    APP_VERSION = "0.1.6";
+    APP_VERSION = "0.1.7";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -49534,19 +50121,19 @@ var init_messageDAO = __esm({
 });
 
 // src/i18n/getMessage.ts
-function getMessage(lang, path68, values = {}) {
-  const dbValue = getTemplate(lang, path68);
+function getMessage(lang, path69, values = {}) {
+  const dbValue = getTemplate(lang, path69);
   let template = "";
   if (dbValue !== null) {
     template = dbValue;
   } else {
-    const keys = path68.split(".");
+    const keys = path69.split(".");
     let segment = ALL_MESSAGES[lang];
     for (const k of keys) {
-      if (segment == null) return `[Missing: ${path68}]`;
+      if (segment == null) return `[Missing: ${path69}]`;
       segment = segment[k];
     }
-    if (typeof segment !== "string") return `[Not a string: ${path68}]`;
+    if (typeof segment !== "string") return `[Not a string: ${path69}]`;
     template = segment;
   }
   return template.replace(/\{\{(\w+)\}\}/g, (_, placeholder) => {
@@ -68197,6 +68784,12 @@ var init_serviceStatus = __esm({
               whatsapp: whatsappEnabled,
               telegram: telegramEnabled,
               email: emailConfigured
+            },
+            database: {
+              journalMode: "WAL",
+              synchronous: "NORMAL",
+              antiLockCoordinator: "ACTIVE",
+              stats: dbManager.getLockStats()
             }
           }
         });
@@ -75570,6 +76163,9 @@ var init_sales = __esm({
     init_imageCompressionService();
     router33 = import_express35.default.Router();
     router33.use(tenantAuthMiddleware);
+    router33.use((_req, _res, next) => {
+      dbManager.runWithPriority("VIP", () => next());
+    });
     normalizeNumericSearch = (val) => {
       const cleaned = val.trim();
       if (!cleaned) return "";
@@ -78794,7 +79390,7 @@ async function seedMasterMedicines(force = false) {
     let headerParsed = false;
     let isFullMedicinesCsv = false;
     const col = {};
-    const batchSize = 1e3;
+    const batchSize = 100;
     let csvBatch = [];
     let simpleBatch = [];
     for await (const line of rl) {
@@ -78899,49 +79495,55 @@ async function seedMasterMedicines(force = false) {
   }
 }
 async function insertMedicinesCsvBatch(db2, rows) {
-  await db2.run("BEGIN TRANSACTION");
-  try {
-    const stmt = await db2.prepare(`
-      INSERT OR IGNORE INTO medicines (
-        name, canonical_name, normalized_name, manufacturer, marketed_by,
-        packaging, pack_size, item_type, hsn_code, cgst_per,
-        sgst_per, igst_per, sell_price, barcode, rack,
-        therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
-        source, status
-      ) VALUES (
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        'master_reference', 'ACTIVE'
-      )
-    `);
-    for (const row of rows) {
-      await stmt.run(...row);
+  await dbManager.runWithPriority("BACKGROUND", async () => {
+    await db2.run("BEGIN TRANSACTION");
+    try {
+      const stmt = await db2.prepare(`
+        INSERT OR IGNORE INTO medicines (
+          name, canonical_name, normalized_name, manufacturer, marketed_by,
+          packaging, pack_size, item_type, hsn_code, cgst_per,
+          sgst_per, igst_per, sell_price, barcode, rack,
+          therapeutic, sub_therapeutic, short_code, ucode, legacy_id,
+          source, status
+        ) VALUES (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          'master_reference', 'ACTIVE'
+        )
+      `);
+      for (const row of rows) {
+        await stmt.run(...row);
+      }
+      await stmt.finalize();
+      await db2.run("COMMIT");
+    } catch (err) {
+      await db2.run("ROLLBACK");
+      throw err;
     }
-    await stmt.finalize();
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK");
-    throw err;
-  }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 15));
 }
 async function insertSimpleBatch(db2, rows) {
-  await db2.run("BEGIN TRANSACTION");
-  try {
-    const stmt = await db2.prepare(
-      `INSERT OR IGNORE INTO medicines (name, generic_name, manufacturer, source, mrp, cgst_per, sgst_per)
-       VALUES (?, ?, ?, ?, 0, 6, 6)`
-    );
-    for (const row of rows) {
-      await stmt.run(row[0], row[1], row[2], row[3]);
+  await dbManager.runWithPriority("BACKGROUND", async () => {
+    await db2.run("BEGIN TRANSACTION");
+    try {
+      const stmt = await db2.prepare(
+        `INSERT OR IGNORE INTO medicines (name, generic_name, manufacturer, source, mrp, cgst_per, sgst_per)
+         VALUES (?, ?, ?, ?, 0, 6, 6)`
+      );
+      for (const row of rows) {
+        await stmt.run(row[0], row[1], row[2], row[3]);
+      }
+      await stmt.finalize();
+      await db2.run("COMMIT");
+    } catch (err) {
+      await db2.run("ROLLBACK");
+      throw err;
     }
-    await stmt.finalize();
-    await db2.run("COMMIT");
-  } catch (err) {
-    await db2.run("ROLLBACK");
-    throw err;
-  }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 15));
 }
 async function syncInventoryToMaster() {
   const db2 = await dbManager.getConnection();
@@ -86598,13 +87200,16 @@ var catalogImages_exports = {};
 __export(catalogImages_exports, {
   default: () => catalogImages_default
 });
-var import_express48, router46, catalogImages_default;
+var import_express48, import_path66, import_fs60, router46, catalogImages_default;
 var init_catalogImages = __esm({
   "src/routes/catalogImages.ts"() {
     "use strict";
     import_express48 = __toESM(require("express"), 1);
+    import_path66 = __toESM(require("path"), 1);
+    import_fs60 = __toESM(require("fs"), 1);
     init_catalogImageService();
     init_connection();
+    init_whatsappQueueWorker();
     router46 = import_express48.default.Router();
     router46.get("/", async (req, res) => {
       try {
@@ -87018,6 +87623,32 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to replace image" });
       }
     });
+    router46.post("/:id/relink", async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        const targetMedicineId = parseInt(String(req.body?.target_medicine_id), 10);
+        const imageType = req.body?.image_type || "front";
+        const isPrimary = req.body?.is_primary !== void 0 ? !!req.body.is_primary : true;
+        const verifiedBy = req.body?.verified_by || "pharmacist";
+        if (!targetMedicineId || isNaN(targetMedicineId)) {
+          return res.status(400).json({ success: false, error: "target_medicine_id is required" });
+        }
+        const result = await catalogImageService.relinkImage(
+          id,
+          targetMedicineId,
+          imageType,
+          isPrimary,
+          verifiedBy
+        );
+        res.json({
+          message: `Image successfully linked to "${result.medicine.name}" as ${imageType.toUpperCase()} packaging.`,
+          ...result
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error relinking image:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to relink image" });
+      }
+    });
     router46.post("/medicine/:medicineId/approve-all", async (req, res) => {
       try {
         const medicineId = parseInt(req.params.medicineId, 10);
@@ -87078,6 +87709,207 @@ var init_catalogImages = __esm({
         res.status(500).json({ success: false, error: err.message || "Failed to fetch history" });
       }
     });
+    router46.get("/medicine/:medicineId/visual-reference", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        if (!medicineId) return res.status(400).json({ success: false, error: "Invalid medicineId" });
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get(
+          "SELECT id, name, generic_name, manufacturer, dosage_form, strength, mrp, packaging FROM medicines WHERE id = ?",
+          [medicineId]
+        );
+        if (!med) return res.status(404).json({ success: false, error: "Medicine not found" });
+        let gallery = await catalogImageService.getMedicineGallery(medicineId);
+        let resolved = await catalogImageService.resolveProductImages(medicineId);
+        let autoPulled = false;
+        if (!resolved.primaryUrl && gallery.length === 0) {
+          try {
+            console.log(`[VisualReference] No local image for ${med.name} (#${medicineId}). Auto-pulling from CDN...`);
+            const candidate = await catalogImageService.searchAndDownloadCandidate(medicineId);
+            if (candidate) {
+              autoPulled = true;
+              gallery = await catalogImageService.getMedicineGallery(medicineId);
+              resolved = await catalogImageService.resolveProductImages(medicineId);
+            }
+          } catch (cdnErr) {
+            console.warn(`[VisualReference] CDN auto-pull failed for medicine ${medicineId}:`, cdnErr?.message);
+          }
+        }
+        res.json({
+          success: true,
+          medicine: med,
+          has_image: !!resolved.primaryUrl,
+          auto_pulled: autoPulled,
+          primaryUrl: resolved.primaryUrl,
+          images: resolved.images,
+          gallery: gallery.map((img) => ({
+            id: img.id,
+            url: img.image_path || img.thumbnail_path,
+            type: img.image_type || "combined",
+            verification_status: img.verification_status,
+            is_primary: !!img.is_primary,
+            is_active: !!img.is_active
+          }))
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error resolving visual reference:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to resolve visual reference" });
+      }
+    });
+    router46.post("/send-visual-reference", async (req, res) => {
+      try {
+        const {
+          phone,
+          medicineId,
+          imageId,
+          imageUrl,
+          customNote,
+          livePhoto,
+          customerName
+        } = req.body;
+        if (!phone) {
+          return res.status(400).json({ success: false, error: "Recipient phone number is required" });
+        }
+        if (!medicineId) {
+          return res.status(400).json({ success: false, error: "medicineId is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const med = await db2.get(
+          "SELECT id, name, generic_name, manufacturer, dosage_form, strength, mrp, packaging FROM medicines WHERE id = ?",
+          [medicineId]
+        );
+        if (!med) return res.status(404).json({ success: false, error: "Medicine not found" });
+        let finalFileObj = void 0;
+        let isPendingReview = false;
+        let usedImageRecord = null;
+        if (livePhoto && livePhoto.data) {
+          try {
+            const uploadsDir = import_path66.default.resolve(process.cwd(), "uploads/products");
+            if (!import_fs60.default.existsSync(uploadsDir)) import_fs60.default.mkdirSync(uploadsDir, { recursive: true });
+            const filename = `counter-live-${medicineId}-${Date.now()}.jpg`;
+            const diskPath = import_path66.default.join(uploadsDir, filename);
+            import_fs60.default.writeFileSync(diskPath, Buffer.from(livePhoto.data, "base64"));
+            const webPath = `/uploads/products/${filename}`;
+            const ins = await db2.run(
+              `INSERT INTO catalog_images (medicine_id, image_path, thumbnail_path, image_source, verification_status, is_active, is_primary, match_source, created_at, updated_at)
+           VALUES (?, ?, ?, 'counter_camera', 'PENDING_REVIEW', 1, 1, 'manual', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [medicineId, webPath, webPath]
+            );
+            finalFileObj = {
+              mimetype: livePhoto.mimetype || "image/jpeg",
+              data: livePhoto.data,
+              filename
+            };
+            isPendingReview = true;
+            usedImageRecord = { id: ins.lastID, image_path: webPath, verification_status: "PENDING_REVIEW", image_source: "counter_camera" };
+          } catch (camErr) {
+            console.error("[VisualReference] Failed to save live counter photo:", camErr);
+          }
+        } else {
+          if (imageId) {
+            usedImageRecord = await db2.get("SELECT * FROM catalog_images WHERE id = ?", [imageId]);
+          }
+          if (!usedImageRecord && imageUrl) {
+            usedImageRecord = await db2.get("SELECT * FROM catalog_images WHERE image_path = ? OR thumbnail_path = ? LIMIT 1", [imageUrl, imageUrl]);
+          }
+          if (!usedImageRecord) {
+            usedImageRecord = await db2.get(
+              "SELECT * FROM catalog_images WHERE medicine_id = ? AND is_active = 1 ORDER BY is_primary DESC, id DESC LIMIT 1",
+              [medicineId]
+            );
+          }
+          if (usedImageRecord) {
+            if (usedImageRecord.verification_status === "PENDING_REVIEW") {
+              isPendingReview = true;
+            }
+            const relativePath = (usedImageRecord.image_path || usedImageRecord.thumbnail_path || "").replace(/^[/\\]+/, "");
+            const fullDiskPath = import_path66.default.resolve(process.cwd(), relativePath);
+            if (import_fs60.default.existsSync(fullDiskPath)) {
+              const buf = import_fs60.default.readFileSync(fullDiskPath);
+              const ext = import_path66.default.extname(fullDiskPath).toLowerCase();
+              const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+              finalFileObj = {
+                mimetype: mime,
+                data: buf.toString("base64"),
+                filename: import_path66.default.basename(fullDiskPath)
+              };
+            }
+          }
+        }
+        const specLines = [];
+        if (med.strength || med.dosage_form) {
+          specLines.push(`\u2022 *Strength / Form:* ${[med.strength, med.dosage_form].filter(Boolean).join(" ")}`);
+        }
+        if (med.generic_name) {
+          specLines.push(`\u2022 *Composition:* ${med.generic_name}`);
+        }
+        if (med.manufacturer) {
+          specLines.push(`\u2022 *Manufacturer:* ${med.manufacturer}`);
+        }
+        if (med.mrp) {
+          specLines.push(`\u2022 *MRP:* \u20B9${med.mrp}`);
+        }
+        const greeting = customerName ? `Hello ${customerName}, ` : "Hello, ";
+        const noteBlock = customNote && customNote.trim() ? `
+\u{1F4DD} *Pharmacist Note:* ${customNote.trim()}
+` : "";
+        const messageText = `\u{1F4CB} *Medicine Verification / Visual Reference*
+${greeting}please check if this packaging matches what you need:
+
+\u{1F48A} *${med.name}*
+${specLines.join("\n")}${noteBlock}
+\u26A0\uFE0F *Note:* Packaging artwork, colors, or strip designs may vary across manufacturer batches. Please verify the active medicine name and strength printed on your physical strip.
+
+\u{1F449} *Please reply to confirm if this is the correct medicine.*`;
+        const queueId = await whatsappQueueWorker.enqueue(
+          phone,
+          messageText,
+          "customer_medicine_clarification",
+          customerName || "Customer",
+          void 0,
+          void 0,
+          finalFileObj
+        );
+        let ownerNotified = false;
+        if (isPendingReview || usedImageRecord?.verification_status === "PENDING_REVIEW") {
+          try {
+            const ownerRow = await db2.get(
+              "SELECT value FROM app_settings WHERE key IN ('owner_whatsapp_number', 'shop_phone') AND value IS NOT NULL AND value != '' ORDER BY (CASE WHEN key = 'owner_whatsapp_number' THEN 1 ELSE 2 END) ASC LIMIT 1"
+            );
+            const ownerPhone = ownerRow?.value?.replace(/\\D/g, "");
+            const cleanCustPhone = phone.replace(/\\D/g, "");
+            if (ownerPhone && ownerPhone !== cleanCustPhone && ownerPhone.length >= 10) {
+              const ownerAlertMsg = `\u{1F4F8} *Visual Reference Review Alert*
+Medicine: *${med.name}*
+Customer: ${customerName || "Customer"} (${phone})
+Status: *Pending Review (${usedImageRecord?.image_source || "CDN/Camera"})*
+
+\u{1F449} Please verify packaging in App: *Database \u2794 Catalog Images* so this verified image is permanently cached for future refills.`;
+              await whatsappQueueWorker.enqueue(
+                ownerPhone,
+                ownerAlertMsg,
+                "admin_escalation",
+                "Store Owner"
+              );
+              ownerNotified = true;
+            }
+          } catch (ownerErr) {
+            console.warn("[VisualReference] Could not notify owner WhatsApp:", ownerErr);
+          }
+        }
+        res.json({
+          success: true,
+          message: "Visual reference sent successfully",
+          queueId,
+          has_image: !!finalFileObj,
+          is_pending_review: isPendingReview,
+          owner_notified: ownerNotified
+        });
+      } catch (err) {
+        console.error("[CatalogImages API] Error sending visual reference:", err);
+        res.status(500).json({ success: false, error: err.message || "Failed to send visual reference" });
+      }
+    });
     catalogImages_default = router46;
   }
 });
@@ -87087,12 +87919,12 @@ var catalog_exports = {};
 __export(catalog_exports, {
   default: () => catalog_default
 });
-var import_express49, import_fs60, router47, catalog_default;
+var import_express49, import_fs61, router47, catalog_default;
 var init_catalog = __esm({
   "src/routes/catalog.ts"() {
     "use strict";
     import_express49 = __toESM(require("express"), 1);
-    import_fs60 = __toESM(require("fs"), 1);
+    import_fs61 = __toESM(require("fs"), 1);
     init_connection();
     init_medicineService();
     router47 = import_express49.default.Router();
@@ -87299,9 +88131,9 @@ var init_catalog = __esm({
           await dbManager.close();
           return res.status(404).json({ error: "Job not found" });
         }
-        if (job.file_path && import_fs60.default.existsSync(job.file_path)) {
+        if (job.file_path && import_fs61.default.existsSync(job.file_path)) {
           try {
-            import_fs60.default.unlinkSync(job.file_path);
+            import_fs61.default.unlinkSync(job.file_path);
           } catch (err) {
             console.warn(`[Catalog] Failed to delete physical file: ${job.file_path}`, err);
           }
@@ -88830,13 +89662,13 @@ var enrichment_exports = {};
 __export(enrichment_exports, {
   default: () => enrichment_default
 });
-var import_express52, import_fs61, import_path66, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router50, upload4, enrichment_default;
+var import_express52, import_fs62, import_path67, import_url47, import_multer4, __filename45, __dirname45, DATA_DIR2, REFERENCE_CSV2, router50, upload4, enrichment_default;
 var init_enrichment = __esm({
   "src/routes/enrichment.ts"() {
     "use strict";
     import_express52 = __toESM(require("express"), 1);
-    import_fs61 = __toESM(require("fs"), 1);
-    import_path66 = __toESM(require("path"), 1);
+    import_fs62 = __toESM(require("fs"), 1);
+    import_path67 = __toESM(require("path"), 1);
     import_url47 = require("url");
     import_multer4 = __toESM(require("multer"), 1);
     init_connection();
@@ -88844,9 +89676,9 @@ var init_enrichment = __esm({
     init_onlineDataEnricher();
     init_config();
     __filename45 = (0, import_url47.fileURLToPath)(import_meta_url);
-    __dirname45 = import_path66.default.dirname(__filename45);
-    DATA_DIR2 = import_path66.default.resolve(getAppDataDir(), "data");
-    REFERENCE_CSV2 = import_path66.default.join(DATA_DIR2, "reference_medicines.csv");
+    __dirname45 = import_path67.default.dirname(__filename45);
+    DATA_DIR2 = import_path67.default.resolve(getAppDataDir(), "data");
+    REFERENCE_CSV2 = import_path67.default.join(DATA_DIR2, "reference_medicines.csv");
     router50 = import_express52.default.Router();
     upload4 = (0, import_multer4.default)({ storage: import_multer4.default.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
     router50.get("/enrichment/status", async (_req, res) => {
@@ -88927,8 +89759,8 @@ var init_enrichment = __esm({
           return res.status(400).json({ error: "Only CSV files are accepted" });
         }
         const tmpPath = REFERENCE_CSV2 + ".tmp";
-        import_fs61.default.writeFileSync(tmpPath, req.file.buffer);
-        import_fs61.default.renameSync(tmpPath, REFERENCE_CSV2);
+        import_fs62.default.writeFileSync(tmpPath, req.file.buffer);
+        import_fs62.default.renameSync(tmpPath, REFERENCE_CSV2);
         const result = await loadReferenceData({ force: true });
         const apiResult = await loadApiSubstances({ force: true });
         res.json({
@@ -89432,12 +90264,12 @@ var distributors_exports = {};
 __export(distributors_exports, {
   default: () => distributors_default
 });
-var import_express54, import_fs62, router52, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
+var import_express54, import_fs63, router52, getDistributorsHandler, postDistributorsHandler, putDistributorHandler, deleteDistributorHandler, distributors_default;
 var init_distributors = __esm({
   "src/routes/distributors.ts"() {
     "use strict";
     import_express54 = __toESM(require("express"), 1);
-    import_fs62 = __toESM(require("fs"), 1);
+    import_fs63 = __toESM(require("fs"), 1);
     init_connection();
     init_creditNoteService();
     init_distributorSyncHelper();
@@ -89538,9 +90370,9 @@ var init_distributors = __esm({
         try {
           const files = await db2.all("SELECT file_path FROM distributor_historical_files WHERE distributor_id = ?", [id]);
           for (const f of files) {
-            if (f.file_path && import_fs62.default.existsSync(f.file_path)) {
+            if (f.file_path && import_fs63.default.existsSync(f.file_path)) {
               try {
-                import_fs62.default.unlinkSync(f.file_path);
+                import_fs63.default.unlinkSync(f.file_path);
               } catch (e) {
                 console.warn("Failed to delete distributor file:", f.file_path, e);
               }
@@ -89819,15 +90651,15 @@ var init_notifications2 = __esm({
       }
     });
     router53.get("/notifications/download-apk", (req, res) => {
-      const fs64 = require("fs");
-      const path68 = require("path");
+      const fs65 = require("fs");
+      const path69 = require("path");
       const candidatePaths = [
-        path68.join(process.cwd(), "data", "pharmacy-mobile.apk"),
-        path68.join(process.cwd(), "public", "pharmacy-mobile.apk"),
-        path68.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
-        path68.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        path69.join(process.cwd(), "data", "pharmacy-mobile.apk"),
+        path69.join(process.cwd(), "public", "pharmacy-mobile.apk"),
+        path69.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "release", "app-release.apk"),
+        path69.join(process.cwd(), "pharmacy-mobile", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
       ];
-      const foundPath = candidatePaths.find((p) => fs64.existsSync(p));
+      const foundPath = candidatePaths.find((p) => fs65.existsSync(p));
       if (foundPath) {
         res.setHeader("Content-Type", "application/vnd.android.package-archive");
         return res.download(foundPath, "AI-Pharmacy-Mobile.apk");
@@ -91149,9 +91981,9 @@ async function auditMigration(db2) {
 async function auditMobile() {
   const findings = [];
   try {
-    const botPath = import_path67.default.resolve(__dirname46, "..", "telegramBot.ts");
-    if (import_fs63.default.existsSync(botPath)) {
-      const src = import_fs63.default.readFileSync(botPath, "utf8");
+    const botPath = import_path68.default.resolve(__dirname46, "..", "telegramBot.ts");
+    if (import_fs64.default.existsSync(botPath)) {
+      const src = import_fs64.default.readFileSync(botPath, "utf8");
       const suspicious = /const\s+(FAKE|MOCK|DUMMY|SAMPLE)_?(STOCK|INVENTORY|MEDICINE)/i.test(src);
       if (suspicious) {
         findings.push(finding({
@@ -91368,12 +92200,12 @@ async function auditDatabaseIntegrity(db2) {
 }
 function readAppVersion() {
   const candidates = [
-    import_path67.default.resolve(__dirname46, "..", "..", "package.json"),
-    import_path67.default.resolve(process.cwd(), "package.json")
+    import_path68.default.resolve(__dirname46, "..", "..", "package.json"),
+    import_path68.default.resolve(process.cwd(), "package.json")
   ];
   for (const p of candidates) {
     try {
-      const pkg2 = JSON.parse(import_fs63.default.readFileSync(p, "utf8"));
+      const pkg2 = JSON.parse(import_fs64.default.readFileSync(p, "utf8"));
       if (pkg2?.version) return String(pkg2.version);
     } catch (_e) {
     }
@@ -91424,17 +92256,17 @@ async function runAudit(db2) {
     status: blocking.length === 0 ? "PROJECT READY" : "PROJECT NOT READY"
   };
 }
-var import_fs63, import_path67, import_url48, import_child_process10, __filename46, __dirname46, BANNED_BATCH_STRINGS;
+var import_fs64, import_path68, import_url48, import_child_process10, __filename46, __dirname46, BANNED_BATCH_STRINGS;
 var init_auditEngine = __esm({
   "src/utils/auditEngine.ts"() {
     "use strict";
-    import_fs63 = __toESM(require("fs"), 1);
-    import_path67 = __toESM(require("path"), 1);
+    import_fs64 = __toESM(require("fs"), 1);
+    import_path68 = __toESM(require("path"), 1);
     import_url48 = require("url");
     import_child_process10 = require("child_process");
     init_nameNormalizer();
     __filename46 = (0, import_url48.fileURLToPath)(import_meta_url);
-    __dirname46 = import_path67.default.dirname(__filename46);
+    __dirname46 = import_path68.default.dirname(__filename46);
     BANNED_BATCH_STRINGS = ["BATCH123", "B-GEN", "B-CATALOG", "B-IMPORT", "B-OFFLINE", "B-REISSUE", "B-MANUAL", "B-NEW"];
   }
 });
@@ -91950,9 +92782,9 @@ async function startTieredPreWarm() {
 }
 function extractMedicinesWithPython(messageText) {
   return new Promise((resolve, reject) => {
-    const pythonExecutable = import_path68.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
-    const scriptPath = import_path68.default.resolve("python_scripts", "extract_medicine.py");
-    if (!import_fs64.default.existsSync(pythonExecutable) || !import_fs64.default.existsSync(scriptPath)) {
+    const pythonExecutable = import_path69.default.resolve("python_scripts", ".venv", "Scripts", "python.exe");
+    const scriptPath = import_path69.default.resolve("python_scripts", "extract_medicine.py");
+    if (!import_fs65.default.existsSync(pythonExecutable) || !import_fs65.default.existsSync(scriptPath)) {
       return resolve([]);
     }
     const pythonProcess = (0, import_child_process11.spawn)(pythonExecutable, [scriptPath, messageText]);
@@ -92170,7 +93002,7 @@ async function gracefulShutdown(signal) {
   }
   process.exit(0);
 }
-var import_express59, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path68, import_child_process11, import_url49, import_fs64, import_axios5, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
+var import_express59, import_compression, import_cors, import_helmet, import_express_rate_limit, import_path69, import_child_process11, import_url49, import_fs65, import_axios5, __filename47, __dirname47, DB_PATH30, schemaReady, BOOT_T0, bootWorkerFailures, registeredLazyRoutes, preWarmStarted, app, inFlightRequests, UPLOAD_DIR2, TEMP_DIR5, RAW_DIR2, ALLOWED_ORIGINS, pendingShutdownTimer, appDataDir2, frontendCandidates, frontendDist, PORT, server, isShuttingDown;
 var init_server = __esm({
   "src/server.ts"() {
     "use strict";
@@ -92180,10 +93012,10 @@ var init_server = __esm({
     import_cors = __toESM(require("cors"), 1);
     import_helmet = __toESM(require("helmet"), 1);
     import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-    import_path68 = __toESM(require("path"), 1);
+    import_path69 = __toESM(require("path"), 1);
     import_child_process11 = require("child_process");
     import_url49 = require("url");
-    import_fs64 = __toESM(require("fs"), 1);
+    import_fs65 = __toESM(require("fs"), 1);
     import_axios5 = __toESM(require("axios"), 1);
     init_errorHandler();
     init_notFoundHandler();
@@ -92195,7 +93027,7 @@ var init_server = __esm({
     init_config();
     init_chromeBrowser();
     __filename47 = (0, import_url49.fileURLToPath)(import_meta_url);
-    __dirname47 = import_path68.default.dirname(__filename47);
+    __dirname47 = import_path69.default.dirname(__filename47);
     DB_PATH30 = config.dbPath;
     import_axios5.default.defaults.timeout = 2e4;
     schemaReady = false;
@@ -92233,15 +93065,15 @@ var init_server = __esm({
     });
     UPLOAD_DIR2 = config.uploadDir;
     TEMP_DIR5 = config.tempDir;
-    RAW_DIR2 = import_path68.default.join(getAppDataDir(), "catalogue", "raw");
-    if (!import_fs64.default.existsSync(UPLOAD_DIR2)) {
-      import_fs64.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
+    RAW_DIR2 = import_path69.default.join(getAppDataDir(), "catalogue", "raw");
+    if (!import_fs65.default.existsSync(UPLOAD_DIR2)) {
+      import_fs65.default.mkdirSync(UPLOAD_DIR2, { recursive: true });
     }
-    if (!import_fs64.default.existsSync(TEMP_DIR5)) {
-      import_fs64.default.mkdirSync(TEMP_DIR5, { recursive: true });
+    if (!import_fs65.default.existsSync(TEMP_DIR5)) {
+      import_fs65.default.mkdirSync(TEMP_DIR5, { recursive: true });
     }
-    if (!import_fs64.default.existsSync(RAW_DIR2)) {
-      import_fs64.default.mkdirSync(RAW_DIR2, { recursive: true });
+    if (!import_fs65.default.existsSync(RAW_DIR2)) {
+      import_fs65.default.mkdirSync(RAW_DIR2, { recursive: true });
     }
     app.use((0, import_helmet.default)({
       contentSecurityPolicy: false
@@ -92295,10 +93127,10 @@ var init_server = __esm({
       next(err);
     });
     app.use("/uploads", import_express59.default.static(UPLOAD_DIR2));
-    app.use("/products", import_express59.default.static(import_path68.default.resolve(process.cwd(), "frontend/public/products")));
-    app.use("/products", import_express59.default.static(import_path68.default.resolve(process.cwd(), "uploads/products")));
-    app.use("/data/search_screenshots", import_express59.default.static(import_path68.default.join(getAppDataDir(), "data", "search_screenshots")));
-    app.use("/data/inbound_media", import_express59.default.static(import_path68.default.resolve(process.cwd(), "data", "inbound_media")));
+    app.use("/products", import_express59.default.static(import_path69.default.resolve(process.cwd(), "frontend/public/products")));
+    app.use("/products", import_express59.default.static(import_path69.default.resolve(process.cwd(), "uploads/products")));
+    app.use("/data/search_screenshots", import_express59.default.static(import_path69.default.join(getAppDataDir(), "data", "search_screenshots")));
+    app.use("/data/inbound_media", import_express59.default.static(import_path69.default.resolve(process.cwd(), "data", "inbound_media")));
     app.use("/api/wa-business/webhook", lazyRoute(() => Promise.resolve().then(() => (init_whatsappBusiness(), whatsappBusiness_exports))));
     app.get("/api/health", (req, res) => {
       res.json({ success: true, status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -92416,14 +93248,14 @@ var init_server = __esm({
     app.use("/api", lazyRoute(() => Promise.resolve().then(() => (init_medicineAvailability(), medicineAvailability_exports))));
     appDataDir2 = getAppDataDir();
     frontendCandidates = [
-      import_path68.default.resolve(appDataDir2, "frontend", "dist"),
-      import_path68.default.resolve(process.cwd(), "frontend", "dist"),
-      import_path68.default.resolve(__dirname47, "..", "frontend", "dist"),
-      import_path68.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
-      import_path68.default.resolve(process.cwd(), "dist"),
-      import_path68.default.resolve(appDataDir2, "dist")
+      import_path69.default.resolve(appDataDir2, "frontend", "dist"),
+      import_path69.default.resolve(process.cwd(), "frontend", "dist"),
+      import_path69.default.resolve(__dirname47, "..", "frontend", "dist"),
+      import_path69.default.resolve(__dirname47, "..", "..", "frontend", "dist"),
+      import_path69.default.resolve(process.cwd(), "dist"),
+      import_path69.default.resolve(appDataDir2, "dist")
     ];
-    frontendDist = frontendCandidates.find((dir) => import_fs64.default.existsSync(import_path68.default.join(dir, "index.html"))) || frontendCandidates[0];
+    frontendDist = frontendCandidates.find((dir) => import_fs65.default.existsSync(import_path69.default.join(dir, "index.html"))) || frontendCandidates[0];
     app.use(import_express59.default.static(frontendDist, {
       maxAge: "1d",
       setHeaders: (res, filePath) => {
@@ -92439,8 +93271,8 @@ var init_server = __esm({
       if (req.path.startsWith("/assets/") || /\.(js|css|png|jpg|jpeg|gif|svg|ico|json|woff2?|ttf|map)$/i.test(req.path)) {
         return res.status(404).send("Asset not found");
       }
-      const indexPath = import_path68.default.join(frontendDist, "index.html");
-      if (import_fs64.default.existsSync(indexPath)) {
+      const indexPath = import_path69.default.join(frontendDist, "index.html");
+      if (import_fs65.default.existsSync(indexPath)) {
         res.setHeader("Cache-Control", "no-cache");
         return res.sendFile(indexPath);
       }
