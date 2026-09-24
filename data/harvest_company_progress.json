@@ -1,10 +1,11 @@
 {
-  "last_updated": "2026-09-24T17:52:32.810Z",
+  "last_updated": "2026-09-24T18:17:19.033Z",
   "completed_companies": [
     "ZYDUS CADILA HEALTHCARE LTD",
     "CIPLA LIMITED",
     "INTAS PHARMACEUTICALS LTD",
-    "ZEE LABORATORIES LTD"
+    "ZEE LABORATORIES LTD",
+    "ABBOTT HEALTHCARE PVT LTD"
   ],
   "products": {
     "77": {
@@ -32,6 +33,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T10:54:52.588Z"
     },
+    "236": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:13.396Z"
+    },
     "238": {
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -57,6 +63,11 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:34:27.365Z"
     },
+    "510": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:13.439Z"
+    },
     "524": {
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -66,6 +77,11 @@
       "status": "already_verified",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:34:32.207Z"
+    },
+    "670": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:13.476Z"
     },
     "698": {
       "status": "not_found",
@@ -91,6 +107,11 @@
       "status": "already_verified",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T14:29:10.062Z"
+    },
+    "872": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:14.961Z"
     },
     "880": {
       "status": "already_on_disk",
@@ -131,6 +152,11 @@
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T08:59:58.080Z"
+    },
+    "1111": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:15.401Z"
     },
     "1174": {
       "status": "already_verified",
@@ -187,10 +213,20 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T10:54:59.288Z"
     },
+    "1455": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:21.187Z"
+    },
     "1665": {
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:35:03.105Z"
+    },
+    "1732": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:21.584Z"
     },
     "1801": {
       "status": "not_found",
@@ -202,6 +238,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:00.238Z"
     },
+    "2076": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:24.523Z"
+    },
     "2129": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -211,6 +252,11 @@
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:35:05.870Z"
+    },
+    "2232": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:29.102Z"
     },
     "2245": {
       "status": "not_found",
@@ -252,6 +298,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T10:55:04.529Z"
     },
+    "2822": {
+      "status": "not_found",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:33.921Z"
+    },
     "2836": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -272,6 +323,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T10:55:06.716Z"
     },
+    "3152": {
+      "status": "not_found",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:39.986Z"
+    },
     "3153": {
       "status": "already_verified",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -281,6 +337,11 @@
       "status": "already_verified",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:35:08.480Z"
+    },
+    "3387": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:43.715Z"
     },
     "3411": {
       "status": "downloaded",
@@ -331,6 +392,11 @@
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T10:55:16.323Z"
+    },
+    "3818": {
+      "status": "not_found",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:47.194Z"
     },
     "3858": {
       "status": "already_verified",
@@ -392,6 +458,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:05.783Z"
     },
+    "4700": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:48.537Z"
+    },
     "4761": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -427,6 +498,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:32:56.272Z"
     },
+    "5128": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:49.020Z"
+    },
     "5138": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -457,6 +533,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:32:56.668Z"
     },
+    "5390": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:49.124Z"
+    },
     "5476": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -466,6 +547,11 @@
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:35:33.398Z"
+    },
+    "5604": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:49.704Z"
     },
     "5647": {
       "status": "not_found",
@@ -582,6 +668,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:33:05.424Z"
     },
+    "7247": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:50.626Z"
+    },
     "7333": {
       "status": "already_verified",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -657,6 +748,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:16.568Z"
     },
+    "8388": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:55.758Z"
+    },
     "8445": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -682,6 +778,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:33:08.322Z"
     },
+    "8727": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:56.809Z"
+    },
     "8762": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -706,6 +807,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:18.997Z"
+    },
+    "9032": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:16:58.230Z"
     },
     "9092": {
       "status": "not_found",
@@ -787,6 +893,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:22.081Z"
     },
+    "9989": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:00.609Z"
+    },
     "9990": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -837,6 +948,11 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:36:28.647Z"
     },
+    "10297": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:01.787Z"
+    },
     "10354": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -851,6 +967,11 @@
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:34.268Z"
+    },
+    "10625": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:03.478Z"
     },
     "10687": {
       "status": "downloaded",
@@ -907,6 +1028,16 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:36:37.124Z"
     },
+    "11357": {
+      "status": "not_found",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:08.820Z"
+    },
+    "11375": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:10.026Z"
+    },
     "11388": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -921,6 +1052,11 @@
       "status": "not_found",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:36:42.904Z"
+    },
+    "11445": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:11.465Z"
     },
     "11454": {
       "status": "downloaded",
@@ -952,6 +1088,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:33:12.560Z"
     },
+    "11915": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:15.199Z"
+    },
     "11985": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
@@ -977,10 +1118,20 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T13:33:14.354Z"
     },
+    "12481": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:15.672Z"
+    },
     "12557": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:41.630Z"
+    },
+    "12617": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:15.781Z"
     },
     "12739": {
       "status": "downloaded",
@@ -1022,6 +1173,11 @@
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:36:55.148Z"
     },
+    "13511": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:16.685Z"
+    },
     "13592": {
       "status": "downloaded",
       "company": "ABBOTT HEALTHCARE PVT LTD",
@@ -1046,6 +1202,11 @@
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T09:00:45.977Z"
+    },
+    "13960": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:17.098Z"
     },
     "13982": {
       "status": "downloaded",
@@ -1101,6 +1262,11 @@
       "status": "already_verified",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:37:06.847Z"
+    },
+    "14358": {
+      "status": "already_verified",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:17.176Z"
     },
     "14365": {
       "status": "downloaded",
@@ -1186,6 +1352,11 @@
       "status": "already_verified",
       "company": "ABBOTT HEALTHCARE PVT LTD",
       "timestamp": "2026-09-24T15:37:30.247Z"
+    },
+    "14791": {
+      "status": "downloaded",
+      "company": "ALKEM LABORATORIES LTD",
+      "timestamp": "2026-09-24T18:17:19.033Z"
     },
     "14803": {
       "status": "already_on_disk",
@@ -89567,6 +89738,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:20:43.174Z"
     },
+    "530109": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:35.781Z"
+    },
     "530110": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -89576,6 +89752,11 @@
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:10:25.851Z"
+    },
+    "530152": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:40.785Z"
     },
     "530158": {
       "status": "not_found",
@@ -89596,6 +89777,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:20:46.204Z"
+    },
+    "530265": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:44.976Z"
     },
     "530274": {
       "status": "downloaded",
@@ -89667,10 +89853,20 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:10:30.812Z"
     },
+    "530436": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:47.640Z"
+    },
     "530442": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:10:31.959Z"
+    },
+    "530456": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:50.190Z"
     },
     "530459": {
       "status": "not_found",
@@ -89696,6 +89892,11 @@
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:20:57.895Z"
+    },
+    "530569": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:52.668Z"
     },
     "530577": {
       "status": "already_on_disk",
@@ -89737,6 +89938,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:23:31.616Z"
     },
+    "530710": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:54.995Z"
+    },
     "530714": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
@@ -89756,6 +89962,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:00.654Z"
+    },
+    "530780": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:56.271Z"
     },
     "530786": {
       "status": "not_found",
@@ -89842,6 +90053,16 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:05.514Z"
     },
+    "530932": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:52:59.815Z"
+    },
+    "530935": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:00.227Z"
+    },
     "530949": {
       "status": "already_verified",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -89886,6 +90107,11 @@
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:21.543Z"
+    },
+    "531123": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:04.618Z"
     },
     "531124": {
       "status": "not_found",
@@ -89951,6 +90177,11 @@
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:25.100Z"
+    },
+    "531374": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:08.506Z"
     },
     "531378": {
       "status": "not_found",
@@ -90022,6 +90253,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:23:44.724Z"
     },
+    "531591": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:12.120Z"
+    },
     "531596": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -90051,6 +90287,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:25.269Z"
+    },
+    "531700": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:13.118Z"
     },
     "531712": {
       "status": "not_found",
@@ -90086,6 +90327,11 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:23:45.919Z"
+    },
+    "531829": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:17.801Z"
     },
     "531839": {
       "status": "not_found",
@@ -90197,6 +90443,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:10:53.399Z"
     },
+    "532106": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:21.658Z"
+    },
     "532145": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -90207,6 +90458,11 @@
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:28.384Z"
     },
+    "532164": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:23.495Z"
+    },
     "532165": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
@@ -90216,6 +90472,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:34.427Z"
+    },
+    "532221": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:27.709Z"
     },
     "532260": {
       "status": "not_found",
@@ -90307,6 +90568,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:38.254Z"
     },
+    "532572": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:31.190Z"
+    },
     "532576": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -90377,6 +90643,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:23:57.147Z"
     },
+    "532758": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:35.220Z"
+    },
     "532796": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -90432,6 +90703,16 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:49.662Z"
     },
+    "532898": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:39.226Z"
+    },
+    "532916": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:41.898Z"
+    },
     "532962": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -90441,6 +90722,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:50.501Z"
+    },
+    "532988": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:45.112Z"
     },
     "532992": {
       "status": "not_found",
@@ -90466,6 +90752,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:52.447Z"
+    },
+    "533049": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:49.647Z"
     },
     "533070": {
       "status": "downloaded",
@@ -90496,6 +90787,11 @@
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:21:56.375Z"
+    },
+    "533148": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:52.245Z"
     },
     "533149": {
       "status": "not_found",
@@ -90537,6 +90833,11 @@
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:44.581Z"
     },
+    "533236": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:55.298Z"
+    },
     "533238": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -90551,6 +90852,11 @@
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:45.756Z"
+    },
+    "533270": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:53:59.340Z"
     },
     "533282": {
       "status": "not_found",
@@ -90662,6 +90968,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:06.148Z"
     },
+    "533585": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:03.819Z"
+    },
     "533601": {
       "status": "downloaded",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -90677,10 +90988,20 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:12.096Z"
     },
+    "533617": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:04.215Z"
+    },
     "533626": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:10.353Z"
+    },
+    "533628": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:06.305Z"
     },
     "533660": {
       "status": "downloaded",
@@ -90716,6 +91037,11 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:13.006Z"
+    },
+    "533799": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:07.586Z"
     },
     "533804": {
       "status": "not_found",
@@ -90762,6 +91088,11 @@
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:26:59.812Z"
     },
+    "533880": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:09.893Z"
+    },
     "533913": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -90787,6 +91118,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:13.592Z"
     },
+    "533950": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:11.020Z"
+    },
     "533953": {
       "status": "already_verified",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -90796,6 +91132,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:16.779Z"
+    },
+    "533960": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:15.308Z"
     },
     "533969": {
       "status": "not_found",
@@ -90912,6 +91253,16 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:21.891Z"
     },
+    "534304": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:19.738Z"
+    },
+    "534307": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:23.709Z"
+    },
     "534310": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -90927,6 +91278,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:26.145Z"
     },
+    "534364": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:27.379Z"
+    },
     "534371": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -90936,6 +91292,11 @@
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:19.420Z"
+    },
+    "534388": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:29.258Z"
     },
     "534433": {
       "status": "not_found",
@@ -91007,6 +91368,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:28.820Z"
     },
+    "534613": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:33.124Z"
+    },
     "534630": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -91027,6 +91393,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:29.222Z"
     },
+    "534727": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:34.095Z"
+    },
     "534728": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -91042,6 +91413,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:24.538Z"
     },
+    "534756": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:38.044Z"
+    },
     "534757": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -91051,6 +91427,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:31.877Z"
+    },
+    "534783": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:40.772Z"
     },
     "534784": {
       "status": "not_found",
@@ -91097,10 +91478,20 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:32.295Z"
     },
+    "534884": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:44.489Z"
+    },
     "534924": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:28.250Z"
+    },
+    "534925": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:49.085Z"
     },
     "534927": {
       "status": "not_found",
@@ -91111,6 +91502,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:32.768Z"
+    },
+    "534936": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:51.809Z"
     },
     "534960": {
       "status": "not_found",
@@ -91141,6 +91537,11 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:36.755Z"
+    },
+    "535083": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:54.821Z"
     },
     "535091": {
       "status": "not_found",
@@ -91207,6 +91608,16 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:39.910Z"
     },
+    "535308": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:54:56.946Z"
+    },
+    "535311": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:01.015Z"
+    },
     "535313": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -91232,6 +91643,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:42.025Z"
     },
+    "535369": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:03.826Z"
+    },
     "535371": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -91241,6 +91657,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:35.361Z"
+    },
+    "535400": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:08.154Z"
     },
     "535403": {
       "status": "not_found",
@@ -91262,15 +91683,35 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:36.236Z"
     },
+    "535432": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:09.627Z"
+    },
     "535436": {
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:36.669Z"
     },
+    "535471": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:12.918Z"
+    },
     "535478": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:38.751Z"
+    },
+    "535491": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:15.501Z"
+    },
+    "535513": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:20.480Z"
     },
     "535514": {
       "status": "not_found",
@@ -91282,15 +91723,35 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:39.717Z"
     },
+    "535530": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:25.083Z"
+    },
     "535541": {
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:38.050Z"
     },
+    "535544": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:28.775Z"
+    },
     "535606": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:42.048Z"
+    },
+    "535629": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:32.153Z"
+    },
+    "535633": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:34.966Z"
     },
     "535647": {
       "status": "not_found",
@@ -91306,6 +91767,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:40.592Z"
+    },
+    "535661": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:39.443Z"
     },
     "535675": {
       "status": "not_found",
@@ -91502,6 +91968,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:11:51.539Z"
     },
+    "536215": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:42.384Z"
+    },
     "536236": {
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
@@ -91527,6 +91998,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:24:54.980Z"
     },
+    "536347": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:46.944Z"
+    },
     "536356": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -91541,6 +92017,11 @@
       "status": "not_found",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:22:57.519Z"
+    },
+    "536362": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:51.782Z"
     },
     "536377": {
       "status": "not_found",
@@ -91617,6 +92098,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:12:00.003Z"
     },
+    "536606": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:55.144Z"
+    },
     "536609": {
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -91631,6 +92117,11 @@
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:27:43.624Z"
+    },
+    "536677": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:57.038Z"
     },
     "536678": {
       "status": "not_found",
@@ -91667,6 +92158,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:12:02.746Z"
     },
+    "536756": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:57.433Z"
+    },
     "536758": {
       "status": "downloaded",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -91676,6 +92172,16 @@
       "status": "not_found",
       "company": "ZEE LABORATORIES LTD",
       "timestamp": "2026-09-24T15:27:49.990Z"
+    },
+    "536777": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:55:59.507Z"
+    },
+    "536787": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:03.985Z"
     },
     "536797": {
       "status": "not_found",
@@ -91762,6 +92268,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:05.349Z"
     },
+    "537054": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:07.769Z"
+    },
     "537069": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -91776,6 +92287,11 @@
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:05.805Z"
+    },
+    "537090": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:08.167Z"
     },
     "537091": {
       "status": "downloaded",
@@ -91927,10 +92443,30 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:12:44.492Z"
     },
+    "537338": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:08.910Z"
+    },
+    "537378": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:11.156Z"
+    },
+    "537379": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:11.600Z"
+    },
     "537407": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:12:45.668Z"
+    },
+    "537453": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:12.695Z"
     },
     "537494": {
       "status": "not_found",
@@ -92022,6 +92558,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:19.395Z"
     },
+    "537556": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:13.518Z"
+    },
     "537593": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -92082,10 +92623,25 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:05.372Z"
     },
+    "537746": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:14.657Z"
+    },
     "537753": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:13:10.621Z"
+    },
+    "537772": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:17.597Z"
+    },
+    "537795": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:17.986Z"
     },
     "537805": {
       "status": "not_found",
@@ -92226,6 +92782,16 @@
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:13:45.667Z"
+    },
+    "538344": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:18.577Z"
+    },
+    "538345": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:21.868Z"
     },
     "538367": {
       "status": "already_verified",
@@ -92372,6 +92938,31 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:14:16.508Z"
     },
+    "538439": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:24.265Z"
+    },
+    "538440": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:25.700Z"
+    },
+    "538441": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:26.083Z"
+    },
+    "538442": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:26.644Z"
+    },
+    "538444": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:28.903Z"
+    },
     "538510": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -92492,6 +93083,26 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:14:31.695Z"
     },
+    "538723": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:32.757Z"
+    },
+    "538725": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:33.975Z"
+    },
+    "538729": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:36.955Z"
+    },
+    "538730": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:38.185Z"
+    },
     "538741": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -92562,10 +93173,30 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:42.282Z"
     },
+    "539162": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:40.502Z"
+    },
+    "539163": {
+      "status": "already_on_disk",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:40.923Z"
+    },
+    "539168": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:43.145Z"
+    },
     "539171": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:14:32.823Z"
+    },
+    "539183": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:44.557Z"
     },
     "539288": {
       "status": "already_on_disk",
@@ -92722,6 +93353,31 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:47.304Z"
     },
+    "539557": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:46.480Z"
+    },
+    "539563": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:49.983Z"
+    },
+    "539564": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:51.057Z"
+    },
+    "539579": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:53.331Z"
+    },
+    "539580": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:56:58.438Z"
+    },
     "539585": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
@@ -92736,6 +93392,11 @@
       "status": "downloaded",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:22.690Z"
+    },
+    "539591": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:00.946Z"
     },
     "539595": {
       "status": "already_verified",
@@ -92752,10 +93413,25 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:49.034Z"
     },
+    "539681": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:01.335Z"
+    },
     "539697": {
       "status": "already_on_disk",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:23:49.408Z"
+    },
+    "539701": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:02.658Z"
+    },
+    "539719": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:04.307Z"
     },
     "539743": {
       "status": "downloaded",
@@ -92771,6 +93447,16 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:14:59.906Z"
+    },
+    "539778": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:05.597Z"
+    },
+    "539779": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:06.751Z"
     },
     "539785": {
       "status": "already_on_disk",
@@ -92806,6 +93492,11 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:26.390Z"
+    },
+    "539874": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:10.504Z"
     },
     "539883": {
       "status": "downloaded",
@@ -92877,6 +93568,36 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:28.161Z"
     },
+    "539977": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:13.228Z"
+    },
+    "539978": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:13.619Z"
+    },
+    "539979": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:15.679Z"
+    },
+    "539980": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:19.818Z"
+    },
+    "540000": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:23.612Z"
+    },
+    "540001": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:25.690Z"
+    },
     "540013": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -92917,6 +93638,11 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:24:00.994Z"
     },
+    "540346": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:27.952Z"
+    },
     "540371": {
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -92946,6 +93672,11 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:15:20.400Z"
+    },
+    "540735": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:28.788Z"
     },
     "540748": {
       "status": "downloaded",
@@ -93022,6 +93753,21 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:25:40.275Z"
     },
+    "540851": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:29.196Z"
+    },
+    "540852": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:31.048Z"
+    },
+    "540853": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:32.793Z"
+    },
     "540854": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -93056,6 +93802,16 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:15:37.507Z"
+    },
+    "540998": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:35.425Z"
+    },
+    "540999": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:36.660Z"
     },
     "541103": {
       "status": "not_found",
@@ -93157,6 +93913,31 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:24:13.277Z"
     },
+    "541351": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:40.407Z"
+    },
+    "541352": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:43.078Z"
+    },
+    "541353": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:45.542Z"
+    },
+    "541370": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:48.673Z"
+    },
+    "541371": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:51.918Z"
+    },
     "541374": {
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
@@ -93176,6 +93957,21 @@
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:24:17.259Z"
+    },
+    "541445": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:53.577Z"
+    },
+    "541446": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:53.971Z"
+    },
+    "541447": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:56.394Z"
     },
     "541450": {
       "status": "downloaded",
@@ -93247,6 +94043,26 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:15:56.334Z"
     },
+    "541749": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:58.026Z"
+    },
+    "541828": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:59.029Z"
+    },
+    "541838": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:57:59.422Z"
+    },
+    "541839": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:00.123Z"
+    },
     "541845": {
       "status": "downloaded",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -93292,6 +94108,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:26:06.164Z"
     },
+    "541948": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:01.373Z"
+    },
     "541960": {
       "status": "already_verified",
       "company": "ZEE LABORATORIES LTD",
@@ -93331,6 +94152,11 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:16:13.288Z"
+    },
+    "542038": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:03.266Z"
     },
     "542099": {
       "status": "downloaded",
@@ -93882,6 +94708,21 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:26:13.209Z"
     },
+    "543140": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:07.745Z"
+    },
+    "543141": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:09.779Z"
+    },
+    "543153": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:11.444Z"
+    },
     "543154": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -93891,6 +94732,16 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:26:14.747Z"
+    },
+    "543192": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:12.728Z"
+    },
+    "543193": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:15.263Z"
     },
     "543236": {
       "status": "downloaded",
@@ -93967,6 +94818,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:17:45.951Z"
     },
+    "543719": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:17.714Z"
+    },
     "543720": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -93992,6 +94848,11 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:17:51.216Z"
     },
+    "543769": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:20.572Z"
+    },
     "543787": {
       "status": "not_found",
       "company": "CIPLA LIMITED",
@@ -94002,6 +94863,31 @@
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:17:52.723Z"
     },
+    "543839": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:22.317Z"
+    },
+    "543987": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:26.786Z"
+    },
+    "544031": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:27.636Z"
+    },
+    "544032": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:28.420Z"
+    },
+    "544033": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:32.518Z"
+    },
     "544086": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -94011,6 +94897,16 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:17:53.456Z"
+    },
+    "544192": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:32.931Z"
+    },
+    "544194": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:34.499Z"
     },
     "544229": {
       "status": "not_found",
@@ -94037,6 +94933,51 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:26:31.438Z"
     },
+    "544291": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:34.896Z"
+    },
+    "544306": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:35.798Z"
+    },
+    "544307": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:36.967Z"
+    },
+    "544308": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:37.933Z"
+    },
+    "544309": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:44.613Z"
+    },
+    "544352": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:46.473Z"
+    },
+    "544353": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:48.082Z"
+    },
+    "544354": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:49.138Z"
+    },
+    "544380": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:49.556Z"
+    },
     "544385": {
       "status": "downloaded",
       "company": "CIPLA LIMITED",
@@ -94056,6 +94997,31 @@
       "status": "already_verified",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:17:57.747Z"
+    },
+    "544506": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:51.412Z"
+    },
+    "544556": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:56.147Z"
+    },
+    "544638": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:58:58.687Z"
+    },
+    "544639": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:00.930Z"
+    },
+    "544640": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:02.875Z"
     },
     "544670": {
       "status": "downloaded",
@@ -94107,6 +95073,16 @@
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:24:54.675Z"
     },
+    "544773": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:04.936Z"
+    },
+    "544820": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:05.802Z"
+    },
     "544827": {
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
@@ -94121,6 +95097,11 @@
       "status": "not_found",
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:26:36.233Z"
+    },
+    "544838": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:08.557Z"
     },
     "544841": {
       "status": "downloaded",
@@ -94141,6 +95122,16 @@
       "status": "downloaded",
       "company": "ZYDUS CADILA HEALTHCARE LTD",
       "timestamp": "2026-09-24T10:25:00.549Z"
+    },
+    "544879": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:11.894Z"
+    },
+    "544880": {
+      "status": "not_found",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:14.884Z"
     },
     "544885": {
       "status": "downloaded",
@@ -94166,6 +95157,11 @@
       "status": "already_verified",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:18:05.567Z"
+    },
+    "544960": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:15.276Z"
     },
     "544963": {
       "status": "already_verified",
@@ -94206,6 +95202,11 @@
       "status": "already_verified",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:18:05.636Z"
+    },
+    "545204": {
+      "status": "already_verified",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:15.359Z"
     },
     "545274": {
       "status": "already_verified",
@@ -94337,6 +95338,11 @@
       "company": "INTAS PHARMACEUTICALS LTD",
       "timestamp": "2026-09-24T14:27:10.746Z"
     },
+    "545690": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:16.873Z"
+    },
     "545696": {
       "status": "already_verified",
       "company": "CIPLA LIMITED",
@@ -94346,6 +95352,11 @@
       "status": "downloaded",
       "company": "CIPLA LIMITED",
       "timestamp": "2026-09-24T12:18:16.907Z"
+    },
+    "545703": {
+      "status": "downloaded",
+      "company": "ABBOTT HEALTHCARE PVT LTD",
+      "timestamp": "2026-09-24T17:59:20.671Z"
     },
     "545707": {
       "status": "downloaded",
